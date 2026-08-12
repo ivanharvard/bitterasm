@@ -1,0 +1,9 @@
+from tinycpu.native import *
+
+start:
+    mov r1, 7
+    add r1, r2
+
+    @if something == 42 {
+        nop
+    }
