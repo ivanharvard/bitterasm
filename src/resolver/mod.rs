@@ -4,6 +4,7 @@ mod types;
 
 pub use aliases::AliasResolver;
 pub use symbols::*;
+pub use types::*;
 
 use crate::ast::{Program, Statement};
 use crate::token::Span;

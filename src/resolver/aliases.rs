@@ -21,10 +21,10 @@ enum AliasState {
     Resolved(ResolvedType),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GenericScopeKind {
-    Type,
-    Const,
+#[derive(Debug, Clone, PartialEq)]
+enum GenericBinding {
+    Type(ResolvedType),
+    Const(Option<Expr>),
 }
 
 pub struct AliasResolver<'a> {
@@ -34,7 +34,7 @@ pub struct AliasResolver<'a> {
     states: HashMap<SymbolId, AliasState>,
     stack: Vec<SymbolId>,
 
-    generic_scope: HashMap<String, GenericScopeKind>,
+    generic_scope: HashMap<String, GenericBinding>,
 }
 
 impl<'a> AliasResolver<'a> {
@@ -151,30 +151,61 @@ impl<'a> AliasResolver<'a> {
         id: SymbolId,
     ) -> Result<Vec<ResolvedType>, ResolveError> {
         let declaration = self.find_struct_declaration(id)?;
-
         let generic_params = declaration.generic_params.clone();
-
-        let field_types: Vec<TypeExpr> = declaration
-            .fields
-            .iter()
-            .map(|field| field.ty.clone())
-            .collect();
 
         let mut scope = HashMap::new();
 
         for param in &generic_params {
-            let (name, kind) = match param {
+            let binding = match param {
                 GenericParameter::Type { name, .. } => {
-                    (name.clone(), GenericScopeKind::Type)
+                    GenericBinding::Type(ResolvedType::TypeParameter { name: name.clone() })
                 }
 
-                GenericParameter::Const { name, .. } => {
-                    (name.clone(), GenericScopeKind::Const)
-                }
+                GenericParameter::Const { .. } => GenericBinding::Const(None),
             };
 
-            scope.insert(name, kind);
+            scope.insert(param_name(param).to_string(), binding);
         }
+
+        self.resolve_fields_in_scope(id, scope)
+    }
+
+    // Resolves a struct's field types under a specific instantiation, e.g.
+    // `Reg<64>`, by binding its generic parameters to the actual arguments
+    // used at that call site instead of abstract placeholders.
+    pub fn instantiate_struct_fields(
+        &mut self,
+        id: SymbolId,
+        args: &[ResolvedGenericArg],
+    ) -> Result<Vec<ResolvedType>, ResolveError> {
+        let declaration = self.find_struct_declaration(id)?;
+        let generic_params = declaration.generic_params.clone();
+
+        let mut scope = HashMap::new();
+
+        for (param, arg) in generic_params.iter().zip(args) {
+            let binding = match arg {
+                ResolvedGenericArg::Type(ty) => GenericBinding::Type((**ty).clone()),
+                ResolvedGenericArg::Const(expr) => GenericBinding::Const(Some(expr.clone())),
+            };
+
+            scope.insert(param_name(param).to_string(), binding);
+        }
+
+        self.resolve_fields_in_scope(id, scope)
+    }
+
+    fn resolve_fields_in_scope(
+        &mut self,
+        id: SymbolId,
+        scope: HashMap<String, GenericBinding>,
+    ) -> Result<Vec<ResolvedType>, ResolveError> {
+        let field_types: Vec<TypeExpr> = self
+            .find_struct_declaration(id)?
+            .fields
+            .iter()
+            .map(|field| field.ty.clone())
+            .collect();
 
         let previous = std::mem::replace(&mut self.generic_scope, scope);
 
@@ -223,11 +254,9 @@ impl<'a> AliasResolver<'a> {
 
         // generic parameters in scope shadow builtins and declared symbols
         match self.generic_scope.get(name) {
-            Some(GenericScopeKind::Type) => {
-                return Ok(ResolvedType::TypeParameter { name: name.clone() });
-            }
+            Some(GenericBinding::Type(ty)) => return Ok(ty.clone()),
 
-            Some(GenericScopeKind::Const) => {
+            Some(GenericBinding::Const(_)) => {
                 return Err(ResolveError::ExpectedType {
                     name: name.clone(),
                     span,
@@ -363,9 +392,9 @@ impl<'a> AliasResolver<'a> {
 
         // generic parameters in scope shadow builtins and declared symbols
         match self.generic_scope.get(name) {
-            Some(GenericScopeKind::Const) => return Ok(()),
+            Some(GenericBinding::Const(_)) => return Ok(()),
 
-            Some(GenericScopeKind::Type) => {
+            Some(GenericBinding::Type(_)) => {
                 return Err(ResolveError::ExpectedConstant {
                     name: name.clone(),
                     span: *span,
@@ -428,12 +457,21 @@ impl<'a> AliasResolver<'a> {
             });
         };
 
-        // an in-scope const parameter has no concrete value yet
+        // an in-scope const parameter, bound to a literal once instantiated
         if let Expr::Identifier { name, .. } = expr {
-            if self.generic_scope.get(name) == Some(&GenericScopeKind::Const) {
-                return Ok(ResolvedType::Builtin(BuiltinType::Bits {
-                    width: BitsWidth::Parameter(name.clone()),
-                }));
+            match self.generic_scope.get(name) {
+                Some(GenericBinding::Const(Some(Expr::Integer { raw, span: int_span }))) => {
+                    let width = parse_bits_width(raw, *int_span)?;
+                    return Ok(ResolvedType::Builtin(BuiltinType::Bits { width: BitsWidth::Literal(width) }));
+                }
+
+                Some(GenericBinding::Const(_)) => {
+                    return Ok(ResolvedType::Builtin(BuiltinType::Bits {
+                        width: BitsWidth::Parameter(name.clone()),
+                    }));
+                }
+
+                _ => {}
             }
         }
 
@@ -444,19 +482,7 @@ impl<'a> AliasResolver<'a> {
             });
         };
 
-        let width = parse_integer_literal(raw).ok_or_else(|| {
-            ResolveError::InvalidBitWidth {
-                raw: raw.clone(),
-                span: expr.span()
-            }
-        })?;
-
-        if width == 0 {
-            return Err(ResolveError::InvalidBitWidth {
-                raw: raw.clone(),
-                span: expr.span()
-            });
-        }
+        let width = parse_bits_width(raw, expr.span())?;
 
         Ok(ResolvedType::Builtin(BuiltinType::Bits { width: BitsWidth::Literal(width) }))
     }
@@ -547,6 +573,25 @@ impl<'a> AliasResolver<'a> {
         }
     }
 
+}
+
+fn parse_bits_width(raw: &str, span: Span) -> Result<u64, ResolveError> {
+    let width = parse_integer_literal(raw).ok_or_else(|| {
+        ResolveError::InvalidBitWidth { raw: raw.to_string(), span }
+    })?;
+
+    if width == 0 {
+        return Err(ResolveError::InvalidBitWidth { raw: raw.to_string(), span });
+    }
+
+    Ok(width)
+}
+
+fn param_name(param: &GenericParameter) -> &str {
+    match param {
+        GenericParameter::Type { name, .. } => name,
+        GenericParameter::Const { name, .. } => name,
+    }
 }
 
 fn parse_integer_literal(raw: &str) -> Option<u64> {

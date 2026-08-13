@@ -213,6 +213,25 @@ impl Parser {
         }
     }
 
+    // `>>` lexes as one `ShiftRight` token, so closing two nested generic
+    // lists at once (e.g. `Param<Reg<64>>`) needs it split back into two
+    // `Greater` tokens.
+    fn expect_generic_close(&mut self) -> Result<Token, ParseError> {
+        if self.check(&TokenKind::ShiftRight) {
+            let token = self.current().clone();
+            let mid = token.span.start + 1;
+
+            self.tokens[self.pos] = Token::new(TokenKind::Greater, mid, token.span.end);
+            self.tokens.insert(self.pos, Token::new(TokenKind::Greater, token.span.start, mid));
+
+            return Ok(self.advance().clone());
+        }
+
+        let token = self.current().clone();
+        self.expect_simple(TokenKind::Greater)?;
+        Ok(token)
+    }
+
     // =============
     // token navigation
     // =============

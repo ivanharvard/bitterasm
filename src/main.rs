@@ -63,8 +63,26 @@ fn main() {
         }
     };
 
+    let mut instantiations = std::collections::HashMap::new();
+
+    for (id, ty) in &aliases {
+        if let resolver::ResolvedType::Struct { symbol, args } = ty {
+            let fields = match alias_resolver.instantiate_struct_fields(*symbol, args) {
+                Ok(fields) => fields,
+
+                Err(error) => {
+                    eprintln!("resolver error: {error:?}");
+                    std::process::exit(1);
+                }
+            };
+
+            instantiations.insert(*id, fields);
+        }
+    }
+
     println!("{program:#?}");
     println!("resolved structs: {structs:#?}");
     println!("resolved aliases: {aliases:#?}");
+    println!("instantiated fields: {instantiations:#?}");
 
 }

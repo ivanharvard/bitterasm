@@ -1,0 +1,11 @@
+struct Reg<const W: uint> {
+    width: bits<W>
+}
+
+type Reg64 = Reg<64>
+
+struct Param<T> {
+    value: T
+}
+
+type Foo = Param<Reg<64>>

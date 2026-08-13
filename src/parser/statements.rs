@@ -290,9 +290,7 @@ impl Parser {
                 break;
             }
 
-            let closing = self.current().clone();
-
-            self.expect_simple(TokenKind::Greater)?;
+            let closing = self.expect_generic_close()?;
 
             ty = TypeExpr::Apply {
                 base: Box::new(ty),
@@ -308,11 +306,12 @@ impl Parser {
         &mut self,
         expected_kind: Option<GenericParamKind>,
     ) -> Result<TypeArgument, ParseError> {
-        // min_bp above Less/Greater's binding power so the closing '>' of
-        // the generic argument list isn't consumed as a comparison operator
+        // min_bp above ShiftRight's binding power so a closing '>' (or a
+        // split-off '>>' closing two nested lists at once) isn't consumed
+        // as a comparison or shift operator
         match expected_kind {
             Some(GenericParamKind::Const) => {
-                let expr = self.parse_expr_bp(51)?;
+                let expr = self.parse_expr_bp(62)?;
                 Ok(TypeArgument::Const(expr))
             }
 
@@ -330,7 +329,7 @@ impl Parser {
                 | TokenKind::LParen
                 | TokenKind::Bang
                 | TokenKind::Tilde => {
-                    let expr = self.parse_expr_bp(51)?;
+                    let expr = self.parse_expr_bp(62)?;
                     Ok(TypeArgument::Const(expr))
                 }
 
@@ -416,7 +415,7 @@ impl Parser {
             break;
         }
 
-        self.expect_simple(TokenKind::Greater)?;
+        self.expect_generic_close()?;
 
         Ok(parameters)
     }

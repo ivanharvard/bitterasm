@@ -1,0 +1,9 @@
+struct Reg<const width: uint> {
+    id: bits<2>,
+    width: bits<width>
+}
+
+const r0: Reg<2> = Reg<2>(id=0, width=2)
+
+const foo = r0.id
+const bar = r0.width
