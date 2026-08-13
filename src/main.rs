@@ -3,6 +3,7 @@ mod lexer;
 mod token;
 mod parser;
 mod types;
+mod resolver;
 
 use std::{env, fs};
 
