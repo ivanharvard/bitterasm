@@ -33,5 +33,28 @@ fn main() {
         }
     };
 
+    let symbols = match resolver::collect_symbols(&program) {
+        Ok(symbols) => symbols,
+
+        Err(error) => {
+            eprintln!("resolver error: {error:?}");
+            std::process::exit(1);
+        }
+    };
+
+    let mut alias_resolver =
+        resolver::AliasResolver::new(&program, &symbols);
+
+    let aliases = match alias_resolver.resolve_all() {
+        Ok(aliases) => aliases,
+
+        Err(error) => {
+            eprintln!("resolver error: {error:?}");
+            std::process::exit(1);
+        }
+    };
+
     println!("{program:#?}");
+    println!("resolved aliases: {aliases:#?}");
+
 }

@@ -63,6 +63,10 @@ impl SymbolTable {
     pub fn get(&self, id: SymbolId) -> &Symbol {
         &self.symbols[id.0]
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Symbol> {
+        self.symbols.iter()
+    }
 }
 
 #[derive(Debug)]

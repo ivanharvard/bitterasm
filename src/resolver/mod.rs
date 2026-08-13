@@ -1,6 +1,8 @@
 mod aliases;
 mod symbols;
+mod types;
 
+pub use aliases::AliasResolver;
 pub use symbols::*;
 
 use crate::ast::{Program, Statement};
@@ -70,4 +72,26 @@ pub enum ResolveError {
         name: String,
         span: Span,
     },
+
+    InvalidGenericArity {
+        name: String,
+        expected: usize,
+        actual: usize,
+        span: Span,
+    },
+
+    ExpectedConstGeneric {
+        name: String,
+        span: Span,
+    },
+
+    InvalidBitWidth {
+        raw: String,
+        span: Span,
+    },
+
+    Internal {
+        message: String,
+        span: Span,
+    }
 }
