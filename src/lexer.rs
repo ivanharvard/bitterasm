@@ -582,7 +582,7 @@ mod tests {
     }
 
     #[test]
-    fn lexes_instruction() {
+    fn lexes_invocation() {
         assert_eq!(
             kinds("mov r1, 42\n"),
             vec![

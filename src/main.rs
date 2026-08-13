@@ -1,4 +1,6 @@
+mod ast;
 mod lexer;
+mod parser;
 
 use std::{env, fs};
 
@@ -10,16 +12,23 @@ fn main() {
     let source = fs::read_to_string(&path)
         .expect("failed to read source file");
 
-    match lexer::lex(&source) {
-        Ok(tokens) => {
-            for token in tokens {
-                println!("{token:?}");
-            }
-        }
+    let tokens = match lexer::lex(&source) {
+        Ok(tokens) => tokens,
 
         Err(error) => {
-            eprintln!("error: {error}");
+            eprintln!("lexer error: {error}");
             std::process::exit(1);
         }
-    }
+    };
+
+    let program = match parser::parse(tokens) {
+        Ok(program) => program,
+
+        Err(error) => {
+            eprintln!("parser error: {error}");
+            std::process::exit(1);
+        }
+    };
+
+    println!("{program:#?}");
 }
