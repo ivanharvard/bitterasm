@@ -1,0 +1,206 @@
+use std::fmt;
+
+use crate::ast::{
+    BinaryOp, CallArgument, ConstDeclaration, Expr, ImportItems, ImportStatement,
+    Invocation, Label, ModulePath, Program, Statement, UnaryOp, TypeAliasDeclaration,
+};
+use crate::token::{Span, Token, TokenKind};
+use crate::types::{GenericParameter, StructField, TypeExpr, TypeArgument};
+
+
+mod expressions;
+mod statements;
+
+#[cfg(test)]
+mod tests;
+
+// ================
+// public entry point
+// ================
+
+pub fn parse(tokens: Vec<Token>) -> Result<Program, ParseError> {
+    Parser::new(tokens).parse_program()
+}
+
+// ================
+// errors
+// ================
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParseError {
+    pub message: String,
+    pub span: Span,
+}
+
+impl ParseError {
+    pub fn new(message: impl Into<String>, span: Span) -> Self {
+        Self { message: message.into(), span }
+    }
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} at byte {}..{}",
+            self.message,
+            self.span.start,
+            self.span.end
+        )
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+// ================
+// parser
+// ================
+
+struct Parser {
+    tokens: Vec<Token>,
+    pos: usize,
+}
+
+impl Parser {
+    fn new(tokens: Vec<Token>) -> Self {
+        Self { tokens, pos: 0 }
+    }
+
+    // ===============
+    // program
+    // ===============
+
+    fn parse_program(mut self) -> Result<Program, ParseError> {
+        let start = self.current().span.start;
+
+        let mut statements = Vec::new();
+
+        self.skip_newlines();
+
+        while !self.at_eof() {
+            statements.push(self.parse_statement()?);
+            self.skip_newlines();
+        }
+
+        let end = self.current().span.end;
+
+        Ok(Program {
+            statements,
+            span: Span::new(start, end),
+        })
+    }
+
+    // =============
+    // statement end
+    // =============
+
+    fn at_statement_end(&self) -> bool {
+        matches!(
+            self.current().kind,
+            TokenKind::Newline | TokenKind::Eof
+        )
+    }
+
+    // consume a new line if present and return the ending byte offset
+    // eof is also a valid statement terminator
+    fn statement_end(&mut self) -> Result<usize, ParseError> {
+        match self.current().kind {
+            TokenKind::Newline => {
+                let end = self.current().span.end;
+                self.advance();
+                Ok(end)
+            }
+
+            TokenKind::Eof => Ok(self.current().span.end),
+
+            _ => Err(ParseError::new(
+                "expected end of line",
+                self.current().span,
+            )),
+        }
+    }
+
+    fn skip_newlines(&mut self) {
+        while self.check(&TokenKind::Newline) {
+            self.advance();
+        }
+    }
+
+    // =============
+    // expectations
+    // =============
+
+    fn expect_identifier(&mut self) -> Result<String, ParseError> {
+        let token = self.current().clone();
+
+        match token.kind {
+            TokenKind::Identifier(name) => {
+                self.advance();
+                Ok(name)
+            }
+
+            other => Err(ParseError::new(
+                format!("expected identifier, found {other:?}"),
+                token.span,
+            )),
+        }
+    }
+
+    fn expect_simple(&mut self, expected: TokenKind) -> Result<(), ParseError> {
+        if self.check(&expected) {
+            self.advance();
+            Ok(())
+        } else {
+            Err(ParseError::new(
+                format!(
+                    "expected {:?}, found {:?}",
+                    expected,
+                    self.current().kind
+                ),
+                self.current().span,
+            ))
+        }
+    }
+
+    // =============
+    // token navigation
+    // =============
+
+    fn current(&self) -> &Token {
+        &self.tokens[self.pos]
+    }
+
+    fn previous(&self) -> &Token {
+        &self.tokens[self.pos - 1]
+    }
+
+    fn advance(&mut self) -> &Token {
+        if !self.at_eof() {
+            self.pos += 1;
+        }
+        self.previous()
+    }
+
+    fn at_eof(&self) -> bool {
+        matches!(self.current().kind, TokenKind::Eof)
+    }
+
+    fn check(&self, kind: &TokenKind) -> bool {
+        same_variant(&self.current().kind, kind)
+    }
+
+    fn check_next(&self, kind: &TokenKind) -> bool {
+        self.tokens
+            .get(self.pos + 1)
+            .map(|token| same_variant(&token.kind, kind))
+            .unwrap_or(false)
+    }
+}
+
+// =============
+// token comparison
+// =============
+
+fn same_variant(a: &TokenKind, b: &TokenKind) -> bool {
+    std::mem::discriminant(a) == std::mem::discriminant(b)
+}

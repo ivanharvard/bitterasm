@@ -1,0 +1,10 @@
+struct Reg<const width: uint> {
+    id: bits<2>
+}
+
+type Reg2 = Reg<2>
+
+const r0: Reg2 = Reg2(id=0)
+const r1: Reg2 = Reg2(id=1)
+const r2: Reg2 = Reg2(id=2)
+const r3: Reg2 = Reg2(id=3)
