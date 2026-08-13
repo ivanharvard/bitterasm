@@ -4,7 +4,7 @@ use crate::ast::{
     Expr, ImportItems, ImportStatement, Invocation, 
     Label, ModulePath, Program, Statement,
 };
-use crate::lexer::{Span, Token, TokenKind};
+use crate::token::{Span, Token, TokenKind};
 
 // ================
 // public entry point

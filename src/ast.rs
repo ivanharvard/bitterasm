@@ -1,4 +1,4 @@
-use crate::lexer::Span;
+use crate::token::Span;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {

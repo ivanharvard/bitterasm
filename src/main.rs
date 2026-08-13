@@ -1,5 +1,6 @@
 mod ast;
 mod lexer;
+mod token;
 mod parser;
 
 use std::{env, fs};
