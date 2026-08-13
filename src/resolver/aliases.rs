@@ -3,10 +3,11 @@ use std::collections::HashMap;
 use crate::ast::{Expr, Program, Statement};
 use crate::ast::Expr::Integer;
 use crate::token::Span;
-use crate::types::{TypeArgument, TypeExpr};
+use crate::types::{GenericParameter, TypeArgument, TypeExpr};
 
 use super::symbols::{SymbolId, SymbolKind, SymbolTable};
 use super::types::{
+    BitsWidth,
     BuiltinType,
     ResolvedGenericArg,
     ResolvedType,
@@ -20,12 +21,20 @@ enum AliasState {
     Resolved(ResolvedType),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GenericScopeKind {
+    Type,
+    Const,
+}
+
 pub struct AliasResolver<'a> {
     program: &'a Program,
     symbols: &'a SymbolTable,
 
     states: HashMap<SymbolId, AliasState>,
     stack: Vec<SymbolId>,
+
+    generic_scope: HashMap<String, GenericScopeKind>,
 }
 
 impl<'a> AliasResolver<'a> {
@@ -46,6 +55,7 @@ impl<'a> AliasResolver<'a> {
             symbols,
             states,
             stack: Vec::new(),
+            generic_scope: HashMap::new(),
         }
     }
 
@@ -113,6 +123,72 @@ impl<'a> AliasResolver<'a> {
     }
 
     // ==============
+    // struct fields
+    // ==============
+
+    pub fn resolve_all_structs(
+        &mut self
+    ) -> Result<HashMap<SymbolId, Vec<ResolvedType>>, ResolveError> {
+        let struct_ids: Vec<_> = self
+            .symbols
+            .iter()
+            .filter(|symbol| symbol.kind == SymbolKind::Struct)
+            .map(|symbol| symbol.id)
+            .collect();
+
+        let mut resolved = HashMap::new();
+
+        for id in struct_ids {
+            let fields = self.resolve_struct_fields(id)?;
+            resolved.insert(id, fields);
+        }
+
+        Ok(resolved)
+    }
+
+    fn resolve_struct_fields(
+        &mut self,
+        id: SymbolId,
+    ) -> Result<Vec<ResolvedType>, ResolveError> {
+        let declaration = self.find_struct_declaration(id)?;
+
+        let generic_params = declaration.generic_params.clone();
+
+        let field_types: Vec<TypeExpr> = declaration
+            .fields
+            .iter()
+            .map(|field| field.ty.clone())
+            .collect();
+
+        let mut scope = HashMap::new();
+
+        for param in &generic_params {
+            let (name, kind) = match param {
+                GenericParameter::Type { name, .. } => {
+                    (name.clone(), GenericScopeKind::Type)
+                }
+
+                GenericParameter::Const { name, .. } => {
+                    (name.clone(), GenericScopeKind::Const)
+                }
+            };
+
+            scope.insert(name, kind);
+        }
+
+        let previous = std::mem::replace(&mut self.generic_scope, scope);
+
+        let result = field_types
+            .iter()
+            .map(|ty| self.resolve_type_expr(ty))
+            .collect::<Result<Vec<_>, _>>();
+
+        self.generic_scope = previous;
+
+        result
+    }
+
+    // ==============
     // type expressions
     // ==============
 
@@ -144,6 +220,22 @@ impl<'a> AliasResolver<'a> {
         }
 
         let name = &path[0];
+
+        // generic parameters in scope shadow builtins and declared symbols
+        match self.generic_scope.get(name) {
+            Some(GenericScopeKind::Type) => {
+                return Ok(ResolvedType::TypeParameter { name: name.clone() });
+            }
+
+            Some(GenericScopeKind::Const) => {
+                return Err(ResolveError::ExpectedType {
+                    name: name.clone(),
+                    span,
+                });
+            }
+
+            None => {}
+        }
 
         // builtins
         match name.as_str() {
@@ -269,6 +361,20 @@ impl<'a> AliasResolver<'a> {
             return Ok(());
         };
 
+        // generic parameters in scope shadow builtins and declared symbols
+        match self.generic_scope.get(name) {
+            Some(GenericScopeKind::Const) => return Ok(()),
+
+            Some(GenericScopeKind::Type) => {
+                return Err(ResolveError::ExpectedConstant {
+                    name: name.clone(),
+                    span: *span,
+                });
+            }
+
+            None => {}
+        }
+
         if matches!(name.as_str(), "int" | "uint") {
             return Err(ResolveError::ExpectedConstant {
                 name: name.clone(),
@@ -322,6 +428,15 @@ impl<'a> AliasResolver<'a> {
             });
         };
 
+        // an in-scope const parameter has no concrete value yet
+        if let Expr::Identifier { name, .. } = expr {
+            if self.generic_scope.get(name) == Some(&GenericScopeKind::Const) {
+                return Ok(ResolvedType::Builtin(BuiltinType::Bits {
+                    width: BitsWidth::Parameter(name.clone()),
+                }));
+            }
+        }
+
         let Integer { raw, ..} = expr else {
             return Err(ResolveError::ExpectedConstGeneric {
                 name: "bits".to_string(),
@@ -330,20 +445,20 @@ impl<'a> AliasResolver<'a> {
         };
 
         let width = parse_integer_literal(raw).ok_or_else(|| {
-            ResolveError::InvalidBitWidth { 
-                raw: raw.clone(), 
+            ResolveError::InvalidBitWidth {
+                raw: raw.clone(),
                 span: expr.span()
             }
         })?;
 
         if width == 0 {
-            return Err(ResolveError::InvalidBitWidth { 
-                raw: raw.clone(), 
+            return Err(ResolveError::InvalidBitWidth {
+                raw: raw.clone(),
                 span: expr.span()
             });
         }
 
-        Ok(ResolvedType::Builtin(BuiltinType::Bits { width }))
+        Ok(ResolvedType::Builtin(BuiltinType::Bits { width: BitsWidth::Literal(width) }))
     }
 
     // ==============

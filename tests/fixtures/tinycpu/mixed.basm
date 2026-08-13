@@ -1,0 +1,7 @@
+struct Foo<T, const W: uint> {
+    x: T,
+    data: bits<W>
+}
+
+type Good = Foo<int, 8>
+type Bad  = Foo<8, int>

@@ -45,6 +45,15 @@ fn main() {
     let mut alias_resolver =
         resolver::AliasResolver::new(&program, &symbols);
 
+    let structs = match alias_resolver.resolve_all_structs() {
+        Ok(structs) => structs,
+
+        Err(error) => {
+            eprintln!("resolver error: {error:?}");
+            std::process::exit(1);
+        }
+    };
+
     let aliases = match alias_resolver.resolve_all() {
         Ok(aliases) => aliases,
 
@@ -55,6 +64,7 @@ fn main() {
     };
 
     println!("{program:#?}");
+    println!("resolved structs: {structs:#?}");
     println!("resolved aliases: {aliases:#?}");
 
 }

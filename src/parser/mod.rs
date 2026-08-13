@@ -88,10 +88,17 @@ struct Parser {
 
 impl Parser {
     fn new(tokens: Vec<Token>) -> Self {
+        // `bits` has no struct declaration to register its signature from.
+        let mut generic_signatures = HashMap::new();
+        generic_signatures.insert(
+            "bits".to_string(),
+            vec![GenericParamKind::Const],
+        );
+
         Self {
             tokens,
             pos: 0,
-            generic_signatures: HashMap::new(),
+            generic_signatures,
         }
     }
 

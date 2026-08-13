@@ -455,6 +455,16 @@ impl Parser {
             fields.push(self.parse_struct_field()?);
 
             self.skip_newlines();
+
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+                self.skip_newlines();
+            } else if !self.check(&TokenKind::RBrace) {
+                return Err(ParseError::new(
+                    "expected ',' or '}' after struct field",
+                    self.current().span,
+                ));
+            }
         }
 
         let closing = self.current().clone();
@@ -485,15 +495,6 @@ impl Parser {
         let ty = self.parse_type_expr()?;
 
         let end = ty.span().end;
-
-        if self.check(&TokenKind::Newline) {
-            self.advance();
-        } else if !self.check(&TokenKind::RBrace) {
-            return Err(ParseError::new(
-                "expected newline or '}' after struct field",
-                self.current().span,
-            ));
-        }
 
         Ok(StructField {
             name,

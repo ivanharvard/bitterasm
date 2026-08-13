@@ -19,8 +19,14 @@ pub enum BuiltinType {
     Int,
     Uint,
     Bits {
-        width: u64,
+        width: BitsWidth,
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BitsWidth {
+    Literal(u64),
+    Parameter(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
