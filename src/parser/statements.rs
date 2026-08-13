@@ -267,8 +267,20 @@ impl Parser {
                 ));
             }
 
+            let signature = ty.name().and_then(|name| {
+                self.generic_signatures.get(name)
+            }).cloned();
+
+            let mut index = 0;
+
             loop {
-                args.push(self.parse_type_argument()?);
+                let expected_kind = signature
+                    .as_ref()
+                    .and_then(|kinds| kinds.get(index))
+                    .copied();
+
+                args.push(self.parse_type_argument(expected_kind)?);
+                index += 1;
 
                 if self.check(&TokenKind::Comma) {
                     self.advance();
@@ -292,25 +304,46 @@ impl Parser {
         Ok(ty)
     }
 
-    fn parse_type_argument(&mut self) -> Result<TypeArgument, ParseError> {
-        match &self.current().kind {
-            TokenKind::Integer(_) => {
-                // min_bp above Less/Greater's binding power so the closing
-                // '>' of the generic argument list isn't consumed as a
-                // comparison operator
+    fn parse_type_argument(
+        &mut self,
+        expected_kind: Option<GenericParamKind>,
+    ) -> Result<TypeArgument, ParseError> {
+        // min_bp above Less/Greater's binding power so the closing '>' of
+        // the generic argument list isn't consumed as a comparison operator
+        match expected_kind {
+            Some(GenericParamKind::Const) => {
                 let expr = self.parse_expr_bp(51)?;
                 Ok(TypeArgument::Const(expr))
             }
 
-            TokenKind::Identifier(_) => {
+            Some(GenericParamKind::Type) => {
                 let ty = self.parse_type_expr()?;
                 Ok(TypeArgument::Type(ty))
             }
 
-            other => Err(ParseError::new(
-                format!("expected type argument, found {other:?}"),
-                self.current().span,
-            )),
+            // The callee's signature isn't known (builtin type, or a
+            // forward reference to a declaration later in the source), so
+            // try guessing from the leading token.
+            None => match &self.current().kind {
+                TokenKind::Integer(_)
+                | TokenKind::Minus
+                | TokenKind::LParen
+                | TokenKind::Bang
+                | TokenKind::Tilde => {
+                    let expr = self.parse_expr_bp(51)?;
+                    Ok(TypeArgument::Const(expr))
+                }
+
+                TokenKind::Identifier(_) => {
+                    let ty = self.parse_type_expr()?;
+                    Ok(TypeArgument::Type(ty))
+                }
+
+                other => Err(ParseError::new(
+                    format!("expected type argument, found {other:?}"),
+                    self.current().span,
+                )),
+            },
         }
     }
 
@@ -403,6 +436,8 @@ impl Parser {
 
         let generic_params = self.parse_generic_params()?;
 
+        self.register_generic_signature(&name, &generic_params);
+
         self.expect_simple(TokenKind::LBrace)?;
 
         self.skip_newlines();
@@ -482,6 +517,8 @@ impl Parser {
 
         let generic_params =
             self.parse_generic_params()?;
+
+        self.register_generic_signature(&name, &generic_params);
 
         self.expect_simple(TokenKind::Equal)?;
 

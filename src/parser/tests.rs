@@ -385,3 +385,77 @@ const r3: Reg2 = Reg2(id = 3)
 
     assert_eq!(program.statements.len(), 6);
 }
+#[test]
+fn resolves_identifier_const_generic_via_signature() {
+    let source = r#"
+struct Reg<const width: uint> {
+    id: bits<2>
+}
+
+const w: uint = 4
+type R = Reg<w>
+"#;
+
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    let Statement::TypeAlias(alias) = &program.statements[2] else {
+        panic!("expected type alias");
+    };
+
+    let TypeExpr::Apply { args, .. } = &alias.ty else {
+        panic!("expected generic application");
+    };
+
+    assert!(matches!(args[0], TypeArgument::Const(_)), "expected const arg, got {:?}", args[0]);
+}
+
+#[test]
+fn negative_const_generic_argument() {
+    let source = r#"
+struct Foo<const n: int> {
+    id: bits<2>
+}
+
+type Bar = Foo<-1>
+"#;
+
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    let Statement::TypeAlias(alias) = &program.statements[1] else {
+        panic!("expected type alias");
+    };
+
+    let TypeExpr::Apply { args, .. } = &alias.ty else {
+        panic!("expected generic application");
+    };
+
+    assert!(matches!(args[0], TypeArgument::Const(_)), "expected const arg, got {:?}", args[0]);
+}
+
+#[test]
+fn resolves_generic_argument_via_forward_declared_signature() {
+    // `Reg<w>` is used before `Reg` and `w` are declared, so only the
+    // pre-pass (which sees the whole file first) lets this resolve to a
+    // Const argument instead of misclassifying `w` as a Type argument.
+    let source = r#"
+type R = Reg<w>
+
+struct Reg<const width: uint> {
+    id: bits<2>
+}
+
+const w: uint = 4
+"#;
+
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    let Statement::TypeAlias(alias) = &program.statements[0] else {
+        panic!("expected type alias");
+    };
+
+    let TypeExpr::Apply { args, .. } = &alias.ty else {
+        panic!("expected generic application");
+    };
+
+    assert!(matches!(args[0], TypeArgument::Const(_)), "expected const arg, got {:?}", args[0]);
+}

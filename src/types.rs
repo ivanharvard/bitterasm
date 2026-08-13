@@ -35,6 +35,13 @@ impl TypeExpr {
             | TypeExpr::Apply { span, .. } => *span,
         }
     }
+
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            TypeExpr::Named { path, .. } => path.last().map(String::as_str),
+            TypeExpr::Apply { base, .. } => base.name(),
+        }
+    }
 }
 
 // ===============

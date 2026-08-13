@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 
 use crate::ast::{
@@ -19,7 +20,14 @@ mod tests;
 // ================
 
 pub fn parse(tokens: Vec<Token>) -> Result<Program, ParseError> {
-    Parser::new(tokens).parse_program()
+    // dummy pass to collect signatures
+    let mut prepass = Parser::new(tokens.clone());
+    let _ = prepass.parse_program();
+
+    let mut parser = Parser::new(tokens);
+    parser.generic_signatures = prepass.generic_signatures;
+
+    parser.parse_program()
 }
 
 // ================
@@ -56,21 +64,57 @@ impl std::error::Error for ParseError {}
 // parser
 // ================
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum GenericParamKind {
+    Type,
+    Const,
+}
+
+impl From<&GenericParameter> for GenericParamKind {
+    fn from(param: &GenericParameter) -> Self {
+        match param {
+            GenericParameter::Type { .. } => GenericParamKind::Type,
+            GenericParameter::Const { .. } => GenericParamKind::Const,
+        }
+    }
+}
+
 struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+
+    generic_signatures: HashMap<String, Vec<GenericParamKind>>,
 }
 
 impl Parser {
     fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, pos: 0 }
+        Self {
+            tokens,
+            pos: 0,
+            generic_signatures: HashMap::new(),
+        }
+    }
+
+    fn register_generic_signature(
+        &mut self,
+        name: &str,
+        params: &[GenericParameter],
+    ) {
+        if params.is_empty() {
+            return;
+        }
+
+        self.generic_signatures.insert(
+            name.to_string(),
+            params.iter().map(GenericParamKind::from).collect(),
+        );
     }
 
     // ===============
     // program
     // ===============
 
-    fn parse_program(mut self) -> Result<Program, ParseError> {
+    fn parse_program(&mut self) -> Result<Program, ParseError> {
         let start = self.current().span.start;
 
         let mut statements = Vec::new();
