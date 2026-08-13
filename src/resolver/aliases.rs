@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::ast::{Program, Statement};
+use crate::ast::{Expr, Program, Statement};
 use crate::ast::Expr::Integer;
 use crate::token::Span;
 use crate::types::{TypeArgument, TypeExpr};
@@ -255,8 +255,43 @@ impl<'a> AliasResolver<'a> {
             }
 
             TypeArgument::Const(expr) => {
+                self.check_const_expr(expr)?;
                 Ok(ResolvedGenericArg::Const(expr.clone()))
             }
+        }
+    }
+
+    fn check_const_expr(
+        &self,
+        expr: &Expr,
+    ) -> Result<(), ResolveError> {
+        let Expr::Identifier { name, span } = expr else {
+            return Ok(());
+        };
+
+        if matches!(name.as_str(), "int" | "uint") {
+            return Err(ResolveError::ExpectedConstant {
+                name: name.clone(),
+                span: *span,
+            });
+        }
+
+        match self.symbols.lookup(name) {
+            Some(id) => match self.symbols.get(id).kind {
+                SymbolKind::Const => Ok(()),
+
+                SymbolKind::Struct | SymbolKind::TypeAlias => {
+                    Err(ResolveError::ExpectedConstant {
+                        name: name.clone(),
+                        span: *span,
+                    })
+                }
+            },
+
+            None => Err(ResolveError::UnknownConstant {
+                name: name.clone(),
+                span: *span,
+            }),
         }
     }
 

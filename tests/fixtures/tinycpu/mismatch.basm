@@ -1,0 +1,6 @@
+struct Reg<const W: uint> {
+    id: bits<2>
+}
+
+type Good = Reg<64>
+type Bad  = Reg<uint>

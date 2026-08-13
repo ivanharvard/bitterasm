@@ -85,6 +85,16 @@ pub enum ResolveError {
         span: Span,
     },
 
+    ExpectedConstant {
+        name: String,
+        span: Span,
+    },
+
+    UnknownConstant {
+        name: String,
+        span: Span,
+    },
+
     InvalidBitWidth {
         raw: String,
         span: Span,

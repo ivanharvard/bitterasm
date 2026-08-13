@@ -1,0 +1,6 @@
+struct Param<T> {
+    value: T
+}
+
+type Good = Param<int>
+type Bad  = Param<foobar>
