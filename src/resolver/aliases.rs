@@ -198,6 +198,19 @@ impl<'a> AliasResolver<'a> {
 
         match base_type {
             ResolvedType::Struct { symbol, .. } => {
+                let expected = self.find_struct_declaration(symbol)?.generic_params.len();
+
+                if args.len() != expected {
+                    let name = self.symbols.get(symbol).name.clone();
+
+                    return Err(ResolveError::InvalidGenericArity {
+                        name,
+                        expected,
+                        actual: args.len(),
+                        span,
+                    });
+                }
+
                 let resolved_args = args
                     .iter()
                     .map(|arg| self.resolve_generic_args(arg))
@@ -321,6 +334,31 @@ impl<'a> AliasResolver<'a> {
         Err(ResolveError::Internal {
             message: format!(
                 "symbol table contains alias `{}` but no matching AST declaration exists",
+                symbol.name,
+            ),
+            span: symbol.span,
+        })
+    }
+
+    fn find_struct_declaration(
+        &self,
+        id: SymbolId,
+    ) -> Result<&crate::ast::StructDeclaration, ResolveError> {
+        let symbol = self.symbols.get(id);
+
+        for statement in &self.program.statements {
+            if let Statement::Struct(declaration) = statement {
+                if declaration.name == symbol.name {
+                    return Ok(declaration);
+                }
+            }
+        }
+
+        // there is some internal compiler inconsistency rather than bad
+        // BitterASM source.
+        Err(ResolveError::Internal {
+            message: format!(
+                "symbol table contains struct `{}` but no matching AST declaration exists",
                 symbol.name,
             ),
             span: symbol.span,

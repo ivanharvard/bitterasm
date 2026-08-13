@@ -1,0 +1,2 @@
+const Foo = 42
+type A = Foo
