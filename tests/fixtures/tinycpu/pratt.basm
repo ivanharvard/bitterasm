@@ -1,4 +1,4 @@
-from tinycpu.native import *
+from std.tinycpu import *
 
 start:
     mov r1, 1 + 2 * 3

@@ -83,11 +83,15 @@ impl Parser {
 
         let end = self.statement_end()?;
 
-        Ok(ImportStatement {
+        let import = ImportStatement {
             module,
             items,
             span: Span::new(start, end),
-        })
+        };
+
+        self.imports.push(import.clone());
+
+        Ok(import)
     }
 
     fn parse_module_path(&mut self) -> Result<ModulePath, ParseError> {

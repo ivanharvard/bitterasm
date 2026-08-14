@@ -20,14 +20,41 @@ mod tests;
 // ================
 
 pub fn parse(tokens: Vec<Token>) -> Result<Program, ParseError> {
+    parse_seeded(tokens, &HashMap::new()).map(|(program, _)| program)
+}
+
+// Parses `tokens`, treating `seed` as generic signatures known in advance
+// (e.g. struct/type-alias signatures pulled in from imported modules, whose
+// declarations aren't textually present in this token stream). Returns the
+// full set of signatures visible by the end of the file (seed plus whatever
+// this file declared itself), so callers can pass it on to files that import
+// *this* one in turn.
+pub(crate) fn parse_seeded(
+    tokens: Vec<Token>,
+    seed: &HashMap<String, Vec<GenericParamKind>>,
+) -> Result<(Program, HashMap<String, Vec<GenericParamKind>>), ParseError> {
     // dummy pass to collect signatures
     let mut prepass = Parser::new(tokens.clone());
+    prepass.generic_signatures.extend(seed.clone());
     let _ = prepass.parse_program();
 
     let mut parser = Parser::new(tokens);
     parser.generic_signatures = prepass.generic_signatures;
 
-    parser.parse_program()
+    let program = parser.parse_program()?;
+
+    Ok((program, parser.generic_signatures))
+}
+
+// Parses `tokens` leniently (ignoring errors past the first) purely to
+// discover which modules it imports, without needing to know anything about
+// those modules' contents first. Import statements don't depend on any
+// generic signature, so this succeeds even when later statements in the
+// file don't (e.g. because they use a type from one of these imports).
+pub(crate) fn discover_imports(tokens: Vec<Token>) -> Vec<ImportStatement> {
+    let mut parser = Parser::new(tokens);
+    let _ = parser.parse_program();
+    parser.imports
 }
 
 // ================
@@ -84,21 +111,16 @@ struct Parser {
     pos: usize,
 
     generic_signatures: HashMap<String, Vec<GenericParamKind>>,
+    imports: Vec<ImportStatement>,
 }
 
 impl Parser {
     fn new(tokens: Vec<Token>) -> Self {
-        // `bits` has no struct declaration to register its signature from.
-        let mut generic_signatures = HashMap::new();
-        generic_signatures.insert(
-            "bits".to_string(),
-            vec![GenericParamKind::Const],
-        );
-
         Self {
             tokens,
             pos: 0,
-            generic_signatures,
+            generic_signatures: HashMap::new(),
+            imports: Vec::new(),
         }
     }
 

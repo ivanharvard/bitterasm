@@ -1,13 +1,11 @@
 use std::collections::HashMap;
 
 use crate::ast::{Expr, Program, Statement};
-use crate::ast::Expr::Integer;
 use crate::token::Span;
 use crate::types::{GenericParameter, TypeArgument, TypeExpr};
 
 use super::symbols::{SymbolId, SymbolKind, SymbolTable};
 use super::types::{
-    BitsWidth,
     BuiltinType,
     ResolvedGenericArg,
     ResolvedType,
@@ -179,20 +177,52 @@ impl<'a> AliasResolver<'a> {
         args: &[ResolvedGenericArg],
     ) -> Result<Vec<ResolvedType>, ResolveError> {
         let declaration = self.find_struct_declaration(id)?;
-        let generic_params = declaration.generic_params.clone();
-
-        let mut scope = HashMap::new();
-
-        for (param, arg) in generic_params.iter().zip(args) {
-            let binding = match arg {
-                ResolvedGenericArg::Type(ty) => GenericBinding::Type((**ty).clone()),
-                ResolvedGenericArg::Const(expr) => GenericBinding::Const(Some(expr.clone())),
-            };
-
-            scope.insert(param_name(param).to_string(), binding);
-        }
+        let scope = generic_arg_scope(&declaration.generic_params, args);
 
         self.resolve_fields_in_scope(id, scope)
+    }
+
+    // Resolves the type of a single named field on a (possibly generic)
+    // struct type, e.g. `field_type(Reg<64>, "value")` returns `bits<64>`.
+    // This is the semantic entry point field access should go through:
+    // callers hand over a `ResolvedType` and a field name, without needing
+    // to know about symbol IDs or how generic substitution works.
+    pub fn field_type(
+        &mut self,
+        ty: &ResolvedType,
+        field_name: &str,
+        span: Span,
+    ) -> Result<ResolvedType, ResolveError> {
+        let ResolvedType::Struct { symbol, args } = ty else {
+            return Err(ResolveError::UnknownField {
+                type_name: describe_type(ty, self.symbols),
+                field: field_name.to_string(),
+                span,
+            });
+        };
+
+        let declaration = self.find_struct_declaration(*symbol)?;
+
+        let Some(field) = declaration
+            .fields
+            .iter()
+            .find(|field| field.name == field_name)
+        else {
+            return Err(ResolveError::UnknownField {
+                type_name: self.symbols.get(*symbol).name.clone(),
+                field: field_name.to_string(),
+                span,
+            });
+        };
+
+        let field_ty = field.ty.clone();
+        let scope = generic_arg_scope(&declaration.generic_params, args);
+
+        let previous = std::mem::replace(&mut self.generic_scope, scope);
+        let result = self.resolve_type_expr(&field_ty);
+        self.generic_scope = previous;
+
+        result
     }
 
     fn resolve_fields_in_scope(
@@ -309,12 +339,6 @@ impl<'a> AliasResolver<'a> {
         args: &[TypeArgument],
         span: Span
     ) -> Result<ResolvedType, ResolveError> {
-        if let TypeExpr::Named { path, .. } = base {
-            if path.len() == 1 && path[0] == "bits" {
-                return self.resolve_bits(args, span);
-            }
-        }
-
         let base_type = self.resolve_type_expr(base)?;
 
         match base_type {
@@ -431,63 +455,6 @@ impl<'a> AliasResolver<'a> {
     }
 
     // ==============
-    // bits<N>
-    // ==============
-
-    fn resolve_bits(
-        &mut self,
-        args: &[TypeArgument],
-        span: Span
-    ) -> Result<ResolvedType, ResolveError> {
-        if args.len() != 1 {
-            return Err(ResolveError::InvalidGenericArity {
-                name: "bits".to_string(),
-                expected: 1,
-                actual: args.len(),
-                span,
-            })
-        }
-
-        let arg = &args[0];
-
-        let TypeArgument::Const(expr) = arg else {
-            return Err(ResolveError::ExpectedConstGeneric {
-                name: "bits".to_string(),
-                span,
-            });
-        };
-
-        // an in-scope const parameter, bound to a literal once instantiated
-        if let Expr::Identifier { name, .. } = expr {
-            match self.generic_scope.get(name) {
-                Some(GenericBinding::Const(Some(Expr::Integer { raw, span: int_span }))) => {
-                    let width = parse_bits_width(raw, *int_span)?;
-                    return Ok(ResolvedType::Builtin(BuiltinType::Bits { width: BitsWidth::Literal(width) }));
-                }
-
-                Some(GenericBinding::Const(_)) => {
-                    return Ok(ResolvedType::Builtin(BuiltinType::Bits {
-                        width: BitsWidth::Parameter(name.clone()),
-                    }));
-                }
-
-                _ => {}
-            }
-        }
-
-        let Integer { raw, ..} = expr else {
-            return Err(ResolveError::ExpectedConstGeneric {
-                name: "bits".to_string(),
-                span,
-            });
-        };
-
-        let width = parse_bits_width(raw, expr.span())?;
-
-        Ok(ResolvedType::Builtin(BuiltinType::Bits { width: BitsWidth::Literal(width) }))
-    }
-
-    // ==============
     // ast lookup
     // ==============
 
@@ -575,18 +542,6 @@ impl<'a> AliasResolver<'a> {
 
 }
 
-fn parse_bits_width(raw: &str, span: Span) -> Result<u64, ResolveError> {
-    let width = parse_integer_literal(raw).ok_or_else(|| {
-        ResolveError::InvalidBitWidth { raw: raw.to_string(), span }
-    })?;
-
-    if width == 0 {
-        return Err(ResolveError::InvalidBitWidth { raw: raw.to_string(), span });
-    }
-
-    Ok(width)
-}
-
 fn param_name(param: &GenericParameter) -> &str {
     match param {
         GenericParameter::Type { name, .. } => name,
@@ -594,22 +549,35 @@ fn param_name(param: &GenericParameter) -> &str {
     }
 }
 
-fn parse_integer_literal(raw: &str) -> Option<u64> {
-    let cleaned = raw.replace("_", "");
+// Pairs a struct's generic parameters with the resolved arguments supplied
+// at a particular use site, e.g. `Reg<64>`, into a scope suitable for
+// resolving field types under that instantiation.
+fn generic_arg_scope(
+    generic_params: &[GenericParameter],
+    args: &[ResolvedGenericArg],
+) -> HashMap<String, GenericBinding> {
+    let mut scope = HashMap::new();
 
-    if let Some(value) = cleaned.strip_prefix("0x") {
-        u64::from_str_radix(value, 16).ok()
-    } else if let Some(value) = cleaned.strip_prefix("0X") {
-        u64::from_str_radix(value, 16).ok()
-    } else if let Some(value) = cleaned.strip_prefix("0b") {
-        u64::from_str_radix(value, 2).ok()
-    } else if let Some(value) = cleaned.strip_prefix("0B") {
-        u64::from_str_radix(value, 2).ok()
-    } else if let Some(value) = cleaned.strip_prefix("0o") {
-        u64::from_str_radix(value, 8).ok()
-    } else if let Some(value) = cleaned.strip_prefix("0O") {
-        u64::from_str_radix(value, 8).ok()
-    } else {
-        cleaned.parse::<u64>().ok()
+    for (param, arg) in generic_params.iter().zip(args) {
+        let binding = match arg {
+            ResolvedGenericArg::Type(ty) => GenericBinding::Type((**ty).clone()),
+            ResolvedGenericArg::Const(expr) => GenericBinding::Const(Some(expr.clone())),
+        };
+
+        scope.insert(param_name(param).to_string(), binding);
+    }
+
+    scope
+}
+
+// Produces a human-readable name for a resolved type, used in diagnostics
+// like `UnknownField` when the type isn't the kind of thing that error
+// needs to describe more precisely (e.g. field access on a non-struct).
+fn describe_type(ty: &ResolvedType, symbols: &SymbolTable) -> String {
+    match ty {
+        ResolvedType::Builtin(BuiltinType::Int) => "int".to_string(),
+        ResolvedType::Builtin(BuiltinType::Uint) => "uint".to_string(),
+        ResolvedType::Struct { symbol, .. } => symbols.get(*symbol).name.clone(),
+        ResolvedType::TypeParameter { name } => name.clone(),
     }
 }

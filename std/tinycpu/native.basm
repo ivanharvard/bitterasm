@@ -1,3 +1,5 @@
+from std.binary.native import *
+
 struct Reg<const width: uint> {
     id: bits<2>
 }

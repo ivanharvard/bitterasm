@@ -81,11 +81,6 @@ pub enum ResolveError {
         span: Span,
     },
 
-    ExpectedConstGeneric {
-        name: String,
-        span: Span,
-    },
-
     ExpectedConstant {
         name: String,
         span: Span,
@@ -96,13 +91,14 @@ pub enum ResolveError {
         span: Span,
     },
 
-    InvalidBitWidth {
-        raw: String,
+    UnknownField {
+        type_name: String,
+        field: String,
         span: Span,
     },
 
     Internal {
         message: String,
         span: Span,
-    }
+    },
 }

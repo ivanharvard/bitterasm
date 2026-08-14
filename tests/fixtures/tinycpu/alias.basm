@@ -1,2 +1,4 @@
+from std.binary import *
+
 type A = B
 type B = bits<8>
