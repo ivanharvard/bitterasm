@@ -1,0 +1,5 @@
+type address = int
+
+pub struct pointer<T> {
+    addr: address
+}

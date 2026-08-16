@@ -190,6 +190,8 @@ impl<'src> Lexer<'src> {
 
             '@' => self.single(TokenKind::At),
 
+            '$' => self.single(TokenKind::Dollar),
+
             // unknown
 
             other => {

@@ -60,6 +60,8 @@ pub enum TokenKind {
 
     Arrow,
 
+    Dollar,
+
     // Metaprogramming
     At,
 
