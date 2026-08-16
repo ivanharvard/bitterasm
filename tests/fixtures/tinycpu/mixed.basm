@@ -1,6 +1,6 @@
 from std.binary import *
 
-struct Foo<T, const W: uint> {
+struct Foo<T, const W: int> {
     x: T,
     data: bits<W>
 }

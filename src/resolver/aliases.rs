@@ -299,7 +299,6 @@ impl<'a> AliasResolver<'a> {
         // builtins
         match name.as_str() {
             "int" => return Ok(ResolvedType::Builtin(BuiltinType::Int)),
-            "uint" => return Ok(ResolvedType::Builtin(BuiltinType::Uint)),
             _ => {}
         }
 
@@ -428,7 +427,7 @@ impl<'a> AliasResolver<'a> {
             None => {}
         }
 
-        if matches!(name.as_str(), "int" | "uint") {
+        if name == "int" {
             return Err(ResolveError::ExpectedConstant {
                 name: name.clone(),
                 span: *span,
@@ -576,7 +575,6 @@ fn generic_arg_scope(
 fn describe_type(ty: &ResolvedType, symbols: &SymbolTable) -> String {
     match ty {
         ResolvedType::Builtin(BuiltinType::Int) => "int".to_string(),
-        ResolvedType::Builtin(BuiltinType::Uint) => "uint".to_string(),
         ResolvedType::Struct { symbol, .. } => symbols.get(*symbol).name.clone(),
         ResolvedType::TypeParameter { name } => name.clone(),
     }

@@ -1,12 +1,13 @@
 from std.binary import *
 
-struct Reg<const width: uint> {
+pub struct Reg<const width: int> {
     id: bits<2>
 }
 
-type Reg2 = Reg<2>
+pub type Reg64 = Reg<64>
 
-const r0: Reg2 = Reg2(id=0)
-const r1: Reg2 = Reg2(id=1)
-const r2: Reg2 = Reg2(id=2)
-const r3: Reg2 = Reg2(id=3)
+pub const r0: Reg64 = Reg64(0)
+pub const r1: Reg64 = Reg64(1)
+pub const r2: Reg64 = Reg64(2)
+pub const r3: Reg64 = Reg64(3)
+

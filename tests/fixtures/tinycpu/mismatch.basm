@@ -1,8 +1,8 @@
 from std.binary import *
 
-struct Reg<const W: uint> {
+struct Reg<const W: int> {
     id: bits<2>
 }
 
 type Good = Reg<64>
-type Bad  = Reg<uint>
+type Bad  = Reg<int>

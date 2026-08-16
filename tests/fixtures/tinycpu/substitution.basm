@@ -1,6 +1,6 @@
 from std.binary import *
 
-struct Reg<const W: uint> {
+struct Reg<const W: int> {
     width: bits<W>
 }
 

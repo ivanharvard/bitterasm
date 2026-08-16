@@ -17,7 +17,6 @@ pub enum ResolvedType {
 #[derive(Debug, Clone, PartialEq)]
 pub enum BuiltinType {
     Int,
-    Uint,
 }
 
 #[derive(Debug, Clone, PartialEq)]

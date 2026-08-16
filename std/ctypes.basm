@@ -1,0 +1,15 @@
+from std.binary import *
+
+pub type int8_t = bits<8>
+pub type uint8_t = bits<8>
+
+pub type int16_t = bits<16>
+pub type uint16_t = bits<16>
+
+pub type int32_t = bits<32>
+pub type uint32_t = bits<32>
+
+pub type int64_t = bits<64>
+pub type uint64_t = bits<64>
+
+pub type size_t = int
