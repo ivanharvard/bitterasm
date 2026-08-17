@@ -228,7 +228,7 @@ impl<'src> Lexer<'src> {
             "from" => TokenKind::From,
             "import" => TokenKind::Import,
             "as" => TokenKind::As,
-            "export" => TokenKind::Export,
+            "pub" => TokenKind::Pub,
 
             "macro" => TokenKind::Macro,
             "type" => TokenKind::Type,

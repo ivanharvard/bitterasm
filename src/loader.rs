@@ -14,10 +14,11 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::ast::{ImportItems, ImportStatement, ModulePath, Program, Statement};
+use crate::ast::{Expr, ImportItems, ImportStatement, ModulePath, Program, Statement};
 use crate::lexer;
 use crate::parser::{self, GenericParamKind};
 use crate::token::Span;
+use crate::types::{GenericParameter, TypeArgument, TypeExpr};
 
 #[derive(Debug)]
 pub enum LoadError {
@@ -97,8 +98,17 @@ struct LoadedModule {
     // declarations plus everything transitively pulled in by its own
     // imports. Handed to files that import this module, so they can parse
     // `bits<width>`-shaped usages correctly without the declaration itself
-    // being textually present.
+    // being textually present. Private (non-pub) signatures declared by
+    // this file itself are filtered out before caching, since a name an
+    // importer can never write shouldn't shadow how they interpret an
+    // unrelated same-named generic of their own.
     signatures: HashMap<String, Vec<GenericParamKind>>,
+
+    // Stable, unique-per-module id assigned the first time this module is
+    // loaded. Used to mangle its private declarations into names that can't
+    // collide with (or be typed by) any other module's when everything is
+    // flattened into one global program.
+    module_id: usize,
 }
 
 pub fn load_program(entry: &Path) -> Result<Program, LoadError> {
@@ -171,7 +181,7 @@ fn load_module(
         seed.extend(cache[&child_path].signatures.clone());
     }
 
-    let (program, signatures) = parser::parse_seeded(tokens, &seed).map_err(|error| {
+    let (program, mut signatures) = parser::parse_seeded(tokens, &seed).map_err(|error| {
         LoadError::Parse {
             path: path.to_path_buf(),
             message: error.to_string(),
@@ -180,12 +190,27 @@ fn load_module(
 
     stack.pop();
 
+    let own_private_names: HashSet<&str> = program
+        .statements
+        .iter()
+        .filter_map(|statement| match statement {
+            Statement::Struct(decl) if !decl.is_pub => Some(decl.name.as_str()),
+            Statement::TypeAlias(decl) if !decl.is_pub => Some(decl.name.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    signatures.retain(|name, _| !own_private_names.contains(name.as_str()));
+
+    let module_id = cache.len();
+
     cache.insert(
         path.to_path_buf(),
         LoadedModule {
             statements: program.statements,
             span: program.span,
             signatures,
+            module_id,
         },
     );
 
@@ -210,6 +235,8 @@ fn splice_import(
             .statements
             .iter()
             .filter_map(declaration_name)
+            .filter(|(_, is_pub)| *is_pub)
+            .map(|(name, _)| name)
             .collect();
 
         for name in names {
@@ -222,10 +249,11 @@ fn splice_import(
         }
     }
 
-    // Resolution isn't import-scoped anywhere else in the compiler, so
-    // there's nothing to gain from narrowing what gets spliced beyond the
-    // names check above: everything the target transitively needs has to be
-    // present regardless of which names were explicitly asked for.
+    // The names check above only gates what an importer is allowed to ask
+    // for by name; everything the target transitively needs still has to be
+    // spliced in for resolution to work. Non-pub declarations are mangled
+    // (see `collect_declarations`) so they're never nameable outside the
+    // module that declared them, regardless of how much gets spliced.
     let mut out = Vec::new();
     collect_declarations(&target_path, cache, spliced, &mut out)?;
     Ok(out)
@@ -243,6 +271,13 @@ fn collect_declarations(
 
     let module = &cache[path];
 
+    // Non-pub struct/type-alias/const declarations are private to this
+    // file: mangle them to a name no other file's source text could ever
+    // spell, and rewrite every reference to them within this file's own
+    // declarations to match. Declarations from other files are untouched
+    // here; each gets its own independent rename pass at its own splice.
+    let renames = build_rename_map(&module.statements, module.module_id);
+
     for statement in &module.statements {
         match statement {
             Statement::Import(nested) => {
@@ -251,7 +286,9 @@ fn collect_declarations(
             }
 
             Statement::Struct(_) | Statement::TypeAlias(_) | Statement::Const(_) => {
-                out.push(statement.clone());
+                let mut declaration = statement.clone();
+                rename_statement(&mut declaration, &renames);
+                out.push(declaration);
             }
 
             // Labels, invocations, and meta statements are program bodies,
@@ -263,12 +300,141 @@ fn collect_declarations(
     Ok(())
 }
 
-fn declaration_name(statement: &Statement) -> Option<&str> {
+// A name and whether it's reachable from outside the file that declared it.
+fn declaration_name(statement: &Statement) -> Option<(&str, bool)> {
     match statement {
-        Statement::Struct(decl) => Some(&decl.name),
-        Statement::TypeAlias(decl) => Some(&decl.name),
-        Statement::Const(decl) => Some(&decl.name),
+        Statement::Struct(decl) => Some((&decl.name, decl.is_pub)),
+        Statement::TypeAlias(decl) => Some((&decl.name, decl.is_pub)),
+        Statement::Const(decl) => Some((&decl.name, decl.is_pub)),
         _ => None,
+    }
+}
+
+// ===============
+// privacy mangling
+// ===============
+//
+// Non-pub declarations are only ever meant to be visible within the file
+// that declares them. Since the resolver works over one flattened, global
+// program with a single flat (by-name) symbol table, "private" can't mean
+// "absent from the table" (a pub sibling may still depend on it) — instead
+// it means "renamed to something no source text could ever spell", using
+// `#`, which the lexer only ever treats as the start of a line comment and
+// so can never appear inside an identifier a `.basm` file actually wrote.
+
+fn build_rename_map(statements: &[Statement], module_id: usize) -> HashMap<String, String> {
+    let mut renames = HashMap::new();
+
+    for statement in statements {
+        if let Some((name, is_pub)) = declaration_name(statement) {
+            if !is_pub {
+                renames.insert(name.to_string(), format!("{name}#{module_id}"));
+            }
+        }
+    }
+
+    renames
+}
+
+fn rename_statement(statement: &mut Statement, renames: &HashMap<String, String>) {
+    match statement {
+        Statement::Struct(decl) => {
+            if let Some(mangled) = renames.get(&decl.name) {
+                decl.name = mangled.clone();
+            }
+
+            for param in &mut decl.generic_params {
+                rename_generic_parameter(param, renames);
+            }
+
+            for field in &mut decl.fields {
+                rename_type_expr(&mut field.ty, renames);
+            }
+        }
+
+        Statement::TypeAlias(decl) => {
+            if let Some(mangled) = renames.get(&decl.name) {
+                decl.name = mangled.clone();
+            }
+
+            for param in &mut decl.generic_params {
+                rename_generic_parameter(param, renames);
+            }
+
+            rename_type_expr(&mut decl.ty, renames);
+        }
+
+        Statement::Const(decl) => {
+            if let Some(mangled) = renames.get(&decl.name) {
+                decl.name = mangled.clone();
+            }
+
+            if let Some(ty) = &mut decl.ty {
+                rename_type_expr(ty, renames);
+            }
+
+            rename_expr(&mut decl.value, renames);
+        }
+
+        Statement::Import(_) | Statement::Label(_) | Statement::Invocation(_) | Statement::Meta(_) => {}
+    }
+}
+
+fn rename_generic_parameter(param: &mut GenericParameter, renames: &HashMap<String, String>) {
+    if let GenericParameter::Const { ty, .. } = param {
+        rename_type_expr(ty, renames);
+    }
+}
+
+fn rename_type_expr(ty: &mut TypeExpr, renames: &HashMap<String, String>) {
+    match ty {
+        TypeExpr::Named { path, .. } => {
+            if path.len() == 1 {
+                if let Some(mangled) = renames.get(&path[0]) {
+                    path[0] = mangled.clone();
+                }
+            }
+        }
+
+        TypeExpr::Apply { base, args, .. } => {
+            rename_type_expr(base, renames);
+
+            for arg in args {
+                match arg {
+                    TypeArgument::Type(ty) => rename_type_expr(ty, renames),
+                    TypeArgument::Const(expr) => rename_expr(expr, renames),
+                }
+            }
+        }
+    }
+}
+
+fn rename_expr(expr: &mut Expr, renames: &HashMap<String, String>) {
+    match expr {
+        Expr::Identifier { name, .. } => {
+            if let Some(mangled) = renames.get(name) {
+                *name = mangled.clone();
+            }
+        }
+
+        Expr::Integer { .. } | Expr::String { .. } => {}
+
+        Expr::Member { object, .. } => rename_expr(object, renames),
+
+        Expr::Call { callee, arguments, .. } => {
+            rename_expr(callee, renames);
+
+            for argument in arguments {
+                rename_expr(&mut argument.value, renames);
+            }
+        }
+
+        Expr::Unary { operand, .. } => rename_expr(operand, renames),
+
+        Expr::Binary { left, right, .. } => {
+            rename_expr(left, renames);
+            rename_expr(right, renames);
+        }
     }
 }
 
@@ -400,6 +566,126 @@ mod tests {
         let result = load_program(&dir.join("a.basm"));
 
         assert!(matches!(result, Err(LoadError::ModuleNotFound { .. })));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn private_declaration_is_unreachable_outside_its_module() {
+        let dir = scratch_dir("private_unreachable");
+
+        fs::write(
+            dir.join("priv.basm"),
+            "struct Helper { x: int }\n\npub struct Public { y: Helper }\n",
+        )
+        .unwrap();
+
+        // Using `Public` from another file should resolve fine: `Public`'s
+        // own field type `Helper` is private, but that's an internal detail
+        // of `priv.basm`, not something the importer needs to spell.
+        fs::write(
+            dir.join("uses_public.basm"),
+            "from .priv import *\n\ntype Alias = Public\n",
+        )
+        .unwrap();
+
+        let program = load_program(&dir.join("uses_public.basm"))
+            .expect("uses_public.basm should load");
+
+        let symbols = crate::resolver::collect_symbols(&program)
+            .expect("symbol collection should succeed");
+
+        crate::resolver::AliasResolver::new(&program, &symbols)
+            .resolve_all()
+            .expect("Alias should resolve through Public down to the private Helper field");
+
+        // But typing `Helper` directly from outside `priv.basm` should not
+        // resolve to anything: its name was mangled away during splicing.
+        fs::write(
+            dir.join("uses_private.basm"),
+            "from .priv import *\n\ntype Bad = Helper\n",
+        )
+        .unwrap();
+
+        let program = load_program(&dir.join("uses_private.basm"))
+            .expect("uses_private.basm should load (privacy is a resolve-time concern)");
+
+        let symbols = crate::resolver::collect_symbols(&program)
+            .expect("symbol collection should succeed");
+
+        let result = crate::resolver::AliasResolver::new(&program, &symbols).resolve_all();
+
+        assert!(
+            matches!(result, Err(crate::resolver::ResolveError::UnknownType { .. })),
+            "expected Helper to be unresolvable from outside priv.basm, got {result:?}",
+        );
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn named_import_of_private_declaration_is_rejected() {
+        let dir = scratch_dir("private_named_import");
+
+        fs::write(
+            dir.join("priv.basm"),
+            "struct Helper { x: int }\n\npub struct Public { y: Helper }\n",
+        )
+        .unwrap();
+
+        fs::write(dir.join("a.basm"), "from .priv import Helper\n").unwrap();
+
+        let result = load_program(&dir.join("a.basm"));
+
+        assert!(
+            matches!(result, Err(LoadError::UnknownImportedName { .. })),
+            "expected importing a private name by name to fail, got {result:?}",
+        );
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn private_declarations_with_the_same_name_do_not_collide_across_modules() {
+        let dir = scratch_dir("private_no_collision");
+
+        fs::write(
+            dir.join("a.basm"),
+            "struct Helper { x: int }\n\npub struct A { h: Helper }\n",
+        )
+        .unwrap();
+
+        fs::write(
+            dir.join("b.basm"),
+            "struct Helper { y: int }\n\npub struct B { h: Helper }\n",
+        )
+        .unwrap();
+
+        fs::write(
+            dir.join("importer.basm"),
+            "from .a import *\nfrom .b import *\n\ntype UsesA = A\ntype UsesB = B\n",
+        )
+        .unwrap();
+
+        let program = load_program(&dir.join("importer.basm"))
+            .expect("importer.basm should load");
+
+        // Without per-module mangling both files' `Helper` would land in the
+        // same flat symbol table under the same name and collide here.
+        let symbols = crate::resolver::collect_symbols(&program)
+            .expect("both private Helpers should coexist without a duplicate-symbol error");
+
+        let mut alias_resolver = crate::resolver::AliasResolver::new(&program, &symbols);
+
+        alias_resolver
+            .resolve_all()
+            .expect("UsesA and UsesB should each resolve through their own module's Helper");
+
+        // Each struct's `h: Helper` field should resolve against its own
+        // module's (distinctly mangled) Helper, not the other module's.
+        alias_resolver
+            .resolve_all_structs()
+            .expect("A.h and B.h should each resolve to their own module's Helper field");
 
         fs::remove_dir_all(&dir).ok();
     }

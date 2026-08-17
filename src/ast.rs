@@ -164,6 +164,7 @@ pub struct MetaStatement {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstDeclaration {
     pub name: String,
+    pub is_pub: bool,
     /// Optional explicit annotation
     pub ty: Option<TypeExpr>,
     pub value: Expr,
@@ -173,6 +174,7 @@ pub struct ConstDeclaration {
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructDeclaration {
     pub name: String,
+    pub is_pub: bool,
     pub generic_params: Vec<GenericParameter>,
     pub fields: Vec<StructField>,
     pub span: Span,
@@ -181,6 +183,7 @@ pub struct StructDeclaration {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeAliasDeclaration {
     pub name: String,
+    pub is_pub: bool,
     pub generic_params: Vec<GenericParameter>,
     pub ty: TypeExpr,
     pub span: Span,

@@ -17,20 +17,43 @@ impl Parser {
 
             TokenKind::Struct => {
                 Ok(Statement::Struct(
-                    self.parse_struct_declaration()?
+                    self.parse_struct_declaration(false)?
                 ))
             }
 
             TokenKind::Type => {
                 Ok(Statement::TypeAlias(
-                    self.parse_type_alias()?
+                    self.parse_type_alias(false)?
                 ))
             }
 
             TokenKind::Const => {
                 Ok(Statement::Const(
-                    self.parse_const_declaration()?
+                    self.parse_const_declaration(false)?
                 ))
+            }
+
+            TokenKind::Pub => {
+                self.advance();
+
+                match &self.current().kind {
+                    TokenKind::Struct => Ok(Statement::Struct(
+                        self.parse_struct_declaration(true)?
+                    )),
+
+                    TokenKind::Type => Ok(Statement::TypeAlias(
+                        self.parse_type_alias(true)?
+                    )),
+
+                    TokenKind::Const => Ok(Statement::Const(
+                        self.parse_const_declaration(true)?
+                    )),
+
+                    other => Err(ParseError::new(
+                        format!("expected declaration after `pub`, found {other:?}"),
+                        self.current().span,
+                    )),
+                }
             }
 
             TokenKind::Identifier(_) => {
@@ -198,6 +221,7 @@ impl Parser {
 
     fn parse_const_declaration(
         &mut self,
+        is_pub: bool,
     ) -> Result<ConstDeclaration, ParseError> {
         let start = self.current().span.start;
 
@@ -230,6 +254,7 @@ impl Parser {
 
         Ok(ConstDeclaration {
             name,
+            is_pub,
             ty,
             value,
             span: Span::new(start, end),
@@ -430,6 +455,7 @@ impl Parser {
     
     fn parse_struct_declaration(
         &mut self,
+        is_pub: bool,
     ) -> Result<StructDeclaration, ParseError> {
         let start = self.current().span.start;
 
@@ -480,6 +506,7 @@ impl Parser {
 
         Ok(StructDeclaration {
             name,
+            is_pub,
             generic_params,
             fields,
             span: Span::new(start, closing.span.end),
@@ -512,6 +539,7 @@ impl Parser {
 
     fn parse_type_alias(
         &mut self,
+        is_pub: bool,
     ) -> Result<TypeAliasDeclaration, ParseError> {
         let start = self.current().span.start;
 
@@ -542,6 +570,7 @@ impl Parser {
 
         Ok(TypeAliasDeclaration {
             name,
+            is_pub,
             generic_params: generic_params,
             ty: target,
             span: Span::new(start, end),

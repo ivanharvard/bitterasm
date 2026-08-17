@@ -9,7 +9,7 @@ pub enum TokenKind {
     From,
     Import,
     As,
-    Export,
+    Pub,
 
     Macro,
     Type,
