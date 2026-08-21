@@ -1,3 +1,10 @@
+//! Turns `.basm` source text into a flat [`Token`] stream. Newlines are
+//! preserved as their own tokens (statements are newline-terminated, not
+//! semicolon-terminated), and `>>` always lexes as one [`TokenKind::ShiftRight`]
+//! token even where it closes two nested generic lists — the parser splits
+//! it back into two `>` tokens where that's what the grammar needs; see
+//! [`crate::parser`].
+
 use std::fmt;
 use crate::token::{Token, TokenKind, Span};
 
@@ -27,6 +34,29 @@ impl std::error::Error for LexError {}
 
 // Public API
 
+/// Lexes an entire source string, returning every token including a
+/// trailing `Eof`. Fails on the first invalid character or malformed
+/// literal — there is no error-recovery pass.
+///
+/// ```
+/// use bitterasm::lexer::lex;
+/// use bitterasm::token::TokenKind;
+///
+/// let tokens = lex("const x = 1\n").unwrap();
+/// let kinds: Vec<&TokenKind> = tokens.iter().map(|t| &t.kind).collect();
+///
+/// assert_eq!(
+///     kinds,
+///     vec![
+///         &TokenKind::Const,
+///         &TokenKind::Identifier("x".to_string()),
+///         &TokenKind::Equal,
+///         &TokenKind::Integer("1".to_string()),
+///         &TokenKind::Newline,
+///         &TokenKind::Eof,
+///     ],
+/// );
+/// ```
 pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
     Lexer::new(source).lex_all()
 }

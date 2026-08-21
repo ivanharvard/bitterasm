@@ -1,3 +1,10 @@
+//! Resolves [`crate::types::TypeExpr`] trees — struct field types, type
+//! alias targets, and generic arguments — against a [`SymbolTable`], via
+//! [`AliasResolver`]. Type aliases are resolved lazily and memoized per
+//! symbol (see [`AliasState`]), with [`AliasState::Visiting`] used to
+//! detect and reject reference cycles (`type A = B; type B = A`) instead of
+//! recursing forever.
+
 use std::collections::HashMap;
 
 use crate::ast::{Expr, Program, Statement};

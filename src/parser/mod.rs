@@ -1,3 +1,15 @@
+//! A hand-written recursive-descent parser (Pratt parsing for expressions,
+//! in [`expressions`]) over a single file's [`Token`] stream.
+//!
+//! Generic argument lists are the awkward part: `Reg<64>` and `Reg<T>` are
+//! only distinguishable by knowing whether `Reg`'s declaration takes a
+//! const or a type parameter, and that declaration may live later in this
+//! file or in another file entirely. [`Parser`] handles the first case with
+//! a throwaway prepass (see [`parse_seeded`]) that walks the file purely to
+//! collect every declaration's generic signature before parsing it for
+//! real; [`crate::loader`] handles the second by threading signatures
+//! collected from one file's [`parse_seeded`] call into the next as a seed.
+
 use std::collections::HashMap;
 use std::fmt;
 
@@ -7,7 +19,6 @@ use crate::ast::{
 };
 use crate::token::{Span, Token, TokenKind};
 use crate::types::{GenericParameter, StructField, TypeExpr, TypeArgument};
-
 
 mod expressions;
 mod statements;
@@ -19,16 +30,28 @@ mod tests;
 // public entry point
 // ================
 
+/// Parses a single, self-contained token stream with no externally-known
+/// generic signatures. Most callers should go through [`crate::loader`]
+/// instead, which seeds signatures pulled in from imports.
+///
+/// ```
+/// use bitterasm::lexer::lex;
+/// use bitterasm::parser::parse;
+///
+/// let tokens = lex("const x = 1\n").unwrap();
+/// let program = parse(tokens).unwrap();
+/// assert_eq!(program.statements.len(), 1);
+/// ```
 pub fn parse(tokens: Vec<Token>) -> Result<Program, ParseError> {
     parse_seeded(tokens, &HashMap::new()).map(|(program, _)| program)
 }
 
-// Parses `tokens`, treating `seed` as generic signatures known in advance
-// (e.g. struct/type-alias signatures pulled in from imported modules, whose
-// declarations aren't textually present in this token stream). Returns the
-// full set of signatures visible by the end of the file (seed plus whatever
-// this file declared itself), so callers can pass it on to files that import
-// *this* one in turn.
+/// Parses `tokens`, treating `seed` as generic signatures known in advance
+/// (e.g. struct/type-alias signatures pulled in from imported modules, whose
+/// declarations aren't textually present in this token stream). Returns the
+/// full set of signatures visible by the end of the file (seed plus whatever
+/// this file declared itself), so callers can pass it on to files that import
+/// *this* one in turn.
 pub(crate) fn parse_seeded(
     tokens: Vec<Token>,
     seed: &HashMap<String, Vec<GenericParamKind>>,

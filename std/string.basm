@@ -1,4 +1,0 @@
-from std.array import Array
-
-pub type char = int
-pub type string = Array<char>

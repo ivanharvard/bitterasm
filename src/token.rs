@@ -1,3 +1,5 @@
+//! Token and source-span types shared by the lexer, parser, and diagnostics.
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     // Values
@@ -70,6 +72,17 @@ pub enum TokenKind {
     Eof,
 }
 
+/// A half-open `[start, end)` byte range into the original source text,
+/// attached to every token and AST node for diagnostics.
+///
+/// ```
+/// use bitterasm::token::Span;
+///
+/// let span = Span::new(3, 7);
+/// assert_eq!(span.len(), 4);
+/// assert!(!span.is_empty());
+/// assert!(Span::new(5, 5).is_empty());
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
     pub start: usize,

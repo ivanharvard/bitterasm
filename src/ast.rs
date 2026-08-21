@@ -1,3 +1,14 @@
+//! The syntax tree produced by [`crate::parser`], before import resolution
+//! ([`crate::loader`]) or symbol resolution ([`crate::resolver`]). A
+//! [`Program`] is one file's worth of statements; multiple files are
+//! flattened into one by the loader before anything downstream sees them.
+//!
+//! `mov r1, 7`-shaped lines parse as [`Statement::Invocation`] — BitterASM
+//! has no built-in instruction syntax, so every mnemonic is just an
+//! identifier followed by operand expressions, resolved to a macro
+//! definition later. [`Statement::Meta`] is reserved for the `@`-prefixed
+//! directives (e.g. a macro body's `@return`) that make up macro bodies.
+
 use crate::token::Span;
 use crate::types::{
     GenericParameter,

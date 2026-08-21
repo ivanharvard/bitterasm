@@ -1,13 +1,7 @@
-mod ast;
-mod lexer;
-mod token;
-mod parser;
-mod types;
-mod resolver;
-mod loader;
-
 use std::env;
 use std::path::Path;
+
+use bitterasm::{loader, resolver};
 
 fn main() {
     let path = env::args()

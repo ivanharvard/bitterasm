@@ -1,3 +1,10 @@
+//! Resolves the flattened [`Program`] produced by [`crate::loader`] against
+//! itself: [`collect_symbols`] builds a whole-program [`SymbolTable`] of
+//! top-level declarations, and [`AliasResolver`] resolves [`crate::types::TypeExpr`]
+//! trees against that table into [`ResolvedType`]s, instantiating generic
+//! struct fields along the way. Import resolution has already happened by
+//! this point, so nothing here needs to know about modules or files.
+
 mod aliases;
 mod symbols;
 mod types;

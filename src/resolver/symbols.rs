@@ -1,3 +1,9 @@
+//! A flat, whole-program table of top-level declarations (structs, type
+//! aliases, consts), keyed by name. By the time [`SymbolTable`] is built
+//! the [`crate::loader`] has already flattened every imported module into
+//! one [`crate::ast::Program`], so a single flat table — rather than one
+//! scoped per module — is enough.
+
 use std::collections::HashMap;
 
 use crate::token::Span;
@@ -20,6 +26,19 @@ pub struct Symbol {
     pub span: Span,
 }
 
+/// ```
+/// use bitterasm::resolver::{SymbolKind, SymbolTable};
+/// use bitterasm::token::Span;
+///
+/// let mut table = SymbolTable::new();
+/// let span = Span::new(0, 0);
+///
+/// let id = table.insert("Reg".to_string(), SymbolKind::Struct, span).unwrap();
+/// assert_eq!(table.lookup("Reg"), Some(id));
+///
+/// // Re-inserting the same name fails rather than shadowing it.
+/// assert!(table.insert("Reg".to_string(), SymbolKind::Struct, span).is_err());
+/// ```
 #[derive(Debug, Default)]
 pub struct SymbolTable {
     symbols: Vec<Symbol>,
