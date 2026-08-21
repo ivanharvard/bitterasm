@@ -69,9 +69,19 @@ fn main() {
         }
     }
 
+    let consts = match resolver::ConstEvaluator::new(&program, &symbols).evaluate_all() {
+        Ok(consts) => consts,
+
+        Err(error) => {
+            eprintln!("resolver error: {error:?}");
+            std::process::exit(1);
+        }
+    };
+
     println!("{program:#?}");
     println!("resolved structs: {structs:#?}");
     println!("resolved aliases: {aliases:#?}");
     println!("instantiated fields: {instantiations:#?}");
+    println!("evaluated consts: {consts:#?}");
 
 }

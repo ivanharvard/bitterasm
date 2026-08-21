@@ -6,12 +6,14 @@
 //! this point, so nothing here needs to know about modules or files.
 
 mod aliases;
+mod consts;
 mod facets;
 mod structs;
 mod symbols;
 mod types;
 
 pub use aliases::AliasResolver;
+pub use consts::ConstEvaluator;
 pub use facets::validate as validate_facets;
 pub use symbols::*;
 pub use types::*;
@@ -84,6 +86,15 @@ pub enum ResolveError {
 
     CyclicTypeAlias {
         cycle: Vec<String>,
+        span: Span,
+    },
+
+    CyclicConstant {
+        cycle: Vec<String>,
+        span: Span,
+    },
+
+    DivisionByZero {
         span: Span,
     },
 

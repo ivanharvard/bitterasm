@@ -32,3 +32,4 @@ pub mod types;
 pub mod resolver;
 pub mod loader;
 pub mod facets;
+pub mod eval;
