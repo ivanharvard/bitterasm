@@ -14,7 +14,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::ast::{Expr, ImportItems, ImportStatement, ModulePath, Program, Statement};
+use crate::ast::{Expr, Facet, FacetPayload, ImportItems, ImportStatement, ModulePath, Program, Statement};
 use crate::lexer;
 use crate::parser::{self, GenericParamKind};
 use crate::token::Span;
@@ -351,6 +351,10 @@ fn rename_statement(statement: &mut Statement, renames: &HashMap<String, String>
             for field in &mut decl.fields {
                 rename_type_expr(&mut field.ty, renames);
             }
+
+            for facet in &mut decl.facets {
+                rename_facet(facet, renames);
+            }
         }
 
         Statement::TypeAlias(decl) => {
@@ -390,12 +394,32 @@ fn rename_statement(statement: &mut Statement, renames: &HashMap<String, String>
                 rename_type_expr(ty, renames);
             }
 
+            for facet in &mut decl.facets {
+                rename_facet(facet, renames);
+            }
+
             for statement in &mut decl.body {
                 rename_statement(statement, renames);
             }
         }
 
         Statement::Import(_) | Statement::Label(_) | Statement::Invocation(_) | Statement::Meta(_) => {}
+    }
+}
+
+fn rename_facet(facet: &mut Facet, renames: &HashMap<String, String>) {
+    match &mut facet.payload {
+        FacetPayload::Bare => {}
+
+        FacetPayload::Expr(expr) => rename_expr(expr, renames),
+
+        FacetPayload::Block(statements) => {
+            for statement in statements {
+                rename_statement(statement, renames);
+            }
+        }
+
+        FacetPayload::Type(ty) => rename_type_expr(ty, renames),
     }
 }
 

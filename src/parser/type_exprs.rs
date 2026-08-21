@@ -1,0 +1,192 @@
+//! Grammar for type expressions (`Reg`, `foo.Reg`, `bits<8>`, `Reg<T>`) and
+//! generic parameter lists, shared by struct/alias declarations
+//! ([`super::declarations`]), macro parameters ([`super::macros`]), and
+//! const type annotations ([`super::statements`]).
+
+use super::*;
+
+impl Parser {
+    pub(super) fn parse_type_expr(&mut self) -> Result<TypeExpr, ParseError> {
+        let start = self.current().span.start;
+
+        let mut path = Vec::new();
+
+        path.push(self.expect_identifier()?);
+
+        while self.check(&TokenKind::Dot) {
+            self.advance();
+            path.push(self.expect_identifier()?);
+        }
+
+        let named_end = self.previous().span.end;
+
+        let mut ty = TypeExpr::Named {
+            path,
+            span: Span::new(start, named_end),
+        };
+
+        if self.check(&TokenKind::Less) {
+            self.advance();
+
+            let mut args = Vec::new();
+
+            if self.check(&TokenKind::Greater) {
+                return Err(ParseError::new(
+                    "generic argument list cannot be empty",
+                    self.current().span,
+                ));
+            }
+
+            let signature = ty.name().and_then(|name| {
+                self.generic_signatures.get(name)
+            }).cloned();
+
+            let mut index = 0;
+
+            loop {
+                let expected_kind = signature
+                    .as_ref()
+                    .and_then(|kinds| kinds.get(index))
+                    .copied();
+
+                args.push(self.parse_type_argument(expected_kind)?);
+                index += 1;
+
+                if self.check(&TokenKind::Comma) {
+                    self.advance();
+                    continue;
+                }
+
+                break;
+            }
+
+            let closing = self.expect_generic_close()?;
+
+            ty = TypeExpr::Apply {
+                base: Box::new(ty),
+                args,
+                span: Span::new(start, closing.span.end),
+            };
+        }
+
+        Ok(ty)
+    }
+
+    fn parse_type_argument(
+        &mut self,
+        expected_kind: Option<GenericParamKind>,
+    ) -> Result<TypeArgument, ParseError> {
+        // min_bp above ShiftRight's binding power so a closing '>' (or a
+        // split-off '>>' closing two nested lists at once) isn't consumed
+        // as a comparison or shift operator
+        match expected_kind {
+            Some(GenericParamKind::Const) => {
+                let expr = self.parse_expr_bp(62)?;
+                Ok(TypeArgument::Const(expr))
+            }
+
+            Some(GenericParamKind::Type) => {
+                let ty = self.parse_type_expr()?;
+                Ok(TypeArgument::Type(ty))
+            }
+
+            // The callee's signature isn't known (builtin type, or a
+            // forward reference to a declaration later in the source), so
+            // try guessing from the leading token.
+            None => match &self.current().kind {
+                TokenKind::Integer(_)
+                | TokenKind::Minus
+                | TokenKind::LParen
+                | TokenKind::Bang
+                | TokenKind::Tilde => {
+                    let expr = self.parse_expr_bp(62)?;
+                    Ok(TypeArgument::Const(expr))
+                }
+
+                TokenKind::Identifier(_) => {
+                    let ty = self.parse_type_expr()?;
+                    Ok(TypeArgument::Type(ty))
+                }
+
+                other => Err(ParseError::new(
+                    format!("expected type argument, found {other:?}"),
+                    self.current().span,
+                )),
+            },
+        }
+    }
+
+    pub(super) fn parse_generic_params(
+        &mut self,
+    ) -> Result<Vec<GenericParameter>, ParseError> {
+        let mut parameters = Vec::new();
+
+        if !self.check(&TokenKind::Less) {
+            return Ok(parameters);
+        }
+
+        self.advance();
+
+        if self.check(&TokenKind::Greater) {
+            return Err(ParseError::new(
+                "generic parameter list cannot be empty",
+                self.current().span,
+            ));
+        }
+
+        loop {
+            let start = self.current().span.start;
+
+            match &self.current().kind {
+                TokenKind::Const => {
+                    self.advance();
+
+                    let name = self.expect_identifier()?;
+
+                    self.expect_simple(TokenKind::Colon)?;
+
+                    let ty = self.parse_type_expr()?;
+
+                    let end = ty.span().end;
+
+                    parameters.push(GenericParameter::Const {
+                        name,
+                        ty,
+                        span: Span::new(start, end),
+                    });
+                }
+
+                TokenKind::Identifier(_) => {
+                    let name = self.expect_identifier()?;
+
+                    let end = self.previous().span.end;
+
+                    parameters.push(GenericParameter::Type {
+                        name,
+                        span: Span::new(start, end),
+                    });
+                }
+
+                other => {
+                    return Err(ParseError::new(
+                        format!(
+                            "expected generic parameter, found {other:?}"
+                        ),
+                        self.current().span,
+                    ));
+                }
+            }
+
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+                continue;
+            }
+
+            break;
+        }
+
+        self.expect_generic_close()?;
+
+        Ok(parameters)
+    }
+}

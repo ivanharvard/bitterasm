@@ -24,6 +24,10 @@ use crate::types::{GenericParameter, StructField, TypeExpr, TypeArgument};
 
 mod expressions;
 mod statements;
+mod type_exprs;
+mod declarations;
+mod macros;
+mod facets;
 
 #[cfg(test)]
 mod tests;

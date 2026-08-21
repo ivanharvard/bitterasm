@@ -192,6 +192,7 @@ pub struct StructDeclaration {
     pub name: String,
     pub is_pub: bool,
     pub generic_params: Vec<GenericParameter>,
+    pub facets: Vec<Facet>,
     pub fields: Vec<StructField>,
     pub span: Span,
 }
@@ -211,6 +212,7 @@ pub struct MacroDeclaration {
     pub is_pub: bool,
     pub params: Vec<MacroParameter>,
     pub return_ty: Option<TypeExpr>,
+    pub facets: Vec<Facet>,
     pub body: Vec<Statement>,
     pub span: Span,
 }
@@ -220,4 +222,31 @@ pub struct MacroParameter {
     pub name: String,
     pub ty: TypeExpr,
     pub span: Span,
+}
+
+// ===============
+// facets
+// ===============
+//
+// `| name ...` modifiers on struct/macro declarations. `pub` and `-> Type`
+// are spelled with dedicated tokens rather than a plain identifier, but
+// they still parse into ordinary `Facet` entries here, same as any other
+// facet — see `crate::facets` for what each name means and how its actual
+// effect (e.g. `pub`'s on `is_pub`) gets applied. What names are valid,
+// what they attach to, and how many times they may appear is metadata
+// owned by `crate::facets`, not this type; this is just the parsed shape.
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Facet {
+    pub name: String,
+    pub payload: FacetPayload,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FacetPayload {
+    Bare,
+    Expr(Expr),
+    Block(Vec<Statement>),
+    Type(TypeExpr),
 }

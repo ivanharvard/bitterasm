@@ -17,6 +17,11 @@ fn main() {
         }
     };
 
+    if let Err(error) = resolver::validate_facets(&program) {
+        eprintln!("resolver error: {error:?}");
+        std::process::exit(1);
+    }
+
     let symbols = match resolver::collect_symbols(&program) {
         Ok(symbols) => symbols,
 

@@ -6,10 +6,13 @@
 //! this point, so nothing here needs to know about modules or files.
 
 mod aliases;
+mod facets;
+mod structs;
 mod symbols;
 mod types;
 
 pub use aliases::AliasResolver;
+pub use facets::validate as validate_facets;
 pub use symbols::*;
 pub use types::*;
 
@@ -109,6 +112,16 @@ pub enum ResolveError {
     UnknownField {
         type_name: String,
         field: String,
+        span: Span,
+    },
+
+    FacetNotApplicable {
+        facet: String,
+        span: Span,
+    },
+
+    DuplicateFacet {
+        facet: String,
         span: Span,
     },
 
