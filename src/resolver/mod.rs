@@ -115,6 +115,13 @@ pub enum ResolveError {
         span: Span,
     },
 
+    // Like `ExpectedConstant`, but for an expression (`bits<foo()>`,
+    // `bits<foo.bar>`) rather than a single identifier that names the
+    // wrong kind of thing — there's no single `name` to report.
+    ExpectedConstantExpression {
+        span: Span,
+    },
+
     UnknownConstant {
         name: String,
         span: Span,

@@ -15,6 +15,7 @@
 use std::collections::HashMap;
 
 use crate::ast::{Expr, Program, Statement};
+use crate::eval::{self, EvalError, Int};
 use crate::token::Span;
 use crate::types::{TypeArgument, TypeExpr};
 
@@ -36,12 +37,13 @@ enum AliasState {
 #[derive(Debug, Clone, PartialEq)]
 pub(super) enum GenericBinding {
     Type(ResolvedType),
-    Const(Option<Expr>),
+    Const(Option<Int>),
 }
 
 pub struct AliasResolver<'a> {
     pub(super) program: &'a Program,
     pub(super) symbols: &'a SymbolTable,
+    consts: &'a HashMap<String, Int>,
 
     states: HashMap<SymbolId, AliasState>,
     stack: Vec<SymbolId>,
@@ -50,9 +52,14 @@ pub struct AliasResolver<'a> {
 }
 
 impl<'a> AliasResolver<'a> {
+    /// `consts` is every top-level const already evaluated to an `Int`
+    /// (see [`super::ConstEvaluator`]) — needed so a generic const argument
+    /// that references one, e.g. `bits<SOME_WIDTH>`, can fold to a
+    /// concrete value the same way a literal or arithmetic expression does.
     pub fn new(
         program: &'a Program,
         symbols: &'a SymbolTable,
+        consts: &'a HashMap<String, Int>,
     ) -> Self {
         let mut states = HashMap::new();
 
@@ -65,6 +72,7 @@ impl<'a> AliasResolver<'a> {
         Self {
             program,
             symbols,
+            consts,
             states,
             stack: Vec::new(),
             generic_scope: HashMap::new(),
@@ -291,57 +299,56 @@ impl<'a> AliasResolver<'a> {
             }
 
             TypeArgument::Const(expr) => {
-                self.check_const_expr(expr)?;
-                Ok(ResolvedGenericArg::Const(expr.clone()))
+                // A bare reference to a const generic param that isn't
+                // bound to a concrete value yet (e.g. resolving a struct's
+                // own field types in the abstract, before any particular
+                // instantiation) stays symbolic rather than being folded —
+                // there's nothing to fold it *to*.
+                if let Expr::Identifier { name, .. } = expr {
+                    if let Some(GenericBinding::Const(None)) = self.generic_scope.get(name) {
+                        return Ok(ResolvedGenericArg::ConstParam(name.clone()));
+                    }
+                }
+
+                Ok(ResolvedGenericArg::Const(self.eval_const_expr(expr)?))
             }
         }
     }
 
-    fn check_const_expr(
-        &self,
-        expr: &Expr,
-    ) -> Result<(), ResolveError> {
-        let Expr::Identifier { name, span } = expr else {
-            return Ok(());
-        };
+    fn eval_const_expr(&self, expr: &Expr) -> Result<Int, ResolveError> {
+        let mut scope = self.consts.clone();
 
-        // generic parameters in scope shadow builtins and declared symbols
-        match self.generic_scope.get(name) {
-            Some(GenericBinding::Const(_)) => return Ok(()),
+        for (name, binding) in &self.generic_scope {
+            if let GenericBinding::Const(Some(value)) = binding {
+                scope.insert(name.clone(), value.clone());
+            }
+        }
 
-            Some(GenericBinding::Type(_)) => {
-                return Err(ResolveError::ExpectedConstant {
-                    name: name.clone(),
-                    span: *span,
-                });
+        eval::eval(expr, &scope).map_err(|error| self.into_resolve_error(error))
+    }
+
+    fn into_resolve_error(&self, error: EvalError) -> ResolveError {
+        match error {
+            EvalError::UnknownConstant { name, span } => {
+                // `name` names *something* (a struct, a type alias, a
+                // macro, a type-generic param, or a const that isn't
+                // int-valued) rather than nothing at all — a clearer
+                // diagnostic than a bare "unknown" either way.
+                let known = self.symbols.lookup(&name).is_some()
+                    || self.generic_scope.contains_key(&name);
+
+                if known {
+                    ResolveError::ExpectedConstant { name, span }
+                } else {
+                    ResolveError::UnknownConstant { name, span }
+                }
             }
 
-            None => {}
-        }
+            EvalError::NotConstant { span } => {
+                ResolveError::ExpectedConstantExpression { span }
+            }
 
-        if name == "int" {
-            return Err(ResolveError::ExpectedConstant {
-                name: name.clone(),
-                span: *span,
-            });
-        }
-
-        match self.symbols.lookup(name) {
-            Some(id) => match self.symbols.get(id).kind {
-                SymbolKind::Const => Ok(()),
-
-                SymbolKind::Struct | SymbolKind::TypeAlias | SymbolKind::Macro => {
-                    Err(ResolveError::ExpectedConstant {
-                        name: name.clone(),
-                        span: *span,
-                    })
-                }
-            },
-
-            None => Err(ResolveError::UnknownConstant {
-                name: name.clone(),
-                span: *span,
-            }),
+            EvalError::DivisionByZero { span } => ResolveError::DivisionByZero { span },
         }
     }
 

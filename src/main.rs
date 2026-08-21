@@ -1,7 +1,7 @@
 use std::env;
 use std::path::Path;
 
-use bitterasm::{loader, resolver};
+use bitterasm::{eval, loader, resolver};
 
 fn main() {
     let path = env::args()
@@ -31,8 +31,22 @@ fn main() {
         }
     };
 
+    let consts = match resolver::ConstEvaluator::new(&program, &symbols).evaluate_all() {
+        Ok(consts) => consts,
+
+        Err(error) => {
+            eprintln!("resolver error: {error:?}");
+            std::process::exit(1);
+        }
+    };
+
+    let consts_by_name: std::collections::HashMap<String, eval::Int> = consts
+        .iter()
+        .map(|(id, value)| (symbols.get(*id).name.clone(), value.clone()))
+        .collect();
+
     let mut alias_resolver =
-        resolver::AliasResolver::new(&program, &symbols);
+        resolver::AliasResolver::new(&program, &symbols, &consts_by_name);
 
     let structs = match alias_resolver.resolve_all_structs() {
         Ok(structs) => structs,
@@ -68,15 +82,6 @@ fn main() {
             instantiations.insert(*id, fields);
         }
     }
-
-    let consts = match resolver::ConstEvaluator::new(&program, &symbols).evaluate_all() {
-        Ok(consts) => consts,
-
-        Err(error) => {
-            eprintln!("resolver error: {error:?}");
-            std::process::exit(1);
-        }
-    };
 
     println!("{program:#?}");
     println!("resolved structs: {structs:#?}");

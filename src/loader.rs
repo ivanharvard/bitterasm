@@ -559,11 +559,71 @@ mod tests {
         let symbols = crate::resolver::collect_symbols(&program)
             .expect("symbol collection should succeed");
 
-        let mut alias_resolver = crate::resolver::AliasResolver::new(&program, &symbols);
+        let no_consts = HashMap::new();
+        let mut alias_resolver =
+            crate::resolver::AliasResolver::new(&program, &symbols, &no_consts);
 
         alias_resolver
             .resolve_all_structs()
             .expect("struct fields should resolve, including bits<width>");
+    }
+
+    // `bits<8>`, `bits<4 + 4>`, and `bits<2 * 4>` all denote the same type —
+    // this only holds once generic const arguments are actually evaluated
+    // rather than compared as unevaluated expression trees, which is what
+    // this test locks in.
+    #[test]
+    fn equivalent_const_generic_arguments_resolve_to_the_same_type() {
+        let dir = scratch_dir("const_generic_type_identity");
+
+        fs::write(
+            dir.join("a.basm"),
+            concat!(
+                "from std.binary import *\n\n",
+                "type A = bits<8>\n",
+                "type B = bits<4 + 4>\n",
+                "type C = bits<2 * 4>\n",
+                "type D = bits<9>\n",
+            ),
+        )
+        .unwrap();
+
+        let program = load_program(&dir.join("a.basm")).expect("a.basm should load");
+
+        let symbols = crate::resolver::collect_symbols(&program)
+            .expect("symbol collection should succeed");
+
+        let consts = crate::resolver::ConstEvaluator::new(&program, &symbols)
+            .evaluate_all()
+            .expect("const evaluation should succeed");
+
+        let consts_by_name: HashMap<String, crate::eval::Int> = consts
+            .iter()
+            .map(|(id, value)| (symbols.get(*id).name.clone(), value.clone()))
+            .collect();
+
+        let mut alias_resolver =
+            crate::resolver::AliasResolver::new(&program, &symbols, &consts_by_name);
+
+        let aliases = alias_resolver
+            .resolve_all()
+            .expect("aliases should resolve");
+
+        let resolved = |name: &str| {
+            let id = symbols.lookup(name).expect("symbol should exist");
+            aliases.get(&id).expect("alias should resolve").clone()
+        };
+
+        let a = resolved("A");
+        let b = resolved("B");
+        let c = resolved("C");
+        let d = resolved("D");
+
+        assert_eq!(a, b, "bits<8> and bits<4 + 4> should be the same type");
+        assert_eq!(a, c, "bits<8> and bits<2 * 4> should be the same type");
+        assert_ne!(a, d, "bits<8> and bits<9> should be different types");
+
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -638,7 +698,7 @@ mod tests {
         let symbols = crate::resolver::collect_symbols(&program)
             .expect("symbol collection should succeed");
 
-        crate::resolver::AliasResolver::new(&program, &symbols)
+        crate::resolver::AliasResolver::new(&program, &symbols, &HashMap::new())
             .resolve_all()
             .expect("Alias should resolve through Public down to the private Helper field");
 
@@ -656,7 +716,8 @@ mod tests {
         let symbols = crate::resolver::collect_symbols(&program)
             .expect("symbol collection should succeed");
 
-        let result = crate::resolver::AliasResolver::new(&program, &symbols).resolve_all();
+        let result =
+            crate::resolver::AliasResolver::new(&program, &symbols, &HashMap::new()).resolve_all();
 
         assert!(
             matches!(result, Err(crate::resolver::ResolveError::UnknownType { .. })),
@@ -718,7 +779,9 @@ mod tests {
         let symbols = crate::resolver::collect_symbols(&program)
             .expect("both private Helpers should coexist without a duplicate-symbol error");
 
-        let mut alias_resolver = crate::resolver::AliasResolver::new(&program, &symbols);
+        let no_consts = HashMap::new();
+        let mut alias_resolver =
+            crate::resolver::AliasResolver::new(&program, &symbols, &no_consts);
 
         alias_resolver
             .resolve_all()

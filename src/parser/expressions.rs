@@ -137,7 +137,18 @@ impl Parser {
 
                 self.advance();
 
-                let mut expr = self.parse_expr()?;
+                // Parens have their own explicit close, so `>`-shaped
+                // tokens inside them are never ambiguous with closing a
+                // generic argument list — same as C++ allowing `(a > b)`
+                // there but not a bare `a > b`.
+                let outer_restriction = self.restrict_closing_ops;
+                self.restrict_closing_ops = false;
+
+                let result = self.parse_expr();
+
+                self.restrict_closing_ops = outer_restriction;
+
+                let mut expr = result?;
 
                 let closing = self.current().clone();
 
@@ -227,6 +238,18 @@ impl Parser {
     // binary ops
     // =============
     fn current_binary_operator(&self) -> Option<(u8, u8, BinaryOp)> {
+        // Only `>`-shaped tokens can be mistaken for closing a generic
+        // argument list; nothing else is ambiguous there, regardless of
+        // precedence — see `Parser::restrict_closing_ops`.
+        if self.restrict_closing_ops
+            && matches!(
+                self.current().kind,
+                TokenKind::Greater | TokenKind::GreaterEqual | TokenKind::ShiftRight
+            )
+        {
+            return None;
+        }
+
         let result = match self.current().kind {
             // Highest binary precedence
             TokenKind::Star => (80, 81, BinaryOp::Multiply),

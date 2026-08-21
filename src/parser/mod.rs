@@ -141,6 +141,16 @@ struct Parser {
 
     generic_signatures: HashMap<String, Vec<GenericParamKind>>,
     imports: Vec<ImportStatement>,
+
+    // While parsing a generic argument expression (e.g. the `width` in
+    // `bits<width>`), `>`-shaped tokens (`Greater`, `GreaterEqual`,
+    // `ShiftRight`) can't be treated as operators — any of them might
+    // instead be closing the argument list. Every other operator, `<<`
+    // included, is unambiguous (only `>` ever closes a list, never `<`),
+    // so this is narrower than refusing every low-precedence operator.
+    // Lifted while parsing inside parens, same as `Foo<(a > b)>` needing
+    // parens in C++ for the same reason.
+    pub(super) restrict_closing_ops: bool,
 }
 
 impl Parser {
@@ -150,6 +160,7 @@ impl Parser {
             pos: 0,
             generic_signatures: HashMap::new(),
             imports: Vec::new(),
+            restrict_closing_ops: false,
         }
     }
 

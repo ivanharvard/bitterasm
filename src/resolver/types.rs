@@ -3,15 +3,18 @@
 //! confirmed to actually refer to a struct, a builtin, or a generic
 //! parameter in scope, rather than just a path of identifiers.
 
-use crate::ast::Expr;
+use crate::eval::Int;
 
 use super::symbols::SymbolId;
 
-/// A type after name resolution. Unlike [`crate::types::TypeExpr::Apply`],
-/// generic const arguments here are still unevaluated [`Expr`] trees rather
-/// than folded values — so, for instance, `bits<4 + 4>` and `bits<8>`
-/// resolve to distinct [`ResolvedType::Struct`] values even though they
-/// denote the same type. Const folding isn't implemented yet.
+/// A type after name resolution. Generic const arguments are folded to a
+/// concrete [`Int`] wherever a concrete value is available, so `bits<4+4>`
+/// and `bits<8>` now resolve to the same [`ResolvedType::Struct`] value —
+/// unlike a const arg that's still an unbound parameter (e.g. resolving
+/// `Reg`'s own field types, where `bits<width>`'s `width` has no concrete
+/// value yet), which stays symbolic via [`ResolvedGenericArg::ConstParam`],
+/// mirroring how [`ResolvedType::TypeParameter`] handles the same problem
+/// for type arguments.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResolvedType {
     Builtin(BuiltinType),
@@ -32,5 +35,6 @@ pub enum BuiltinType {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResolvedGenericArg {
     Type(Box<ResolvedType>),
-    Const(Expr),
+    Const(Int),
+    ConstParam(String),
 }

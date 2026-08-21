@@ -161,7 +161,11 @@ fn generic_arg_scope(
     for (param, arg) in generic_params.iter().zip(args) {
         let binding = match arg {
             ResolvedGenericArg::Type(ty) => GenericBinding::Type((**ty).clone()),
-            ResolvedGenericArg::Const(expr) => GenericBinding::Const(Some(expr.clone())),
+            ResolvedGenericArg::Const(value) => GenericBinding::Const(Some(value.clone())),
+            // Passing an unbound param through as an argument (e.g. one
+            // generic struct instantiating another with its own still-open
+            // param) stays unbound in the new scope too.
+            ResolvedGenericArg::ConstParam(_) => GenericBinding::Const(None),
         };
 
         scope.insert(param_name(param).to_string(), binding);

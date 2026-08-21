@@ -76,13 +76,9 @@ impl Parser {
         &mut self,
         expected_kind: Option<GenericParamKind>,
     ) -> Result<TypeArgument, ParseError> {
-        // min_bp above ShiftRight's binding power so a closing '>' (or a
-        // split-off '>>' closing two nested lists at once) isn't consumed
-        // as a comparison or shift operator
         match expected_kind {
             Some(GenericParamKind::Const) => {
-                let expr = self.parse_expr_bp(62)?;
-                Ok(TypeArgument::Const(expr))
+                Ok(TypeArgument::Const(self.parse_const_arg_expr()?))
             }
 
             Some(GenericParamKind::Type) => {
@@ -99,8 +95,7 @@ impl Parser {
                 | TokenKind::LParen
                 | TokenKind::Bang
                 | TokenKind::Tilde => {
-                    let expr = self.parse_expr_bp(62)?;
-                    Ok(TypeArgument::Const(expr))
+                    Ok(TypeArgument::Const(self.parse_const_arg_expr()?))
                 }
 
                 TokenKind::Identifier(_) => {
@@ -114,6 +109,22 @@ impl Parser {
                 )),
             },
         }
+    }
+
+    // Parses a const generic argument's expression with `>`-shaped tokens
+    // (`Greater`, `GreaterEqual`, `ShiftRight`) suppressed as operators, so
+    // a closing `>` (or a split-off `>>` closing two nested lists at once)
+    // isn't consumed as a comparison or shift instead. See
+    // `Parser::restrict_closing_ops`.
+    fn parse_const_arg_expr(&mut self) -> Result<Expr, ParseError> {
+        let outer_restriction = self.restrict_closing_ops;
+        self.restrict_closing_ops = true;
+
+        let result = self.parse_expr();
+
+        self.restrict_closing_ops = outer_restriction;
+
+        result
     }
 
     pub(super) fn parse_generic_params(
