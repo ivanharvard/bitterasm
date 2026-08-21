@@ -53,7 +53,9 @@ pub enum TokenKind {
     GreaterEqual,
 
     Ampersand,
+    AndAnd,
     Pipe,
+    OrOr,
     Caret,
     Tilde,
 

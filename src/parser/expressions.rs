@@ -253,6 +253,9 @@ impl Parser {
 
             TokenKind::Pipe => (10, 11, BinaryOp::BitOr),
 
+            TokenKind::AndAnd => (6, 7, BinaryOp::And),
+            TokenKind::OrOr => (2, 3, BinaryOp::Or),
+
             _ => return None,
         };
 

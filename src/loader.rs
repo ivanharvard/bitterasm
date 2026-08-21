@@ -285,7 +285,7 @@ fn collect_declarations(
                 collect_declarations(&nested_path, cache, spliced, out)?;
             }
 
-            Statement::Struct(_) | Statement::TypeAlias(_) | Statement::Const(_) => {
+            Statement::Struct(_) | Statement::TypeAlias(_) | Statement::Const(_) | Statement::Macro(_) => {
                 let mut declaration = statement.clone();
                 rename_statement(&mut declaration, &renames);
                 out.push(declaration);
@@ -306,6 +306,7 @@ fn declaration_name(statement: &Statement) -> Option<(&str, bool)> {
         Statement::Struct(decl) => Some((&decl.name, decl.is_pub)),
         Statement::TypeAlias(decl) => Some((&decl.name, decl.is_pub)),
         Statement::Const(decl) => Some((&decl.name, decl.is_pub)),
+        Statement::Macro(decl) => Some((&decl.name, decl.is_pub)),
         _ => None,
     }
 }
@@ -374,6 +375,24 @@ fn rename_statement(statement: &mut Statement, renames: &HashMap<String, String>
             }
 
             rename_expr(&mut decl.value, renames);
+        }
+
+        Statement::Macro(decl) => {
+            if let Some(mangled) = renames.get(&decl.name) {
+                decl.name = mangled.clone();
+            }
+
+            for param in &mut decl.params {
+                rename_type_expr(&mut param.ty, renames);
+            }
+
+            if let Some(ty) = &mut decl.return_ty {
+                rename_type_expr(ty, renames);
+            }
+
+            for statement in &mut decl.body {
+                rename_statement(statement, renames);
+            }
         }
 
         Statement::Import(_) | Statement::Label(_) | Statement::Invocation(_) | Statement::Meta(_) => {}

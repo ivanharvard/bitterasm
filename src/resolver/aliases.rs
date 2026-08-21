@@ -336,6 +336,13 @@ impl<'a> AliasResolver<'a> {
                     span,
                 })
             }
+
+            SymbolKind::Macro => {
+                Err(ResolveError::ExpectedType {
+                    name: name.clone(),
+                    span,
+                })
+            }
         }
     }
 
@@ -445,7 +452,7 @@ impl<'a> AliasResolver<'a> {
             Some(id) => match self.symbols.get(id).kind {
                 SymbolKind::Const => Ok(()),
 
-                SymbolKind::Struct | SymbolKind::TypeAlias => {
+                SymbolKind::Struct | SymbolKind::TypeAlias | SymbolKind::Macro => {
                     Err(ResolveError::ExpectedConstant {
                         name: name.clone(),
                         span: *span,

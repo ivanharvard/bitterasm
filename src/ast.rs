@@ -32,6 +32,8 @@ pub enum Statement {
 
     Label(Label),
     Invocation(Invocation),
+
+    Macro(MacroDeclaration),
     
     Meta(MetaStatement),
 }
@@ -155,6 +157,9 @@ pub enum BinaryOp {
     BitXor,
     BitOr,
 
+    And,
+    Or,
+
     Equal,
     NotEqual,
 
@@ -196,6 +201,23 @@ pub struct TypeAliasDeclaration {
     pub name: String,
     pub is_pub: bool,
     pub generic_params: Vec<GenericParameter>,
+    pub ty: TypeExpr,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MacroDeclaration {
+    pub name: String,
+    pub is_pub: bool,
+    pub params: Vec<MacroParameter>,
+    pub return_ty: Option<TypeExpr>,
+    pub body: Vec<Statement>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MacroParameter {
+    pub name: String,
     pub ty: TypeExpr,
     pub span: Span,
 }

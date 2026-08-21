@@ -16,6 +16,7 @@ pub enum SymbolKind {
     Struct,
     TypeAlias,
     Const,
+    Macro,
 }
 
 #[derive(Debug, Clone)]

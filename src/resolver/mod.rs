@@ -45,6 +45,14 @@ pub fn collect_symbols(program: &Program) -> Result<SymbolTable, ResolveError> {
                 )
             }
 
+            Statement::Macro(decl) => {
+                table.insert(
+                    decl.name.clone(),
+                    SymbolKind::Macro,
+                    decl.span,
+                )
+            }
+
             _ => continue,
         };
 

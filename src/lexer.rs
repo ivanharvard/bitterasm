@@ -213,8 +213,28 @@ impl<'src> Lexer<'src> {
                 }
             }
 
-            '&' => self.single(TokenKind::Ampersand),
-            '|' => self.single(TokenKind::Pipe),
+            '&' => {
+                let start = self.pos;
+                self.advance();
+
+                if self.consume_if('&') {
+                    self.push(TokenKind::AndAnd, start);
+                } else {
+                    self.push(TokenKind::Ampersand, start);
+                }
+            }
+
+            '|' => {
+                let start = self.pos;
+                self.advance();
+
+                if self.consume_if('|') {
+                    self.push(TokenKind::OrOr, start);
+                } else {
+                    self.push(TokenKind::Pipe, start);
+                }
+            }
+
             '^' => self.single(TokenKind::Caret),
             '~' => self.single(TokenKind::Tilde),
 

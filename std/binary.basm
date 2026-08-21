@@ -2,7 +2,7 @@ pub struct bits<const width: int> {
     value: int
 }
 
-pub macro fits_inside_width(const width: int, value: int) -> bool
+pub macro fits_inside_width(width: int, value: int) -> bool
 {
     @return value >= 0 && value < (1 << width)
 }

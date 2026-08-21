@@ -33,6 +33,12 @@ impl Parser {
                 ))
             }
 
+            TokenKind::Macro => {
+                Ok(Statement::Macro(
+                    self.parse_macro_declaration(false)?
+                ))
+            }
+
             TokenKind::Pub => {
                 self.advance();
 
@@ -47,6 +53,10 @@ impl Parser {
 
                     TokenKind::Const => Ok(Statement::Const(
                         self.parse_const_declaration(true)?
+                    )),
+
+                    TokenKind::Macro => Ok(Statement::Macro(
+                        self.parse_macro_declaration(true)?
                     )),
 
                     other => Err(ParseError::new(
@@ -66,6 +76,12 @@ impl Parser {
                         self.parse_invocation()?
                     ))
                 }
+            }
+
+            TokenKind::At => {
+                Ok(Statement::Meta(
+                    self.parse_meta_statement()?
+                ))
             }
 
             other => Err(ParseError::new(
@@ -573,6 +589,134 @@ impl Parser {
             is_pub,
             generic_params: generic_params,
             ty: target,
+            span: Span::new(start, end),
+        })
+    }
+
+    // =============
+    // meta
+    // =============
+    fn parse_meta_statement(
+        &mut self
+    ) -> Result<MetaStatement, ParseError> {
+        let start = self.current().span.start;
+
+        self.expect_simple(TokenKind::At)?;
+
+        let name = self.expect_identifier()?;
+
+        let mut args = Vec::new();
+
+        if !self.at_statement_end() {
+            args.push(self.parse_expr()?);
+
+            while self.check(&TokenKind::Comma) {
+                self.advance();
+                args.push(self.parse_expr()?);
+            }
+        }
+
+        let end = self.statement_end()?;
+
+        Ok(MetaStatement {
+            name,
+            args,
+            body: None,
+            span: Span::new(start, end),
+        })
+    }
+
+    // =============
+    // macros
+    // =============
+
+    fn parse_macro_declaration(
+        &mut self,
+        is_pub: bool,
+    ) -> Result<MacroDeclaration, ParseError> {
+        let start = self.current().span.start;
+
+        self.expect_simple(TokenKind::Macro)?;
+
+        let name = self.expect_identifier()?;
+
+        self.expect_simple(TokenKind::LParen)?;
+
+        let mut params = Vec::new();
+
+        if !self.check(&TokenKind::RParen) {
+            params.push(self.parse_macro_parameter()?);
+
+            while self.check(&TokenKind::Comma) {
+                self.advance();
+                params.push(self.parse_macro_parameter()?);
+            }
+        }
+
+        self.expect_simple(TokenKind::RParen)?;
+
+        let return_ty = if self.check(&TokenKind::Arrow) {
+            self.advance();
+            Some(self.parse_type_expr()?)
+        } else {
+            None
+        };
+
+        self.skip_newlines();
+
+        self.expect_simple(TokenKind::LBrace)?;
+
+        self.skip_newlines();
+
+        let mut body = Vec::new();
+
+        while !self.check(&TokenKind::RBrace) {
+            if self.at_eof() {
+                return Err(ParseError::new(
+                    "unterminated macro body",
+                    self.current().span,
+                ));
+            }
+
+            body.push(self.parse_statement()?);
+
+            self.skip_newlines();
+        }
+
+        let closing = self.current().clone();
+
+        self.expect_simple(TokenKind::RBrace)?;
+
+        if self.check(&TokenKind::Newline) {
+            self.advance();
+        }
+
+        Ok(MacroDeclaration {
+            name,
+            is_pub,
+            params,
+            return_ty,
+            body,
+            span: Span::new(start, closing.span.end),
+        })
+    }
+
+    fn parse_macro_parameter(
+        &mut self,
+    ) -> Result<MacroParameter, ParseError> {
+        let start = self.current().span.start;
+
+        let name = self.expect_identifier()?;
+
+        self.expect_simple(TokenKind::Colon)?;
+
+        let ty = self.parse_type_expr()?;
+
+        let end = ty.span().end;
+
+        Ok(MacroParameter {
+            name,
+            ty,
             span: Span::new(start, end),
         })
     }
