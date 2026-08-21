@@ -433,6 +433,44 @@ type Bar = Foo<-1>
 }
 
 #[test]
+fn shift_and_bitwise_ops_are_allowed_in_generic_arguments() {
+    // Only `>`-shaped tokens are ambiguous with closing the argument list
+    // (matching C++, where `Foo<vector<int>>` needs the `>>` split but
+    // `Foo<1 << 2>` doesn't need parens) — `<<` and bitwise ops should
+    // parse here without needing to be wrapped in parens.
+    let source = "type A = bits<2 << 2>\n";
+
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    let Statement::TypeAlias(alias) = &program.statements[0] else {
+        panic!("expected type alias");
+    };
+
+    let TypeExpr::Apply { args, .. } = &alias.ty else {
+        panic!("expected generic application");
+    };
+
+    let TypeArgument::Const(expr) = &args[0] else {
+        panic!("expected const arg, got {:?}", args[0]);
+    };
+
+    assert!(
+        matches!(expr, Expr::Binary { op: BinaryOp::ShiftLeft, .. }),
+        "expected a shift-left expression, got {expr:?}",
+    );
+}
+
+#[test]
+fn bare_greater_than_in_generic_argument_still_closes_the_list() {
+    // Unlike `<<`, a bare (unparenthesized) `>` genuinely is ambiguous with
+    // closing the argument list, so it can't be treated as a comparison
+    // here — matching how C++ requires `Foo<(a > b)>` for the same reason.
+    let source = "type A = bits<4 > 2>\n";
+
+    assert!(parse(lex(source).unwrap()).is_err());
+}
+
+#[test]
 fn resolves_generic_argument_via_forward_declared_signature() {
     // `Reg<w>` is used before `Reg` and `w` are declared, so only the
     // pre-pass (which sees the whole file first) lets this resolve to a
