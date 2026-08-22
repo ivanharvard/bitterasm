@@ -23,10 +23,41 @@
 //!
 //! Still out of scope: non-default invocation syntax (a macro always binds
 //! via the plain `name arg, arg, ...` form for now).
+//!
+//! A body statement that isn't `@emit`/`@return`/an invocation is ordinary
+//! top-level-shaped BitterASM — `struct`, `type`, `macro`, `const`, a
+//! label — since a macro body is exactly that: BitterASM the macro
+//! generates at its call site, same as `@emit` generates a value there.
+//! `Statement::Const` is the one kind with a private/`pub` distinction that
+//! matters here too: a bare (non-`pub`) `const` evaluates immediately and
+//! becomes a scope-local binding for the rest of *this* expansion, the same
+//! role a `let` would play, while `pub const` (like every other supported
+//! kind) is captured into [`MacroExpansion::generated`] to be spliced back
+//! into the program wherever this expansion's call site was — nothing
+//! actually performs that splice yet, so `generated` is inert until a
+//! driver exists to consume it (see `crate::main`, which doesn't call
+//! macro expansion at all today).
+//!
+//! A generated declaration's `` `expr` `` splices are evaluated now, against
+//! this expansion's scope, and rewritten in place into the literal `Expr`
+//! they produced ([`AliasResolver::splice_expr`]) — everything *outside* a
+//! splice is left exactly as written, to be resolved later, in whatever
+//! scope the generated declaration ends up in. A struct/macro/type alias's
+//! own *name* can't yet contain a splice (`` `name` `` as a declaration name
+//! doesn't parse — declaration names are still a plain `String` in the AST,
+//! not an `Expr`), so those three kinds are captured verbatim with no
+//! rewriting at all; only `Const`'s single `value: Expr` gets this
+//! treatment today.
+//!
+//! `Statement::Import` is a hard, permanent error rather than an
+//! unimplemented one: imports are resolved by `crate::loader` before the
+//! resolver ever runs, against the importing *file's* path — a macro body
+//! has no file of its own for a relative import to resolve against, and by
+//! the time macro expansion happens the whole program is already flattened.
 
 use std::collections::HashMap;
 
-use crate::ast::{Invocation, MacroDeclaration, Statement};
+use crate::ast::{CallArgument, ConstDeclaration, Expr, Invocation, MacroDeclaration, Statement};
 use crate::token::Span;
 
 use super::aliases::AliasResolver;
@@ -38,6 +69,13 @@ use super::ResolveError;
 #[derive(Debug, Clone, PartialEq)]
 pub struct MacroExpansion {
     pub emitted: Vec<Value>,
+
+    /// Declarations this expansion produced — a `pub const`, or any
+    /// `struct`/`type`/`macro`/label found in the body — in program order,
+    /// including any bubbled up from nested invocations. Not yet spliced
+    /// back into a resolvable program anywhere; see the module doc.
+    pub generated: Vec<Statement>,
+
     pub returned: Option<Value>,
 }
 
@@ -134,16 +172,22 @@ impl<'a> AliasResolver<'a> {
     fn walk_macro_body(
         &mut self,
         body: &[Statement],
-        scope: &HashMap<String, Value>,
+        initial_scope: &HashMap<String, Value>,
         stack: &mut Vec<SymbolId>,
     ) -> Result<MacroExpansion, ResolveError> {
+        // Owned and mutable, unlike `initial_scope` — a bare (non-`pub`)
+        // `const` extends this for the rest of the body, the same way a
+        // `let` would; nothing outside this expansion ever sees it.
+        let mut scope = initial_scope.clone();
+
         let mut emitted = Vec::new();
+        let mut generated = Vec::new();
 
         for statement in body {
             match statement {
                 Statement::Meta(meta) => match meta.name.as_str() {
                     "emit" => match meta.args.as_slice() {
-                        [expr] => emitted.push(self.eval_value(expr, scope)?),
+                        [expr] => emitted.push(self.eval_value(expr, &scope)?),
 
                         other => {
                             return Err(ResolveError::InvalidArgumentCount {
@@ -158,7 +202,7 @@ impl<'a> AliasResolver<'a> {
                     "return" => {
                         let value = match meta.args.as_slice() {
                             [] => None,
-                            [expr] => Some(self.eval_value(expr, scope)?),
+                            [expr] => Some(self.eval_value(expr, &scope)?),
 
                             other => {
                                 return Err(ResolveError::InvalidArgumentCount {
@@ -170,7 +214,7 @@ impl<'a> AliasResolver<'a> {
                             }
                         };
 
-                        return Ok(MacroExpansion { emitted, returned: value });
+                        return Ok(MacroExpansion { emitted, generated, returned: value });
                     }
 
                     other => {
@@ -184,25 +228,114 @@ impl<'a> AliasResolver<'a> {
                 Statement::Invocation(invocation) => {
                     // A bare invocation has no binding point for a return
                     // value — same as a real instruction line not producing
-                    // a usable result elsewhere — so only its emitted
-                    // values are spliced into ours, in order; `returned` is
-                    // discarded.
-                    let nested = self.expand_invocation_inner(invocation, scope, stack)?;
+                    // a usable result elsewhere — so only its emitted (and
+                    // generated) output is spliced into ours, in order;
+                    // `returned` is discarded.
+                    let nested = self.expand_invocation_inner(invocation, &scope, stack)?;
                     emitted.extend(nested.emitted);
+                    generated.extend(nested.generated);
                 }
 
-                other => {
-                    let (kind, span) = describe_statement(other);
+                Statement::Const(decl) if decl.is_pub => {
+                    generated.push(Statement::Const(self.splice_const(decl, &scope)?));
+                }
 
+                Statement::Const(decl) => {
+                    let value = self.eval_value(&decl.value, &scope)?;
+                    scope.insert(decl.name.clone(), value);
+                }
+
+                Statement::Struct(_)
+                | Statement::TypeAlias(_)
+                | Statement::Macro(_)
+                | Statement::Label(_) => {
+                    // Their own name/body can't contain a splice yet (see
+                    // the module doc), so there's nothing to rewrite —
+                    // captured verbatim, to be spliced into the program
+                    // wherever this expansion's call site was.
+                    generated.push(statement.clone());
+                }
+
+                Statement::Import(import) => {
                     return Err(ResolveError::UnsupportedMacroStatement {
-                        kind: kind.to_string(),
-                        span,
+                        kind: "import".to_string(),
+                        span: import.span,
                     });
                 }
             }
         }
 
-        Ok(MacroExpansion { emitted, returned: None })
+        Ok(MacroExpansion { emitted, generated, returned: None })
+    }
+
+    fn splice_const(
+        &mut self,
+        decl: &ConstDeclaration,
+        scope: &HashMap<String, Value>,
+    ) -> Result<ConstDeclaration, ResolveError> {
+        Ok(ConstDeclaration {
+            name: decl.name.clone(),
+            is_pub: decl.is_pub,
+            ty: decl.ty.clone(),
+            value: self.splice_expr(&decl.value, scope)?,
+            span: decl.span,
+        })
+    }
+
+    /// Rewrites `expr` for a generated declaration: every `` `inner` ``
+    /// splice is evaluated now against `scope` and replaced with the
+    /// literal `Expr` that value reifies to; everything else — including a
+    /// bare identifier that isn't a splice — is left exactly as written,
+    /// to be resolved later wherever the generated declaration ends up.
+    fn splice_expr(
+        &mut self,
+        expr: &Expr,
+        scope: &HashMap<String, Value>,
+    ) -> Result<Expr, ResolveError> {
+        match expr {
+            Expr::Splice { inner, span } => {
+                let value = self.eval_value(inner, scope)?;
+                reify_value(&value, *span)
+            }
+
+            Expr::Identifier { .. } | Expr::Integer { .. } | Expr::String { .. } => {
+                Ok(expr.clone())
+            }
+
+            Expr::Member { object, member, span } => Ok(Expr::Member {
+                object: Box::new(self.splice_expr(object, scope)?),
+                member: member.clone(),
+                span: *span,
+            }),
+
+            Expr::Call { callee, arguments, span } => Ok(Expr::Call {
+                callee: Box::new(self.splice_expr(callee, scope)?),
+                arguments: arguments
+                    .iter()
+                    .map(|argument| {
+                        Ok(CallArgument {
+                            name: argument.name.clone(),
+                            value: self.splice_expr(&argument.value, scope)?,
+                            span: argument.span,
+                        })
+                    })
+                    .collect::<Result<_, ResolveError>>()?,
+                span: *span,
+            }),
+
+            Expr::Unary { op, operand, span } => Ok(Expr::Unary {
+                op: *op,
+                operand: Box::new(self.splice_expr(operand, scope)?),
+                span: *span,
+            }),
+
+            Expr::Binary { left, op, right, span } => Ok(Expr::Binary {
+                left: Box::new(self.splice_expr(left, scope)?),
+                op: *op,
+                right: Box::new(self.splice_expr(right, scope)?),
+                span: *span,
+            }),
+        }
     }
 
     // Mirrors AliasResolver::make_cycle_error / ConstEvaluator::make_cycle_error's
@@ -228,17 +361,13 @@ impl<'a> AliasResolver<'a> {
     }
 }
 
-fn describe_statement(statement: &Statement) -> (&'static str, Span) {
-    match statement {
-        Statement::Import(s) => ("import", s.span),
-        Statement::Struct(s) => ("struct", s.span),
-        Statement::TypeAlias(s) => ("type alias", s.span),
-        Statement::Const(s) => ("const", s.span),
-        Statement::Label(s) => ("label", s.span),
-        Statement::Macro(s) => ("nested macro", s.span),
-        Statement::Invocation(_) | Statement::Meta(_) => {
-            unreachable!("Invocation and Meta statements are handled before this is called")
-        }
+// A splice's evaluated `Value` reified back into source-shaped `Expr`, for
+// a generated declaration's rewritten `value` — see
+// `AliasResolver::splice_expr`.
+fn reify_value(value: &Value, span: Span) -> Result<Expr, ResolveError> {
+    match value {
+        Value::Int(int) => Ok(Expr::Integer { raw: int.to_string(), span }),
+        Value::Struct { .. } => Err(ResolveError::UnsupportedSpliceValue { span }),
     }
 }
 
@@ -248,7 +377,7 @@ mod tests {
 
     use std::path::Path;
 
-    use crate::ast::{Invocation, MacroDeclaration, Program, Statement};
+    use crate::ast::{Expr, Invocation, MacroDeclaration, Program, Statement};
     use crate::eval::Int;
     use crate::lexer;
     use crate::parser;
@@ -309,6 +438,7 @@ mod tests {
             result,
             MacroExpansion {
                 emitted: vec![Value::Int(Int::from(5)), Value::Int(Int::from(10))],
+                generated: vec![],
                 returned: Some(Value::Int(Int::from(15))),
             }
         );
@@ -338,6 +468,7 @@ mod tests {
                     args: vec![ResolvedGenericArg::Const(Int::from(8))],
                     fields: vec![("value".to_string(), Value::Int(Int::from(3)))],
                 }],
+                generated: vec![],
                 returned: None,
             }
         );
@@ -378,6 +509,7 @@ mod tests {
             result,
             MacroExpansion {
                 emitted: vec![Value::Int(Int::from(10))],
+                generated: vec![],
                 returned: None,
             }
         );
@@ -406,6 +538,7 @@ mod tests {
                     Value::Int(Int::from(6)),
                     Value::Int(Int::from(50)),
                 ],
+                generated: vec![],
                 returned: None,
             }
         );
@@ -508,6 +641,149 @@ mod tests {
         assert!(matches!(
             resolver.expand_invocation(invocation, &HashMap::new()),
             Err(ResolveError::UnknownMacro { .. })
+        ));
+    }
+
+    #[test]
+    fn non_pub_const_extends_scope_without_leaking() {
+        let program = parse_fixture("local_const.basm");
+
+        let declaration = find_macro(&program, "doubles");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("doubles").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let result = resolver
+            .run_macro_body(symbol, declaration, vec![Value::Int(Int::from(5))], &mut stack)
+            .unwrap();
+
+        assert_eq!(
+            result,
+            MacroExpansion {
+                emitted: vec![Value::Int(Int::from(10))],
+                generated: vec![],
+                returned: None,
+            }
+        );
+    }
+
+    #[test]
+    fn pub_const_is_generated_with_splices_evaluated() {
+        let program = parse_fixture("generated_pub_const.basm");
+
+        let declaration = find_macro(&program, "make_reg");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("make_reg").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let result = resolver
+            .run_macro_body(symbol, declaration, vec![Value::Int(Int::from(7))], &mut stack)
+            .unwrap();
+
+        assert_eq!(result.generated.len(), 1);
+
+        let Statement::Const(decl) = &result.generated[0] else {
+            panic!("expected a generated const declaration");
+        };
+
+        assert_eq!(decl.name, "the_reg");
+        assert!(decl.is_pub);
+
+        // `Reg64(id = ...)` itself is untouched (still an unevaluated call,
+        // not folded into a Value) — only the `` `v` `` splice inside it
+        // was evaluated and rewritten.
+        let Expr::Call { callee, arguments, .. } = &decl.value else {
+            panic!("expected the generated const's value to still be an unevaluated call");
+        };
+
+        assert!(matches!(callee.as_ref(), Expr::Identifier { name, .. } if name == "Reg64"));
+        assert_eq!(arguments.len(), 1);
+        assert_eq!(arguments[0].name.as_deref(), Some("id"));
+
+        assert!(matches!(
+            &arguments[0].value,
+            Expr::Integer { raw, .. } if raw == "7"
+        ));
+    }
+
+    #[test]
+    fn nested_declarations_are_captured_verbatim() {
+        let program = parse_fixture("generated_declarations.basm");
+
+        let declaration = find_macro(&program, "make_stuff");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("make_stuff").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let result = resolver
+            .run_macro_body(symbol, declaration, vec![Value::Int(Int::from(1))], &mut stack)
+            .unwrap();
+
+        assert_eq!(result.emitted, vec![Value::Int(Int::from(1))]);
+        assert_eq!(result.generated.len(), 4);
+
+        assert!(matches!(&result.generated[0], Statement::Struct(decl) if decl.name == "Foo"));
+        assert!(matches!(&result.generated[1], Statement::TypeAlias(decl) if decl.name == "Bar"));
+        assert!(matches!(&result.generated[2], Statement::Macro(decl) if decl.name == "helper"));
+        assert!(matches!(&result.generated[3], Statement::Label(label) if label.name == "start"));
+    }
+
+    #[test]
+    fn generated_declarations_bubble_up_through_nested_invocations() {
+        let program = parse_fixture("nested_invocation_generates.basm");
+
+        let declaration = find_macro(&program, "outer");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("outer").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let result = resolver
+            .run_macro_body(symbol, declaration, vec![Value::Int(Int::from(9))], &mut stack)
+            .unwrap();
+
+        assert_eq!(result.generated.len(), 1);
+
+        let Statement::Const(decl) = &result.generated[0] else {
+            panic!("expected a generated const declaration");
+        };
+
+        assert_eq!(decl.name, "the_const");
+        assert!(matches!(&decl.value, Expr::Integer { raw, .. } if raw == "9"));
+    }
+
+    #[test]
+    fn generated_const_leaves_non_spliced_identifiers_alone() {
+        let program = parse_fixture("generated_const_leaves_bare_identifiers.basm");
+
+        let declaration = find_macro(&program, "make_ref");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("make_ref").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let result = resolver
+            .run_macro_body(symbol, declaration, vec![], &mut stack)
+            .unwrap();
+
+        let Statement::Const(decl) = &result.generated[0] else {
+            panic!("expected a generated const declaration");
+        };
+
+        // No splice around `other_global` — left exactly as written, to be
+        // resolved later wherever this generated const lands, not as a
+        // reference into this expansion's now-gone scope.
+        assert!(matches!(
+            &decl.value,
+            Expr::Identifier { name, .. } if name == "other_global"
         ));
     }
 }

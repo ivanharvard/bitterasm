@@ -1,0 +1,4 @@
+macro doubles(x: int) {
+    const y = x * 2
+    @emit y
+}

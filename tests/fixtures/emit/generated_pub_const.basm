@@ -1,0 +1,9 @@
+struct Reg<const width: int> {
+    id: int
+}
+
+type Reg64 = Reg<64>
+
+macro make_reg(v: int) {
+    pub const the_reg = Reg64(id = `v`)
+}

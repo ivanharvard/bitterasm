@@ -1,4 +1,4 @@
 macro bad(v: int) {
-    const x = 1
+    from tinycpu.native import Reg64
     @emit v
 }

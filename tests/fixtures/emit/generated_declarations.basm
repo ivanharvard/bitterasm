@@ -1,0 +1,15 @@
+macro make_stuff(v: int) {
+    struct Foo {
+        x: int
+    }
+
+    type Bar = Foo
+
+    macro helper(y: int) {
+        @emit y
+    }
+
+    start:
+
+    @emit v
+}

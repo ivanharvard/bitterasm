@@ -190,6 +190,16 @@ pub enum ResolveError {
         span: Span,
     },
 
+    // A splice (`` `expr` ``) inside a declaration a macro body is
+    // generating evaluated to a struct value — reifying that back into
+    // source-shaped `Expr` would need to spell out the struct's resolved
+    // generic args (`Reg<64>`, not just `Reg`), which `Expr::Call` has
+    // nowhere to put. Only `Int`s can be spliced into generated
+    // declarations today.
+    UnsupportedSpliceValue {
+        span: Span,
+    },
+
     // A value-construction call (`Expr::Call`) whose callee isn't a bare
     // identifier — e.g. a dotted path or another call — which nothing
     // real-world uses today.

@@ -1,0 +1,7 @@
+macro inner(v: int) {
+    pub const the_const = `v`
+}
+
+macro outer(v: int) {
+    inner v
+}
