@@ -497,3 +497,121 @@ const w: uint = 4
 
     assert!(matches!(args[0], TypeArgument::Const(_)), "expected const arg, got {:?}", args[0]);
 }
+
+#[test]
+fn custom_syntax_invocation_matches_default_shape() {
+    let source = "macro mov(dst: int, value: int) | syntax \"mov $dst$, $value$\" {\n}\n\nmov r1, 7\n";
+
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    let Statement::Invocation(invocation) = &program.statements[1] else {
+        panic!("expected invocation");
+    };
+
+    assert_eq!(invocation.name, "mov");
+    assert_eq!(invocation.operands.len(), 2);
+
+    assert!(matches!(
+        &invocation.operands[0],
+        Expr::Identifier { name, .. } if name == "r1"
+    ));
+
+    assert!(matches!(
+        &invocation.operands[1],
+        Expr::Integer { raw, .. } if raw == "7"
+    ));
+}
+
+#[test]
+fn macro_without_syntax_facet_is_unaffected() {
+    // A sibling macro with custom syntax must not leak its pattern onto a
+    // different identifier.
+    let source = "macro mov(dst: int, value: int) | syntax \"mov $dst$, $value$\" {\n}\n\n\
+                  macro add(a: int, b: int) {\n}\n\nadd r1, r2\n";
+
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    let Statement::Invocation(invocation) = &program.statements[2] else {
+        panic!("expected invocation");
+    };
+
+    assert_eq!(invocation.name, "add");
+    assert_eq!(invocation.operands.len(), 2);
+}
+
+#[test]
+fn custom_syntax_with_operator_shaped_literal_separator() {
+    // `<-` lexes as `Less` then `Minus` (there's no dedicated `<-` token) —
+    // capturing `$dst$` without a stop boundary would swallow `r1 <- 7` as
+    // `r1 < (-7)` in one shot, leaving nothing for `$value$`.
+    let source = "macro mov(dst: int, value: int) | syntax \"mov $dst$ <- $value$\" {\n}\n\nmov r1 <- 7\n";
+
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    let Statement::Invocation(invocation) = &program.statements[1] else {
+        panic!("expected invocation");
+    };
+
+    assert_eq!(invocation.name, "mov");
+
+    assert!(matches!(
+        &invocation.operands[0],
+        Expr::Identifier { name, .. } if name == "r1"
+    ));
+
+    assert!(matches!(
+        &invocation.operands[1],
+        Expr::Integer { raw, .. } if raw == "7"
+    ));
+}
+
+#[test]
+fn syntax_facet_rejects_unbalanced_dollar() {
+    let source = "macro mov(dst: int, value: int) | syntax \"mov $dst, $value$\" {\n}\n";
+
+    assert!(parse(lex(source).unwrap()).is_err());
+}
+
+#[test]
+fn syntax_facet_rejects_unknown_capture_name() {
+    let source = "macro mov(dst: int, value: int) | syntax \"mov $dst$, $bogus$\" {\n}\n";
+
+    assert!(parse(lex(source).unwrap()).is_err());
+}
+
+#[test]
+fn syntax_facet_rejects_uncaptured_param() {
+    let source = "macro mov(dst: int, value: int) | syntax \"mov $dst$\" {\n}\n";
+
+    assert!(parse(lex(source).unwrap()).is_err());
+}
+
+#[test]
+fn syntax_facet_rejects_duplicate_capture() {
+    let source = "macro mov(dst: int, value: int) | syntax \"mov $dst$, $dst$\" {\n}\n";
+
+    assert!(parse(lex(source).unwrap()).is_err());
+}
+
+#[test]
+fn syntax_facet_rejects_captures_with_no_literal_between_them() {
+    let adjacent = "macro mov(dst: int, value: int) | syntax \"mov $dst$$value$\" {\n}\n";
+    assert!(parse(lex(adjacent).unwrap()).is_err());
+
+    let space_only = "macro mov(dst: int, value: int) | syntax \"mov $dst$ $value$\" {\n}\n";
+    assert!(parse(lex(space_only).unwrap()).is_err());
+}
+
+#[test]
+fn syntax_facet_rejects_pattern_not_starting_with_macro_name() {
+    let source = "macro mov(dst: int, value: int) | syntax \"$dst$, mov\" {\n}\n";
+
+    assert!(parse(lex(source).unwrap()).is_err());
+}
+
+#[test]
+fn custom_syntax_call_site_mismatch_is_a_parse_error() {
+    let source = "macro mov(dst: int, value: int) | syntax \"mov $dst$, $value$\" {\n}\n\nmov r1 - 7\n";
+
+    assert!(parse(lex(source).unwrap()).is_err());
+}

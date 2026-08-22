@@ -802,6 +802,88 @@ mod tests {
         fs::remove_dir_all(&dir).ok();
     }
 
+    #[test]
+    fn custom_syntax_macro_resolves_via_import() {
+        let dir = scratch_dir("custom_syntax_import");
+
+        fs::write(
+            dir.join("producer.basm"),
+            "pub macro mov(dst: int, value: int) | syntax \"mov $dst$, $value$\" {\n}\n",
+        )
+        .unwrap();
+
+        fs::write(
+            dir.join("importer.basm"),
+            "from .producer import *\n\nmov r1, 7\n",
+        )
+        .unwrap();
+
+        let program = load_program(&dir.join("importer.basm"))
+            .expect("importer.basm should load, using producer's custom mov syntax");
+
+        let invocation = program
+            .statements
+            .iter()
+            .find_map(|statement| match statement {
+                Statement::Invocation(invocation) if invocation.name == "mov" => Some(invocation),
+                _ => None,
+            })
+            .expect("expected a mov invocation");
+
+        assert_eq!(invocation.operands.len(), 2);
+
+        assert!(matches!(
+            &invocation.operands[0],
+            Expr::Identifier { name, .. } if name == "r1"
+        ));
+
+        assert!(matches!(
+            &invocation.operands[1],
+            Expr::Integer { raw, .. } if raw == "7"
+        ));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn custom_syntax_call_site_must_follow_its_declaration_in_the_same_file() {
+        let dir = scratch_dir("custom_syntax_ordering");
+
+        // A pattern whose separator (`:`) genuinely can't parse as any kind
+        // of default-expression continuation, so a same-file, out-of-order
+        // call site hard-fails during the prepass rather than "accidentally"
+        // still working because the misinterpreted default parse happens to
+        // consume the same tokens anyway (which does happen for some
+        // separators, e.g. `<-`, since `<` and unary `-` are both valid
+        // default-expression continuations even though they're wrong here —
+        // this test specifically needs one that isn't).
+        fs::write(
+            dir.join("after.basm"),
+            "macro mov(dst: int, value: int) | syntax \"mov $dst$: $value$\" {\n}\n\nmov r1: 7\n",
+        )
+        .unwrap();
+
+        load_program(&dir.join("after.basm"))
+            .expect("a custom-syntax call site after its own declaration should load");
+
+        fs::write(
+            dir.join("before.basm"),
+            "mov r1: 7\n\nmacro mov(dst: int, value: int) | syntax \"mov $dst$: $value$\" {\n}\n",
+        )
+        .unwrap();
+
+        let result = load_program(&dir.join("before.basm"));
+
+        assert!(
+            result.is_err(),
+            "a custom-syntax call site before its own declaration is a known v1 \
+             limitation — document it explicitly (this test) rather than relying \
+             on it silently working or silently failing"
+        );
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
     fn scratch_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "bitterasm-loader-test-{name}-{}",

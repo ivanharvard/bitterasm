@@ -16,8 +16,15 @@
 //!
 //! Two accepted v1 limitations: a pattern can't describe a call-site
 //! literal `$` (any `$` starts or ends a capture), and within one file a
-//! macro's custom-syntax call site must textually follow its own
-//! `syntax`-faceted declaration (see `crate::loader`'s module doc for why).
+//! custom-syntax call site that textually precedes its own declaration can
+//! fail to parse — the same-file prepass tolerates its own parse errors by
+//! discarding them and moving on, so it usually still reaches (and
+//! registers) a later declaration even after misreading an earlier,
+//! not-yet-known custom-shaped call site under default rules; it only hard
+//! stops when that default misreading itself can't consume the line (e.g. a
+//! pattern separator, like `:`, that isn't a valid continuation of any
+//! default expression — separators that happen to *look* like one, e.g.
+//! `<-`, silently "work" regardless of ordering, for the wrong reason).
 
 use crate::token::TokenKind;
 
