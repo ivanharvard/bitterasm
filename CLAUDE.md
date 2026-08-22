@@ -16,17 +16,17 @@ The project is early-stage (lexer, parser, and resolver in Rust; a growing `std`
 ## Commands
 
 ```sh
-cargo build                      # build the bitterasm binary
-cargo run -- <path/to/file.basm> # run the compiler pipeline on a .basm file (note the `--`)
-cargo test                       # run all unit tests + doctests
-cargo test <name_substring>      # run a subset, e.g. `cargo test loader::`
-cargo test --doc                 # doctests only
-cargo doc --no-deps --open       # render rustdoc, including module-level design notes
+cargo build --workspace                                # build both the bitterasm and bitter binaries
+cargo run -- compile <path/to/file.basm> [-o out.em]    # resolve + expand a .basm file, writing its emitted values to a .em file (note the `--`)
+cargo test                                              # run all unit tests + doctests
+cargo test <name_substring>                             # run a subset, e.g. `cargo test loader::`
+cargo test --doc                                        # doctests only
+cargo doc --no-deps --open                              # render rustdoc, including module-level design notes
 ```
 
 There is no lint/format config checked in (no `rustfmt.toml`/`clippy.toml`); `cargo build` surfaces `dead_code` warnings, which is the closest thing to a lint gate right now.
 
-`cargo run -- <file>` currently only gets as far as the language actually supports (see Known gaps below) — most `.basm` files under `std/` and `tests/fixtures/` fail to load today because `macro` declarations don't parse yet.
+`bitterasm compile` (the `bitterasm` package's own bin target, `src/main.rs`) currently only gets as far as the language actually supports (see Known gaps below) — most `.basm` files under `std/` and `tests/fixtures/` fail to load today for reasons documented there. `bitter` (the separate crate in `bitter/`, depending on `bitterasm` as a library) is meant to read a `.em` file and encode it into real target output; it's still a stub.
 
 ## Architecture
 
@@ -51,5 +51,5 @@ The crate is split as `src/lib.rs` (the real logic, documented with rustdoc) + a
 
 - **`macro` declarations don't parse.** The lexer already tokenizes `macro`, `@`, and `->` (`TokenKind::Macro`/`At`/`Arrow`), and `ast::Statement::Meta` is reserved for the `@`-prefixed directives (e.g. `@return`) that make up a macro body — but `parser/statements.rs` has no grammar rule for any of it yet. This means `std/binary.basm` (which declares `pub macro fits_inside_width(...)`) fails to load, which cascades: `std/ctypes.basm` and `std/tinycpu/native.basm` both import it transitively, so most `tests/fixtures/tinycpu/*.basm` files and two tests in `loader::tests` currently fail for this reason, not because of a regression.
 - **`ast::Invocation`** (an instruction-mnemonic line like `mov r1, 7`) parses but nothing resolves it to a macro definition yet — macro-to-invocation binding, operand type checking, and expansion don't exist.
-- **No evaluator/emitter.** Nothing turns a resolved program into output (bytes or otherwise) yet; the whole pipeline currently ends at printing `Debug` output of resolved types (see `src/main.rs`).
-- `std/array.basm`, `std/mem.basm`, and `std/string.basm` are absent from the working tree (deleted, uncommitted) as of this writing — check `git status` before assuming the stdlib surface matches what a stale mental model expects.
+- **No target-encoding step.** `bitterasm compile` (`src/main.rs`) resolves a program, expands every top-level invocation, and writes the resulting `emitted: Vec<Value>` stream to a `.em` file — a self-contained JSON shape (`src/emit.rs`'s `EmittedValue`, with `SymbolId`s resolved to names) that doesn't depend on any in-process state. But nothing turns that into actual machine bytes/text yet — that's `bitter`'s job (`bitter/`), and it's still a stub. Also unresolved: a macro's `generated` declarations (a `pub const`, a nested `struct`/`macro`) have nowhere to be spliced back into the program — `compile` just warns and drops them.
+- `std/mem.basm` is still absent from the working tree. `std/array.basm` and `std/cstring.basm` (renamed from `std/string.basm`) exist now but lean on several features that don't exist yet (`@for`, `@if`/`@else`, `@assert`, generic macros, indexing syntax, templated struct/field names) — check `git status` and the files themselves rather than assuming the stdlib surface matches what a stale mental model expects.

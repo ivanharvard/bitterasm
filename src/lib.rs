@@ -25,6 +25,7 @@
 //! (as written in source) and the resolver (as resolved against symbols).
 
 pub mod ast;
+pub mod emit;
 pub mod lexer;
 pub mod token;
 pub mod parser;
