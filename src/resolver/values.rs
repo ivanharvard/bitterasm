@@ -20,8 +20,9 @@ use crate::eval::{self, EvalError, Int};
 use crate::token::Span;
 
 use super::aliases::AliasResolver;
+use super::structs::describe_type;
 use super::symbols::SymbolId;
-use super::types::{ResolvedGenericArg, ResolvedType};
+use super::types::{BuiltinType, ResolvedGenericArg, ResolvedType};
 use super::ResolveError;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -142,6 +143,7 @@ impl<'a> AliasResolver<'a> {
             by_name.insert(field_name, value);
         }
 
+        let struct_ty = ResolvedType::Struct { symbol, args: args.clone() };
         let mut fields = Vec::with_capacity(field_names.len());
 
         for field_name in field_names {
@@ -153,10 +155,34 @@ impl<'a> AliasResolver<'a> {
                 span,
             })?;
 
+            let expected = self.field_type(&struct_ty, &field_name, span)?;
+            let actual = value_type(&value);
+
+            if actual != expected {
+                return Err(ResolveError::TypeMismatch {
+                    name: field_name,
+                    expected: describe_type(&expected, self.symbols),
+                    actual: describe_type(&actual, self.symbols),
+                    span,
+                });
+            }
+
             fields.push((field_name, value));
         }
 
         Ok(Value::Struct { symbol, args, fields })
+    }
+}
+
+// A `Value`'s type is already implicit in what it is — an Int, or which
+// struct (identity + resolved generic args) — no separate inference needed.
+pub(super) fn value_type(value: &Value) -> ResolvedType {
+    match value {
+        Value::Int(_) => ResolvedType::Builtin(BuiltinType::Int),
+        Value::Struct { symbol, args, .. } => ResolvedType::Struct {
+            symbol: *symbol,
+            args: args.clone(),
+        },
     }
 }
 
@@ -367,6 +393,31 @@ mod tests {
             resolver.eval_value(emit_expr(declaration), &scope),
             Err(ResolveError::InvalidArgumentCount { expected: 2, actual: 1, .. })
         ));
+    }
+
+    #[test]
+    fn rejects_field_type_mismatch() {
+        let program = parse_fixture("field_type_mismatch.basm");
+
+        let declaration = find_macro(&program, "wrap");
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+
+        let mut scope = HashMap::new();
+        scope.insert("v".to_string(), Value::Int(Int::from(1)));
+
+        // `A.id` is declared `int`; the body constructs it from `B(...)`, a
+        // struct — same mismatch as a wrong-typed macro operand, just at
+        // struct-construction time instead of invocation-binding time.
+        match resolver.eval_value(emit_expr(declaration), &scope) {
+            Err(ResolveError::TypeMismatch { name, expected, actual, .. }) => {
+                assert_eq!(name, "id");
+                assert_eq!(expected, "int");
+                assert_eq!(actual, "B");
+            }
+            other => panic!("expected a type mismatch error, got {other:?}"),
+        }
     }
 
     #[test]

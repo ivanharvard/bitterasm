@@ -177,7 +177,7 @@ fn generic_arg_scope(
 // Produces a human-readable name for a resolved type, used in diagnostics
 // like `UnknownField` when the type isn't the kind of thing that error
 // needs to describe more precisely (e.g. field access on a non-struct).
-fn describe_type(ty: &ResolvedType, symbols: &SymbolTable) -> String {
+pub(super) fn describe_type(ty: &ResolvedType, symbols: &SymbolTable) -> String {
     match ty {
         ResolvedType::Builtin(BuiltinType::Int) => "int".to_string(),
         ResolvedType::Struct { symbol, .. } => symbols.get(*symbol).name.clone(),

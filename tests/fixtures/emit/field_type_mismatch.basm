@@ -1,0 +1,11 @@
+struct A {
+    id: int
+}
+
+struct B {
+    value: int
+}
+
+macro wrap(v: int) {
+    @emit A(id=B(value=v))
+}

@@ -14,10 +14,15 @@
 //! stack so a macro invoking itself (directly, or via another macro that
 //! calls back) is a compile error instead of a stack overflow.
 //!
-//! What's still out of scope here: operand type checking (an invocation's
-//! operands aren't checked against the macro's declared param types yet),
-//! and non-default invocation syntax (a macro always binds via the plain
-//! `name arg, arg, ...` form for now).
+//! Each operand's evaluated `Value` is also checked against its parameter's
+//! declared type before binding (`resolve_type_expr`'d the same way a
+//! struct field's type would be, then compared against the value's own
+//! implicit type — see `values::value_type`) — a `mov 7, r1`-shaped
+//! argument-order mistake is a `TypeMismatch` error, not a silent wrong
+//! bind.
+//!
+//! Still out of scope: non-default invocation syntax (a macro always binds
+//! via the plain `name arg, arg, ...` form for now).
 
 use std::collections::HashMap;
 
@@ -25,8 +30,9 @@ use crate::ast::{Invocation, MacroDeclaration, Statement};
 use crate::token::Span;
 
 use super::aliases::AliasResolver;
+use super::structs::describe_type;
 use super::symbols::SymbolId;
-use super::values::Value;
+use super::values::{value_type, Value};
 use super::ResolveError;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -103,6 +109,18 @@ impl<'a> AliasResolver<'a> {
         let mut scope: HashMap<String, Value> = HashMap::new();
 
         for (param, value) in declaration.params.iter().zip(arguments) {
+            let expected = self.resolve_type_expr(&param.ty)?;
+            let actual = value_type(&value);
+
+            if actual != expected {
+                return Err(ResolveError::TypeMismatch {
+                    name: param.name.clone(),
+                    expected: describe_type(&expected, self.symbols),
+                    actual: describe_type(&actual, self.symbols),
+                    span: param.span,
+                });
+            }
+
             scope.insert(param.name.clone(), value);
         }
 
@@ -391,6 +409,31 @@ mod tests {
                 returned: None,
             }
         );
+    }
+
+    #[test]
+    fn rejects_operand_type_mismatch() {
+        let program = parse_fixture("read_id.basm");
+
+        let declaration = find_macro(&program, "read_id");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("read_id").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+
+        // `dst` is declared `Reg`; passing a bare Int should be rejected
+        // before the body even runs, the same way `mov 7, r1` (args
+        // swapped) should be.
+        let mut stack = Vec::new();
+
+        match resolver.run_macro_body(symbol, declaration, vec![Value::Int(Int::from(5))], &mut stack) {
+            Err(ResolveError::TypeMismatch { name, expected, actual, .. }) => {
+                assert_eq!(name, "dst");
+                assert_eq!(expected, "Reg");
+                assert_eq!(actual, "int");
+            }
+            other => panic!("expected a type mismatch error, got {other:?}"),
+        }
     }
 
     #[test]

@@ -218,6 +218,18 @@ pub enum ResolveError {
         span: Span,
     },
 
+    // A value's type (derived from what it actually is — Int, or which
+    // struct) doesn't match the type it was required to have — either a
+    // macro invocation's operand against the matching declared parameter,
+    // or a struct constructor argument against the matching declared
+    // field. `name` is the parameter or field name.
+    TypeMismatch {
+        name: String,
+        expected: String,
+        actual: String,
+        span: Span,
+    },
+
     Internal {
         message: String,
         span: Span,
