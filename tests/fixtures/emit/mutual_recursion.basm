@@ -1,0 +1,7 @@
+macro ping(v: int) {
+    pong v
+}
+
+macro pong(v: int) {
+    ping v
+}

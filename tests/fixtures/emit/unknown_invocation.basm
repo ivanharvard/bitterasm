@@ -1,0 +1,5 @@
+macro noop(v: int) {
+    @emit v
+}
+
+ghost 5

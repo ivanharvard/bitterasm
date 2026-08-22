@@ -1,0 +1,9 @@
+macro helper(v: int) {
+    @emit v + 1
+}
+
+macro outer(x: int) {
+    @emit x
+    helper x
+    @emit x * 10
+}

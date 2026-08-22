@@ -1,0 +1,3 @@
+macro loopy(v: int) {
+    loopy v
+}

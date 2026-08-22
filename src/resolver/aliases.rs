@@ -406,6 +406,53 @@ impl<'a> AliasResolver<'a> {
         })
     }
 
+    pub(super) fn find_macro_symbol(
+        &self,
+        name: &str,
+        span: Span,
+    ) -> Result<SymbolId, ResolveError> {
+        let Some(id) = self.symbols.lookup(name) else {
+            return Err(ResolveError::UnknownMacro {
+                name: name.to_string(),
+                span,
+            });
+        };
+
+        if self.symbols.get(id).kind != SymbolKind::Macro {
+            return Err(ResolveError::ExpectedMacro {
+                name: name.to_string(),
+                span,
+            });
+        }
+
+        Ok(id)
+    }
+
+    pub(super) fn find_macro_declaration(
+        &self,
+        id: SymbolId,
+    ) -> Result<&crate::ast::MacroDeclaration, ResolveError> {
+        let symbol = self.symbols.get(id);
+
+        for statement in &self.program.statements {
+            if let Statement::Macro(declaration) = statement {
+                if declaration.name == symbol.name {
+                    return Ok(declaration);
+                }
+            }
+        }
+
+        // there is some internal compiler inconsistency rather than bad
+        // BitterASM source.
+        Err(ResolveError::Internal {
+            message: format!(
+                "symbol table contains macro `{}` but no matching AST declaration exists",
+                symbol.name,
+            ),
+            span: symbol.span,
+        })
+    }
+
     // ==============
     // diagnostics
     // ==============

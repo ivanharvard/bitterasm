@@ -197,6 +197,27 @@ pub enum ResolveError {
         span: Span,
     },
 
+    // An `Invocation`'s name doesn't resolve to any known symbol at all.
+    UnknownMacro {
+        name: String,
+        span: Span,
+    },
+
+    // Like `UnknownMacro`, but the name resolves to a real symbol of the
+    // wrong kind (a struct, const, or type alias) — invocations only ever
+    // call macros.
+    ExpectedMacro {
+        name: String,
+        span: Span,
+    },
+
+    // Direct or mutual macro self-invocation (`A -> B -> A`), mirroring
+    // `CyclicTypeAlias`/`CyclicConstant`'s shape.
+    CyclicMacroExpansion {
+        cycle: Vec<String>,
+        span: Span,
+    },
+
     Internal {
         message: String,
         span: Span,
