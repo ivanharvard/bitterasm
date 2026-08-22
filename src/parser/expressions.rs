@@ -10,9 +10,32 @@ impl Parser {
     }
 
     pub fn parse_expr_bp(&mut self, min_bp: u8) -> Result<Expr, ParseError> {
-        let mut left = self.parse_prefix_expr()?;
+        self.parse_expr_bp_until(min_bp, None)
+    }
+
+    // Bounded variant used by custom invocation-syntax capture matching:
+    // `stop`, when set, ends the expression the moment the upcoming token
+    // would otherwise be swallowed as this capture's own continuation (a
+    // postfix `.`/`(`, or a binary operator) even though it's meant to
+    // belong to the pattern's next literal segment instead — e.g. `<-`
+    // lexes as `Less` then `Minus`, so capturing `$dst$` in
+    // `mov $dst$ <- $value$` must stop at `Less` rather than parsing
+    // `r1 <- 7` as `r1 < (-7)` in one shot. `None` is the ordinary,
+    // unbounded case every other caller uses.
+    pub(super) fn parse_expr_bp_until(
+        &mut self,
+        min_bp: u8,
+        stop: Option<&TokenKind>,
+    ) -> Result<Expr, ParseError> {
+        let mut left = self.parse_prefix_expr(stop)?;
 
         loop {
+            if let Some(stop) = stop {
+                if same_variant(&self.current().kind, stop) {
+                    break;
+                }
+            }
+
             // postfix: member access
             //
             //  foo.bar
@@ -75,7 +98,7 @@ impl Parser {
 
             self.advance();
 
-            let right = self.parse_expr_bp(right_bp)?;
+            let right = self.parse_expr_bp_until(right_bp, stop)?;
 
             let span = Span::new(
                 left.span().start,
@@ -93,7 +116,7 @@ impl Parser {
         Ok(left)
     }
 
-    fn parse_prefix_expr(&mut self) -> Result<Expr, ParseError> {
+    fn parse_prefix_expr(&mut self, stop: Option<&TokenKind>) -> Result<Expr, ParseError> {
         let token = self.current().clone();
 
         match token.kind {
@@ -170,7 +193,7 @@ impl Parser {
 
                 self.advance();
 
-                let operand = self.parse_expr_bp(90)?;
+                let operand = self.parse_expr_bp_until(90, stop)?;
 
                 let span = Span::new(start, operand.span().end);
 
@@ -190,7 +213,7 @@ impl Parser {
 
                 self.advance();
 
-                let operand = self.parse_expr_bp(90)?;
+                let operand = self.parse_expr_bp_until(90, stop)?;
 
                 let span = Span::new(
                     start,
@@ -213,7 +236,7 @@ impl Parser {
 
                 self.advance();
 
-                let operand = self.parse_expr_bp(90)?;
+                let operand = self.parse_expr_bp_until(90, stop)?;
 
                 let span = Span::new(
                     start,

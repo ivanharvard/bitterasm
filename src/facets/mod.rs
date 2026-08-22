@@ -20,11 +20,20 @@
 //! This module doesn't depend on `crate::resolver` itself, so those
 //! functions return the facet-owned [`Violation`] here and the resolver
 //! translates it into its own error type — not the reverse.
+//!
+//! [`syntax`] is the first facet whose *parsed data* — not just its payload
+//! shape and cardinality rule — is consumed outside its own file: a macro's
+//! declared call-site pattern has to be known while parsing everything
+//! after it, so `crate::parser` (matching call sites) and `crate::loader`
+//! (threading patterns across file imports) both reach into it directly.
+//! That's why it's `pub(crate)` rather than a bare private `mod` like the
+//! other five.
 
 mod after;
 mod before;
 mod invariant;
 mod return_type;
+pub(crate) mod syntax;
 mod visibility;
 
 use crate::ast::Facet;
@@ -67,6 +76,7 @@ pub fn payload_shape(name: &str) -> Option<PayloadShape> {
         "after" => Some(after::PAYLOAD),
         "pub" => Some(visibility::PAYLOAD),
         "return" => Some(return_type::PAYLOAD),
+        "syntax" => Some(syntax::PAYLOAD),
         _ => None,
     }
 }
@@ -83,6 +93,7 @@ pub fn check(name: &str, decl_kind: DeclKind, count: usize) -> Option<Result<(),
         "after" => Some(after::check(decl_kind, count)),
         "pub" => Some(visibility::check(decl_kind, count)),
         "return" => Some(return_type::check(decl_kind, count)),
+        "syntax" => Some(syntax::check(decl_kind, count)),
         _ => None,
     }
 }

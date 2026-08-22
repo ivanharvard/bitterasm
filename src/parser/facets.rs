@@ -66,13 +66,6 @@ impl Parser {
 
         let name = self.expect_identifier()?;
 
-        if name == "syntax" {
-            return Err(ParseError::new(
-                "the `syntax` facet isn't implemented yet",
-                self.previous().span,
-            ));
-        }
-
         let Some(shape) = facets::payload_shape(&name) else {
             return Err(ParseError::new(
                 format!("unknown facet `{name}`"),
