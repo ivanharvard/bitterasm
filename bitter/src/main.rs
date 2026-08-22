@@ -1,24 +1,10 @@
-use clap::{Parser, Subcommand};
-
-mod install;
+use clap::Parser;
 
 #[derive(Parser)]
 #[command(name = "bitter", version, about = "Exporter CLI for BitterASM-emitted values")]
-struct Cli {
-    #[command(subcommand)]
-    command: Command,
-}
-
-#[derive(Subcommand)]
-enum Command {
-    /// Interactively install the bitterasm language, the bitter CLI, and the stdlib
-    Install,
-}
+struct Cli;
 
 fn main() {
-    let cli = Cli::parse();
-
-    match cli.command {
-        Command::Install => install::run(),
-    }
+    Cli::parse();
+    println!("bitter doesn't do anything yet — @emit support isn't built.");
 }
