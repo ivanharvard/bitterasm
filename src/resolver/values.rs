@@ -81,6 +81,10 @@ impl<'a> AliasResolver<'a> {
             }
 
             Expr::String { span, .. } => Err(ResolveError::ExpectedValueExpression { span: *span }),
+
+            // Transparent here too — `@emit`'s argument is already always
+            // evaluated, so a splice around it changes nothing.
+            Expr::Splice { inner, .. } => self.eval_value(inner, scope),
         }
     }
 

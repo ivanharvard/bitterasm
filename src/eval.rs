@@ -64,6 +64,12 @@ pub fn eval(expr: &Expr, scope: &HashMap<String, Int>) -> Result<Int, EvalError>
         }
 
         Expr::Binary { left, op, right, span } => eval_binary(*op, left, right, scope, *span),
+
+        // A splice is only meaningful where the surrounding code is
+        // otherwise literal/unevaluated (not the case here — `eval` always
+        // evaluates), so it's a transparent no-op: `` `1 + 1` `` folds the
+        // same as `1 + 1`.
+        Expr::Splice { inner, .. } => eval(inner, scope),
     }
 }
 
@@ -199,6 +205,14 @@ mod tests {
     #[test]
     fn evaluates_arithmetic_with_precedence() {
         assert_eq!(eval_source("const x = 1 + 2 * 3").unwrap(), Int::from(7));
+    }
+
+    #[test]
+    fn splice_evaluates_transparently() {
+        assert_eq!(
+            eval_source("const x = `1 + 2 * 3`").unwrap(),
+            eval_source("const x = 1 + 2 * 3").unwrap(),
+        );
     }
 
     #[test]

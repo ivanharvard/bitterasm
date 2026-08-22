@@ -65,6 +65,14 @@ pub enum TokenKind {
     Arrow,
 
     Dollar,
+    Backtick,
+
+    /// A backslash-escaped literal character outside a string literal —
+    /// `` \` `` or `\$`, spelling out a literal backtick/dollar sign in a
+    /// position where the bare character would otherwise be meaningful
+    /// (a splice delimiter, a capture delimiter). Carries the escaped
+    /// character itself, same shape as `String` carrying its decoded value.
+    Escaped(char),
 
     // Metaprogramming
     At,

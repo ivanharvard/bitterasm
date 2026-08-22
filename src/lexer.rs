@@ -4,6 +4,14 @@
 //! token even where it closes two nested generic lists — the parser splits
 //! it back into two `>` tokens where that's what the grammar needs; see
 //! [`crate::parser`].
+//!
+//! A bare backslash is only meaningful outside string literals as the start
+//! of one of two escapes, `` \` `` or `\$` — [`TokenKind::Escaped`] carrying
+//! the literal character it spells out, as opposed to the structural
+//! [`TokenKind::Backtick`]/[`TokenKind::Dollar`] the un-escaped characters
+//! produce. Any other character after `\` (including none, at EOF) is a
+//! lex error; there's no general-purpose escape mechanism outside strings,
+//! just these two.
 
 use std::fmt;
 use crate::token::{Token, TokenKind, Span};
@@ -241,6 +249,9 @@ impl<'src> Lexer<'src> {
             '@' => self.single(TokenKind::At),
 
             '$' => self.single(TokenKind::Dollar),
+            '`' => self.single(TokenKind::Backtick),
+
+            '\\' => self.lex_escape()?,
 
             // unknown
 
@@ -451,6 +462,41 @@ impl<'src> Lexer<'src> {
             start,
             self.pos,
         ))
+    }
+
+    // escapes outside strings — `` \` `` / `\$`, spelling out a literal
+    // backtick/dollar sign in source text rather than the delimiter
+    // meaning those characters carry unescaped (a splice, a capture).
+    fn lex_escape(&mut self) -> Result<(), LexError> {
+        let start = self.pos;
+
+        // Leading backslash.
+        self.advance();
+
+        let escaped = match self.advance() {
+            Some('`') => '`',
+            Some('$') => '$',
+
+            Some(other) => {
+                return Err(LexError::new(
+                    format!("unknown escape sequence \\{other}"),
+                    start,
+                    self.pos,
+                ));
+            }
+
+            None => {
+                return Err(LexError::new(
+                    "unterminated escape sequence",
+                    start,
+                    self.pos,
+                ));
+            }
+        };
+
+        self.push(TokenKind::Escaped(escaped), start);
+
+        Ok(())
     }
 
     // comments
@@ -681,9 +727,50 @@ mod tests {
 
     #[test]
     fn rejects_unknown_characters() {
-        let error = lex("mov r1, `").unwrap_err();
+        let error = lex("mov r1, ?").unwrap_err();
 
         assert!(error.message.contains("unexpected character"));
+    }
+
+    #[test]
+    fn lexes_backtick() {
+        assert_eq!(
+            kinds("`foo`\n"),
+            vec![
+                TokenKind::Backtick,
+                TokenKind::Identifier("foo".into()),
+                TokenKind::Backtick,
+                TokenKind::Newline,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn lexes_escapes_outside_strings() {
+        assert_eq!(
+            kinds("\\`\\$\n"),
+            vec![
+                TokenKind::Escaped('`'),
+                TokenKind::Escaped('$'),
+                TokenKind::Newline,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_escape_outside_strings() {
+        let error = lex("\\n").unwrap_err();
+
+        assert!(error.message.contains("unknown escape sequence"));
+    }
+
+    #[test]
+    fn rejects_unterminated_escape_outside_strings() {
+        let error = lex("\\").unwrap_err();
+
+        assert_eq!(error.message, "unterminated escape sequence");
     }
 
     #[test]

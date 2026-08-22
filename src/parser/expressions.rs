@@ -185,6 +185,39 @@ impl Parser {
             }
 
             // ============
+            // `expr` — evaluate and splice
+            // ============
+
+            TokenKind::Backtick => {
+                let start = token.span.start;
+
+                self.advance();
+
+                // Same reasoning as the LParen case just below: a splice
+                // has its own explicit close, so a `>`-shaped token inside
+                // it can't be closing a generic argument list.
+                let outer_restriction = self.restrict_closing_ops;
+                self.restrict_closing_ops = false;
+
+                let result = self.parse_expr();
+
+                self.restrict_closing_ops = outer_restriction;
+
+                let inner = result?;
+
+                let closing = self.current().clone();
+
+                self.expect_simple(TokenKind::Backtick)?;
+
+                let span = Span::new(start, closing.span.end);
+
+                Ok(Expr::Splice {
+                    inner: Box::new(inner),
+                    span,
+                })
+            }
+
+            // ============
             // unary -
             // ============
 
@@ -391,7 +424,8 @@ fn set_expr_span(expr: &mut Expr, new_span: Span) {
         | Expr::Member { span, .. }
         | Expr::Call { span, .. }
         | Expr::Unary { span, .. }
-        | Expr::Binary { span, .. } => {
+        | Expr::Binary { span, .. }
+        | Expr::Splice { span, .. } => {
             *span = new_span;
         }
     }

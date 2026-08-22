@@ -484,6 +484,8 @@ fn rename_expr(expr: &mut Expr, renames: &HashMap<String, String>) {
             rename_expr(left, renames);
             rename_expr(right, renames);
         }
+
+        Expr::Splice { inner, .. } => rename_expr(inner, renames),
     }
 }
 

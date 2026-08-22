@@ -284,6 +284,22 @@ fn parses_unary_expression() {
 }
 
 #[test]
+fn parses_splice_expression() {
+    let program =
+        parse(lex("mov r1, `foo + 1`\n").unwrap()).unwrap();
+
+    let Statement::Invocation(invocation) = &program.statements[0] else {
+        panic!("expected invocation");
+    };
+
+    let Expr::Splice { inner, .. } = &invocation.operands[1] else {
+        panic!("expected splice");
+    };
+
+    assert!(matches!(inner.as_ref(), Expr::Binary { .. }));
+}
+
+#[test]
 fn parses_const_declaration() {
     let program =
         parse(lex("const r1 = Reg(id = 1)\n").unwrap()).unwrap();

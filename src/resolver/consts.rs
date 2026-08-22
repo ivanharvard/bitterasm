@@ -183,6 +183,7 @@ fn referenced_identifiers(expr: &crate::ast::Expr) -> Vec<String> {
                 stack.push(left);
                 stack.push(right);
             }
+            Expr::Splice { inner, .. } => stack.push(inner),
         }
     }
 
@@ -233,5 +234,9 @@ fn find_const_declaration<'a>(
 // level mean this const holds something else entirely (a struct value, a
 // field access, plain text), not an `Int` that failed to fold.
 fn is_int_shaped(expr: &Expr) -> bool {
-    !matches!(expr, Expr::Member { .. } | Expr::Call { .. } | Expr::String { .. })
+    match expr {
+        // Transparent: a splice's shape is whatever it wraps.
+        Expr::Splice { inner, .. } => is_int_shaped(inner),
+        _ => !matches!(expr, Expr::Member { .. } | Expr::Call { .. } | Expr::String { .. }),
+    }
 }

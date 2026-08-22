@@ -112,6 +112,17 @@ pub enum Expr {
         right: Box<Expr>,
         span: Span,
     },
+
+    /// `` `expr` `` — "evaluate this expression now and splice the result
+    /// in here", as opposed to a bare `expr` which, in a context that
+    /// otherwise treats its surrounding tokens as literal (unevaluated)
+    /// source, stays literal. Everywhere `expr` is already evaluated
+    /// unconditionally (e.g. an `@emit` argument), a splice is a no-op:
+    /// `` `1 + 1` `` and `1 + 1` evaluate identically.
+    Splice {
+        inner: Box<Expr>,
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -123,7 +134,8 @@ impl Expr {
             | Expr::Member { span, .. }
             | Expr::Call { span, .. }
             | Expr::Unary { span, .. }
-            | Expr::Binary { span, .. } => *span,
+            | Expr::Binary { span, .. }
+            | Expr::Splice { span, .. } => *span,
         }
     }
 }
