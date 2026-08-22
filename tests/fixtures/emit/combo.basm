@@ -1,0 +1,6 @@
+macro combo(x: int) {
+    @emit x
+    @emit x * 2
+    @return x * 3
+    @emit x * 4
+}

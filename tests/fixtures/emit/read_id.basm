@@ -1,0 +1,8 @@
+struct Reg {
+    id: int,
+    width: int
+}
+
+macro read_id(dst: Reg) {
+    @emit dst.id
+}

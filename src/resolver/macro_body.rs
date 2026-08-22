@@ -125,6 +125,8 @@ fn describe_statement(statement: &Statement) -> (&'static str, Span) {
 mod tests {
     use std::collections::HashMap;
 
+    use std::path::Path;
+
     use crate::ast::{MacroDeclaration, Program, Statement};
     use crate::eval::Int;
     use crate::lexer;
@@ -133,12 +135,16 @@ mod tests {
 
     use super::{MacroExpansion, Value};
 
-    fn parse_program(source: &str) -> Program {
-        let mut full = source.to_string();
-        full.push('\n');
+    fn parse_fixture(name: &str) -> Program {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/emit")
+            .join(name);
 
-        let tokens = lexer::lex(&full).expect("source should lex");
-        parser::parse(tokens).expect("source should parse")
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read fixture {}: {error}", path.display()));
+
+        let tokens = lexer::lex(&source).expect("fixture should lex");
+        parser::parse(tokens).expect("fixture should parse")
     }
 
     fn find_macro<'a>(program: &'a Program, name: &str) -> &'a MacroDeclaration {
@@ -154,14 +160,7 @@ mod tests {
 
     #[test]
     fn emit_and_return_combine_and_return_stops_the_body() {
-        let program = parse_program(
-            "macro combo(x: int) {\n    \
-                @emit x\n    \
-                @emit x * 2\n    \
-                @return x * 3\n    \
-                @emit x * 4\n\
-             }",
-        );
+        let program = parse_fixture("combo.basm");
 
         let declaration = find_macro(&program, "combo");
         let symbols = collect_symbols(&program).unwrap();
@@ -183,11 +182,7 @@ mod tests {
 
     #[test]
     fn struct_via_generic_alias_carries_resolved_generic_args() {
-        let program = parse_program(
-            "struct bits<const width: int> {\n    value: int\n}\n\n\
-             type Byte = bits<8>\n\n\
-             macro make_byte(v: int) {\n    @emit Byte(value=v)\n}",
-        );
+        let program = parse_fixture("generic_alias.basm");
 
         let declaration = find_macro(&program, "make_byte");
         let symbols = collect_symbols(&program).unwrap();
@@ -214,12 +209,7 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_statement_in_macro_body() {
-        let program = parse_program(
-            "macro bad(v: int) {\n    \
-                const x = 1\n    \
-                @emit v\n\
-             }",
-        );
+        let program = parse_fixture("unsupported_statement.basm");
 
         let declaration = find_macro(&program, "bad");
         let symbols = collect_symbols(&program).unwrap();

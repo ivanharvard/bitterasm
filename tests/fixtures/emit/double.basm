@@ -1,0 +1,3 @@
+macro double(x: int) {
+    @emit x * 2
+}

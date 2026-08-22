@@ -1,0 +1,4 @@
+macro bad(v: int) {
+    const x = 1
+    @emit v
+}

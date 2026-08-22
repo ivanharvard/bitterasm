@@ -1,0 +1,9 @@
+struct bits<const width: int> {
+    value: int
+}
+
+type Byte = bits<8>
+
+macro make_byte(v: int) {
+    @emit Byte(value=v)
+}

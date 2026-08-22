@@ -192,6 +192,8 @@ fn into_value_error(error: EvalError, scope: &HashMap<String, Value>) -> Resolve
 mod tests {
     use std::collections::HashMap;
 
+    use std::path::Path;
+
     use crate::ast::{Expr, MacroDeclaration, Program, Statement};
     use crate::eval::Int;
     use crate::lexer;
@@ -200,12 +202,16 @@ mod tests {
 
     use super::Value;
 
-    fn parse_program(source: &str) -> Program {
-        let mut full = source.to_string();
-        full.push('\n');
+    fn parse_fixture(name: &str) -> Program {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/emit")
+            .join(name);
 
-        let tokens = lexer::lex(&full).expect("source should lex");
-        parser::parse(tokens).expect("source should parse")
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read fixture {}: {error}", path.display()));
+
+        let tokens = lexer::lex(&source).expect("fixture should lex");
+        parser::parse(tokens).expect("fixture should parse")
     }
 
     fn find_macro<'a>(program: &'a Program, name: &str) -> &'a MacroDeclaration {
@@ -229,7 +235,7 @@ mod tests {
 
     #[test]
     fn evaluates_plain_int_emit() {
-        let program = parse_program("macro double(x: int) {\n    @emit x * 2\n}");
+        let program = parse_fixture("double.basm");
         let declaration = find_macro(&program, "double");
         let symbols = collect_symbols(&program).unwrap();
         let consts = HashMap::new();
@@ -245,10 +251,7 @@ mod tests {
 
     #[test]
     fn evaluates_struct_emit_with_named_args() {
-        let program = parse_program(
-            "struct Reg {\n    id: int,\n    width: int\n}\n\n\
-             macro make_reg(v: int) {\n    @emit Reg(id=0, width=v)\n}",
-        );
+        let program = parse_fixture("make_reg_named.basm");
 
         let declaration = find_macro(&program, "make_reg");
         let symbols = collect_symbols(&program).unwrap();
@@ -276,10 +279,7 @@ mod tests {
 
     #[test]
     fn evaluates_struct_emit_with_positional_args() {
-        let program = parse_program(
-            "struct Reg {\n    id: int,\n    width: int\n}\n\n\
-             macro make_reg(v: int) {\n    @emit Reg(0, v)\n}",
-        );
+        let program = parse_fixture("make_reg_positional.basm");
 
         let declaration = find_macro(&program, "make_reg");
         let symbols = collect_symbols(&program).unwrap();
@@ -307,10 +307,7 @@ mod tests {
 
     #[test]
     fn evaluates_member_access_on_struct_valued_scope_entry() {
-        let program = parse_program(
-            "struct Reg {\n    id: int,\n    width: int\n}\n\n\
-             macro read_id(dst: Reg) {\n    @emit dst.id\n}",
-        );
+        let program = parse_fixture("read_id.basm");
 
         let declaration = find_macro(&program, "read_id");
         let symbols = collect_symbols(&program).unwrap();
@@ -338,10 +335,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_field_name() {
-        let program = parse_program(
-            "struct Reg {\n    id: int,\n    width: int\n}\n\n\
-             macro bad(v: int) {\n    @emit Reg(idx=0, width=v)\n}",
-        );
+        let program = parse_fixture("unknown_field.basm");
 
         let declaration = find_macro(&program, "bad");
         let symbols = collect_symbols(&program).unwrap();
@@ -359,10 +353,7 @@ mod tests {
 
     #[test]
     fn rejects_wrong_arity() {
-        let program = parse_program(
-            "struct Reg {\n    id: int,\n    width: int\n}\n\n\
-             macro bad(v: int) {\n    @emit Reg(v)\n}",
-        );
+        let program = parse_fixture("wrong_arity.basm");
 
         let declaration = find_macro(&program, "bad");
         let symbols = collect_symbols(&program).unwrap();
@@ -380,7 +371,7 @@ mod tests {
 
     #[test]
     fn rejects_non_struct_callee() {
-        let program = parse_program("macro bad(v: int) {\n    @emit int(v)\n}");
+        let program = parse_fixture("non_struct_callee.basm");
 
         let declaration = find_macro(&program, "bad");
         let symbols = collect_symbols(&program).unwrap();
