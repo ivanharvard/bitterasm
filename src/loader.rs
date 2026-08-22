@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use crate::ast::{Expr, Facet, FacetPayload, ImportItems, ImportStatement, ModulePath, Program, Statement};
 use crate::lexer;
-use crate::parser::{self, GenericParamKind};
+use crate::parser::{self, ParserSeed};
 use crate::token::Span;
 use crate::types::{GenericParameter, TypeArgument, TypeExpr};
 
@@ -94,15 +94,17 @@ struct LoadedModule {
     statements: Vec<Statement>,
     span: Span,
 
-    // Signatures visible by the end of this file: its own struct/type-alias
-    // declarations plus everything transitively pulled in by its own
-    // imports. Handed to files that import this module, so they can parse
-    // `bits<width>`-shaped usages correctly without the declaration itself
-    // being textually present. Private (non-pub) signatures declared by
-    // this file itself are filtered out before caching, since a name an
-    // importer can never write shouldn't shadow how they interpret an
-    // unrelated same-named generic of their own.
-    signatures: HashMap<String, Vec<GenericParamKind>>,
+    // Generic signatures and macro syntax patterns visible by the end of
+    // this file: its own struct/type-alias/macro declarations plus
+    // everything transitively pulled in by its own imports. Handed to
+    // files that import this module, so they can parse `bits<width>`-shaped
+    // usages, and custom-syntax macro invocations, correctly without the
+    // declaration itself being textually present. Private (non-pub)
+    // declarations from this file are filtered out of both maps before
+    // caching, since a name an importer can never write shouldn't shadow
+    // how they interpret an unrelated same-named generic/macro of their
+    // own.
+    seed: ParserSeed,
 
     // Stable, unique-per-module id assigned the first time this module is
     // loaded. Used to mangle its private declarations into names that can't
@@ -173,15 +175,17 @@ fn load_module(
 
     stack.push(path.to_path_buf());
 
-    let mut seed: HashMap<String, Vec<GenericParamKind>> = HashMap::new();
+    let mut seed = ParserSeed::default();
 
     for import in &imports {
         let child_path = resolve_module_path(&import.module, path)?;
         load_module(&child_path, cache, stack)?;
-        seed.extend(cache[&child_path].signatures.clone());
+        let child_seed = &cache[&child_path].seed;
+        seed.generic_signatures.extend(child_seed.generic_signatures.clone());
+        seed.macro_syntaxes.extend(child_seed.macro_syntaxes.clone());
     }
 
-    let (program, mut signatures) = parser::parse_seeded(tokens, &seed).map_err(|error| {
+    let (program, mut seed) = parser::parse_seeded(tokens, &seed).map_err(|error| {
         LoadError::Parse {
             path: path.to_path_buf(),
             message: error.to_string(),
@@ -196,11 +200,13 @@ fn load_module(
         .filter_map(|statement| match statement {
             Statement::Struct(decl) if !decl.is_pub => Some(decl.name.as_str()),
             Statement::TypeAlias(decl) if !decl.is_pub => Some(decl.name.as_str()),
+            Statement::Macro(decl) if !decl.is_pub => Some(decl.name.as_str()),
             _ => None,
         })
         .collect();
 
-    signatures.retain(|name, _| !own_private_names.contains(name.as_str()));
+    seed.generic_signatures.retain(|name, _| !own_private_names.contains(name.as_str()));
+    seed.macro_syntaxes.retain(|name, _| !own_private_names.contains(name.as_str()));
 
     let module_id = cache.len();
 
@@ -209,7 +215,7 @@ fn load_module(
         LoadedModule {
             statements: program.statements,
             span: program.span,
-            signatures,
+            seed,
             module_id,
         },
     );

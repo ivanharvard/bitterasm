@@ -9,6 +9,13 @@
 //! collect every declaration's generic signature before parsing it for
 //! real; [`crate::loader`] handles the second by threading signatures
 //! collected from one file's [`parse_seeded`] call into the next as a seed.
+//!
+//! A macro's `syntax` facet (see [`crate::facets::syntax`]) needs the exact
+//! same treatment: matching a call site against a custom pattern requires
+//! already knowing that pattern, possibly from later in this file or from
+//! another file entirely, so [`ParserSeed`] carries `macro_syntaxes`
+//! alongside `generic_signatures` through the same prepass and the same
+//! cross-file threading in [`crate::loader`].
 
 use std::collections::HashMap;
 use std::fmt;
@@ -19,6 +26,7 @@ use crate::ast::{
     Program, Statement, UnaryOp, TypeAliasDeclaration,
 };
 
+use crate::facets::syntax::SyntaxPattern;
 use crate::token::{Span, Token, TokenKind};
 use crate::types::{GenericParameter, StructField, TypeExpr, TypeArgument};
 
@@ -28,6 +36,7 @@ mod type_exprs;
 mod declarations;
 mod macros;
 mod facets;
+mod invocation_syntax;
 
 #[cfg(test)]
 mod tests;
@@ -49,30 +58,51 @@ mod tests;
 /// assert_eq!(program.statements.len(), 1);
 /// ```
 pub fn parse(tokens: Vec<Token>) -> Result<Program, ParseError> {
-    parse_seeded(tokens, &HashMap::new()).map(|(program, _)| program)
+    parse_seeded(tokens, &ParserSeed::default()).map(|(program, _)| program)
 }
 
-/// Parses `tokens`, treating `seed` as generic signatures known in advance
-/// (e.g. struct/type-alias signatures pulled in from imported modules, whose
-/// declarations aren't textually present in this token stream). Returns the
-/// full set of signatures visible by the end of the file (seed plus whatever
-/// this file declared itself), so callers can pass it on to files that import
-/// *this* one in turn.
+/// What the same-file prepass discovers, threaded across files the same
+/// way: `generic_signatures` (struct/type-alias generic signatures) and
+/// `macro_syntaxes` (custom call-site patterns from a `syntax` facet) are
+/// unrelated key spaces produced by different declarations, but both are
+/// needed *before* the rest of a file can be parsed for real, so both ride
+/// through [`parse_seeded`]/[`crate::loader`] together as one seed value
+/// rather than two parallel maps that always have to move in lockstep.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ParserSeed {
+    pub generic_signatures: HashMap<String, Vec<GenericParamKind>>,
+    pub macro_syntaxes: HashMap<String, SyntaxPattern>,
+}
+
+/// Parses `tokens`, treating `seed` as generic signatures and macro syntax
+/// patterns known in advance (e.g. pulled in from imported modules, whose
+/// declarations aren't textually present in this token stream). Returns
+/// everything visible by the end of the file (seed plus whatever this file
+/// declared itself), so callers can pass it on to files that import *this*
+/// one in turn.
 pub(crate) fn parse_seeded(
     tokens: Vec<Token>,
-    seed: &HashMap<String, Vec<GenericParamKind>>,
-) -> Result<(Program, HashMap<String, Vec<GenericParamKind>>), ParseError> {
+    seed: &ParserSeed,
+) -> Result<(Program, ParserSeed), ParseError> {
     // dummy pass to collect signatures
     let mut prepass = Parser::new(tokens.clone());
-    prepass.generic_signatures.extend(seed.clone());
+    prepass.generic_signatures.extend(seed.generic_signatures.clone());
+    prepass.macro_syntaxes.extend(seed.macro_syntaxes.clone());
     let _ = prepass.parse_program();
 
     let mut parser = Parser::new(tokens);
     parser.generic_signatures = prepass.generic_signatures;
+    parser.macro_syntaxes = prepass.macro_syntaxes;
 
     let program = parser.parse_program()?;
 
-    Ok((program, parser.generic_signatures))
+    Ok((
+        program,
+        ParserSeed {
+            generic_signatures: parser.generic_signatures,
+            macro_syntaxes: parser.macro_syntaxes,
+        },
+    ))
 }
 
 // Parses `tokens` leniently (ignoring errors past the first) purely to
@@ -140,6 +170,7 @@ struct Parser {
     pos: usize,
 
     generic_signatures: HashMap<String, Vec<GenericParamKind>>,
+    macro_syntaxes: HashMap<String, SyntaxPattern>,
     imports: Vec<ImportStatement>,
 
     // While parsing a generic argument expression (e.g. the `width` in
@@ -159,6 +190,7 @@ impl Parser {
             tokens,
             pos: 0,
             generic_signatures: HashMap::new(),
+            macro_syntaxes: HashMap::new(),
             imports: Vec::new(),
             restrict_closing_ops: false,
         }
@@ -177,6 +209,10 @@ impl Parser {
             name.to_string(),
             params.iter().map(GenericParamKind::from).collect(),
         );
+    }
+
+    fn register_macro_syntax(&mut self, name: &str, pattern: SyntaxPattern) {
+        self.macro_syntaxes.insert(name.to_string(), pattern);
     }
 
     // ===============

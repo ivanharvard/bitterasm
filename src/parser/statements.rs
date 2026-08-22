@@ -64,10 +64,16 @@ impl Parser {
                 }
             }
 
-            TokenKind::Identifier(_) => {
+            TokenKind::Identifier(name) => {
+                let name = name.clone();
+
                 if self.check_next(&TokenKind::Colon) {
                     Ok(Statement::Label(
                         self.parse_label()?
+                    ))
+                } else if let Some(pattern) = self.macro_syntaxes.get(&name).cloned() {
+                    Ok(Statement::Invocation(
+                        self.parse_invocation_via_syntax(&name, &pattern)?
                     ))
                 } else {
                     Ok(Statement::Invocation(

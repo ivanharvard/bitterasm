@@ -1,3 +1,5 @@
+use crate::ast::FacetPayload;
+
 use super::*;
 
 impl Parser {
@@ -67,6 +69,22 @@ impl Parser {
         let facets = self.parse_facet_list(true)?;
         let return_ty = crate::facets::extract_return_type(&facets);
         let is_pub = is_pub || crate::facets::is_pub(&facets);
+
+        if let Some(facet) = facets.iter().find(|facet| facet.name == "syntax") {
+            let FacetPayload::Expr(Expr::String { value, .. }) = &facet.payload else {
+                return Err(ParseError::new(
+                    "the `syntax` facet requires a string literal pattern",
+                    facet.span,
+                ));
+            };
+
+            let param_names: Vec<String> = params.iter().map(|param| param.name.clone()).collect();
+
+            let pattern = crate::facets::syntax::parse_pattern(&name, value, &param_names)
+                .map_err(|message| ParseError::new(message, facet.span))?;
+
+            self.register_macro_syntax(&name, pattern);
+        }
 
         self.skip_newlines();
 
