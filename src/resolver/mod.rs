@@ -8,15 +8,19 @@
 mod aliases;
 mod consts;
 mod facets;
+mod macro_body;
 mod structs;
 mod symbols;
 mod types;
+mod values;
 
 pub use aliases::AliasResolver;
 pub use consts::ConstEvaluator;
 pub use facets::validate as validate_facets;
+pub use macro_body::MacroExpansion;
 pub use symbols::*;
 pub use types::*;
+pub use values::Value;
 
 use crate::ast::{Program, Statement};
 use crate::token::Span;
@@ -140,6 +144,56 @@ pub enum ResolveError {
 
     DuplicateFacet {
         facet: String,
+        span: Span,
+    },
+
+    // `@emit`/`@return` value evaluation (`values`/`macro_body`) errors below.
+
+    InvalidArgumentCount {
+        name: String,
+        expected: usize,
+        actual: usize,
+        span: Span,
+    },
+
+    // Like `ExpectedType`, but for a value-construction callee (`Expr::Call`)
+    // that names something other than a struct — an emitted value's shape
+    // always bottoms out in a struct or an Int, nothing else is callable.
+    ExpectedStructCallee {
+        name: String,
+        span: Span,
+    },
+
+    // A `Value` was needed as an `Int` (inside arithmetic) but was a struct
+    // instead.
+    ExpectedIntValue {
+        span: Span,
+    },
+
+    // A `Value` was needed as a struct (for field access) but was an `Int`
+    // instead.
+    ExpectedStructValue {
+        span: Span,
+    },
+
+    // Like `ExpectedConstantExpression`, but for `@emit`/`@return`'s more
+    // general notion of "value" (which also allows struct construction and
+    // field access) rather than a pure `Int` expression.
+    ExpectedValueExpression {
+        span: Span,
+    },
+
+    // A macro body statement other than `@emit`/`@return` — expanding it
+    // needs macro-to-invocation binding, which doesn't exist yet.
+    UnsupportedMacroStatement {
+        kind: String,
+        span: Span,
+    },
+
+    // A value-construction call (`Expr::Call`) whose callee isn't a bare
+    // identifier — e.g. a dotted path or another call — which nothing
+    // real-world uses today.
+    UnsupportedCallExpression {
         span: Span,
     },
 

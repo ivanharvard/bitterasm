@@ -161,7 +161,7 @@ impl<'a> AliasResolver<'a> {
         }
     }
 
-    fn resolve_named_type(
+    pub(super) fn resolve_named_type(
         &mut self,
         path: &[String],
         span: Span
