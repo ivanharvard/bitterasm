@@ -11,5 +11,3 @@ pub type uint32_t = bits<32>
 
 pub type int64_t = bits<64>
 pub type uint64_t = bits<64>
-
-pub type size_t = int

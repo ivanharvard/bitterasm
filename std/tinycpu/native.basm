@@ -1,7 +1,7 @@
 from std.binary import *
 
-pub struct Reg<const width: int> {
-    id: bits<2>
+pub struct Reg<width: int> {
+    pub id: bits<2>
 }
 
 pub type Reg64 = Reg<64>
