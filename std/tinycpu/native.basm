@@ -1,6 +1,6 @@
 from std.binary import *
 from std import string
-from std.string import String
+from std.cstring import CString
 
 pub struct Reg<const width: int> {
     pub const id: bits<2>
@@ -21,7 +21,7 @@ macro make_reg64(id: bits<2>) {
 # =================
 
 macro make_binary_math_instr(
-    name: String, 
+    name: CString,
     opcode: bits<32>,
 ) {
     struct `string.title(name)`Instr {

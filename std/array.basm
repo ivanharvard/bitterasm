@@ -1,0 +1,36 @@
+pub struct Array<T, const N: int>
+    | invariant N >= 0
+{
+    @for i in 0..N {
+        pub __el`i`: T,
+    }
+
+    pub len: int = N,
+}
+
+pub macro get(arr: Array<T, ...>, index: int) -> T
+    | syntax { $arr$[$index$] }
+{
+    @assert index >= 0 && index < arr.len, "Index out of bounds"
+    @return arr.__el`index`
+}
+
+# Since all basm objects are immutable, we need to return a new array with the updated value
+pub macro updated(arr: Array<T, ...>, index: int, value: T) -> Array<T, ...>{
+    @assert index >= 0 && index < arr.len, "Index out of bounds"
+    @return Array<T, arr.len> {
+        @for i in 0..arr.len {
+            @if i == index {
+                __el`i`: value,
+            } @else {
+                __el`i`: arr.__el`i`,
+            }
+        }
+    }
+}
+
+pub macro len(arr: Array<T, ...>) -> int
+    | syntax { len($arr$) }
+{
+    @return arr.len
+}

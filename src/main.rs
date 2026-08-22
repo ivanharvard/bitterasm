@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use clap::{Parser, Subcommand};
 
 use bitterasm::ast::Statement;
+use bitterasm::resolver::{SymbolTable, Value};
 use bitterasm::{emit, eval, loader, resolver};
 
 #[derive(Parser)]
@@ -24,6 +25,12 @@ enum Command {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+
+    /// Resolve and expand a .basm program, printing what it expanded to
+    /// instead of writing a .em file — the emitted value stream `compile`
+    /// would write, plus the generated declarations `compile` can only
+    /// warn about and drop.
+    Expand { path: PathBuf },
 }
 
 fn main() {
@@ -31,10 +38,22 @@ fn main() {
 
     match cli.command {
         Command::Compile { path, output } => compile(&path, output),
+        Command::Expand { path } => expand(&path),
     }
 }
 
-fn compile(path: &Path, output: Option<PathBuf>) {
+/// The shared front half of both `compile` and `expand`: load, validate,
+/// resolve every struct/alias up front (so a broken declaration fails
+/// either command even if unreached), then expand every top-level
+/// invocation. Exits the process on the first error, same as both commands
+/// already did before this was factored out.
+struct Expansion {
+    symbols: SymbolTable,
+    emitted: Vec<Value>,
+    generated: Vec<Statement>,
+}
+
+fn resolve_and_expand(path: &Path) -> Expansion {
     let program = match loader::load_program(path) {
         Ok(program) => program,
 
@@ -76,7 +95,7 @@ fn compile(path: &Path, output: Option<PathBuf>) {
 
     // Every struct/alias in the program is resolved up front, whether or
     // not any invocation actually reaches it — a broken declaration fails
-    // the whole compile, the same way a real compiler wouldn't skip type
+    // the whole command, the same way a real compiler wouldn't skip type
     // checking an unreachable function.
     if let Err(error) = alias_resolver.resolve_all_structs() {
         eprintln!("resolver error: {error:?}");
@@ -105,14 +124,14 @@ fn compile(path: &Path, output: Option<PathBuf>) {
     // another macro) in program order, against an empty scope — nothing at
     // the top level is a bound parameter.
     let mut emitted = Vec::new();
-    let mut generated_count = 0usize;
+    let mut generated = Vec::new();
 
     for statement in &program.statements {
         if let Statement::Invocation(invocation) = statement {
             match alias_resolver.expand_invocation(invocation, &HashMap::new()) {
                 Ok(expansion) => {
-                    generated_count += expansion.generated.len();
                     emitted.extend(expansion.emitted);
+                    generated.extend(expansion.generated);
                 }
 
                 Err(error) => {
@@ -123,17 +142,26 @@ fn compile(path: &Path, output: Option<PathBuf>) {
         }
     }
 
-    if generated_count > 0 {
+    Expansion { symbols, emitted, generated }
+}
+
+fn compile(path: &Path, output: Option<PathBuf>) {
+    let expansion = resolve_and_expand(path);
+
+    if !expansion.generated.is_empty() {
         eprintln!(
-            "warning: {generated_count} declaration(s) were generated but not included in \
-             {path} — there's no pass yet to splice them back into the program",
+            "warning: {count} declaration(s) were generated but not included in {path} — \
+             there's no pass yet to splice them back into the program; run `bitterasm expand` \
+             to see them",
+            count = expansion.generated.len(),
             path = path.display(),
         );
     }
 
-    let emitted: Vec<emit::EmittedValue> = emitted
+    let emitted: Vec<emit::EmittedValue> = expansion
+        .emitted
         .iter()
-        .map(|value| emit::reify_value(&symbols, value))
+        .map(|value| emit::reify_value(&expansion.symbols, value))
         .collect();
 
     let json = match serde_json::to_string_pretty(&emitted) {
@@ -157,4 +185,26 @@ fn compile(path: &Path, output: Option<PathBuf>) {
         emitted.len(),
         output_path.display()
     );
+}
+
+fn expand(path: &Path) {
+    let expansion = resolve_and_expand(path);
+
+    let emitted: Vec<emit::EmittedValue> = expansion
+        .emitted
+        .iter()
+        .map(|value| emit::reify_value(&expansion.symbols, value))
+        .collect();
+
+    let json = match serde_json::to_string_pretty(&emitted) {
+        Ok(json) => json,
+
+        Err(error) => {
+            eprintln!("serialization error: {error}");
+            std::process::exit(1);
+        }
+    };
+
+    println!("emitted values:\n{json}");
+    println!("generated declarations:\n{:#?}", expansion.generated);
 }

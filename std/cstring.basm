@@ -1,0 +1,59 @@
+from std.array import *
+from std.ctypes import uint8_t
+
+pub struct CString {
+    pub chars: Array<uint8_t, ...>,
+}
+
+pub macro string(s: str) -> CString
+    | syntax { "$s$" }
+{
+    @return CString {
+        chars: Array<u8, len(s)> {
+            @for i in 0..len(s) {
+                __el`i`: s[i],
+            }
+        }
+    }
+}
+
+pub macro string_len(s: CString) -> int
+    | syntax { len($s$) }
+{
+    @return len(s.chars)
+}
+
+pub macro string_get(s: CString, index: int) -> u8
+    | syntax { $s$[$index$] }
+{
+    @return s.chars[index]
+}
+
+pub macro string_updated(s: CString, index: int, value: u8)
+{
+    @return CString {
+        chars: updated(s.chars, index, value),
+    }
+}
+
+# =========================
+# CString helpers
+# =========================
+
+pub macro title(s: CString) -> CString {
+    @return CString {
+        chars: Array<u8, len(s.chars)> {
+            @for i in 0..len(s.chars) {
+                @if i == 0 {
+                    @if s.chars[i] >= 97 && s.chars[i] <= 122 {
+                        __el`i`: s.chars[i] - 32,
+                    } @else {
+                        __el`i`: s.chars[i],
+                    }
+                } @else {
+                    __el`i`: s.chars[i],
+                }
+            }
+        }
+    }
+}
