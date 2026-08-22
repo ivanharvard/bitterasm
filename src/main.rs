@@ -1,11 +1,13 @@
 use std::collections::HashMap;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 
 use bitterasm::ast::Statement;
+use bitterasm::expander::MacroTable;
 use bitterasm::resolver::{SymbolTable, Value};
-use bitterasm::{emit, eval, loader, resolver};
+use bitterasm::{emit, eval, expander, lexer, loader, parser, resolver};
 
 #[derive(Parser)]
 #[command(name = "bitterasm", version, about = "Compiler for BitterASM")]
@@ -26,11 +28,32 @@ enum Command {
         output: Option<PathBuf>,
     },
 
-    /// Resolve and expand a .basm program, printing what it expanded to
-    /// instead of writing a .em file — the emitted value stream `compile`
-    /// would write, plus the generated declarations `compile` can only
-    /// warn about and drop.
-    Expand { path: PathBuf },
+    /// Paste every macro invocation's body in place of its call, leaving
+    /// everything else — `@emit`, `@return`, the rest of the file — exactly
+    /// as written. Purely syntactic: nothing is evaluated or resolved, so
+    /// this is closer to `cargo expand` than to `compile`.
+    Expand {
+        path: PathBuf,
+
+        /// How many rounds of substitution to perform per invocation;
+        /// omit for fully recursive expansion.
+        #[arg(short, long)]
+        depth: Option<usize>,
+
+        /// Only expand invocations within this 1-indexed, inclusive line
+        /// range (e.g. `10-15`); everything else is left untouched.
+        #[arg(long, value_name = "START-END", conflicts_with = "chars")]
+        lines: Option<String>,
+
+        /// Only expand invocations within this byte-offset range (e.g.
+        /// `120-180`); everything else is left untouched.
+        #[arg(long, value_name = "START-END", conflicts_with = "lines")]
+        chars: Option<String>,
+
+        /// Defaults to printing to stdout.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }
 
 fn main() {
@@ -38,7 +61,10 @@ fn main() {
 
     match cli.command {
         Command::Compile { path, output } => compile(&path, output),
-        Command::Expand { path } => expand(&path),
+
+        Command::Expand { path, depth, lines, chars, output } => {
+            expand(&path, depth, lines, chars, output)
+        }
     }
 }
 
@@ -187,24 +213,133 @@ fn compile(path: &Path, output: Option<PathBuf>) {
     );
 }
 
-fn expand(path: &Path) {
-    let expansion = resolve_and_expand(path);
-
-    let emitted: Vec<emit::EmittedValue> = expansion
-        .emitted
-        .iter()
-        .map(|value| emit::reify_value(&expansion.symbols, value))
-        .collect();
-
-    let json = match serde_json::to_string_pretty(&emitted) {
-        Ok(json) => json,
+fn expand(
+    path: &Path,
+    depth: Option<usize>,
+    lines: Option<String>,
+    chars: Option<String>,
+    output: Option<PathBuf>,
+) {
+    let source = match std::fs::read_to_string(path) {
+        Ok(source) => source,
 
         Err(error) => {
-            eprintln!("serialization error: {error}");
+            eprintln!("failed to read {}: {error}", path.display());
             std::process::exit(1);
         }
     };
 
-    println!("emitted values:\n{json}");
-    println!("generated declarations:\n{:#?}", expansion.generated);
+    // Parsed standalone, not via `loader::load_program` — that flattens
+    // every imported file into one `Program`, whose statements' spans
+    // would then point into files other than `path`'s own source. This
+    // program's spans need to mean something against `source` itself, so
+    // it's this one file's own AST, imports and all, left unresolved.
+    let tokens = match lexer::lex(&source) {
+        Ok(tokens) => tokens,
+
+        Err(error) => {
+            eprintln!("lex error: {error}");
+            std::process::exit(1);
+        }
+    };
+
+    let program = match parser::parse(tokens) {
+        Ok(program) => program,
+
+        Err(error) => {
+            eprintln!("parse error: {error:?}");
+            std::process::exit(1);
+        }
+    };
+
+    // A separate, import-resolved parse, used only to look up a macro
+    // invoked here but declared in an imported file — its own statements'
+    // spans are never used, only its `Statement::Macro` declarations.
+    let flattened = match loader::load_program(path) {
+        Ok(flattened) => flattened,
+
+        Err(error) => {
+            eprintln!("load error: {error}");
+            std::process::exit(1);
+        }
+    };
+
+    let table = MacroTable::from_program(&flattened);
+    let depth = depth.unwrap_or(usize::MAX);
+
+    let range = match (lines, chars) {
+        (Some(lines), None) => match parse_range(&lines) {
+            Ok((start, end)) => Some(line_range_to_bytes(&source, start, end)),
+
+            Err(message) => {
+                eprintln!("invalid --lines: {message}");
+                std::process::exit(1);
+            }
+        },
+
+        (None, Some(chars)) => match parse_range(&chars) {
+            Ok((start, end)) => Some(start..end),
+
+            Err(message) => {
+                eprintln!("invalid --chars: {message}");
+                std::process::exit(1);
+            }
+        },
+
+        (None, None) => None,
+
+        (Some(_), Some(_)) => unreachable!("clap's conflicts_with rules out --lines and --chars together"),
+    };
+
+    let expanded = expander::expand_source(&source, &program, &table, depth, range);
+
+    match output {
+        Some(output_path) => {
+            if let Err(error) = std::fs::write(&output_path, expanded) {
+                eprintln!("failed to write {}: {error}", output_path.display());
+                std::process::exit(1);
+            }
+        }
+
+        None => print!("{expanded}"),
+    }
+}
+
+fn parse_range(spec: &str) -> Result<(usize, usize), String> {
+    let (start, end) = spec
+        .split_once('-')
+        .ok_or_else(|| format!("expected `START-END`, found `{spec}`"))?;
+
+    let start: usize = start
+        .parse()
+        .map_err(|_| format!("`{start}` isn't a valid start"))?;
+
+    let end: usize = end.parse().map_err(|_| format!("`{end}` isn't a valid end"))?;
+
+    if start > end {
+        return Err(format!("start ({start}) is after end ({end})"));
+    }
+
+    Ok((start, end))
+}
+
+/// Converts a 1-indexed, inclusive line range into a byte range against
+/// `source` — the start of `start_line` through the start of the line
+/// after `end_line` (or end-of-file, if `end_line` is the last line).
+fn line_range_to_bytes(source: &str, start_line: usize, end_line: usize) -> Range<usize> {
+    let mut line_starts = vec![0usize];
+
+    for (index, ch) in source.char_indices() {
+        if ch == '\n' {
+            line_starts.push(index + 1);
+        }
+    }
+
+    line_starts.push(source.len());
+
+    let last = line_starts.len() - 1;
+    let start_index = start_line.saturating_sub(1).min(last);
+    let end_index = end_line.min(last).max(start_index);
+
+    line_starts[start_index]..line_starts[end_index]
 }

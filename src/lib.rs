@@ -26,9 +26,11 @@
 
 pub mod ast;
 pub mod emit;
+pub mod expander;
 pub mod lexer;
 pub mod token;
 pub mod parser;
+pub mod printer;
 pub mod types;
 pub mod resolver;
 pub mod loader;
