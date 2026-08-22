@@ -4,6 +4,8 @@ pub struct bits<const width: int>
     value: int
 }
 
+const BITS_PER_BYTE: int = 8
+
 type bool = bits<1>
 
 pub macro fits_inside_width(width: int, value: int) -> bool
