@@ -1,5 +1,5 @@
 [workspace]
-members = ["bitter", "tests/riscv/decoder"]
+members = ["bitter"]
 
 [package]
 name = "bitterasm"

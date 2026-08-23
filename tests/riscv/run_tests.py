@@ -1,32 +1,31 @@
 #!/usr/bin/env python3
-"""Cross-checks std/riscv/native.basm against two independently-sourced
-oracles: a hand-written Python reference encoder, and an existing,
-external RV32I decoder crate.
+"""Cross-checks std/riscv/native.basm — through the real bitterasm -> bitter
+pipeline — against a single independent oracle: GNU binutils' RISC-V
+assembler, run inside a Docker container (tests/riscv/docker/), an
+existing, independently-maintained "official" encoder this project didn't
+write and shares no code with.
 
-For each tests/riscv/cases/*.s file (plain RISC-V assembly text — no
-labels or directives, one instruction per line, '#' comments) this:
+For each tests/riscv/cases/*.s file (plain RISC-V assembly text — '#'
+comments, one instruction per line, real `label:` lines allowed) this:
 
 1. Builds a derived .basm by prepending `from std.riscv.native import *`
    to the file's own text, unchanged otherwise — the .s file itself stays
-   valid, ordinary-looking assembly.
-2. Compiles that with `bitterasm compile` and packs the resulting .em's
-   emitted values with packer.py — a generic bits<N>-field concatenator
-   standing in for bitter's own (still unbuilt) encoder.
-3. Independently encodes the *original* .s file's text with reference.py,
-   an RV32I encoder written directly from the ISA spec, sharing no code
-   with std/riscv/native.basm — and compares word-for-word.
-4. Separately decodes bitterasm's own words with decoder.py (a thin
-   wrapper over the `riscv-decode` crate — existing, external, not written
-   for this project) and checks the decoded fields match what the source
-   line actually asked for.
+   valid, ordinary-looking assembly, and a `label:` line is valid BitterASM
+   syntax too (`ast::Statement::Label`), so it needs no translation either
+   way.
+2. Compiles that with `bitterasm compile`, then packs the resulting .em's
+   emitted values into raw little-endian machine-code bytes with `bitter
+   encode` — the actual encoder under test.
+3. Independently assembles the *original* .s file's text, whole, with the
+   Docker oracle (see docker/assemble.sh) and compares the two raw byte
+   streams word-for-word. Real labels only, not raw-literal branch/jump
+   offsets — see assemble.sh's own doc comment for why a bare literal
+   can no longer agree with this oracle at all now that
+   std/riscv/native.basm's branch/jump macros take a target *instruction*
+   rather than a raw byte delta.
 
-An early version of this suite tried a *third*-party crate,
-`riscv_assembler`, as the reference encoder instead of reference.py. It
-turned out to have real bugs — non-standard LUI semantics and an
-absolute-vs-relative mixup for branch/jump immediates — caught by
-cross-checking it against riscv-decode. Existing isn't the same as
-correct; both checks below stay because agreeing with a genuinely
-independent implementation is what actually catches something.
+Requires Docker; this builds the oracle image itself (cached by Docker
+after the first run) from tests/riscv/docker/.
 
 Usage: python3 tests/riscv/run_tests.py
 """
@@ -34,21 +33,29 @@ Usage: python3 tests/riscv/run_tests.py
 from __future__ import annotations
 
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
 
-import decoder
-import packer
-import reference
-
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 CASES_DIR = pathlib.Path(__file__).resolve().parent / "cases"
+DOCKER_DIR = pathlib.Path(__file__).resolve().parent / "docker"
 BITTERASM_BIN = REPO_ROOT / "target" / "debug" / "bitterasm"
+BITTER_BIN = REPO_ROOT / "target" / "debug" / "bitter"
+ORACLE_IMAGE = "bitterasm-riscv-oracle"
 
 
 def build_bitterasm() -> None:
     subprocess.run(["cargo", "build", "--bin", "bitterasm"], cwd=REPO_ROOT, check=True)
+
+
+def build_bitter() -> None:
+    subprocess.run(["cargo", "build", "--package", "bitter"], cwd=REPO_ROOT, check=True)
+
+
+def build_oracle_image() -> None:
+    subprocess.run(["docker", "build", "-t", ORACLE_IMAGE, str(DOCKER_DIR)], check=True)
 
 
 def compile_case(source_path: pathlib.Path, workdir: pathlib.Path) -> pathlib.Path:
@@ -73,65 +80,87 @@ def compile_case(source_path: pathlib.Path, workdir: pathlib.Path) -> pathlib.Pa
     return em_path
 
 
+def encode_case(em_path: pathlib.Path, workdir: pathlib.Path) -> list[int]:
+    bin_path = workdir / (em_path.stem + ".bin")
+
+    result = subprocess.run(
+        [str(BITTER_BIN), "encode", str(em_path), "-o", str(bin_path)],
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(f"bitter encode failed for {em_path.name}:\n{result.stderr}")
+
+    # RV32I words are 32 bits, little-endian — `bitter encode`'s default
+    # byte order (see bitter/src/pack.rs) and the target ISA's actual one.
+    data = bin_path.read_bytes()
+    return [int.from_bytes(data[i : i + 4], "little") for i in range(0, len(data), 4)]
+
+
+def official_encode(source_path: pathlib.Path) -> list[int]:
+    with source_path.open("rb") as source:
+        result = subprocess.run(
+            ["docker", "run", "--rm", "-i", ORACLE_IMAGE],
+            stdin=source,
+            capture_output=True,
+        )
+
+    if result.returncode != 0:
+        stderr = result.stderr.decode(errors="replace")
+        raise RuntimeError(f"official encoder failed for {source_path.name}:\n{stderr}")
+
+    data = result.stdout
+    return [int.from_bytes(data[i : i + 4], "little") for i in range(0, len(data), 4)]
+
+
+_LABEL_LINE = re.compile(r"^\w+\s*:$")
+
+
+def _instruction_lines(text: str) -> list[str]:
+    # A bare `label:` line is zero-width on both sides (no `@emit`, no
+    # assembled bytes) — excluded here so the remaining lines stay in
+    # exact 1:1 correspondence with the word streams being compared.
+    lines = []
+
+    for line in text.splitlines():
+        content = line.split("#", 1)[0].strip()
+
+        if content and not _LABEL_LINE.match(content):
+            lines.append(line)
+
+    return lines
+
+
 def run_case(source_path: pathlib.Path, workdir: pathlib.Path) -> list[str]:
     em_path = compile_case(source_path, workdir)
-    actual_words = packer.pack_file(str(em_path))
-    expected_words = reference.encode_file(str(source_path))
-
-    parsed = [
-        (line, reference.parse_line(line))
-        for line in source_path.read_text().splitlines()
-        if reference.parse_line(line) is not None
-    ]
+    actual_words = encode_case(em_path, workdir)
+    expected_words = official_encode(source_path)
+    lines = _instruction_lines(source_path.read_text())
 
     failures = []
 
     if len(actual_words) != len(expected_words):
         failures.append(
-            f"{source_path.name}: bitterasm emitted {len(actual_words)} value(s), "
-            f"reference expected {len(expected_words)}"
+            f"{source_path.name}: bitter encoded {len(actual_words)} word(s), "
+            f"official encoder produced {len(expected_words)}"
         )
         return failures
 
-    for (line, _parsed), actual, expected in zip(parsed, actual_words, expected_words):
+    for line, actual, expected in zip(lines, actual_words, expected_words):
         if actual != expected:
             failures.append(
                 f"{source_path.name}: {line.strip()!r} -> "
-                f"bitterasm 0x{actual:08x}, reference.py 0x{expected:08x}"
+                f"bitter 0x{actual:08x}, official encoder 0x{expected:08x}"
             )
-
-    # Second, differently-sourced check: decode bitterasm's own words with
-    # an external crate and confirm the fields it reports match what the
-    # line actually asked for — catches a bug reference.py might share
-    # with std/riscv/native.basm (both being this project's own code),
-    # since riscv-decode is neither.
-    decoded = decoder.decode_words(actual_words)
-
-    for (line, parsed_line), decoding in zip(parsed, decoded):
-        mnemonic, operands = parsed_line
-        mnemonic = mnemonic.lower()
-        expected_fields = reference.expected_fields(mnemonic, operands)
-
-        if decoding.get("mnemonic") != mnemonic:
-            failures.append(
-                f"{source_path.name}: {line.strip()!r} -> riscv-decode read it back as "
-                f"{decoding.get('mnemonic')!r}, not {mnemonic!r}"
-            )
-            continue
-
-        for field, expected_value in expected_fields.items():
-            if decoding.get(field) != expected_value:
-                failures.append(
-                    f"{source_path.name}: {line.strip()!r} -> riscv-decode's {field}="
-                    f"{decoding.get(field)}, expected {expected_value}"
-                )
 
     return failures
 
 
 def main() -> int:
     build_bitterasm()
-    decoder.build()
+    build_bitter()
+    build_oracle_image()
 
     case_files = sorted(CASES_DIR.glob("*.s"))
     if not case_files:
@@ -145,9 +174,7 @@ def main() -> int:
         workdir = pathlib.Path(tmp)
 
         for case_file in case_files:
-            instruction_count = sum(
-                1 for line in case_file.read_text().splitlines() if reference.parse_line(line) is not None
-            )
+            instruction_count = len(_instruction_lines(case_file.read_text()))
             total_instructions += instruction_count
 
             try:
