@@ -27,6 +27,7 @@ impl Parser {
 
         if self.check(&TokenKind::Less) {
             self.advance();
+            self.skip_newlines();
 
             let mut args = Vec::new();
 
@@ -51,9 +52,11 @@ impl Parser {
 
                 args.push(self.parse_type_argument(expected_kind)?);
                 index += 1;
+                self.skip_newlines();
 
                 if self.check(&TokenKind::Comma) {
                     self.advance();
+                    self.skip_newlines();
                     continue;
                 }
 
@@ -137,6 +140,7 @@ impl Parser {
         }
 
         self.advance();
+        self.skip_newlines();
 
         if self.check(&TokenKind::Greater) {
             return Err(ParseError::new(
@@ -188,8 +192,11 @@ impl Parser {
                 }
             }
 
+            self.skip_newlines();
+
             if self.check(&TokenKind::Comma) {
                 self.advance();
+                self.skip_newlines();
                 continue;
             }
 

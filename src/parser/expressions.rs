@@ -348,15 +348,18 @@ impl Parser {
         let start = callee.span().start;
 
         self.expect_simple(TokenKind::LParen)?;
+        self.skip_newlines();
 
         let mut arguments = Vec::new();
 
         if !self.check(&TokenKind::RParen) {
             loop {
                 arguments.push(self.parse_call_argument()?);
+                self.skip_newlines();
 
                 if self.check(&TokenKind::Comma) {
                     self.advance();
+                    self.skip_newlines();
 
                     if self.check(&TokenKind::RParen) {
                         // Allow:

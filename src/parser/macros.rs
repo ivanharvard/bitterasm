@@ -52,15 +52,19 @@ impl Parser {
         let name = self.expect_identifier()?;
 
         self.expect_simple(TokenKind::LParen)?;
+        self.skip_newlines();
 
         let mut params = Vec::new();
 
         if !self.check(&TokenKind::RParen) {
             params.push(self.parse_macro_parameter()?);
+            self.skip_newlines();
 
             while self.check(&TokenKind::Comma) {
                 self.advance();
+                self.skip_newlines();
                 params.push(self.parse_macro_parameter()?);
+                self.skip_newlines();
             }
         }
 

@@ -242,6 +242,52 @@ fn parses_function_call() {
 }
 
 #[test]
+fn parses_call_arguments_spanning_multiple_lines() {
+    let program = parse(
+        lex("mov r1, foo(\n    1,\n    2,\n)\n").unwrap(),
+    )
+    .unwrap();
+
+    let Statement::Invocation(invocation) = &program.statements[0] else {
+        panic!("expected invocation");
+    };
+
+    let Expr::Call { arguments, .. } = &invocation.operands[1] else {
+        panic!("expected call");
+    };
+
+    assert_eq!(arguments.len(), 2);
+}
+
+#[test]
+fn parses_macro_parameters_spanning_multiple_lines() {
+    let program = parse(
+        lex("macro foo(\n    a: int,\n    b: int\n) {\n    @emit a\n}\n").unwrap(),
+    )
+    .unwrap();
+
+    let Statement::Macro(decl) = &program.statements[0] else {
+        panic!("expected macro declaration");
+    };
+
+    assert_eq!(decl.params.len(), 2);
+}
+
+#[test]
+fn parses_generic_arguments_spanning_multiple_lines() {
+    let program = parse(
+        lex("const x: Reg<\n    64\n> = 1\n").unwrap(),
+    )
+    .unwrap();
+
+    let Statement::Const(decl) = &program.statements[0] else {
+        panic!("expected const declaration");
+    };
+
+    assert!(decl.ty.is_some());
+}
+
+#[test]
 fn parses_named_arguments() {
     let program =
         parse(lex("mov r1, Reg(id = 7)\n").unwrap()).unwrap();
