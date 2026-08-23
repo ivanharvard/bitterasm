@@ -199,6 +199,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "riscv-decode"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68b59d645e392e041ad18f5e529ed13242d8405c66bb192f59703ea2137017d0"
+
+[[package]]
+name = "riscv_decode_check"
+version = "0.1.0"
+dependencies = [
+ "riscv-decode",
+]
+
+[[package]]
 name = "serde"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"

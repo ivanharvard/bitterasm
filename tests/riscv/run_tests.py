@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Cross-checks std/riscv/native.basm against an independent Python RV32I
-reference encoder.
+"""Cross-checks std/riscv/native.basm against two independently-sourced
+oracles: a hand-written Python reference encoder, and an existing,
+external RV32I decoder crate.
 
 For each tests/riscv/cases/*.s file (plain RISC-V assembly text — no
 labels or directives, one instruction per line, '#' comments) this:
@@ -13,8 +14,19 @@ labels or directives, one instruction per line, '#' comments) this:
    standing in for bitter's own (still unbuilt) encoder.
 3. Independently encodes the *original* .s file's text with reference.py,
    an RV32I encoder written directly from the ISA spec, sharing no code
-   with std/riscv/native.basm.
-4. Compares the two word-for-word.
+   with std/riscv/native.basm — and compares word-for-word.
+4. Separately decodes bitterasm's own words with decoder.py (a thin
+   wrapper over the `riscv-decode` crate — existing, external, not written
+   for this project) and checks the decoded fields match what the source
+   line actually asked for.
+
+An early version of this suite tried a *third*-party crate,
+`riscv_assembler`, as the reference encoder instead of reference.py. It
+turned out to have real bugs — non-standard LUI semantics and an
+absolute-vs-relative mixup for branch/jump immediates — caught by
+cross-checking it against riscv-decode. Existing isn't the same as
+correct; both checks below stay because agreeing with a genuinely
+independent implementation is what actually catches something.
 
 Usage: python3 tests/riscv/run_tests.py
 """
@@ -26,6 +38,7 @@ import subprocess
 import sys
 import tempfile
 
+import decoder
 import packer
 import reference
 
@@ -65,8 +78,10 @@ def run_case(source_path: pathlib.Path, workdir: pathlib.Path) -> list[str]:
     actual_words = packer.pack_file(str(em_path))
     expected_words = reference.encode_file(str(source_path))
 
-    lines = [
-        line for line in source_path.read_text().splitlines() if reference.parse_line(line) is not None
+    parsed = [
+        (line, reference.parse_line(line))
+        for line in source_path.read_text().splitlines()
+        if reference.parse_line(line) is not None
     ]
 
     failures = []
@@ -78,18 +93,45 @@ def run_case(source_path: pathlib.Path, workdir: pathlib.Path) -> list[str]:
         )
         return failures
 
-    for line, actual, expected in zip(lines, actual_words, expected_words):
+    for (line, _parsed), actual, expected in zip(parsed, actual_words, expected_words):
         if actual != expected:
             failures.append(
                 f"{source_path.name}: {line.strip()!r} -> "
-                f"bitterasm 0x{actual:08x}, reference 0x{expected:08x}"
+                f"bitterasm 0x{actual:08x}, reference.py 0x{expected:08x}"
             )
+
+    # Second, differently-sourced check: decode bitterasm's own words with
+    # an external crate and confirm the fields it reports match what the
+    # line actually asked for — catches a bug reference.py might share
+    # with std/riscv/native.basm (both being this project's own code),
+    # since riscv-decode is neither.
+    decoded = decoder.decode_words(actual_words)
+
+    for (line, parsed_line), decoding in zip(parsed, decoded):
+        mnemonic, operands = parsed_line
+        mnemonic = mnemonic.lower()
+        expected_fields = reference.expected_fields(mnemonic, operands)
+
+        if decoding.get("mnemonic") != mnemonic:
+            failures.append(
+                f"{source_path.name}: {line.strip()!r} -> riscv-decode read it back as "
+                f"{decoding.get('mnemonic')!r}, not {mnemonic!r}"
+            )
+            continue
+
+        for field, expected_value in expected_fields.items():
+            if decoding.get(field) != expected_value:
+                failures.append(
+                    f"{source_path.name}: {line.strip()!r} -> riscv-decode's {field}="
+                    f"{decoding.get(field)}, expected {expected_value}"
+                )
 
     return failures
 
 
 def main() -> int:
     build_bitterasm()
+    decoder.build()
 
     case_files = sorted(CASES_DIR.glob("*.s"))
     if not case_files:

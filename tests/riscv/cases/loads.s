@@ -1,6 +1,6 @@
 # I-type: loads
-lb t0, 0(sp)
-lh t1, 4(sp)
-lw t2, -8(sp)
-lbu t3, 1(gp)
+lb t0, 987(sp)
+lh t1, -654(sp)
+lw t2, 1685(sp)
+lbu t3, -1370(gp)
 lhu t4, 2047(gp)

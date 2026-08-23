@@ -220,6 +220,60 @@ def encode(mnemonic: str, operands: list[str]) -> int:
     raise ValueError(f"unknown mnemonic {mnemonic!r}")
 
 
+def expected_fields(mnemonic: str, operands: list[str]) -> dict[str, int]:
+    """The decoded fields a correct encoding of this line should have,
+    keyed the same way decoder/src/main.rs prints them — used to check a
+    word decoded by the external `riscv-decode` crate against what this
+    line actually asked for, independently of whether `encode` above
+    agrees (it's the same operand-shape logic, but a different question:
+    "did the bits round-trip", not "do two encoders agree bit-for-bit").
+    """
+    mnemonic = mnemonic.lower()
+
+    if mnemonic in _R:
+        rd, rs1, rs2 = operands
+        return {"rd": _reg(rd), "rs1": _reg(rs1), "rs2": _reg(rs2)}
+
+    if mnemonic in _I_ARITH:
+        rd, rs1, imm = operands
+        return {"rd": _reg(rd), "rs1": _reg(rs1), "imm": _imm(imm)}
+
+    if mnemonic in _I_SHIFT:
+        rd, rs1, shamt = operands
+        return {"rd": _reg(rd), "rs1": _reg(rs1), "shamt": _mask(_imm(shamt), 5)}
+
+    if mnemonic in _LOADS:
+        rd, offset_base = operands
+        offset, base = _split_offset(offset_base)
+        return {"rd": _reg(rd), "rs1": _reg(base), "imm": offset}
+
+    if mnemonic in _STORES:
+        rs2, offset_base = operands
+        offset, base = _split_offset(offset_base)
+        return {"rs1": _reg(base), "rs2": _reg(rs2), "imm": offset}
+
+    if mnemonic in _BRANCHES:
+        rs1, rs2, offset = operands
+        return {"rs1": _reg(rs1), "rs2": _reg(rs2), "imm": _imm(offset)}
+
+    if mnemonic in ("lui", "auipc"):
+        rd, imm = operands
+        return {"rd": _reg(rd), "imm": _mask(_imm(imm), 20)}
+
+    if mnemonic == "jal":
+        rd, offset = operands
+        return {"rd": _reg(rd), "imm": _imm(offset)}
+
+    if mnemonic == "jalr":
+        rd, rs1, offset = operands
+        return {"rd": _reg(rd), "rs1": _reg(rs1), "imm": _imm(offset)}
+
+    if mnemonic in ("ecall", "ebreak"):
+        return {}
+
+    raise ValueError(f"unknown mnemonic {mnemonic!r}")
+
+
 def _split_offset(token: str) -> tuple[int, str]:
     match = _OFFSET_PAREN.match(token)
     if not match:
