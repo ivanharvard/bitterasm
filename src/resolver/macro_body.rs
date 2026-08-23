@@ -228,6 +228,8 @@ impl<'a> AliasResolver<'a> {
                         return Ok(MacroExpansion { emitted, generated, returned: value });
                     }
 
+                    "assert" => super::metas::assert::check(self, &meta.args, &scope, meta.span)?,
+
                     other => {
                         return Err(ResolveError::UnsupportedMacroStatement {
                             kind: format!("@{other}"),
@@ -1012,5 +1014,118 @@ mod tests {
                 Value::Int(Int::from(1)),
             ]
         );
+    }
+
+    #[test]
+    fn assert_passes_silently_and_body_continues() {
+        let program = parse_fixture("assert_condition.basm");
+
+        let declaration = find_macro(&program, "double");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("double").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let result = resolver
+            .run_macro_body(symbol, declaration, vec![Value::Int(Int::from(3))], &mut stack)
+            .unwrap();
+
+        assert_eq!(
+            result,
+            MacroExpansion {
+                emitted: vec![Value::Int(Int::from(6))],
+                generated: vec![],
+                returned: None,
+            }
+        );
+    }
+
+    #[test]
+    fn assert_failure_aborts_with_no_message() {
+        let program = parse_fixture("assert_condition.basm");
+
+        let declaration = find_macro(&program, "double");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("double").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let result = resolver.run_macro_body(symbol, declaration, vec![Value::Int(Int::from(-1))], &mut stack);
+
+        assert!(matches!(result, Err(ResolveError::AssertionFailed { message: None, .. })));
+    }
+
+    #[test]
+    fn assert_failure_carries_its_message() {
+        let program = parse_fixture("assert_with_message.basm");
+
+        let declaration = find_macro(&program, "double");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("double").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let result = resolver.run_macro_body(symbol, declaration, vec![Value::Int(Int::from(0))], &mut stack);
+
+        match result {
+            Err(ResolveError::AssertionFailed { message: Some(message), .. }) => {
+                assert_eq!(message, "x must be positive");
+            }
+            other => panic!("expected an AssertionFailed with a message, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn assert_rejects_a_non_string_message() {
+        let program = parse_fixture("assert_non_string_message.basm");
+
+        let declaration = find_macro(&program, "double");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("double").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let result = resolver.run_macro_body(symbol, declaration, vec![Value::Int(Int::from(3))], &mut stack);
+
+        assert!(matches!(result, Err(ResolveError::InvalidAssertMessage { .. })));
+    }
+
+    #[test]
+    fn assert_rejects_wrong_arity() {
+        let program = parse_fixture("assert_wrong_arity.basm");
+
+        let declaration = find_macro(&program, "double");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("double").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let result = resolver.run_macro_body(symbol, declaration, vec![Value::Int(Int::from(3))], &mut stack);
+
+        assert!(matches!(
+            result,
+            Err(ResolveError::InvalidArgumentCount { expected: 2, actual: 3, .. })
+        ));
+    }
+
+    #[test]
+    fn assert_rejects_a_struct_valued_condition() {
+        let program = parse_fixture("assert_non_int_condition.basm");
+
+        let declaration = find_macro(&program, "bad");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("bad").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let result = resolver.run_macro_body(symbol, declaration, vec![Value::Int(Int::from(1))], &mut stack);
+
+        assert!(matches!(result, Err(ResolveError::ExpectedIntValue { .. })));
     }
 }

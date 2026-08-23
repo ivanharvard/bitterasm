@@ -1,0 +1,4 @@
+macro double(x: int) {
+    @assert x > 0, "message", "extra"
+    @emit x * 2
+}

@@ -1,0 +1,8 @@
+struct Reg {
+    id: int,
+    width: int
+}
+
+macro bad(v: int) {
+    @assert Reg(v, v)
+}

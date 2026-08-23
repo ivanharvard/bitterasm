@@ -9,6 +9,7 @@ mod aliases;
 mod consts;
 mod facets;
 mod macro_body;
+mod metas;
 mod structs;
 mod symbols;
 mod types;
@@ -238,6 +239,21 @@ pub enum ResolveError {
     // `CyclicTypeAlias`/`CyclicConstant`'s shape.
     CyclicMacroExpansion {
         cycle: Vec<String>,
+        span: Span,
+    },
+
+    // `@assert`'s condition (see `metas::assert`) evaluated to `0` —
+    // falsy, under the language's `0`/`1` `Int` convention for booleans
+    // (`crate::eval`'s module doc). `message` is the assertion's own
+    // optional second argument, not a description this error invents.
+    AssertionFailed {
+        message: Option<String>,
+        span: Span,
+    },
+
+    // `@assert`'s optional second argument was present but wasn't a
+    // string literal.
+    InvalidAssertMessage {
         span: Span,
     },
 
