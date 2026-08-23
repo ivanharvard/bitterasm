@@ -23,12 +23,12 @@ use std::fmt;
 use crate::ast::{
     BinaryOp, CallArgument, ConstDeclaration, Expr, ImportItems, ImportStatement,
     Invocation, Label, MacroDeclaration, MacroParameter, MetaStatement, ModulePath,
-    Program, Statement, UnaryOp, TypeAliasDeclaration,
+    NamePart, Program, Statement, UnaryOp, TypeAliasDeclaration,
 };
 
 use crate::facets::syntax::SyntaxPattern;
 use crate::token::{Span, Token, TokenKind};
-use crate::types::{GenericParameter, StructField, TypeExpr, TypeArgument};
+use crate::types::{GenericParameter, StructBodyItem, StructField, TypeExpr, TypeArgument};
 
 mod expressions;
 mod statements;
@@ -273,6 +273,82 @@ impl Parser {
         while self.check(&TokenKind::Newline) {
             self.advance();
         }
+    }
+
+    // A contextual keyword (`in`, `else`) recognized only where a
+    // specific construct's grammar expects it — not a general reserved
+    // word.
+    fn expect_keyword(&mut self, keyword: &str) -> Result<(), ParseError> {
+        let token = self.current().clone();
+
+        match &token.kind {
+            TokenKind::Identifier(name) if name == keyword => {
+                self.advance();
+                Ok(())
+            }
+
+            other => Err(ParseError::new(
+                format!("expected `{keyword}`, found {other:?}"),
+                token.span,
+            )),
+        }
+    }
+
+    // True when the upcoming tokens are `@else` — used by `@if`
+    // (macro-body statements) and a struct body's own `@if` alike, to
+    // decide whether a then-branch is followed by an else branch without
+    // consuming anything.
+    fn at_else_meta(&self) -> bool {
+        self.check(&TokenKind::At)
+            && self
+                .tokens
+                .get(self.pos + 1)
+                .is_some_and(|token| matches!(&token.kind, TokenKind::Identifier(name) if name == "else"))
+    }
+
+    // Optional trailing newline after a block's closing `}`, mirroring
+    // `parse_macro_declaration`/`parse_struct_declaration`'s own
+    // closing-brace handling.
+    fn consume_trailing_newline(&mut self) {
+        if self.check(&TokenKind::Newline) {
+            self.advance();
+        }
+    }
+
+    // A name that may be built from evaluated fragments — `` r`id` `` is
+    // the literal text `r` followed by `id` evaluated and pasted in as
+    // text (see `ast::NamePart`). Every ordinary name (the overwhelming
+    // majority) is a single `Identifier` token with no backtick following
+    // it, parsing to one `Literal` part. Used for a `const` declaration's
+    // name and a struct field's name — the two positions a macro body or
+    // `@for`-generated struct body needs a computed name in.
+    fn parse_spliced_name(&mut self) -> Result<(Vec<NamePart>, Span), ParseError> {
+        let first_token = self.current().clone();
+        let first = self.expect_identifier()?;
+
+        let mut parts = vec![NamePart::Literal(first)];
+        let mut end = first_token.span.end;
+
+        while self.check(&TokenKind::Backtick) {
+            self.advance();
+
+            let inner = self.parse_expr()?;
+
+            let closing = self.current().clone();
+            self.expect_simple(TokenKind::Backtick)?;
+            end = closing.span.end;
+
+            parts.push(NamePart::Splice(inner));
+
+            if matches!(self.current().kind, TokenKind::Identifier(_)) {
+                let literal_token = self.current().clone();
+                let literal = self.expect_identifier()?;
+                parts.push(NamePart::Literal(literal));
+                end = literal_token.span.end;
+            }
+        }
+
+        Ok((parts, Span::new(first_token.span.start, end)))
     }
 
     // =============

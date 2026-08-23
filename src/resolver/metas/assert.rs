@@ -13,7 +13,6 @@
 use std::collections::HashMap;
 
 use crate::ast::Expr;
-use crate::eval::Int;
 use crate::token::Span;
 
 use crate::resolver::{AliasResolver, ResolveError, Value};
@@ -45,12 +44,7 @@ pub fn check(
         }
     };
 
-    let truthy = match resolver.eval_value(condition, scope)? {
-        Value::Int(value) => value != Int::from(0),
-        Value::Struct { .. } => return Err(ResolveError::ExpectedIntValue { span: condition.span() }),
-    };
-
-    if truthy {
+    if resolver.eval_truthy(condition, scope)? {
         Ok(())
     } else {
         Err(ResolveError::AssertionFailed { message, span })

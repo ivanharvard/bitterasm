@@ -1,0 +1,5 @@
+struct Conditional<const flag: int> {
+    @if flag {
+        present: int,
+    }
+}

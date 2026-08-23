@@ -57,7 +57,9 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{CallArgument, ConstDeclaration, Expr, Invocation, MacroDeclaration, Statement};
+use crate::ast::{
+    CallArgument, ConstDeclaration, Expr, Invocation, MacroDeclaration, NamePart, Statement,
+};
 use crate::eval::Int;
 use crate::token::Span;
 
@@ -66,6 +68,13 @@ use super::structs::describe_type;
 use super::symbols::SymbolId;
 use super::values::{value_type, Value};
 use super::ResolveError;
+
+/// Safety cap on `@for`'s iteration count — `Int` is arbitrary-precision,
+/// so an unbounded or accidentally-huge range (`@for i in 0..N` with a
+/// mis-set `N`) would otherwise hang rather than fail fast. Shared by
+/// every `@for` unroller (a struct body's, in `structs.rs`; a top-level
+/// one, in `toplevel.rs`), not just this one.
+pub(super) const MAX_FOR_ITERATIONS: u64 = 1_000_000;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MacroExpansion {
@@ -230,6 +239,95 @@ impl<'a> AliasResolver<'a> {
 
                     "assert" => super::metas::assert::check(self, &meta.args, &scope, meta.span)?,
 
+                    "if" => {
+                        let [condition] = meta.args.as_slice() else {
+                            return Err(ResolveError::Internal {
+                                message: "`@if`'s args should always be a single condition — \
+                                          the parser guarantees this shape"
+                                    .to_string(),
+                                span: meta.span,
+                            });
+                        };
+
+                        let chosen = if self.eval_truthy(condition, &scope)? {
+                            meta.body.as_ref()
+                        } else {
+                            meta.else_body.as_ref()
+                        };
+
+                        if let Some(chosen_body) = chosen {
+                            let nested = self.walk_macro_body(chosen_body, &scope, stack)?;
+                            emitted.extend(nested.emitted);
+                            generated.extend(nested.generated);
+
+                            if nested.returned.is_some() {
+                                return Ok(MacroExpansion {
+                                    emitted,
+                                    generated,
+                                    returned: nested.returned,
+                                });
+                            }
+                        }
+                    }
+
+                    "for" => {
+                        let [var, start_expr, end_expr] = meta.args.as_slice() else {
+                            return Err(ResolveError::Internal {
+                                message: "`@for`'s args should always be [var, start, end] — \
+                                          the parser guarantees this shape"
+                                    .to_string(),
+                                span: meta.span,
+                            });
+                        };
+
+                        let Expr::Identifier { name: var_name, .. } = var else {
+                            return Err(ResolveError::Internal {
+                                message: "`@for`'s loop variable should always be an \
+                                          identifier — the parser guarantees this shape"
+                                    .to_string(),
+                                span: meta.span,
+                            });
+                        };
+
+                        let start = self.eval_int(start_expr, &scope)?;
+                        let end = self.eval_int(end_expr, &scope)?;
+
+                        let for_body = meta.body.as_ref().ok_or_else(|| ResolveError::Internal {
+                            message: "`@for` should always carry a body — the parser \
+                                      guarantees this shape"
+                                .to_string(),
+                            span: meta.span,
+                        })?;
+
+                        let mut i = start;
+                        let mut iterations: u64 = 0;
+
+                        while i < end {
+                            iterations += 1;
+
+                            if iterations > MAX_FOR_ITERATIONS {
+                                return Err(ResolveError::ForLoopTooLarge { span: meta.span });
+                            }
+
+                            let mut iter_scope = scope.clone();
+                            iter_scope.insert(var_name.clone(), Value::Int(i.clone()));
+
+                            let nested = self.walk_macro_body(for_body, &iter_scope, stack)?;
+                            emitted.extend(nested.emitted);
+                            generated.extend(nested.generated);
+
+                            if nested.returned.is_some() {
+                                return Ok(MacroExpansion {
+                                    emitted,
+                                    generated,
+                                    returned: nested.returned,
+                                });
+                            }
+
+                            i += Int::from(1);
+                        }
+                    }
+
                     other => {
                         return Err(ResolveError::UnsupportedMacroStatement {
                             kind: format!("@{other}"),
@@ -255,7 +353,8 @@ impl<'a> AliasResolver<'a> {
 
                 Statement::Const(decl) => {
                     let value = self.eval_value(&decl.value, &scope)?;
-                    scope.insert(decl.name.clone(), value);
+                    let name = self.resolve_spliced_name(&decl.name, &scope)?;
+                    scope.insert(name, value);
                 }
 
                 Statement::Struct(_)
@@ -286,8 +385,10 @@ impl<'a> AliasResolver<'a> {
         decl: &ConstDeclaration,
         scope: &HashMap<String, Value>,
     ) -> Result<ConstDeclaration, ResolveError> {
+        let name = self.resolve_spliced_name(&decl.name, scope)?;
+
         Ok(ConstDeclaration {
-            name: decl.name.clone(),
+            name: vec![NamePart::Literal(name)],
             is_pub: decl.is_pub,
             ty: decl.ty.clone(),
             value: self.splice_expr(&decl.value, scope)?,
@@ -390,7 +491,7 @@ mod tests {
 
     use std::path::Path;
 
-    use crate::ast::{Expr, Invocation, MacroDeclaration, Program, Statement};
+    use crate::ast::{literal_name, Expr, Invocation, MacroDeclaration, Program, Statement};
     use crate::eval::Int;
     use crate::lexer;
     use crate::parser;
@@ -683,6 +784,30 @@ mod tests {
     }
 
     #[test]
+    fn pub_const_with_a_spliced_name_resolves_a_distinct_name_per_invocation() {
+        let program = parse_fixture("spliced_const_name.basm");
+
+        let declaration = find_macro(&program, "make_reg64");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("make_reg64").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let result = resolver
+            .run_macro_body(symbol, declaration, vec![Value::Int(Int::from(3))], &mut stack)
+            .unwrap();
+
+        assert_eq!(result.generated.len(), 1);
+
+        let Statement::Const(decl) = &result.generated[0] else {
+            panic!("expected a generated const declaration");
+        };
+
+        assert_eq!(literal_name(&decl.name), Some("r3".to_string()));
+    }
+
+    #[test]
     fn pub_const_is_generated_with_splices_evaluated() {
         let program = parse_fixture("generated_pub_const.basm");
 
@@ -703,7 +828,7 @@ mod tests {
             panic!("expected a generated const declaration");
         };
 
-        assert_eq!(decl.name, "the_reg");
+        assert_eq!(literal_name(&decl.name), Some("the_reg".to_string()));
         assert!(decl.is_pub);
 
         // `Reg64(id = ...)` itself is untouched (still an unevaluated call,
@@ -775,7 +900,7 @@ mod tests {
             panic!("expected a generated const declaration");
         };
 
-        assert_eq!(decl.name, "the_const");
+        assert_eq!(literal_name(&decl.name), Some("the_const".to_string()));
         assert!(matches!(&decl.value, Expr::Integer { raw, .. } if raw == "9"));
     }
 
@@ -1116,6 +1241,211 @@ mod tests {
     #[test]
     fn assert_rejects_a_struct_valued_condition() {
         let program = parse_fixture("assert_non_int_condition.basm");
+
+        let declaration = find_macro(&program, "bad");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("bad").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let result = resolver.run_macro_body(symbol, declaration, vec![Value::Int(Int::from(1))], &mut stack);
+
+        assert!(matches!(result, Err(ResolveError::ExpectedIntValue { .. })));
+    }
+
+    #[test]
+    fn for_emits_each_value_in_the_range() {
+        let program = parse_fixture("for_basic.basm");
+
+        let declaration = find_macro(&program, "emit_range");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("emit_range").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let result = resolver
+            .run_macro_body(symbol, declaration, vec![Value::Int(Int::from(4))], &mut stack)
+            .unwrap();
+
+        assert_eq!(
+            result,
+            MacroExpansion {
+                emitted: vec![
+                    Value::Int(Int::from(0)),
+                    Value::Int(Int::from(1)),
+                    Value::Int(Int::from(2)),
+                    Value::Int(Int::from(3)),
+                ],
+                generated: vec![],
+                returned: None,
+            }
+        );
+    }
+
+    #[test]
+    fn for_over_an_empty_range_emits_nothing() {
+        let program = parse_fixture("for_basic.basm");
+
+        let declaration = find_macro(&program, "emit_range");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("emit_range").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let result = resolver
+            .run_macro_body(symbol, declaration, vec![Value::Int(Int::from(0))], &mut stack)
+            .unwrap();
+
+        assert_eq!(
+            result,
+            MacroExpansion { emitted: vec![], generated: vec![], returned: None }
+        );
+    }
+
+    #[test]
+    fn return_inside_for_stops_the_whole_body_not_just_the_iteration() {
+        let program = parse_fixture("for_with_return.basm");
+
+        let declaration = find_macro(&program, "loop_then_return");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("loop_then_return").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let result = resolver
+            .run_macro_body(symbol, declaration, vec![Value::Int(Int::from(3))], &mut stack)
+            .unwrap();
+
+        // Only the first iteration runs — its `@return` exits the whole
+        // body, so neither later iterations nor the trailing `@emit 999`
+        // after the loop ever run.
+        assert_eq!(
+            result,
+            MacroExpansion {
+                emitted: vec![Value::Int(Int::from(0))],
+                generated: vec![],
+                returned: Some(Value::Int(Int::from(0))),
+            }
+        );
+    }
+
+    #[test]
+    fn if_true_takes_the_then_branch() {
+        let program = parse_fixture("if_else.basm");
+
+        let declaration = find_macro(&program, "sign");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("sign").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let result = resolver
+            .run_macro_body(symbol, declaration, vec![Value::Int(Int::from(5))], &mut stack)
+            .unwrap();
+
+        assert_eq!(
+            result,
+            MacroExpansion {
+                emitted: vec![Value::Int(Int::from(1))],
+                generated: vec![],
+                returned: None,
+            }
+        );
+    }
+
+    #[test]
+    fn if_false_takes_the_else_branch() {
+        let program = parse_fixture("if_else.basm");
+
+        let declaration = find_macro(&program, "sign");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("sign").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let result = resolver
+            .run_macro_body(symbol, declaration, vec![Value::Int(Int::from(-5))], &mut stack)
+            .unwrap();
+
+        assert_eq!(
+            result,
+            MacroExpansion {
+                emitted: vec![Value::Int(Int::from(-1))],
+                generated: vec![],
+                returned: None,
+            }
+        );
+    }
+
+    #[test]
+    fn if_with_no_else_and_a_false_condition_falls_through() {
+        let program = parse_fixture("if_no_else.basm");
+
+        let declaration = find_macro(&program, "maybe_emit");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("maybe_emit").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let result = resolver
+            .run_macro_body(symbol, declaration, vec![Value::Int(Int::from(-1))], &mut stack)
+            .unwrap();
+
+        assert_eq!(
+            result,
+            MacroExpansion {
+                emitted: vec![Value::Int(Int::from(0))],
+                generated: vec![],
+                returned: None,
+            }
+        );
+    }
+
+    #[test]
+    fn if_nested_inside_for_picks_a_branch_per_iteration() {
+        let program = parse_fixture("for_if_nested.basm");
+
+        let declaration = find_macro(&program, "replace_at");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("replace_at").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let result = resolver
+            .run_macro_body(
+                symbol,
+                declaration,
+                vec![Value::Int(Int::from(4)), Value::Int(Int::from(2)), Value::Int(Int::from(99))],
+                &mut stack,
+            )
+            .unwrap();
+
+        assert_eq!(
+            result,
+            MacroExpansion {
+                emitted: vec![
+                    Value::Int(Int::from(0)),
+                    Value::Int(Int::from(1)),
+                    Value::Int(Int::from(99)),
+                    Value::Int(Int::from(3)),
+                ],
+                generated: vec![],
+                returned: None,
+            }
+        );
+    }
+
+    #[test]
+    fn if_rejects_a_struct_valued_condition() {
+        let program = parse_fixture("if_non_int_condition.basm");
 
         let declaration = find_macro(&program, "bad");
         let symbols = collect_symbols(&program).unwrap();

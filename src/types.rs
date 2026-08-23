@@ -4,7 +4,7 @@
 //! [`crate::ast`] because both the parser and resolver need to build and
 //! walk these trees in ways that don't apply to any other AST node.
 
-use crate::ast::Expr;
+use crate::ast::{Expr, SplicedName};
 use crate::token::Span;
 
 // ===============
@@ -102,7 +102,35 @@ pub enum GenericParameter {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructField {
-    pub name: String,
+    pub name: SplicedName,
     pub ty: TypeExpr,
     pub span: Span,
+}
+
+/// One item in a struct declaration's body — either a field written
+/// directly, or an `@for`/`@if` that generates zero or more fields once
+/// its range/condition can be evaluated (e.g. `Array<T, N>`'s
+/// `@for i in 0..N { pub __el\`i\`: T, }`). Deliberately its own type
+/// rather than reusing `ast::MetaStatement`/`ast::Statement`: a struct
+/// body's items are field-shaped, not statement-shaped, so `@for`/`@if`
+/// here carry a nested `Vec<StructBodyItem>` body instead of
+/// `Vec<Statement>`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StructBodyItem {
+    Field(StructField),
+
+    For {
+        var: String,
+        start: Expr,
+        end: Expr,
+        body: Vec<StructBodyItem>,
+        span: Span,
+    },
+
+    If {
+        condition: Expr,
+        body: Vec<StructBodyItem>,
+        else_body: Option<Vec<StructBodyItem>>,
+        span: Span,
+    },
 }

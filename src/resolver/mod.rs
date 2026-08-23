@@ -12,6 +12,7 @@ mod macro_body;
 mod metas;
 mod structs;
 mod symbols;
+mod toplevel;
 mod types;
 mod values;
 
@@ -20,6 +21,7 @@ pub use consts::ConstEvaluator;
 pub use facets::validate as validate_facets;
 pub use macro_body::MacroExpansion;
 pub use symbols::*;
+pub use toplevel::unroll_top_level;
 pub use types::*;
 pub use values::Value;
 
@@ -48,11 +50,18 @@ pub fn collect_symbols(program: &Program) -> Result<SymbolTable, ResolveError> {
             }
 
             Statement::Const(decl) => {
-                table.insert(
-                    decl.name.clone(),
-                    SymbolKind::Const,
-                    decl.span,
-                )
+                // A top-level const's name can't contain an unevaluated
+                // `` `expr` `` splice — evaluating one needs a live macro
+                // invocation's scope (see `resolver::values::AliasResolver::resolve_spliced_name`),
+                // which doesn't exist yet at this point (symbol collection
+                // runs before any evaluation at all). A splice-generated
+                // name only ever makes sense on a `pub const` produced
+                // from inside a macro body — see `resolver::macro_body`.
+                let Some(name) = crate::ast::literal_name(&decl.name) else {
+                    return Err(ResolveError::ComputedNameNotAllowed { span: decl.span });
+                };
+
+                table.insert(name, SymbolKind::Const, decl.span)
             }
 
             Statement::Macro(decl) => {
@@ -271,6 +280,21 @@ pub enum ResolveError {
 
     Internal {
         message: String,
+        span: Span,
+    },
+
+    // `@for`'s range spans more than `macro_body::MAX_FOR_ITERATIONS` —
+    // guards against a runaway or accidentally-huge loop rather than
+    // silently hanging on it.
+    ForLoopTooLarge {
+        span: Span,
+    },
+
+    // A declaration's name contains an unevaluated `` `expr` `` splice in
+    // a position that has no live scope to evaluate it against — e.g. a
+    // top-level `const` (see `collect_symbols`). Only a `pub const`
+    // produced from inside a macro body can have a computed name.
+    ComputedNameNotAllowed {
         span: Span,
     },
 }

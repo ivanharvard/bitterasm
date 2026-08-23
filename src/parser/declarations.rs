@@ -26,11 +26,31 @@ impl Parser {
 
         self.skip_newlines();
 
-        self.expect_simple(TokenKind::LBrace)?;
+        let (fields, body_end) = self.parse_struct_body_items()?;
 
+        self.consume_trailing_newline();
+
+        Ok(StructDeclaration {
+            name,
+            is_pub,
+            generic_params,
+            facets,
+            fields,
+            span: Span::new(start, body_end),
+        })
+    }
+
+    // Parses `{ item, item, ... }`, given the opening `{` hasn't been
+    // consumed yet — the body of a struct declaration, or of a struct
+    // body's own `@for`/`@if`. A generative item (`@for`/`@if`) is
+    // self-delimited by its own closing brace and doesn't need a trailing
+    // comma the way a plain field does; one is still allowed if present,
+    // for consistency.
+    fn parse_struct_body_items(&mut self) -> Result<(Vec<StructBodyItem>, usize), ParseError> {
+        self.expect_simple(TokenKind::LBrace)?;
         self.skip_newlines();
 
-        let mut fields = Vec::new();
+        let mut items = Vec::new();
 
         while !self.check(&TokenKind::RBrace) {
             if self.at_eof() {
@@ -40,14 +60,16 @@ impl Parser {
                 ));
             }
 
-            fields.push(self.parse_struct_field()?);
+            let item = self.parse_struct_body_item()?;
+            let is_generative = matches!(item, StructBodyItem::For { .. } | StructBodyItem::If { .. });
+            items.push(item);
 
             self.skip_newlines();
 
             if self.check(&TokenKind::Comma) {
                 self.advance();
                 self.skip_newlines();
-            } else if !self.check(&TokenKind::RBrace) {
+            } else if !self.check(&TokenKind::RBrace) && !is_generative {
                 return Err(ParseError::new(
                     "expected ',' or '}' after struct field",
                     self.current().span,
@@ -56,20 +78,85 @@ impl Parser {
         }
 
         let closing = self.current().clone();
-
         self.expect_simple(TokenKind::RBrace)?;
 
-        if self.check(&TokenKind::Newline) {
-            self.advance();
-        }
+        Ok((items, closing.span.end))
+    }
 
-        Ok(StructDeclaration {
-            name,
-            is_pub,
-            generic_params,
-            facets,
-            fields,
-            span: Span::new(start, closing.span.end),
+    fn parse_struct_body_item(&mut self) -> Result<StructBodyItem, ParseError> {
+        if self.check(&TokenKind::At) {
+            self.parse_struct_generative_item()
+        } else {
+            Ok(StructBodyItem::Field(self.parse_struct_field()?))
+        }
+    }
+
+    fn parse_struct_generative_item(&mut self) -> Result<StructBodyItem, ParseError> {
+        let start = self.current().span.start;
+
+        self.expect_simple(TokenKind::At)?;
+
+        let name_token = self.current().clone();
+        let name = self.expect_identifier()?;
+
+        match name.as_str() {
+            "for" => self.parse_struct_for_item(start),
+            "if" => self.parse_struct_if_item(start),
+
+            other => Err(ParseError::new(
+                format!("`@{other}` isn't valid inside a struct body — only `@for`/`@if` are"),
+                name_token.span,
+            )),
+        }
+    }
+
+    fn parse_struct_for_item(&mut self, start: usize) -> Result<StructBodyItem, ParseError> {
+        let var = self.expect_identifier()?;
+
+        self.expect_keyword("in")?;
+
+        let range_start = self.parse_expr()?;
+        self.expect_simple(TokenKind::DotDot)?;
+        let range_end = self.parse_expr()?;
+
+        self.skip_newlines();
+
+        let (body, body_end) = self.parse_struct_body_items()?;
+
+        Ok(StructBodyItem::For {
+            var,
+            start: range_start,
+            end: range_end,
+            body,
+            span: Span::new(start, body_end),
+        })
+    }
+
+    fn parse_struct_if_item(&mut self, start: usize) -> Result<StructBodyItem, ParseError> {
+        let condition = self.parse_expr()?;
+
+        self.skip_newlines();
+
+        let (body, mut end) = self.parse_struct_body_items()?;
+
+        let else_body = if self.at_else_meta() {
+            self.advance(); // `@`
+            self.advance(); // `else`
+            self.skip_newlines();
+
+            let (else_body, else_end) = self.parse_struct_body_items()?;
+            end = else_end;
+
+            Some(else_body)
+        } else {
+            None
+        };
+
+        Ok(StructBodyItem::If {
+            condition,
+            body,
+            else_body,
+            span: Span::new(start, end),
         })
     }
 
@@ -78,7 +165,7 @@ impl Parser {
     ) -> Result<StructField, ParseError> {
         let start = self.current().span.start;
 
-        let name = self.expect_identifier()?;
+        let (name, _) = self.parse_spliced_name()?;
 
         self.expect_simple(TokenKind::Colon)?;
 

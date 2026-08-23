@@ -14,11 +14,14 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::ast::{Expr, Facet, FacetPayload, ImportItems, ImportStatement, ModulePath, Program, Statement};
+use crate::ast::{
+    literal_name, Expr, Facet, FacetPayload, ImportItems, ImportStatement, MetaStatement,
+    ModulePath, NamePart, Program, Statement,
+};
 use crate::lexer;
 use crate::parser::{self, ParserSeed};
 use crate::token::Span;
-use crate::types::{GenericParameter, TypeArgument, TypeExpr};
+use crate::types::{GenericParameter, StructBodyItem, TypeArgument, TypeExpr};
 
 #[derive(Debug)]
 pub enum LoadError {
@@ -237,7 +240,7 @@ fn splice_import(
 
     if let ImportItems::Names(names) = &import.items {
         let target = &cache[&target_path];
-        let declared: HashSet<&str> = target
+        let declared: HashSet<String> = target
             .statements
             .iter()
             .filter_map(declaration_name)
@@ -307,12 +310,18 @@ fn collect_declarations(
 }
 
 // A name and whether it's reachable from outside the file that declared it.
-fn declaration_name(statement: &Statement) -> Option<(&str, bool)> {
+// `Const`'s name can in principle carry a splice, but only meaningfully so
+// once it's generated from inside a live macro body — a top-level const
+// (the only kind this function ever sees; `build_rename_map` doesn't
+// descend into macro bodies) is always fully literal, so a non-literal
+// name here just means there's nothing to add to the rename map for it —
+// `resolver::collect_symbols` is what rejects that case with a real error.
+fn declaration_name(statement: &Statement) -> Option<(String, bool)> {
     match statement {
-        Statement::Struct(decl) => Some((&decl.name, decl.is_pub)),
-        Statement::TypeAlias(decl) => Some((&decl.name, decl.is_pub)),
-        Statement::Const(decl) => Some((&decl.name, decl.is_pub)),
-        Statement::Macro(decl) => Some((&decl.name, decl.is_pub)),
+        Statement::Struct(decl) => Some((decl.name.clone(), decl.is_pub)),
+        Statement::TypeAlias(decl) => Some((decl.name.clone(), decl.is_pub)),
+        Statement::Const(decl) => literal_name(&decl.name).map(|name| (name, decl.is_pub)),
+        Statement::Macro(decl) => Some((decl.name.clone(), decl.is_pub)),
         _ => None,
     }
 }
@@ -335,7 +344,7 @@ fn build_rename_map(statements: &[Statement], module_id: usize) -> HashMap<Strin
     for statement in statements {
         if let Some((name, is_pub)) = declaration_name(statement) {
             if !is_pub {
-                renames.insert(name.to_string(), format!("{name}#{module_id}"));
+                renames.insert(name.clone(), format!("{name}#{module_id}"));
             }
         }
     }
@@ -354,9 +363,7 @@ fn rename_statement(statement: &mut Statement, renames: &HashMap<String, String>
                 rename_generic_parameter(param, renames);
             }
 
-            for field in &mut decl.fields {
-                rename_type_expr(&mut field.ty, renames);
-            }
+            rename_struct_body_items(&mut decl.fields, renames);
 
             for facet in &mut decl.facets {
                 rename_facet(facet, renames);
@@ -376,9 +383,13 @@ fn rename_statement(statement: &mut Statement, renames: &HashMap<String, String>
         }
 
         Statement::Const(decl) => {
-            if let Some(mangled) = renames.get(&decl.name) {
-                decl.name = mangled.clone();
+            if let Some(literal) = literal_name(&decl.name) {
+                if let Some(mangled) = renames.get(&literal) {
+                    decl.name = vec![NamePart::Literal(mangled.clone())];
+                }
             }
+
+            rename_spliced_name(&mut decl.name, renames);
 
             if let Some(ty) = &mut decl.ty {
                 rename_type_expr(ty, renames);
@@ -409,7 +420,65 @@ fn rename_statement(statement: &mut Statement, renames: &HashMap<String, String>
             }
         }
 
-        Statement::Import(_) | Statement::Label(_) | Statement::Invocation(_) | Statement::Meta(_) => {}
+        Statement::Meta(meta) => rename_meta_statement(meta, renames),
+
+        Statement::Import(_) | Statement::Label(_) | Statement::Invocation(_) => {}
+    }
+}
+
+// A macro body's `@if`/`@for` can reference this module's own private
+// siblings in its condition/range bounds, just like any other statement
+// inside the body — so its `args` and nested `body`/`else_body` all need
+// the same rewriting a plain statement would get.
+fn rename_meta_statement(meta: &mut MetaStatement, renames: &HashMap<String, String>) {
+    for arg in &mut meta.args {
+        rename_expr(arg, renames);
+    }
+
+    if let Some(body) = &mut meta.body {
+        for statement in body {
+            rename_statement(statement, renames);
+        }
+    }
+
+    if let Some(else_body) = &mut meta.else_body {
+        for statement in else_body {
+            rename_statement(statement, renames);
+        }
+    }
+}
+
+fn rename_struct_body_items(items: &mut [StructBodyItem], renames: &HashMap<String, String>) {
+    for item in items {
+        match item {
+            StructBodyItem::Field(field) => {
+                rename_type_expr(&mut field.ty, renames);
+                rename_spliced_name(&mut field.name, renames);
+            }
+
+            StructBodyItem::For { start, end, body, .. } => {
+                rename_expr(start, renames);
+                rename_expr(end, renames);
+                rename_struct_body_items(body, renames);
+            }
+
+            StructBodyItem::If { condition, body, else_body, .. } => {
+                rename_expr(condition, renames);
+                rename_struct_body_items(body, renames);
+
+                if let Some(else_body) = else_body {
+                    rename_struct_body_items(else_body, renames);
+                }
+            }
+        }
+    }
+}
+
+fn rename_spliced_name(parts: &mut [NamePart], renames: &HashMap<String, String>) {
+    for part in parts {
+        if let NamePart::Splice(expr) = part {
+            rename_expr(expr, renames);
+        }
     }
 }
 

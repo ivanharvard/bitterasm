@@ -247,7 +247,7 @@ impl Parser {
 
         self.expect_simple(TokenKind::Const)?;
 
-        let name = self.expect_identifier()?;
+        let (name, _) = self.parse_spliced_name()?;
 
         let ty = if self.check(&TokenKind::Colon) {
             self.advance();

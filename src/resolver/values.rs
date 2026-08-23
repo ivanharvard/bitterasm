@@ -15,9 +15,10 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{CallArgument, Expr};
+use crate::ast::{literal_name, CallArgument, Expr, NamePart};
 use crate::eval::{self, EvalError, Int};
 use crate::token::Span;
+use crate::types::StructBodyItem;
 
 use super::aliases::{AliasResolver, LabelMode};
 use super::consts::find_const_declaration;
@@ -145,7 +146,17 @@ impl<'a> AliasResolver<'a> {
             .find_struct_declaration(symbol)?
             .fields
             .iter()
-            .map(|field| field.name.clone())
+            .filter_map(|item| match item {
+                StructBodyItem::Field(field) => literal_name(&field.name),
+
+                // `@for`/`@if`-generated fields aren't visible through
+                // this paren-call construction path yet — it predates
+                // generative struct bodies and doesn't set up the
+                // generic-const scope their `@for`/`@if` would need to
+                // unroll against. Brace-literal construction (not yet
+                // implemented) is where that support belongs.
+                StructBodyItem::For { .. } | StructBodyItem::If { .. } => None,
+            })
             .collect();
 
         if arguments.len() != field_names.len() {
@@ -294,6 +305,55 @@ impl<'a> AliasResolver<'a> {
                 }),
             },
         }
+    }
+
+    /// Evaluates `expr` and requires the result to be an `Int` — shared by
+    /// every caller that needs a plain integer rather than the general
+    /// `Value` (`@for`'s range bounds; `@if`/`@assert`'s condition goes
+    /// through [`Self::eval_truthy`] instead, which also needs this).
+    pub(super) fn eval_int(
+        &mut self,
+        expr: &Expr,
+        scope: &HashMap<String, Value>,
+    ) -> Result<Int, ResolveError> {
+        match self.eval_value(expr, scope)? {
+            Value::Int(value) => Ok(value),
+            Value::Struct { .. } => Err(ResolveError::ExpectedIntValue { span: expr.span() }),
+        }
+    }
+
+    /// Evaluates `expr` and checks it under the language's `0`/`1` `Int`
+    /// convention for booleans (see the [`crate::eval`] module doc) — used
+    /// by `@if` and `@assert` alike.
+    pub(super) fn eval_truthy(
+        &mut self,
+        expr: &Expr,
+        scope: &HashMap<String, Value>,
+    ) -> Result<bool, ResolveError> {
+        Ok(self.eval_int(expr, scope)? != Int::from(0))
+    }
+
+    /// Resolves a (possibly spliced) name to a literal string against a
+    /// live macro invocation's `Value` scope — the counterpart, for a
+    /// macro-body-generated `pub const`'s name, of
+    /// `structs::AliasResolver::resolve_spliced_name_as_const` for a
+    /// struct field's name (which has no macro-body scope to evaluate
+    /// against, only `generic_scope`/top-level consts).
+    pub(super) fn resolve_spliced_name(
+        &mut self,
+        parts: &[NamePart],
+        scope: &HashMap<String, Value>,
+    ) -> Result<String, ResolveError> {
+        let mut out = String::new();
+
+        for part in parts {
+            match part {
+                NamePart::Literal(text) => out.push_str(text),
+                NamePart::Splice(expr) => out.push_str(&self.eval_int(expr, scope)?.to_string()),
+            }
+        }
+
+        Ok(out)
     }
 
     fn make_const_value_cycle_error(&self, repeated: SymbolId) -> ResolveError {

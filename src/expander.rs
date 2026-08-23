@@ -18,11 +18,12 @@ use std::ops::Range;
 
 use crate::ast::{
     CallArgument, ConstDeclaration, Expr, Facet, FacetPayload, Invocation, MacroDeclaration,
-    MacroParameter, MetaStatement, Program, Statement, StructDeclaration, TypeAliasDeclaration,
+    MacroParameter, MetaStatement, NamePart, Program, Statement, StructDeclaration,
+    TypeAliasDeclaration,
 };
 use crate::printer;
 use crate::token::Span;
-use crate::types::{GenericParameter, StructField, TypeArgument, TypeExpr};
+use crate::types::{GenericParameter, StructBodyItem, StructField, TypeArgument, TypeExpr};
 
 /// Macro declarations available to expand an invocation against, by name —
 /// built once from a fully import-resolved [`Program`] (see
@@ -162,7 +163,10 @@ fn generic_param_name(param: &GenericParameter) -> &str {
     }
 }
 
-fn substitute_statements(statements: &[Statement], substitutions: &HashMap<String, Expr>) -> Vec<Statement> {
+pub(crate) fn substitute_statements(
+    statements: &[Statement],
+    substitutions: &HashMap<String, Expr>,
+) -> Vec<Statement> {
     statements
         .iter()
         .map(|statement| substitute_statement(statement, substitutions))
@@ -184,7 +188,7 @@ fn substitute_statement(statement: &Statement, substitutions: &HashMap<String, E
         }),
 
         Statement::Const(decl) => Statement::Const(ConstDeclaration {
-            name: decl.name.clone(),
+            name: substitute_spliced_name(&decl.name, substitutions),
             is_pub: decl.is_pub,
             ty: decl.ty.as_ref().map(|ty| substitute_type_expr(ty, substitutions)),
             value: substitute_expr(&decl.value, substitutions),
@@ -195,15 +199,36 @@ fn substitute_statement(statement: &Statement, substitutions: &HashMap<String, E
         Statement::TypeAlias(decl) => Statement::TypeAlias(substitute_type_alias(decl, substitutions)),
         Statement::Macro(decl) => Statement::Macro(substitute_macro(decl, substitutions)),
 
-        Statement::Meta(meta) => Statement::Meta(MetaStatement {
-            name: meta.name.clone(),
-            args: meta.args.iter().map(|expr| substitute_expr(expr, substitutions)).collect(),
-            body: meta
-                .body
-                .as_ref()
-                .map(|body| substitute_statements(body, substitutions)),
-            span: meta.span,
-        }),
+        // `@for`'s own loop variable (`args[0]`) is a binding introduced
+        // by this statement itself, the same way a macro's declared
+        // parameters are — so it's shadowed out of `substitutions` before
+        // walking `body`, the same way `substitute_macro`/`substitute_struct`
+        // shadow their own generic params. `else_body` (only ever present
+        // on `@if`) introduces no binding of its own and always uses the
+        // outer `substitutions` unchanged.
+        Statement::Meta(meta) => {
+            let body = match (&meta.body, meta.name.as_str(), meta.args.first()) {
+                (Some(body), "for", Some(Expr::Identifier { name, .. })) => {
+                    let inner = without_shadowed(substitutions, std::iter::once(name.as_str()));
+                    Some(substitute_statements(body, &inner))
+                }
+
+                (Some(body), _, _) => Some(substitute_statements(body, substitutions)),
+
+                (None, _, _) => None,
+            };
+
+            Statement::Meta(MetaStatement {
+                name: meta.name.clone(),
+                args: meta.args.iter().map(|expr| substitute_expr(expr, substitutions)).collect(),
+                body,
+                else_body: meta
+                    .else_body
+                    .as_ref()
+                    .map(|body| substitute_statements(body, substitutions)),
+                span: meta.span,
+            })
+        }
     }
 }
 
@@ -215,17 +240,59 @@ fn substitute_struct(decl: &StructDeclaration, substitutions: &HashMap<String, E
         is_pub: decl.is_pub,
         generic_params: decl.generic_params.clone(),
         facets: substitute_facets(&decl.facets, &inner),
-        fields: decl
-            .fields
-            .iter()
-            .map(|field| StructField {
-                name: field.name.clone(),
-                ty: substitute_type_expr(&field.ty, &inner),
-                span: field.span,
-            })
-            .collect(),
+        fields: substitute_struct_body_items(&decl.fields, &inner),
         span: decl.span,
     }
+}
+
+fn substitute_struct_body_items(
+    items: &[StructBodyItem],
+    substitutions: &HashMap<String, Expr>,
+) -> Vec<StructBodyItem> {
+    items
+        .iter()
+        .map(|item| match item {
+            StructBodyItem::Field(field) => StructBodyItem::Field(StructField {
+                name: substitute_spliced_name(&field.name, substitutions),
+                ty: substitute_type_expr(&field.ty, substitutions),
+                span: field.span,
+            }),
+
+            StructBodyItem::For { var, start, end, body, span } => {
+                let inner = without_shadowed(substitutions, std::iter::once(var.as_str()));
+
+                StructBodyItem::For {
+                    var: var.clone(),
+                    start: substitute_expr(start, substitutions),
+                    end: substitute_expr(end, substitutions),
+                    body: substitute_struct_body_items(body, &inner),
+                    span: *span,
+                }
+            }
+
+            StructBodyItem::If { condition, body, else_body, span } => StructBodyItem::If {
+                condition: substitute_expr(condition, substitutions),
+                body: substitute_struct_body_items(body, substitutions),
+                else_body: else_body
+                    .as_ref()
+                    .map(|else_body| substitute_struct_body_items(else_body, substitutions)),
+                span: *span,
+            },
+        })
+        .collect()
+}
+
+fn substitute_spliced_name(
+    parts: &[NamePart],
+    substitutions: &HashMap<String, Expr>,
+) -> Vec<NamePart> {
+    parts
+        .iter()
+        .map(|part| match part {
+            NamePart::Literal(text) => NamePart::Literal(text.clone()),
+            NamePart::Splice(expr) => NamePart::Splice(substitute_expr(expr, substitutions)),
+        })
+        .collect()
 }
 
 fn substitute_type_alias(

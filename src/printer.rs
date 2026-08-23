@@ -14,9 +14,9 @@
 
 use crate::ast::{
     BinaryOp, CallArgument, Expr, Facet, FacetPayload, ImportItems, MacroDeclaration,
-    MacroParameter, Statement, StructDeclaration, UnaryOp,
+    MacroParameter, NamePart, Statement, StructDeclaration, UnaryOp,
 };
-use crate::types::{GenericParameter, StructField, TypeArgument, TypeExpr};
+use crate::types::{GenericParameter, StructBodyItem, StructField, TypeArgument, TypeExpr};
 
 const INDENT: &str = "    ";
 
@@ -67,7 +67,7 @@ pub fn print_statement(statement: &Statement, indent: usize) -> String {
 
             format!(
                 "{pad}{pub_kw}const {name}{ty} = {value}",
-                name = decl.name,
+                name = print_spliced_name(&decl.name),
                 value = print_expr(&decl.value),
             )
         }
@@ -98,14 +98,35 @@ pub fn print_statement(statement: &Statement, indent: usize) -> String {
                 None if args.is_empty() => format!("{pad}@{}", meta.name),
                 None => format!("{pad}@{} {args}", meta.name),
 
-                Some(body) => format!(
-                    "{pad}@{name} {args} {{\n{body}\n{pad}}}",
-                    name = meta.name,
-                    body = print_statements(body, indent + 1),
-                ),
+                Some(body) => {
+                    let then_block = format!(
+                        "{pad}@{name} {args} {{\n{body}\n{pad}}}",
+                        name = meta.name,
+                        body = print_statements(body, indent + 1),
+                    );
+
+                    match &meta.else_body {
+                        Some(else_body) => format!(
+                            "{then_block} @else {{\n{else_body}\n{pad}}}",
+                            else_body = print_statements(else_body, indent + 1),
+                        ),
+
+                        None => then_block,
+                    }
+                }
             }
         }
     }
+}
+
+fn print_spliced_name(parts: &[NamePart]) -> String {
+    parts
+        .iter()
+        .map(|part| match part {
+            NamePart::Literal(text) => text.clone(),
+            NamePart::Splice(expr) => format!("`{}`", print_expr(expr)),
+        })
+        .collect()
 }
 
 fn print_struct(decl: &StructDeclaration, indent: usize) -> String {
@@ -114,12 +135,7 @@ fn print_struct(decl: &StructDeclaration, indent: usize) -> String {
     let generics = print_generic_params(&decl.generic_params);
     let facets = print_facet_list(&decl.facets, None);
 
-    let fields = decl
-        .fields
-        .iter()
-        .map(|field| print_struct_field(field, indent + 1))
-        .collect::<Vec<_>>()
-        .join(",\n");
+    let fields = print_struct_body_items(&decl.fields, indent + 1);
 
     format!(
         "{pad}{pub_kw}struct {name}{generics}{facets}\n{pad}{{\n{fields}\n{pad}}}",
@@ -127,11 +143,51 @@ fn print_struct(decl: &StructDeclaration, indent: usize) -> String {
     )
 }
 
+fn print_struct_body_items(items: &[StructBodyItem], indent: usize) -> String {
+    items
+        .iter()
+        .map(|item| print_struct_body_item(item, indent))
+        .collect::<Vec<_>>()
+        .join(",\n")
+}
+
+fn print_struct_body_item(item: &StructBodyItem, indent: usize) -> String {
+    let pad = INDENT.repeat(indent);
+
+    match item {
+        StructBodyItem::Field(field) => print_struct_field(field, indent),
+
+        StructBodyItem::For { var, start, end, body, .. } => format!(
+            "{pad}@for {var} in {start}..{end} {{\n{body}\n{pad}}}",
+            start = print_expr(start),
+            end = print_expr(end),
+            body = print_struct_body_items(body, indent + 1),
+        ),
+
+        StructBodyItem::If { condition, body, else_body, .. } => {
+            let then_block = format!(
+                "{pad}@if {condition} {{\n{body}\n{pad}}}",
+                condition = print_expr(condition),
+                body = print_struct_body_items(body, indent + 1),
+            );
+
+            match else_body {
+                Some(else_body) => format!(
+                    "{then_block} @else {{\n{else_body}\n{pad}}}",
+                    else_body = print_struct_body_items(else_body, indent + 1),
+                ),
+
+                None => then_block,
+            }
+        }
+    }
+}
+
 fn print_struct_field(field: &StructField, indent: usize) -> String {
     format!(
         "{pad}{name}: {ty}",
         pad = INDENT.repeat(indent),
-        name = field.name,
+        name = print_spliced_name(&field.name),
         ty = print_type_expr(&field.ty),
     )
 }

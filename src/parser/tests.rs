@@ -1,5 +1,7 @@
 use super::*;
+use crate::ast::literal_name;
 use crate::lexer::lex;
+use crate::types::StructBodyItem;
 
 #[test]
 fn parses_empty_program() {
@@ -393,6 +395,120 @@ fn bare_here_statement_still_parses_as_a_meta_statement() {
 }
 
 #[test]
+fn parses_for_meta_with_range_and_body() {
+    let program = parse(
+        lex("macro foo() {\n    @for i in 0..16 {\n        @emit i\n    }\n}\n").unwrap(),
+    )
+    .unwrap();
+
+    let Statement::Macro(decl) = &program.statements[0] else {
+        panic!("expected macro declaration");
+    };
+
+    let Statement::Meta(meta) = &decl.body[0] else {
+        panic!("expected meta statement");
+    };
+
+    assert_eq!(meta.name, "for");
+    assert!(meta.else_body.is_none());
+
+    let [var, start, end] = meta.args.as_slice() else {
+        panic!("expected [var, start, end] args, got {:?}", meta.args);
+    };
+
+    assert!(matches!(var, Expr::Identifier { name, .. } if name == "i"));
+    assert!(matches!(start, Expr::Integer { raw, .. } if raw == "0"));
+    assert!(matches!(end, Expr::Integer { raw, .. } if raw == "16"));
+
+    let body = meta.body.as_ref().expect("@for should carry a body");
+    assert_eq!(body.len(), 1);
+    assert!(matches!(&body[0], Statement::Meta(inner) if inner.name == "emit"));
+}
+
+#[test]
+fn parses_if_without_else() {
+    let program = parse(
+        lex("macro foo() {\n    @if x == 1 {\n        @emit 1\n    }\n}\n").unwrap(),
+    )
+    .unwrap();
+
+    let Statement::Macro(decl) = &program.statements[0] else {
+        panic!("expected macro declaration");
+    };
+
+    let Statement::Meta(meta) = &decl.body[0] else {
+        panic!("expected meta statement");
+    };
+
+    assert_eq!(meta.name, "if");
+    assert_eq!(meta.args.len(), 1);
+    assert!(meta.body.is_some());
+    assert!(meta.else_body.is_none());
+}
+
+#[test]
+fn parses_if_else_on_the_same_line_as_the_closing_brace() {
+    let program = parse(
+        lex("macro foo() {\n    @if x == 1 {\n        @emit 1\n    } @else {\n        @emit 2\n    }\n}\n")
+            .unwrap(),
+    )
+    .unwrap();
+
+    let Statement::Macro(decl) = &program.statements[0] else {
+        panic!("expected macro declaration");
+    };
+
+    let Statement::Meta(meta) = &decl.body[0] else {
+        panic!("expected meta statement");
+    };
+
+    assert_eq!(meta.name, "if");
+
+    let then_body = meta.body.as_ref().expect("@if should carry a body");
+    let else_body = meta.else_body.as_ref().expect("expected an @else body");
+
+    assert!(matches!(&then_body[0], Statement::Meta(inner) if inner.name == "emit"));
+    assert!(matches!(&else_body[0], Statement::Meta(inner) if inner.name == "emit"));
+}
+
+#[test]
+fn parses_nested_if_without_for() {
+    let program = parse(
+        lex("macro foo() {\n    @if a {\n        @if b {\n            @emit 1\n        } @else {\n            @emit 2\n        }\n    }\n}\n")
+            .unwrap(),
+    )
+    .unwrap();
+
+    let Statement::Macro(decl) = &program.statements[0] else {
+        panic!("expected macro declaration");
+    };
+
+    let Statement::Meta(outer) = &decl.body[0] else {
+        panic!("expected meta statement");
+    };
+
+    let outer_body = outer.body.as_ref().expect("outer @if should carry a body");
+    assert!(matches!(&outer_body[0], Statement::Meta(inner) if inner.name == "if" && inner.else_body.is_some()));
+}
+
+#[test]
+fn for_meta_requires_the_in_keyword() {
+    let error = parse(lex("macro foo() {\n    @for i 0..16 {\n    }\n}\n").unwrap()).unwrap_err();
+
+    assert!(
+        format!("{error}").contains("in"),
+        "expected the error to mention `in`, got: {error}"
+    );
+}
+
+#[test]
+fn for_meta_requires_a_range() {
+    let error = parse(lex("macro foo() {\n    @for i in 0 {\n    }\n}\n").unwrap()).unwrap_err();
+
+    assert!(format!("{error}").contains("DotDot") || format!("{error}").contains("LBrace"));
+}
+
+#[test]
 fn parses_const_declaration() {
     let program =
         parse(lex("const r1 = Reg(id = 1)\n").unwrap()).unwrap();
@@ -401,7 +517,7 @@ fn parses_const_declaration() {
         panic!("expected const declaration");
     };
 
-    assert_eq!(declaration.name, "r1");
+    assert_eq!(literal_name(&declaration.name), Some("r1".to_string()));
 
     let Expr::Call {
         callee,
@@ -440,7 +556,12 @@ struct Reg<const width: uint> {
     assert_eq!(declaration.name, "Reg");
     assert_eq!(declaration.generic_params.len(), 1);
     assert_eq!(declaration.fields.len(), 1);
-    assert_eq!(declaration.fields[0].name, "id");
+
+    let StructBodyItem::Field(field) = &declaration.fields[0] else {
+        panic!("expected a plain field");
+    };
+
+    assert_eq!(literal_name(&field.name), Some("id".to_string()));
 }
 
 #[test]
@@ -471,7 +592,7 @@ fn parses_typed_const() {
         panic!("expected const");
     };
 
-    assert_eq!(declaration.name, "r0");
+    assert_eq!(literal_name(&declaration.name), Some("r0".to_string()));
     assert!(declaration.ty.is_some());
 }
 

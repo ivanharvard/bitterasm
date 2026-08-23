@@ -403,7 +403,7 @@ impl<'a> AliasResolver<'a> {
         }
     }
 
-    fn eval_const_expr(&self, expr: &Expr) -> Result<Int, ResolveError> {
+    pub(super) fn eval_const_expr(&self, expr: &Expr) -> Result<Int, ResolveError> {
         let mut scope = self.consts.clone();
 
         for (name, binding) in &self.generic_scope {

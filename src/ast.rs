@@ -12,7 +12,7 @@
 use crate::token::Span;
 use crate::types::{
     GenericParameter,
-    StructField,
+    StructBodyItem,
     TypeExpr,
 };
 
@@ -197,12 +197,49 @@ pub struct MetaStatement {
     pub name: String,
     pub args: Vec<Expr>,
     pub body: Option<Vec<Statement>>,
+
+    /// `@if`'s trailing `@else { ... }`, when present. `None` for every
+    /// other meta, including an `@if` with no `@else`.
+    pub else_body: Option<Vec<Statement>>,
     pub span: Span,
+}
+
+/// One piece of a name that may be built from evaluated fragments —
+/// `` r`id` `` is `[Literal("r"), Splice(id)]`: the literal text `"r"`
+/// followed by `id` evaluated and pasted in as text, the same "evaluate
+/// this now and paste the result in its place" semantics [`Expr::Splice`]
+/// already has for a value position, just applied to build up a name one
+/// piece at a time. An ordinary, non-computed name (the overwhelming
+/// majority) is just `[Literal(name)]`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum NamePart {
+    Literal(String),
+    Splice(Expr),
+}
+
+pub type SplicedName = Vec<NamePart>;
+
+/// `Some(name)` if every part is a literal (i.e. there's nothing left to
+/// evaluate), `None` if a `Splice` remains — used to require an
+/// already-fully-resolved name in a position that can't evaluate one
+/// itself (e.g. a top-level declaration, checked in
+/// `resolver::collect_symbols`).
+pub fn literal_name(parts: &[NamePart]) -> Option<String> {
+    let mut out = String::new();
+
+    for part in parts {
+        match part {
+            NamePart::Literal(text) => out.push_str(text),
+            NamePart::Splice(_) => return None,
+        }
+    }
+
+    Some(out)
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstDeclaration {
-    pub name: String,
+    pub name: SplicedName,
     pub is_pub: bool,
     /// Optional explicit annotation
     pub ty: Option<TypeExpr>,
@@ -216,7 +253,7 @@ pub struct StructDeclaration {
     pub is_pub: bool,
     pub generic_params: Vec<GenericParameter>,
     pub facets: Vec<Facet>,
-    pub fields: Vec<StructField>,
+    pub fields: Vec<StructBodyItem>,
     pub span: Span,
 }
 

@@ -1,0 +1,10 @@
+struct Reg {
+    id: int,
+    width: int
+}
+
+macro bad(v: int) {
+    @if Reg(v, v) {
+        @emit 1
+    }
+}

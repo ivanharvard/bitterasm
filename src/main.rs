@@ -89,6 +89,18 @@ fn resolve_and_expand(path: &Path) -> Expansion {
         }
     };
 
+    // Unrolls every top-level `@for`/`@if` into concrete statements before
+    // anything else (symbol collection included) ever sees them — see
+    // `resolver::unroll_top_level`'s module doc.
+    let program = match resolver::unroll_top_level(program) {
+        Ok(program) => program,
+
+        Err(error) => {
+            eprintln!("resolver error: {error:?}");
+            std::process::exit(1);
+        }
+    };
+
     if let Err(error) = resolver::validate_facets(&program) {
         eprintln!("resolver error: {error:?}");
         std::process::exit(1);
@@ -126,12 +138,17 @@ fn resolve_and_expand(path: &Path) -> Expansion {
     // label silently gets a placeholder position instead of erroring, just
     // to discover where every top-level label actually ends up; pass 2
     // reruns the same expansion for real, in `LabelMode::Strict`, now that
-    // every position is known. This is only sound because nothing in the
-    // language can currently make the *number* of values a macro emits
-    // depend on a value derived from `@here`/a label (no `@if`/`@for`
-    // exist yet) — a wrong placeholder changes what gets emitted at some
-    // points during pass 1, never how many statements execute, so pass 1's
-    // discovered positions are still correct for pass 2 to trust.
+    // every position is known. This is only sound because a wrong
+    // placeholder changes what gets emitted at some points during pass 1,
+    // never how *many* values get emitted — which requires that an
+    // `@if`/`@for` inside a macro body never makes its own condition/range
+    // depend on `@here` or a label's position (both `@if`/`@for` exist
+    // now, but nothing checks this restriction; it's on the author of an
+    // `@if`/`@for`-using macro to not violate it, the same way today's
+    // language already trusts a macro not to have an infinite `@for`).
+    // Top-level `@for`/`@if` (`resolver::unroll_top_level`) doesn't have
+    // this problem at all — it runs before either pass, over plain
+    // top-level consts only, with no notion of `@here`/labels yet.
     let mut discovery = resolver::AliasResolver::new(
         &program,
         &symbols,

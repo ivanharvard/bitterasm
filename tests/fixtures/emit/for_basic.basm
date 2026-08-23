@@ -1,0 +1,5 @@
+macro emit_range(n: int) {
+    @for i in 0..n {
+        @emit i
+    }
+}

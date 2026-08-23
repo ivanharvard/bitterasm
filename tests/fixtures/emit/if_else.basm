@@ -1,0 +1,7 @@
+macro sign(x: int) {
+    @if x >= 0 {
+        @emit 1
+    } @else {
+        @emit -1
+    }
+}

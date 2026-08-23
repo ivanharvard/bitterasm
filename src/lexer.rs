@@ -146,7 +146,17 @@ impl<'src> Lexer<'src> {
             }
 
             // punctuation
-            '.' => self.single(TokenKind::Dot),
+            '.' => {
+                let start = self.pos;
+                self.advance();
+
+                if self.consume_if('.') {
+                    self.push(TokenKind::DotDot, start);
+                } else {
+                    self.push(TokenKind::Dot, start);
+                }
+            }
+
             ',' => self.single(TokenKind::Comma),
             ':' => self.single(TokenKind::Colon),
             ';' => self.single(TokenKind::Semicolon),
@@ -686,6 +696,34 @@ mod tests {
                 TokenKind::Integer("0xff".into()),
                 TokenKind::Newline,
                 TokenKind::RBrace,
+                TokenKind::Newline,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn lexes_range() {
+        assert_eq!(
+            kinds("0..N\n"),
+            vec![
+                TokenKind::Integer("0".into()),
+                TokenKind::DotDot,
+                TokenKind::Identifier("N".into()),
+                TokenKind::Newline,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn lexes_member_access_distinct_from_range() {
+        assert_eq!(
+            kinds("arr.len\n"),
+            vec![
+                TokenKind::Identifier("arr".into()),
+                TokenKind::Dot,
+                TokenKind::Identifier("len".into()),
                 TokenKind::Newline,
                 TokenKind::Eof,
             ]

@@ -1,0 +1,8 @@
+macro loop_then_return(n: int) {
+    @for i in 0..n {
+        @emit i
+        @return i
+    }
+
+    @emit 999
+}

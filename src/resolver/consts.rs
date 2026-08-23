@@ -8,7 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{ConstDeclaration, Expr, Program, Statement};
+use crate::ast::{literal_name, ConstDeclaration, Expr, Program, Statement};
 use crate::eval::{self, EvalError, Int};
 
 use super::symbols::{SymbolId, SymbolKind, SymbolTable};
@@ -223,7 +223,10 @@ pub(super) fn find_const_declaration<'a>(
         .statements
         .iter()
         .find_map(|statement| match statement {
-            Statement::Const(decl) if decl.name == name => Some(decl),
+            // A top-level const's name is always fully literal — see
+            // `ast::literal_name`'s doc — so a spliced name never matches
+            // here rather than being an error in its own right.
+            Statement::Const(decl) if literal_name(&decl.name).as_deref() == Some(name) => Some(decl),
             _ => None,
         })
         .ok_or_else(|| {
@@ -275,7 +278,9 @@ fn is_int_shaped_inner(program: &Program, expr: &Expr, visiting: &mut HashSet<St
                 .statements
                 .iter()
                 .find_map(|statement| match statement {
-                    Statement::Const(decl) if decl.name == *name => Some(decl),
+                    Statement::Const(decl) if literal_name(&decl.name).as_deref() == Some(name.as_str()) => {
+                        Some(decl)
+                    }
                     _ => None,
                 })
                 .is_some_and(|decl| is_int_shaped_inner(program, &decl.value, visiting));

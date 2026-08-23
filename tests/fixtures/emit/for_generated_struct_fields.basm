@@ -1,0 +1,5 @@
+struct Array<T, const n: int> {
+    @for i in 0..n {
+        __el`i`: T,
+    }
+}

@@ -16,25 +16,126 @@ impl Parser {
 
         let name = self.expect_identifier()?;
 
-        let mut args = Vec::new();
+        match name.as_str() {
+            "for" => self.parse_for_meta(start),
+            "if" => self.parse_if_meta(start),
 
-        if !self.at_statement_end() {
-            args.push(self.parse_expr()?);
+            _ => {
+                let mut args = Vec::new();
 
-            while self.check(&TokenKind::Comma) {
-                self.advance();
-                args.push(self.parse_expr()?);
+                if !self.at_statement_end() {
+                    args.push(self.parse_expr()?);
+
+                    while self.check(&TokenKind::Comma) {
+                        self.advance();
+                        args.push(self.parse_expr()?);
+                    }
+                }
+
+                let end = self.statement_end()?;
+
+                Ok(MetaStatement {
+                    name,
+                    args,
+                    body: None,
+                    else_body: None,
+                    span: Span::new(start, end),
+                })
             }
         }
+    }
 
-        let end = self.statement_end()?;
+    // `@for name in start..end { body }` — the loop variable and range
+    // bounds are packed positionally into `args` (`[Identifier, start,
+    // end]`) rather than given their own `MetaStatement` fields, the same
+    // way `@assert`'s `[condition, message]` already overloads `args`.
+    fn parse_for_meta(&mut self, start: usize) -> Result<MetaStatement, ParseError> {
+        let var_token = self.current().clone();
+        let var_name = self.expect_identifier()?;
+        let var = Expr::Identifier { name: var_name, span: var_token.span };
+
+        self.expect_keyword("in")?;
+
+        let range_start = self.parse_expr()?;
+        self.expect_simple(TokenKind::DotDot)?;
+        let range_end = self.parse_expr()?;
+
+        self.skip_newlines();
+
+        let (body, body_end) =
+            self.parse_statement_block("unterminated `@for` body")?;
+
+        self.consume_trailing_newline();
 
         Ok(MetaStatement {
-            name,
-            args,
-            body: None,
+            name: "for".to_string(),
+            args: vec![var, range_start, range_end],
+            body: Some(body),
+            else_body: None,
+            span: Span::new(start, body_end),
+        })
+    }
+
+    // `@if cond { body } [@else { body }]`.
+    fn parse_if_meta(&mut self, start: usize) -> Result<MetaStatement, ParseError> {
+        let condition = self.parse_expr()?;
+
+        self.skip_newlines();
+
+        let (body, mut end) = self.parse_statement_block("unterminated `@if` body")?;
+
+        let else_body = if self.at_else_meta() {
+            self.advance(); // `@`
+            self.advance(); // `else`
+            self.skip_newlines();
+
+            let (else_body, else_end) =
+                self.parse_statement_block("unterminated `@else` body")?;
+
+            end = else_end;
+
+            Some(else_body)
+        } else {
+            None
+        };
+
+        self.consume_trailing_newline();
+
+        Ok(MetaStatement {
+            name: "if".to_string(),
+            args: vec![condition],
+            body: Some(body),
+            else_body,
             span: Span::new(start, end),
         })
+    }
+
+    // Parses `{ stmt* }`, given the opening `{` hasn't been consumed yet.
+    // Returns the body and the closing `}`'s span end; callers decide what,
+    // if anything, follows (a trailing newline for a macro/struct body, an
+    // `@else` for `@if`).
+    fn parse_statement_block(
+        &mut self,
+        unterminated_message: &str,
+    ) -> Result<(Vec<Statement>, usize), ParseError> {
+        self.expect_simple(TokenKind::LBrace)?;
+        self.skip_newlines();
+
+        let mut body = Vec::new();
+
+        while !self.check(&TokenKind::RBrace) {
+            if self.at_eof() {
+                return Err(ParseError::new(unterminated_message, self.current().span));
+            }
+
+            body.push(self.parse_statement()?);
+            self.skip_newlines();
+        }
+
+        let closing = self.current().clone();
+        self.expect_simple(TokenKind::RBrace)?;
+
+        Ok((body, closing.span.end))
     }
 
     // =============
@@ -92,32 +193,9 @@ impl Parser {
 
         self.skip_newlines();
 
-        self.expect_simple(TokenKind::LBrace)?;
+        let (body, body_end) = self.parse_statement_block("unterminated macro body")?;
 
-        self.skip_newlines();
-
-        let mut body = Vec::new();
-
-        while !self.check(&TokenKind::RBrace) {
-            if self.at_eof() {
-                return Err(ParseError::new(
-                    "unterminated macro body",
-                    self.current().span,
-                ));
-            }
-
-            body.push(self.parse_statement()?);
-
-            self.skip_newlines();
-        }
-
-        let closing = self.current().clone();
-
-        self.expect_simple(TokenKind::RBrace)?;
-
-        if self.check(&TokenKind::Newline) {
-            self.advance();
-        }
+        self.consume_trailing_newline();
 
         Ok(MacroDeclaration {
             name,
@@ -126,7 +204,7 @@ impl Parser {
             return_ty,
             facets,
             body,
-            span: Span::new(start, closing.span.end),
+            span: Span::new(start, body_end),
         })
     }
 

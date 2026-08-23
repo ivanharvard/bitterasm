@@ -4,16 +4,37 @@
 //! [`super::aliases`]'s [`AliasResolver::resolve_type_expr`] and
 //! [`AliasResolver::find_struct_declaration`] — this file only adds the
 //! struct-specific instantiation logic on top.
+//!
+//! A struct body isn't always a flat field list — `@for`/`@if` items
+//! ([`StructBodyItem`]) generate zero or more fields once their
+//! range/condition can be evaluated (e.g. `Array<T, N>`'s
+//! `@for i in 0..N { pub __el\`i\`: T, }`). [`AliasResolver::unroll_struct_body`]
+//! expands those into concrete, literally-named fields, given
+//! `self.generic_scope` already reflects the instantiation to unroll
+//! against — every caller here sets that up first (an abstract, unbound
+//! scope for [`resolve_struct_fields`]/[`AliasResolver::resolve_all_structs`],
+//! a concrete one for [`AliasResolver::instantiate_struct_fields`]/[`AliasResolver::field_type`]).
 
 use std::collections::HashMap;
 
+use crate::ast::{literal_name, Expr, NamePart};
+use crate::eval::Int;
 use crate::token::Span;
-use crate::types::GenericParameter;
+use crate::types::{GenericParameter, StructBodyItem, TypeExpr};
 
 use super::aliases::{AliasResolver, GenericBinding};
+use super::macro_body::MAX_FOR_ITERATIONS;
 use super::symbols::{SymbolId, SymbolKind, SymbolTable};
 use super::types::{BuiltinType, ResolvedGenericArg, ResolvedType};
 use super::ResolveError;
+
+/// A struct body item, fully unrolled down to a concrete field: a
+/// literal (never-spliced) name paired with its still-unresolved
+/// [`TypeExpr`] — see the module doc.
+struct UnrolledField {
+    name: String,
+    ty: TypeExpr,
+}
 
 impl<'a> AliasResolver<'a> {
     pub fn resolve_all_structs(
@@ -94,24 +115,25 @@ impl<'a> AliasResolver<'a> {
         };
 
         let declaration = self.find_struct_declaration(*symbol)?;
-
-        let Some(field) = declaration
-            .fields
-            .iter()
-            .find(|field| field.name == field_name)
-        else {
-            return Err(ResolveError::UnknownField {
-                type_name: self.symbols.get(*symbol).name.clone(),
-                field: field_name.to_string(),
-                span,
-            });
-        };
-
-        let field_ty = field.ty.clone();
+        let items = declaration.fields.clone();
         let scope = generic_arg_scope(&declaration.generic_params, args);
 
         let previous = std::mem::replace(&mut self.generic_scope, scope);
-        let result = self.resolve_type_expr(&field_ty);
+
+        let result = match self.unroll_struct_body(&items) {
+            Ok(fields) => match fields.into_iter().find(|field| field.name == field_name) {
+                Some(field) => self.resolve_type_expr(&field.ty),
+
+                None => Err(ResolveError::UnknownField {
+                    type_name: self.symbols.get(*symbol).name.clone(),
+                    field: field_name.to_string(),
+                    span,
+                }),
+            },
+
+            Err(error) => Err(error),
+        };
+
         self.generic_scope = previous;
 
         result
@@ -122,24 +144,137 @@ impl<'a> AliasResolver<'a> {
         id: SymbolId,
         scope: HashMap<String, GenericBinding>,
     ) -> Result<Vec<ResolvedType>, ResolveError> {
-        let field_types: Vec<crate::types::TypeExpr> = self
-            .find_struct_declaration(id)?
-            .fields
-            .iter()
-            .map(|field| field.ty.clone())
-            .collect();
+        let items = self.find_struct_declaration(id)?.fields.clone();
 
         let previous = std::mem::replace(&mut self.generic_scope, scope);
 
-        let result = field_types
-            .iter()
-            .map(|ty| self.resolve_type_expr(ty))
-            .collect::<Result<Vec<_>, _>>();
+        let result = match self.unroll_struct_body(&items) {
+            Ok(fields) => fields.iter().map(|field| self.resolve_type_expr(&field.ty)).collect(),
+            Err(error) => Err(error),
+        };
 
         self.generic_scope = previous;
 
         result
     }
+
+    // Expands every `@for`/`@if` item in a struct body into concrete
+    // fields with fully-literal names, given `self.generic_scope` already
+    // reflects the instantiation to unroll against. A `@for`/`@if` whose
+    // range bound or condition is a bare reference to a still-unbound
+    // generic const (the abstract, not-yet-instantiated case — e.g.
+    // resolving `Array<T, N>` on its own, before any real `Array<u8, 4>`
+    // use) can't be unrolled without a concrete value, so it's skipped
+    // rather than erroring: whatever fields it *would* generate simply
+    // aren't visible abstractly, the same way a field's own *type*
+    // (`bits<N>`) doesn't force `N` to a concrete value either.
+    fn unroll_struct_body(
+        &mut self,
+        items: &[StructBodyItem],
+    ) -> Result<Vec<UnrolledField>, ResolveError> {
+        let mut fields = Vec::new();
+
+        for item in items {
+            match item {
+                StructBodyItem::Field(field) => {
+                    let name = self.resolve_spliced_name_as_const(&field.name)?;
+                    fields.push(UnrolledField { name, ty: field.ty.clone() });
+                }
+
+                StructBodyItem::For { var, start, end, body, span } => {
+                    if references_unbound_generic(start, &self.generic_scope)
+                        || references_unbound_generic(end, &self.generic_scope)
+                    {
+                        continue;
+                    }
+
+                    let start_value = self.eval_const_expr(start)?;
+                    let end_value = self.eval_const_expr(end)?;
+
+                    let mut i = start_value;
+                    let mut iterations: u64 = 0;
+
+                    while i < end_value {
+                        iterations += 1;
+
+                        if iterations > MAX_FOR_ITERATIONS {
+                            return Err(ResolveError::ForLoopTooLarge { span: *span });
+                        }
+
+                        let previous = self
+                            .generic_scope
+                            .insert(var.clone(), GenericBinding::Const(Some(i.clone())));
+
+                        let nested = self.unroll_struct_body(body);
+
+                        match previous {
+                            Some(previous) => {
+                                self.generic_scope.insert(var.clone(), previous);
+                            }
+                            None => {
+                                self.generic_scope.remove(var);
+                            }
+                        }
+
+                        fields.extend(nested?);
+
+                        i += Int::from(1);
+                    }
+                }
+
+                StructBodyItem::If { condition, body, else_body, .. } => {
+                    if references_unbound_generic(condition, &self.generic_scope) {
+                        continue;
+                    }
+
+                    let truthy = self.eval_const_expr(condition)? != Int::from(0);
+                    let chosen = if truthy { Some(body) } else { else_body.as_ref() };
+
+                    if let Some(chosen) = chosen {
+                        fields.extend(self.unroll_struct_body(chosen)?);
+                    }
+                }
+            }
+        }
+
+        Ok(fields)
+    }
+
+    // Resolves a struct field's (possibly spliced) name to a literal
+    // string against the const-expression evaluator (`self.generic_scope`
+    // + top-level consts) — the counterpart, for names, of
+    // `AliasResolver::eval_const_expr` for values. Used only here; a
+    // macro-body-generated `pub const`'s name goes through
+    // `values::AliasResolver::resolve_spliced_name` instead, which
+    // evaluates against a live macro invocation's `Value` scope rather
+    // than `generic_scope`.
+    fn resolve_spliced_name_as_const(&self, parts: &[NamePart]) -> Result<String, ResolveError> {
+        if let Some(literal) = literal_name(parts) {
+            return Ok(literal);
+        }
+
+        let mut out = String::new();
+
+        for part in parts {
+            match part {
+                NamePart::Literal(text) => out.push_str(text),
+                NamePart::Splice(expr) => out.push_str(&self.eval_const_expr(expr)?.to_string()),
+            }
+        }
+
+        Ok(out)
+    }
+}
+
+// A bare reference to a generic const parameter that's in scope but not
+// yet bound to a concrete value — mirrors `AliasResolver::resolve_generic_args`'s
+// identical check for a field's *type* (`bits<N>` staying symbolic rather
+// than folded), applied here to a `@for`/`@if`'s bound/condition instead.
+fn references_unbound_generic(expr: &Expr, generic_scope: &HashMap<String, GenericBinding>) -> bool {
+    matches!(
+        expr,
+        Expr::Identifier { name, .. } if matches!(generic_scope.get(name), Some(GenericBinding::Const(None)))
+    )
 }
 
 fn param_name(param: &GenericParameter) -> &str {
@@ -182,5 +317,114 @@ pub(super) fn describe_type(ty: &ResolvedType, symbols: &SymbolTable) -> String 
         ResolvedType::Builtin(BuiltinType::Int) => "int".to_string(),
         ResolvedType::Struct { symbol, .. } => symbols.get(*symbol).name.clone(),
         ResolvedType::TypeParameter { name } => name.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::path::Path;
+
+    use crate::ast::Program;
+    use crate::eval::Int;
+    use crate::lexer;
+    use crate::parser;
+    use crate::resolver::{collect_symbols, AliasResolver};
+
+    use super::{BuiltinType, ResolvedGenericArg, ResolvedType};
+
+    fn parse_fixture(name: &str) -> Program {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/emit")
+            .join(name);
+
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read fixture {}: {error}", path.display()));
+
+        let tokens = lexer::lex(&source).expect("fixture should lex");
+        parser::parse(tokens).expect("fixture should parse")
+    }
+
+    #[test]
+    fn for_generated_fields_resolve_under_a_concrete_instantiation() {
+        let program = parse_fixture("for_generated_struct_fields.basm");
+        let symbols = collect_symbols(&program).unwrap();
+        let array_id = symbols.lookup("Array").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let fields = resolver
+            .instantiate_struct_fields(
+                array_id,
+                &[
+                    ResolvedGenericArg::Type(Box::new(ResolvedType::Builtin(BuiltinType::Int))),
+                    ResolvedGenericArg::Const(Int::from(3)),
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(fields, vec![ResolvedType::Builtin(BuiltinType::Int); 3]);
+    }
+
+    #[test]
+    fn for_generated_field_names_are_reachable_via_field_type() {
+        let program = parse_fixture("for_generated_struct_fields.basm");
+        let symbols = collect_symbols(&program).unwrap();
+        let array_id = symbols.lookup("Array").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let ty = ResolvedType::Struct {
+            symbol: array_id,
+            args: vec![
+                ResolvedGenericArg::Type(Box::new(ResolvedType::Builtin(BuiltinType::Int))),
+                ResolvedGenericArg::Const(Int::from(3)),
+            ],
+        };
+
+        let span = program.span;
+
+        assert_eq!(
+            resolver.field_type(&ty, "__el0", span).unwrap(),
+            ResolvedType::Builtin(BuiltinType::Int)
+        );
+        assert_eq!(
+            resolver.field_type(&ty, "__el2", span).unwrap(),
+            ResolvedType::Builtin(BuiltinType::Int)
+        );
+        assert!(resolver.field_type(&ty, "__el3", span).is_err());
+    }
+
+    #[test]
+    fn abstract_resolution_skips_an_unrollable_for_without_erroring() {
+        // `n` isn't bound to a concrete value in this abstract,
+        // every-struct-in-the-program pass — `resolve_all_structs` should
+        // still succeed, just without any `@for`-generated fields to show
+        // for it (see `AliasResolver::unroll_struct_body`'s doc).
+        let program = parse_fixture("for_generated_struct_fields.basm");
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        assert!(resolver.resolve_all_structs().is_ok());
+    }
+
+    #[test]
+    fn if_true_includes_the_field_and_false_omits_it() {
+        let program = parse_fixture("if_generated_struct_field.basm");
+        let symbols = collect_symbols(&program).unwrap();
+        let conditional_id = symbols.lookup("Conditional").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let present = resolver
+            .instantiate_struct_fields(conditional_id, &[ResolvedGenericArg::Const(Int::from(1))])
+            .unwrap();
+        assert_eq!(present, vec![ResolvedType::Builtin(BuiltinType::Int)]);
+
+        let absent = resolver
+            .instantiate_struct_fields(conditional_id, &[ResolvedGenericArg::Const(Int::from(0))])
+            .unwrap();
+        assert_eq!(absent, vec![]);
     }
 }
