@@ -1,14 +1,14 @@
 from std.array import *
 from std.ctypes import uint8_t
 
-pub struct CString {
+pub struct U8String {
     pub chars: Array<uint8_t, ...>,
 }
 
-pub macro string(s: str) -> CString
+pub macro string(s: str) -> U8String
     | syntax { "$s$" }
 {
-    @return CString {
+    @return U8String {
         chars: Array<u8, len(s)> {
             @for i in 0..len(s) {
                 __el`i`: s[i],
@@ -17,31 +17,31 @@ pub macro string(s: str) -> CString
     }
 }
 
-pub macro string_len(s: CString) -> int
+pub macro string_len(s: U8String) -> int
     | syntax { len($s$) }
 {
     @return len(s.chars)
 }
 
-pub macro string_get(s: CString, index: int) -> u8
+pub macro string_get(s: U8String, index: int) -> u8
     | syntax { $s$[$index$] }
 {
     @return s.chars[index]
 }
 
-pub macro string_updated(s: CString, index: int, value: u8)
+pub macro string_updated(s: U8String, index: int, value: u8)
 {
-    @return CString {
+    @return U8String {
         chars: updated(s.chars, index, value),
     }
 }
 
 # =========================
-# CString helpers
+# U8String helpers
 # =========================
 
-pub macro title(s: CString) -> CString {
-    @return CString {
+pub macro title(s: U8String) -> U8String {
+    @return U8String {
         chars: Array<u8, len(s.chars)> {
             @for i in 0..len(s.chars) {
                 @if i == 0 {

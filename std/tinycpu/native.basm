@@ -1,6 +1,6 @@
 from std.binary import *
-from std import cstring
-from std.cstring import CString
+from std import u8string
+from std.u8string import U8String
 
 pub struct Reg<const width: int> {
     pub const id: bits<2>
@@ -21,10 +21,10 @@ macro make_reg64(id: bits<2>) {
 # =================
 
 macro make_binary_math_instr(
-    name: CString,
+    name: U8String,
     opcode: bits<32>,
 ) {
-    struct `cstring.title(name)`Instr {
+    struct `u8string.title(name)`Instr {
         const opcode: bits<32>,
         const dest: Reg64,
         const src1: Reg64,
@@ -32,7 +32,7 @@ macro make_binary_math_instr(
     }
 
     pub macro `name`(dest: Reg64, src1: Reg64, src2: Reg64) {
-        @emit `cstring.title(name)`Instr {
+        @emit `u8string.title(name)`Instr {
             opcode: `opcode`,
             dest: \`dest\`,
             src1: \`src1\`,
