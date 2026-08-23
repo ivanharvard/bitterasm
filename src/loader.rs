@@ -466,7 +466,7 @@ fn rename_expr(expr: &mut Expr, renames: &HashMap<String, String>) {
             }
         }
 
-        Expr::Integer { .. } | Expr::String { .. } => {}
+        Expr::Integer { .. } | Expr::String { .. } | Expr::Here { .. } => {}
 
         Expr::Member { object, .. } => rename_expr(object, renames),
 
@@ -569,7 +569,7 @@ mod tests {
 
         let no_consts = HashMap::new();
         let mut alias_resolver =
-            crate::resolver::AliasResolver::new(&program, &symbols, &no_consts);
+            crate::resolver::AliasResolver::new_single_pass(&program, &symbols, &no_consts);
 
         alias_resolver
             .resolve_all_structs()
@@ -611,7 +611,7 @@ mod tests {
             .collect();
 
         let mut alias_resolver =
-            crate::resolver::AliasResolver::new(&program, &symbols, &consts_by_name);
+            crate::resolver::AliasResolver::new_single_pass(&program, &symbols, &consts_by_name);
 
         let aliases = alias_resolver
             .resolve_all()
@@ -706,7 +706,7 @@ mod tests {
         let symbols = crate::resolver::collect_symbols(&program)
             .expect("symbol collection should succeed");
 
-        crate::resolver::AliasResolver::new(&program, &symbols, &HashMap::new())
+        crate::resolver::AliasResolver::new_single_pass(&program, &symbols, &HashMap::new())
             .resolve_all()
             .expect("Alias should resolve through Public down to the private Helper field");
 
@@ -725,7 +725,7 @@ mod tests {
             .expect("symbol collection should succeed");
 
         let result =
-            crate::resolver::AliasResolver::new(&program, &symbols, &HashMap::new()).resolve_all();
+            crate::resolver::AliasResolver::new_single_pass(&program, &symbols, &HashMap::new()).resolve_all();
 
         assert!(
             matches!(result, Err(crate::resolver::ResolveError::UnknownType { .. })),
@@ -789,7 +789,7 @@ mod tests {
 
         let no_consts = HashMap::new();
         let mut alias_resolver =
-            crate::resolver::AliasResolver::new(&program, &symbols, &no_consts);
+            crate::resolver::AliasResolver::new_single_pass(&program, &symbols, &no_consts);
 
         alias_resolver
             .resolve_all()

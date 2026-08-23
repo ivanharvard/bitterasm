@@ -328,43 +328,53 @@ pub macro sw(rs2: Reg, offset: int, rs1: Reg) -> SType
 # =================
 # B-type: branches
 # =================
-# `offset` is the raw byte distance to the branch target (bit 0 is always
-# 0 and isn't stored). The scrambled field order below is RV32I's, not a
-# choice made here — see the BType declaration's own doc comment.
+# `target` is the instruction `@here` would return at the branch target —
+# not a byte address, not a delta a caller computes by hand; see
+# std/riscv/native.basm's own design discussion. Every RV32I instruction is
+# exactly 4 bytes, so `(target - @here) * 4` is the real byte distance the
+# BType format actually encodes (bit 0 is always 0 and isn't stored). The
+# scrambled field order below is RV32I's, not a choice made here — see the
+# BType declaration's own doc comment.
 
-pub macro beq(rs1: Reg, rs2: Reg, offset: int) -> BType
-    | syntax "beq $rs1$, $rs2$, $offset$"
+pub macro beq(rs1: Reg, rs2: Reg, target: int) -> BType
+    | syntax "beq $rs1$, $rs2$, $target$"
 {
+    const offset = (target - @here) * 4
     @emit BType(imm12 = Bit1((offset >> 12) & 1), imm10_5 = Imm6((offset >> 5) & 0b111111), rs2 = rs2, rs1 = rs1, funct3 = Funct3(0b000), imm4_1 = Imm4((offset >> 1) & 0b1111), imm11 = Bit1((offset >> 11) & 1), opcode = Opcode(0b1100011))
 }
 
-pub macro bne(rs1: Reg, rs2: Reg, offset: int) -> BType
-    | syntax "bne $rs1$, $rs2$, $offset$"
+pub macro bne(rs1: Reg, rs2: Reg, target: int) -> BType
+    | syntax "bne $rs1$, $rs2$, $target$"
 {
+    const offset = (target - @here) * 4
     @emit BType(imm12 = Bit1((offset >> 12) & 1), imm10_5 = Imm6((offset >> 5) & 0b111111), rs2 = rs2, rs1 = rs1, funct3 = Funct3(0b001), imm4_1 = Imm4((offset >> 1) & 0b1111), imm11 = Bit1((offset >> 11) & 1), opcode = Opcode(0b1100011))
 }
 
-pub macro blt(rs1: Reg, rs2: Reg, offset: int) -> BType
-    | syntax "blt $rs1$, $rs2$, $offset$"
+pub macro blt(rs1: Reg, rs2: Reg, target: int) -> BType
+    | syntax "blt $rs1$, $rs2$, $target$"
 {
+    const offset = (target - @here) * 4
     @emit BType(imm12 = Bit1((offset >> 12) & 1), imm10_5 = Imm6((offset >> 5) & 0b111111), rs2 = rs2, rs1 = rs1, funct3 = Funct3(0b100), imm4_1 = Imm4((offset >> 1) & 0b1111), imm11 = Bit1((offset >> 11) & 1), opcode = Opcode(0b1100011))
 }
 
-pub macro bge(rs1: Reg, rs2: Reg, offset: int) -> BType
-    | syntax "bge $rs1$, $rs2$, $offset$"
+pub macro bge(rs1: Reg, rs2: Reg, target: int) -> BType
+    | syntax "bge $rs1$, $rs2$, $target$"
 {
+    const offset = (target - @here) * 4
     @emit BType(imm12 = Bit1((offset >> 12) & 1), imm10_5 = Imm6((offset >> 5) & 0b111111), rs2 = rs2, rs1 = rs1, funct3 = Funct3(0b101), imm4_1 = Imm4((offset >> 1) & 0b1111), imm11 = Bit1((offset >> 11) & 1), opcode = Opcode(0b1100011))
 }
 
-pub macro bltu(rs1: Reg, rs2: Reg, offset: int) -> BType
-    | syntax "bltu $rs1$, $rs2$, $offset$"
+pub macro bltu(rs1: Reg, rs2: Reg, target: int) -> BType
+    | syntax "bltu $rs1$, $rs2$, $target$"
 {
+    const offset = (target - @here) * 4
     @emit BType(imm12 = Bit1((offset >> 12) & 1), imm10_5 = Imm6((offset >> 5) & 0b111111), rs2 = rs2, rs1 = rs1, funct3 = Funct3(0b110), imm4_1 = Imm4((offset >> 1) & 0b1111), imm11 = Bit1((offset >> 11) & 1), opcode = Opcode(0b1100011))
 }
 
-pub macro bgeu(rs1: Reg, rs2: Reg, offset: int) -> BType
-    | syntax "bgeu $rs1$, $rs2$, $offset$"
+pub macro bgeu(rs1: Reg, rs2: Reg, target: int) -> BType
+    | syntax "bgeu $rs1$, $rs2$, $target$"
 {
+    const offset = (target - @here) * 4
     @emit BType(imm12 = Bit1((offset >> 12) & 1), imm10_5 = Imm6((offset >> 5) & 0b111111), rs2 = rs2, rs1 = rs1, funct3 = Funct3(0b111), imm4_1 = Imm4((offset >> 1) & 0b1111), imm11 = Bit1((offset >> 11) & 1), opcode = Opcode(0b1100011))
 }
 
@@ -383,10 +393,12 @@ pub macro auipc(rd: Reg, imm: int) -> UType {
 # =================
 # J-type: jump
 # =================
-# Same scrambling story as BType — see JType's own doc comment.
+# Same `target`/`@here` story as BType above, and same scrambling story as
+# BType — see JType's own doc comment.
 
-pub macro jal(rd: Reg, offset: int) -> JType
-    | syntax "jal $rd$, $offset$"
+pub macro jal(rd: Reg, target: int) -> JType
+    | syntax "jal $rd$, $target$"
 {
+    const offset = (target - @here) * 4
     @emit JType(imm20 = Bit1((offset >> 20) & 1), imm10_1 = Imm10((offset >> 1) & 0b1111111111), imm11 = Bit1((offset >> 11) & 1), imm19_12 = Imm8((offset >> 12) & 0b11111111), rd = rd, opcode = Opcode(0b1101111))
 }

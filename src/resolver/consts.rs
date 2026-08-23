@@ -185,7 +185,7 @@ fn referenced_identifiers(expr: &crate::ast::Expr) -> Vec<String> {
     while let Some(expr) = stack.pop() {
         match expr {
             Expr::Identifier { name, .. } => names.push(name.clone()),
-            Expr::Integer { .. } | Expr::String { .. } => {}
+            Expr::Integer { .. } | Expr::String { .. } | Expr::Here { .. } => {}
             Expr::Member { object, .. } => stack.push(object),
             Expr::Call { callee, arguments, .. } => {
                 stack.push(callee);

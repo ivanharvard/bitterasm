@@ -252,6 +252,8 @@ pub fn print_expr(expr: &Expr) -> String {
         }
 
         Expr::Splice { inner, .. } => format!("`{}`", print_expr(inner)),
+
+        Expr::Here { .. } => "@here".to_string(),
     }
 }
 

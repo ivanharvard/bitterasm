@@ -58,6 +58,7 @@
 use std::collections::HashMap;
 
 use crate::ast::{CallArgument, ConstDeclaration, Expr, Invocation, MacroDeclaration, Statement};
+use crate::eval::Int;
 use crate::token::Span;
 
 use super::aliases::AliasResolver;
@@ -187,7 +188,17 @@ impl<'a> AliasResolver<'a> {
             match statement {
                 Statement::Meta(meta) => match meta.name.as_str() {
                     "emit" => match meta.args.as_slice() {
-                        [expr] => emitted.push(self.eval_value(expr, &scope)?),
+                        [expr] => {
+                            emitted.push(self.eval_value(expr, &scope)?);
+                            // Advances the shared, whole-program-persistent
+                            // counter `@here` reads — see
+                            // `AliasResolver::values_emitted`. A nested
+                            // invocation's own `@emit`s bump this same
+                            // field through the shared `&mut self`, so
+                            // there's nothing extra to do where nested
+                            // `emitted`/`generated` get folded in below.
+                            self.values_emitted += Int::from(1);
+                        }
 
                         other => {
                             return Err(ResolveError::InvalidArgumentCount {
@@ -298,7 +309,7 @@ impl<'a> AliasResolver<'a> {
                 reify_value(&value, *span)
             }
 
-            Expr::Identifier { .. } | Expr::Integer { .. } | Expr::String { .. } => {
+            Expr::Identifier { .. } | Expr::Integer { .. } | Expr::String { .. } | Expr::Here { .. } => {
                 Ok(expr.clone())
             }
 
@@ -381,7 +392,7 @@ mod tests {
     use crate::eval::Int;
     use crate::lexer;
     use crate::parser;
-    use crate::resolver::{collect_symbols, AliasResolver, ResolveError, ResolvedGenericArg};
+    use crate::resolver::{collect_symbols, AliasResolver, LabelMode, ResolveError, ResolvedGenericArg};
 
     use super::{MacroExpansion, Value};
 
@@ -427,7 +438,7 @@ mod tests {
         let symbols = collect_symbols(&program).unwrap();
         let symbol = symbols.lookup("combo").unwrap();
         let consts = HashMap::new();
-        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         let mut stack = Vec::new();
         let result = resolver
@@ -453,7 +464,7 @@ mod tests {
         let symbol = symbols.lookup("make_byte").unwrap();
         let bits_id = symbols.lookup("bits").unwrap();
         let consts = HashMap::new();
-        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         let mut stack = Vec::new();
         let result = resolver
@@ -482,7 +493,7 @@ mod tests {
         let symbols = collect_symbols(&program).unwrap();
         let symbol = symbols.lookup("bad").unwrap();
         let consts = HashMap::new();
-        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         let mut stack = Vec::new();
 
@@ -499,7 +510,7 @@ mod tests {
         let invocation = find_invocation(&program, "double");
         let symbols = collect_symbols(&program).unwrap();
         let consts = HashMap::new();
-        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         let result = resolver
             .expand_invocation(invocation, &HashMap::new())
@@ -523,7 +534,7 @@ mod tests {
         let symbols = collect_symbols(&program).unwrap();
         let symbol = symbols.lookup("outer").unwrap();
         let consts = HashMap::new();
-        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         let mut stack = Vec::new();
         let result = resolver
@@ -552,7 +563,7 @@ mod tests {
         let symbols = collect_symbols(&program).unwrap();
         let symbol = symbols.lookup("read_id").unwrap();
         let consts = HashMap::new();
-        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         // `dst` is declared `Reg`; passing a bare Int should be rejected
         // before the body even runs, the same way `mov 7, r1` (args
@@ -577,7 +588,7 @@ mod tests {
         let symbols = collect_symbols(&program).unwrap();
         let symbol = symbols.lookup("loopy").unwrap();
         let consts = HashMap::new();
-        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         let mut stack = Vec::new();
         let result = resolver.run_macro_body(symbol, declaration, vec![Value::Int(Int::from(1))], &mut stack);
@@ -598,7 +609,7 @@ mod tests {
         let symbols = collect_symbols(&program).unwrap();
         let symbol = symbols.lookup("ping").unwrap();
         let consts = HashMap::new();
-        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         let mut stack = Vec::new();
         let result = resolver.run_macro_body(symbol, declaration, vec![Value::Int(Int::from(1))], &mut stack);
@@ -621,7 +632,7 @@ mod tests {
         let invocation = find_invocation(&program, "Reg");
         let symbols = collect_symbols(&program).unwrap();
         let consts = HashMap::new();
-        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         assert!(matches!(
             resolver.expand_invocation(invocation, &HashMap::new()),
@@ -636,7 +647,7 @@ mod tests {
         let invocation = find_invocation(&program, "ghost");
         let symbols = collect_symbols(&program).unwrap();
         let consts = HashMap::new();
-        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         assert!(matches!(
             resolver.expand_invocation(invocation, &HashMap::new()),
@@ -652,7 +663,7 @@ mod tests {
         let symbols = collect_symbols(&program).unwrap();
         let symbol = symbols.lookup("doubles").unwrap();
         let consts = HashMap::new();
-        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         let mut stack = Vec::new();
         let result = resolver
@@ -677,7 +688,7 @@ mod tests {
         let symbols = collect_symbols(&program).unwrap();
         let symbol = symbols.lookup("make_reg").unwrap();
         let consts = HashMap::new();
-        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         let mut stack = Vec::new();
         let result = resolver
@@ -718,7 +729,7 @@ mod tests {
         let symbols = collect_symbols(&program).unwrap();
         let symbol = symbols.lookup("make_stuff").unwrap();
         let consts = HashMap::new();
-        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         let mut stack = Vec::new();
         let result = resolver
@@ -732,6 +743,13 @@ mod tests {
         assert!(matches!(&result.generated[1], Statement::TypeAlias(decl) if decl.name == "Bar"));
         assert!(matches!(&result.generated[2], Statement::Macro(decl) if decl.name == "helper"));
         assert!(matches!(&result.generated[3], Statement::Label(label) if label.name == "start"));
+
+        // Top-level-only scoping: `collect_symbols` never descends into a
+        // macro body, so this nested `start:` — captured verbatim into
+        // `generated` above, still unresolved — was never registered as a
+        // `SymbolKind::Label` and stays completely uninvolved in label
+        // resolution.
+        assert_eq!(symbols.lookup("start"), None);
     }
 
     #[test]
@@ -742,7 +760,7 @@ mod tests {
         let symbols = collect_symbols(&program).unwrap();
         let symbol = symbols.lookup("outer").unwrap();
         let consts = HashMap::new();
-        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         let mut stack = Vec::new();
         let result = resolver
@@ -767,7 +785,7 @@ mod tests {
         let symbols = collect_symbols(&program).unwrap();
         let symbol = symbols.lookup("make_ref").unwrap();
         let consts = HashMap::new();
-        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         let mut stack = Vec::new();
         let result = resolver
@@ -785,5 +803,214 @@ mod tests {
             &decl.value,
             Expr::Identifier { name, .. } if name == "other_global"
         ));
+    }
+
+    // =============
+    // @here / labels
+    // =============
+
+    #[test]
+    fn at_here_counts_values_emitted_so_far() {
+        let program = parse_fixture("here_basic.basm");
+
+        let declaration = find_macro(&program, "emits_here");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("emits_here").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let result = resolver.run_macro_body(symbol, declaration, vec![], &mut stack).unwrap();
+
+        // Nothing has emitted yet when `@here` is reached, so it reads 0 —
+        // the index the very next `@emit` (99) will land at.
+        assert_eq!(result.emitted, vec![Value::Int(Int::from(0)), Value::Int(Int::from(99))]);
+    }
+
+    #[test]
+    fn at_here_reflects_nested_invocation_emits() {
+        let program = parse_fixture("here_reflects_nested_invocation.basm");
+
+        let declaration = find_macro(&program, "outer");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("outer").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let result = resolver.run_macro_body(symbol, declaration, vec![], &mut stack).unwrap();
+
+        // outer's own `@emit 0`, then helper's two `@emit`s (1, 2) flatten
+        // into the same shared counter before outer's own `@here` is
+        // reached, so `@here == 3` — not just "how many statements outer
+        // itself has run so far".
+        assert_eq!(
+            result.emitted,
+            vec![
+                Value::Int(Int::from(0)),
+                Value::Int(Int::from(1)),
+                Value::Int(Int::from(2)),
+                Value::Int(Int::from(3)),
+            ]
+        );
+    }
+
+    #[test]
+    fn bare_here_statement_is_unsupported() {
+        let tokens = lexer::lex("macro foo() {\n    @here\n}\n").expect("fixture should lex");
+        let program = parser::parse(tokens).expect("fixture should parse");
+
+        let declaration = find_macro(&program, "foo");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("foo").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let error = resolver.run_macro_body(symbol, declaration, vec![], &mut stack).unwrap_err();
+
+        assert!(matches!(
+            error,
+            ResolveError::UnsupportedMacroStatement { kind, .. } if kind == "@here"
+        ));
+    }
+
+    #[test]
+    fn backward_label_reference_resolves_to_recorded_position() {
+        let program = parse_fixture("backward_label.basm");
+
+        let declaration = find_macro(&program, "reads_label");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("reads_label").unwrap();
+        let label_id = symbols.lookup("mylabel").unwrap();
+        let consts = HashMap::new();
+
+        let mut positions = HashMap::new();
+        positions.insert(label_id, Int::from(0));
+
+        let mut resolver =
+            AliasResolver::new(&program, &symbols, &consts, LabelMode::Strict, positions);
+
+        let mut stack = Vec::new();
+        let result = resolver.run_macro_body(symbol, declaration, vec![], &mut stack).unwrap();
+
+        assert_eq!(result.emitted, vec![Value::Int(Int::from(0))]);
+    }
+
+    #[test]
+    fn unknown_identifier_still_errors_under_tolerant_label_mode() {
+        let program = parse_fixture("unknown_identifier_in_body.basm");
+
+        let declaration = find_macro(&program, "reads_nothing");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("reads_nothing").unwrap();
+        let consts = HashMap::new();
+
+        // Tolerant mode only substitutes a placeholder for a *known*
+        // label whose position isn't recorded yet — a name that isn't a
+        // symbol at all keeps erroring immediately, in either mode.
+        let mut resolver =
+            AliasResolver::new(&program, &symbols, &consts, LabelMode::Tolerant, HashMap::new());
+
+        let mut stack = Vec::new();
+        let error = resolver.run_macro_body(symbol, declaration, vec![], &mut stack).unwrap_err();
+
+        assert!(matches!(
+            error,
+            ResolveError::UnknownConstant { name, .. } if name == "does_not_exist"
+        ));
+    }
+
+    #[test]
+    fn label_name_colliding_with_a_const_is_a_duplicate_symbol() {
+        let program = parse_fixture("label_collides_with_const.basm");
+
+        let error = collect_symbols(&program).unwrap_err();
+
+        assert!(matches!(
+            error,
+            ResolveError::DuplicateSymbol { name, .. } if name == "dup"
+        ));
+    }
+
+    #[test]
+    fn forward_and_backward_label_references_resolve_via_two_pass_discovery() {
+        let program = parse_fixture("labels_forward_and_backward.basm");
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+
+        // Pass 1 (position discovery, tolerant): mirrors
+        // `main::resolve_and_expand`'s own two-pass driver — walk every
+        // top-level statement, expanding invocations for real and
+        // recording each label's position as it's reached. Forward
+        // references get a silent placeholder; only the resulting
+        // position map is kept.
+        let mut discovery = AliasResolver::new(
+            &program,
+            &symbols,
+            &consts,
+            LabelMode::Tolerant,
+            HashMap::new(),
+        );
+
+        for statement in &program.statements {
+            match statement {
+                Statement::Invocation(invocation) => {
+                    discovery.expand_invocation(invocation, &HashMap::new()).unwrap();
+                }
+
+                Statement::Label(label) => {
+                    let id = symbols.lookup(&label.name).unwrap();
+                    discovery.record_label_position(id);
+                }
+
+                _ => {}
+            }
+        }
+
+        let label_positions = discovery.into_label_positions();
+
+        // Pass 2 (real, strict): rerun the identical walk, this time
+        // keeping the emitted output.
+        let mut resolver = AliasResolver::new(
+            &program,
+            &symbols,
+            &consts,
+            LabelMode::Strict,
+            label_positions,
+        );
+
+        let mut emitted = Vec::new();
+
+        for statement in &program.statements {
+            match statement {
+                Statement::Invocation(invocation) => {
+                    let expansion = resolver.expand_invocation(invocation, &HashMap::new()).unwrap();
+                    emitted.extend(expansion.emitted);
+                }
+
+                Statement::Label(label) => {
+                    let id = symbols.lookup(&label.name).unwrap();
+                    resolver.record_label_position(id);
+                }
+
+                _ => {}
+            }
+        }
+
+        // noop -> 1; reads_target loop_start (backward, -1 instruction —
+        // the exact worked proof from the design conversation); reads_target
+        // skip_target (forward, +2 instructions — this is the case a
+        // single-pass resolver would get wrong, since `skip_target` isn't
+        // known yet the first time it's referenced); noop -> 1.
+        assert_eq!(
+            emitted,
+            vec![
+                Value::Int(Int::from(1)),
+                Value::Int(Int::from(-1)),
+                Value::Int(Int::from(2)),
+                Value::Int(Int::from(1)),
+            ]
+        );
     }
 }

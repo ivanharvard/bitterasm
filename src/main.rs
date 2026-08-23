@@ -117,12 +117,65 @@ fn resolve_and_expand(path: &Path) -> Expansion {
         .map(|(id, value)| (symbols.get(*id).name.clone(), value.clone()))
         .collect();
 
-    let mut alias_resolver = resolver::AliasResolver::new(&program, &symbols, &consts_by_name);
+    // A label reference (or `@here`) can be a *forward* reference — a
+    // label whose `foo:` line appears later in the program than the
+    // invocation that names it — so a label's position can't always be
+    // known the first time it's read. Two passes over the same program
+    // solve this: pass 1 runs the real expansion machinery in
+    // `LabelMode::Tolerant`, so an as-yet-unrecorded (forward-referenced)
+    // label silently gets a placeholder position instead of erroring, just
+    // to discover where every top-level label actually ends up; pass 2
+    // reruns the same expansion for real, in `LabelMode::Strict`, now that
+    // every position is known. This is only sound because nothing in the
+    // language can currently make the *number* of values a macro emits
+    // depend on a value derived from `@here`/a label (no `@if`/`@for`
+    // exist yet) — a wrong placeholder changes what gets emitted at some
+    // points during pass 1, never how many statements execute, so pass 1's
+    // discovered positions are still correct for pass 2 to trust.
+    let mut discovery = resolver::AliasResolver::new(
+        &program,
+        &symbols,
+        &consts_by_name,
+        resolver::LabelMode::Tolerant,
+        HashMap::new(),
+    );
+
+    resolve_structs_and_aliases(&mut discovery);
+    walk_top_level(&program, &symbols, &mut discovery, None);
+
+    let label_positions = discovery.into_label_positions();
+
+    let mut alias_resolver = resolver::AliasResolver::new(
+        &program,
+        &symbols,
+        &consts_by_name,
+        resolver::LabelMode::Strict,
+        label_positions,
+    );
 
     // Every struct/alias in the program is resolved up front, whether or
     // not any invocation actually reaches it — a broken declaration fails
     // the whole command, the same way a real compiler wouldn't skip type
     // checking an unreachable function.
+    resolve_structs_and_aliases(&mut alias_resolver);
+
+    // Expand every top-level invocation (`mov r1, 7`, or a macro calling
+    // another macro) in program order, against an empty scope — nothing at
+    // the top level is a bound parameter.
+    let mut emitted = Vec::new();
+    let mut generated = Vec::new();
+
+    walk_top_level(&program, &symbols, &mut alias_resolver, Some((&mut emitted, &mut generated)));
+
+    Expansion { symbols, emitted, generated }
+}
+
+/// Resolves every struct/alias in the program up front (independent of
+/// label passes — struct/alias resolution never touches `@here`/labels).
+/// Run identically on both pass resolvers rather than sharing state across
+/// them, mirroring how `stack` (the macro-recursion guard) is deliberately
+/// never shared across separate top-level expansions either.
+fn resolve_structs_and_aliases(alias_resolver: &mut resolver::AliasResolver) {
     if let Err(error) = alias_resolver.resolve_all_structs() {
         eprintln!("resolver error: {error:?}");
         std::process::exit(1);
@@ -145,30 +198,49 @@ fn resolve_and_expand(path: &Path) -> Expansion {
             }
         }
     }
+}
 
-    // Expand every top-level invocation (`mov r1, 7`, or a macro calling
-    // another macro) in program order, against an empty scope — nothing at
-    // the top level is a bound parameter.
-    let mut emitted = Vec::new();
-    let mut generated = Vec::new();
-
+/// One left-to-right walk over the program's top-level statements, shared
+/// by both label-resolution passes: expand every `Invocation`, and record
+/// every top-level `Label`'s position as it's reached. `collect` is `None`
+/// for the position-discovery pass (its emitted/generated output is
+/// meaningless, only `alias_resolver`'s label positions matter) and
+/// `Some(emitted, generated)` for the real pass.
+fn walk_top_level(
+    program: &bitterasm::ast::Program,
+    symbols: &SymbolTable,
+    alias_resolver: &mut resolver::AliasResolver,
+    mut collect: Option<(&mut Vec<Value>, &mut Vec<Statement>)>,
+) {
     for statement in &program.statements {
-        if let Statement::Invocation(invocation) = statement {
-            match alias_resolver.expand_invocation(invocation, &HashMap::new()) {
-                Ok(expansion) => {
-                    emitted.extend(expansion.emitted);
-                    generated.extend(expansion.generated);
-                }
+        match statement {
+            Statement::Invocation(invocation) => {
+                match alias_resolver.expand_invocation(invocation, &HashMap::new()) {
+                    Ok(expansion) => {
+                        if let Some((emitted, generated)) = collect.as_mut() {
+                            emitted.extend(expansion.emitted);
+                            generated.extend(expansion.generated);
+                        }
+                    }
 
-                Err(error) => {
-                    eprintln!("resolver error: {error:?}");
-                    std::process::exit(1);
+                    Err(error) => {
+                        eprintln!("resolver error: {error:?}");
+                        std::process::exit(1);
+                    }
                 }
             }
+
+            Statement::Label(label) => {
+                let id = symbols
+                    .lookup(&label.name)
+                    .expect("every top-level label is registered by collect_symbols");
+
+                alias_resolver.record_label_position(id);
+            }
+
+            _ => {}
         }
     }
-
-    Expansion { symbols, emitted, generated }
 }
 
 fn compile(path: &Path, output: Option<PathBuf>) {

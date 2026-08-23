@@ -1,0 +1,5 @@
+mylabel:
+
+macro reads_label() {
+    @emit mylabel
+}

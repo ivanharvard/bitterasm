@@ -1,0 +1,10 @@
+macro helper() {
+    @emit 1
+    @emit 2
+}
+
+macro outer() {
+    @emit 0
+    helper
+    @emit @here
+}

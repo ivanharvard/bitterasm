@@ -41,6 +41,20 @@ pub(super) enum GenericBinding {
     Const(Option<Int>),
 }
 
+/// How `AliasResolver::resolve_label_value` treats a known top-level label
+/// whose position hasn't been recorded yet — i.e. a forward reference.
+/// `Tolerant` (position-discovery pass) substitutes a placeholder so
+/// expansion can keep running long enough to discover *every* label's
+/// position, including ones after the current point; `Strict` (the real
+/// pass) trusts that discovery already ran to completion, so an
+/// unresolved-but-known label at that point is a resolver bug, not a
+/// legitimate forward reference. See `main::resolve_and_expand`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LabelMode {
+    Tolerant,
+    Strict,
+}
+
 pub struct AliasResolver<'a> {
     pub(super) program: &'a Program,
     pub(super) symbols: &'a SymbolTable,
@@ -60,6 +74,17 @@ pub struct AliasResolver<'a> {
     pub(super) const_value_stack: Vec<SymbolId>,
 
     pub(super) generic_scope: HashMap<String, GenericBinding>,
+
+    // How many values have been `@emit`'d so far, in whole-program
+    // emission order — read by `@here`, advanced once per `@emit` (see
+    // `macro_body::walk_macro_body`). Unlike `stack` above, this must
+    // *not* reset per top-level invocation: it tracks a position in the
+    // same flattened stream `main::resolve_and_expand`'s own `emitted`
+    // accumulates across the whole program, so it only resets when a
+    // fresh `AliasResolver` is constructed for a new pass.
+    pub(super) values_emitted: Int,
+    pub(super) label_positions: HashMap<SymbolId, Int>,
+    pub(super) label_mode: LabelMode,
 }
 
 impl<'a> AliasResolver<'a> {
@@ -67,10 +92,17 @@ impl<'a> AliasResolver<'a> {
     /// (see [`super::ConstEvaluator`]) — needed so a generic const argument
     /// that references one, e.g. `bits<SOME_WIDTH>`, can fold to a
     /// concrete value the same way a literal or arithmetic expression does.
+    ///
+    /// `label_mode`/`known_label_positions` select which of the two label
+    /// -resolution passes this instance runs: `Tolerant` with an empty map
+    /// for position-discovery, `Strict` with that pass's completed map for
+    /// the real expansion. See `main::resolve_and_expand`.
     pub fn new(
         program: &'a Program,
         symbols: &'a SymbolTable,
         consts: &'a HashMap<String, Int>,
+        label_mode: LabelMode,
+        known_label_positions: HashMap<SymbolId, Int>,
     ) -> Self {
         let mut states = HashMap::new();
         let mut const_value_states = HashMap::new();
@@ -94,7 +126,38 @@ impl<'a> AliasResolver<'a> {
             const_value_states,
             const_value_stack: Vec::new(),
             generic_scope: HashMap::new(),
+            values_emitted: Int::from(0),
+            label_positions: known_label_positions,
+            label_mode,
         }
+    }
+
+    /// Convenience for callers that don't care about label/`@here`
+    /// resolution across a whole-program two-pass expansion (unit tests
+    /// resolving a single fixture's types/macro body in isolation) —
+    /// equivalent to [`AliasResolver::new`] with `LabelMode::Strict` and no
+    /// pre-recorded label positions. A real `bitterasm compile`/`expand`
+    /// run should go through the two-pass driver in `main.rs` instead.
+    pub fn new_single_pass(
+        program: &'a Program,
+        symbols: &'a SymbolTable,
+        consts: &'a HashMap<String, Int>,
+    ) -> Self {
+        Self::new(program, symbols, consts, LabelMode::Strict, HashMap::new())
+    }
+
+    /// Records `id`'s position as "however many values have been emitted
+    /// so far" — called when a top-level `Statement::Label` is walked (see
+    /// `main::resolve_and_expand`; nested, in-macro-body labels never call
+    /// this, they stay uninvolved in label resolution entirely).
+    pub fn record_label_position(&mut self, id: SymbolId) {
+        self.label_positions.insert(id, self.values_emitted.clone());
+    }
+
+    /// Consumes a position-discovery-pass resolver, handing back its
+    /// completed label-position map to seed the real pass's resolver.
+    pub fn into_label_positions(self) -> HashMap<SymbolId, Int> {
+        self.label_positions
     }
 
     pub fn resolve_all(
@@ -242,6 +305,13 @@ impl<'a> AliasResolver<'a> {
             }
 
             SymbolKind::Macro => {
+                Err(ResolveError::ExpectedType {
+                    name: name.clone(),
+                    span,
+                })
+            }
+
+            SymbolKind::Label => {
                 Err(ResolveError::ExpectedType {
                     name: name.clone(),
                     span,

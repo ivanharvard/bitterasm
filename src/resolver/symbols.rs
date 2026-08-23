@@ -17,6 +17,7 @@ pub enum SymbolKind {
     TypeAlias,
     Const,
     Macro,
+    Label,
 }
 
 #[derive(Debug, Clone)]

@@ -14,7 +14,7 @@ mod symbols;
 mod types;
 mod values;
 
-pub use aliases::AliasResolver;
+pub use aliases::{AliasResolver, LabelMode};
 pub use consts::ConstEvaluator;
 pub use facets::validate as validate_facets;
 pub use macro_body::MacroExpansion;
@@ -59,6 +59,19 @@ pub fn collect_symbols(program: &Program) -> Result<SymbolTable, ResolveError> {
                     decl.name.clone(),
                     SymbolKind::Macro,
                     decl.span,
+                )
+            }
+
+            // Only top-level labels are registered — `collect_symbols`
+            // never descends into a `MacroDeclaration`'s body, so a label
+            // nested inside a macro body (captured verbatim into
+            // `MacroExpansion::generated`, still unresolved) is untouched
+            // by this, exactly as before this variant existed.
+            Statement::Label(label) => {
+                table.insert(
+                    label.name.clone(),
+                    SymbolKind::Label,
+                    label.span,
                 )
             }
 

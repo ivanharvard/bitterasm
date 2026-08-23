@@ -123,6 +123,16 @@ pub enum Expr {
         inner: Box<Expr>,
         span: Span,
     },
+
+    /// `@here` — how many values have been `@emit`'d so far in this
+    /// expansion, as a plain count (not bits/bytes; see
+    /// `resolver::aliases::AliasResolver::values_emitted`). Unlike
+    /// `@emit`/`@return`, which only make sense as their own body
+    /// statement, `@here` is meant to be used inline (`target - @here`),
+    /// so it's a primary expression rather than a `MetaStatement`.
+    Here {
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -135,7 +145,8 @@ impl Expr {
             | Expr::Call { span, .. }
             | Expr::Unary { span, .. }
             | Expr::Binary { span, .. }
-            | Expr::Splice { span, .. } => *span,
+            | Expr::Splice { span, .. }
+            | Expr::Here { span, .. } => *span,
         }
     }
 }

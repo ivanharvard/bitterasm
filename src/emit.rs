@@ -148,7 +148,7 @@ mod tests {
         let declaration = find_macro(&program, "make_byte");
         let symbols = collect_symbols(&program).unwrap();
         let consts = HashMap::new();
-        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         let mut stack = Vec::new();
         let expansion = resolver

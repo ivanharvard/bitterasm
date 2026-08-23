@@ -346,6 +346,53 @@ fn parses_splice_expression() {
 }
 
 #[test]
+fn parses_here_expression_inline() {
+    let program =
+        parse(lex("mov r1, target - @here\n").unwrap()).unwrap();
+
+    let Statement::Invocation(invocation) = &program.statements[0] else {
+        panic!("expected invocation");
+    };
+
+    let Expr::Binary { right, .. } = &invocation.operands[1] else {
+        panic!("expected binary expression");
+    };
+
+    assert!(matches!(right.as_ref(), Expr::Here { .. }));
+}
+
+#[test]
+fn here_expression_rejects_any_other_at_name() {
+    let error = parse(lex("mov r1, @foo\n").unwrap()).unwrap_err();
+
+    assert!(
+        format!("{error}").contains("here"),
+        "expected the error to mention `here`, got: {error}"
+    );
+}
+
+#[test]
+fn bare_here_statement_still_parses_as_a_meta_statement() {
+    // `@here` only makes sense inline (`target - @here`); a bare `@here`
+    // line parses fine (same generic `@`-directive grammar as `@emit`) but
+    // is left for the resolver to reject — see
+    // `resolver::macro_body::tests::bare_here_statement_is_unsupported`.
+    let program = parse(
+        lex("macro foo() {\n    @here\n}\n").unwrap(),
+    )
+    .unwrap();
+
+    let Statement::Macro(decl) = &program.statements[0] else {
+        panic!("expected macro declaration");
+    };
+
+    assert!(matches!(
+        &decl.body[0],
+        Statement::Meta(meta) if meta.name == "here"
+    ));
+}
+
+#[test]
 fn parses_const_declaration() {
     let program =
         parse(lex("const r1 = Reg(id = 1)\n").unwrap()).unwrap();

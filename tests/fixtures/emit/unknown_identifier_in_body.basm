@@ -1,0 +1,3 @@
+macro reads_nothing() {
+    @emit does_not_exist
+}

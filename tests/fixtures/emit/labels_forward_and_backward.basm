@@ -1,0 +1,15 @@
+macro noop() {
+    @emit 1
+}
+
+macro reads_target(target: int) {
+    const offset = target - @here
+    @emit offset
+}
+
+loop_start:
+noop
+reads_target loop_start
+reads_target skip_target
+noop
+skip_target:

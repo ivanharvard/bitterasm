@@ -19,7 +19,7 @@ use crate::ast::{CallArgument, Expr};
 use crate::eval::{self, EvalError, Int};
 use crate::token::Span;
 
-use super::aliases::AliasResolver;
+use super::aliases::{AliasResolver, LabelMode};
 use super::consts::find_const_declaration;
 use super::structs::describe_type;
 use super::symbols::{SymbolId, SymbolKind};
@@ -58,10 +58,16 @@ impl<'a> AliasResolver<'a> {
             // why an expression like `dst.id + 1` isn't supported yet (see
             // module doc): a Member/Call leaf inside a Binary/Unary tree
             // never reaches this match arm to be resolved as a Value.
+            // `@here` has the same problem in principle (`eval::eval`
+            // doesn't know what expansion is in progress) but is common
+            // enough to be worth the small fix: substitute every `@here`
+            // leaf with its current value as a literal first, so `target -
+            // @here` still folds through the ordinary Int evaluator.
             Expr::Integer { .. } | Expr::Unary { .. } | Expr::Binary { .. } => {
+                let rewritten = substitute_here(expr, &self.values_emitted);
                 let int_scope = int_only_scope(scope);
 
-                eval::eval(expr, &int_scope)
+                eval::eval(&rewritten, &int_scope)
                     .map(Value::Int)
                     .map_err(|error| into_value_error(error, scope))
             }
@@ -75,8 +81,19 @@ impl<'a> AliasResolver<'a> {
             // bound that exact name itself.
             Expr::Identifier { name, span } => match scope.get(name) {
                 Some(value) => Ok(value.clone()),
-                None => self.resolve_const_value(name, *span),
+
+                None => match self.symbols.lookup(name) {
+                    Some(id) if self.symbols.get(id).kind == SymbolKind::Label => {
+                        self.resolve_label_value(id, *span)
+                    }
+
+                    _ => self.resolve_const_value(name, *span),
+                },
             },
+
+            // How many values have been `@emit`'d so far, in whole-program
+            // order — see `AliasResolver::values_emitted`.
+            Expr::Here { .. } => Ok(Value::Int(self.values_emitted.clone())),
 
             Expr::Member { object, member, span } => match self.eval_value(object, scope)? {
                 Value::Struct { symbol, fields, .. } => fields
@@ -244,6 +261,41 @@ impl<'a> AliasResolver<'a> {
         }
     }
 
+    /// Resolves a top-level label's `SymbolId` to the value-count position
+    /// it was recorded at (see `AliasResolver::record_label_position`).
+    /// `id` is already known to be `SymbolKind::Label` by the caller.
+    pub(super) fn resolve_label_value(&mut self, id: SymbolId, span: Span) -> Result<Value, ResolveError> {
+        match self.label_positions.get(&id) {
+            Some(position) => Ok(Value::Int(position.clone())),
+
+            None => match self.label_mode {
+                // Position-discovery pass: this label's own `foo:` line
+                // hasn't been walked yet (a forward reference) — a
+                // placeholder lets expansion keep running long enough to
+                // discover every label's position, including this one.
+                // The value itself is meaningless; only the *count* of
+                // values this expansion goes on to emit matters, and that
+                // count is unaffected by which placeholder is used (see
+                // the module doc on why that invariant holds today).
+                LabelMode::Tolerant => Ok(Value::Int(Int::from(0))),
+
+                // The real pass: every top-level label's position was
+                // already recorded by a completed discovery pass, so
+                // reaching here means this resolver was seeded with an
+                // incomplete map — a bug in the two-pass driver, not a
+                // BitterASM source error.
+                LabelMode::Strict => Err(ResolveError::Internal {
+                    message: format!(
+                        "label `{}` has no recorded position — the position-discovery pass \
+                         should have found every top-level label before this pass ran",
+                        self.symbols.get(id).name,
+                    ),
+                    span,
+                }),
+            },
+        }
+    }
+
     fn make_const_value_cycle_error(&self, repeated: SymbolId) -> ResolveError {
         let start = self.const_value_stack.iter().position(|id| *id == repeated).unwrap_or(0);
 
@@ -270,6 +322,31 @@ pub(super) fn value_type(value: &Value) -> ResolvedType {
             symbol: *symbol,
             args: args.clone(),
         },
+    }
+}
+
+// Rewrites every `@here` leaf in an arithmetic subtree into a literal
+// `Expr::Integer` holding `values_emitted`'s current value, so the
+// resulting tree can be folded by `eval::eval` — which has no notion of a
+// live expansion in progress — the same way any other literal would be.
+fn substitute_here(expr: &Expr, values_emitted: &Int) -> Expr {
+    match expr {
+        Expr::Here { span } => Expr::Integer { raw: values_emitted.to_string(), span: *span },
+
+        Expr::Unary { op, operand, span } => Expr::Unary {
+            op: *op,
+            operand: Box::new(substitute_here(operand, values_emitted)),
+            span: *span,
+        },
+
+        Expr::Binary { left, op, right, span } => Expr::Binary {
+            left: Box::new(substitute_here(left, values_emitted)),
+            op: *op,
+            right: Box::new(substitute_here(right, values_emitted)),
+            span: *span,
+        },
+
+        _ => expr.clone(),
     }
 }
 
@@ -363,7 +440,7 @@ mod tests {
         let declaration = find_macro(&program, "double");
         let symbols = collect_symbols(&program).unwrap();
         let consts = HashMap::new();
-        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         let mut scope = HashMap::new();
         scope.insert("x".to_string(), Value::Int(Int::from(21)));
@@ -381,7 +458,7 @@ mod tests {
         let symbols = collect_symbols(&program).unwrap();
         let reg_id = symbols.lookup("Reg").unwrap();
         let consts = HashMap::new();
-        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         let mut scope = HashMap::new();
         scope.insert("v".to_string(), Value::Int(Int::from(2)));
@@ -409,7 +486,7 @@ mod tests {
         let symbols = collect_symbols(&program).unwrap();
         let reg_id = symbols.lookup("Reg").unwrap();
         let consts = HashMap::new();
-        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         let mut scope = HashMap::new();
         scope.insert("v".to_string(), Value::Int(Int::from(2)));
@@ -437,7 +514,7 @@ mod tests {
         let symbols = collect_symbols(&program).unwrap();
         let reg_id = symbols.lookup("Reg").unwrap();
         let consts = HashMap::new();
-        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         let mut scope = HashMap::new();
         scope.insert(
@@ -464,7 +541,7 @@ mod tests {
         let declaration = find_macro(&program, "bad");
         let symbols = collect_symbols(&program).unwrap();
         let consts = HashMap::new();
-        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         let mut scope = HashMap::new();
         scope.insert("v".to_string(), Value::Int(Int::from(2)));
@@ -482,7 +559,7 @@ mod tests {
         let declaration = find_macro(&program, "bad");
         let symbols = collect_symbols(&program).unwrap();
         let consts = HashMap::new();
-        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         let mut scope = HashMap::new();
         scope.insert("v".to_string(), Value::Int(Int::from(2)));
@@ -500,7 +577,7 @@ mod tests {
         let declaration = find_macro(&program, "wrap");
         let symbols = collect_symbols(&program).unwrap();
         let consts = HashMap::new();
-        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         let mut scope = HashMap::new();
         scope.insert("v".to_string(), Value::Int(Int::from(1)));
@@ -525,7 +602,7 @@ mod tests {
         let declaration = find_macro(&program, "bad");
         let symbols = collect_symbols(&program).unwrap();
         let consts = HashMap::new();
-        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         let mut scope = HashMap::new();
         scope.insert("v".to_string(), Value::Int(Int::from(2)));
@@ -541,7 +618,7 @@ mod tests {
         let program = parse_fixture("named_const_reference.basm");
         let symbols = collect_symbols(&program).unwrap();
         let consts = HashMap::new();
-        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         let invocations = find_invocations(&program, "read");
         assert_eq!(invocations.len(), 2);

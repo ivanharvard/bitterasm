@@ -1,0 +1,4 @@
+macro emits_here() {
+    @emit @here
+    @emit 99
+}
