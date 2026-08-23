@@ -1,0 +1,14 @@
+struct Reg {
+    id: int
+}
+
+pub const r0 = Reg(id = 0)
+pub const zero = r0
+
+macro read(r: Reg) {
+    @emit r.id
+}
+
+read r0
+read zero
+

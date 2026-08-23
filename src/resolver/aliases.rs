@@ -25,6 +25,7 @@ use super::types::{
     ResolvedGenericArg,
     ResolvedType,
 };
+use super::values::ConstValueState;
 use super::ResolveError;
 
 #[derive(Debug, Clone)]
@@ -48,6 +49,16 @@ pub struct AliasResolver<'a> {
     states: HashMap<SymbolId, AliasState>,
     stack: Vec<SymbolId>,
 
+    // Lazy-resolve-and-memoize, same shape as `states`/`stack` above, but
+    // for a top-level const's fully-evaluated `Value` (struct or `Int`) —
+    // see `AliasResolver::resolve_const_value` in `super::values`. Kept
+    // separate from `states`/`stack` rather than reusing them: a type
+    // alias's own resolution never needs a struct-valued const (only
+    // `consts`, the pre-folded `Int`-only table, matters there), so the two
+    // recursion chains are independent and shouldn't share one cycle guard.
+    pub(super) const_value_states: HashMap<SymbolId, ConstValueState>,
+    pub(super) const_value_stack: Vec<SymbolId>,
+
     pub(super) generic_scope: HashMap<String, GenericBinding>,
 }
 
@@ -62,10 +73,15 @@ impl<'a> AliasResolver<'a> {
         consts: &'a HashMap<String, Int>,
     ) -> Self {
         let mut states = HashMap::new();
+        let mut const_value_states = HashMap::new();
 
         for symbol in symbols.iter() {
             if symbol.kind == SymbolKind::TypeAlias {
                 states.insert(symbol.id, AliasState::Unvisited);
+            }
+
+            if symbol.kind == SymbolKind::Const {
+                const_value_states.insert(symbol.id, ConstValueState::Unvisited);
             }
         }
 
@@ -75,6 +91,8 @@ impl<'a> AliasResolver<'a> {
             consts,
             states,
             stack: Vec::new(),
+            const_value_states,
+            const_value_stack: Vec::new(),
             generic_scope: HashMap::new(),
         }
     }

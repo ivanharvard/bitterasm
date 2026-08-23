@@ -6,7 +6,7 @@
 //! same way `type A = B; type B = A;` is) rather than requiring
 //! declaration order to already be a topological sort.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::{ConstDeclaration, Expr, Program, Statement};
 use crate::eval::{self, EvalError, Int};
@@ -62,7 +62,7 @@ impl<'a> ConstEvaluator<'a> {
 
             let declaration = find_const_declaration(self.program, &name, self.symbols)?;
 
-            if !is_int_shaped(&declaration.value) {
+            if !is_int_shaped(self.program, &declaration.value) {
                 // Not every const is meant to hold an Int (e.g. a struct
                 // value like `const r0: Reg64 = Reg64(0)`) — skip it here
                 // rather than failing the whole program. Such a const
@@ -130,7 +130,20 @@ impl<'a> ConstEvaluator<'a> {
         for name in referenced_identifiers(&value) {
             if let Some(referenced_id) = self.symbols.lookup(&name) {
                 if self.symbols.get(referenced_id).kind == SymbolKind::Const {
-                    scope.insert(name, self.evaluate(referenced_id)?);
+                    let referenced = find_const_declaration(self.program, &name, self.symbols)?;
+
+                    // A struct-valued const referenced here (`const foo =
+                    // some_reg + 1`) isn't this evaluator's problem to
+                    // reject — `eval::eval` below will, once `name` turns
+                    // out missing from `scope`, with a clearer
+                    // `UnknownConstant` than a confusing type error would
+                    // be. Skipping it here only prevents a *legitimately*
+                    // int-shaped const from crashing while it chases
+                    // through a struct-valued one that happens to share a
+                    // reference chain with it.
+                    if is_int_shaped(self.program, &referenced.value) {
+                        scope.insert(name, self.evaluate(referenced_id)?);
+                    }
                 }
             }
         }
@@ -201,7 +214,7 @@ fn into_resolve_error(error: EvalError, const_name: &str) -> ResolveError {
     }
 }
 
-fn find_const_declaration<'a>(
+pub(super) fn find_const_declaration<'a>(
     program: &'a Program,
     name: &str,
     symbols: &SymbolTable,
@@ -233,10 +246,83 @@ fn find_const_declaration<'a>(
 // are worth attempting to evaluate. `Member`/`Call`/`String` at the top
 // level mean this const holds something else entirely (a struct value, a
 // field access, plain text), not an `Int` that failed to fold.
-fn is_int_shaped(expr: &Expr) -> bool {
+//
+// A bare identifier needs one more step than that syntactic check can give
+// it: `const zero = x0` *looks* int-shaped (it's just a name), but is only
+// really int-shaped if `x0` itself is — so this chases a reference chain
+// through the program's own const declarations, the same way `evaluate`
+// would, rather than assuming a name is always fine to attempt.
+fn is_int_shaped(program: &Program, expr: &Expr) -> bool {
+    is_int_shaped_inner(program, expr, &mut HashSet::new())
+}
+
+fn is_int_shaped_inner(program: &Program, expr: &Expr, visiting: &mut HashSet<String>) -> bool {
     match expr {
         // Transparent: a splice's shape is whatever it wraps.
-        Expr::Splice { inner, .. } => is_int_shaped(inner),
+        Expr::Splice { inner, .. } => is_int_shaped_inner(program, inner, visiting),
+
+        Expr::Identifier { name, .. } => {
+            // A cycle here (`const a = b; const b = a;`) isn't this
+            // function's job to reject — `evaluate`'s own cycle detection
+            // will, if anything ever actually needs one of them as an Int.
+            // Treating it as not-int-shaped just means neither gets folded
+            // speculatively while chasing the other's shape.
+            if !visiting.insert(name.clone()) {
+                return false;
+            }
+
+            let shaped = program
+                .statements
+                .iter()
+                .find_map(|statement| match statement {
+                    Statement::Const(decl) if decl.name == *name => Some(decl),
+                    _ => None,
+                })
+                .is_some_and(|decl| is_int_shaped_inner(program, &decl.value, visiting));
+
+            visiting.remove(name);
+            shaped
+        }
+
         _ => !matches!(expr, Expr::Member { .. } | Expr::Call { .. } | Expr::String { .. }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use crate::ast::Program;
+    use crate::lexer;
+    use crate::parser;
+    use crate::resolver::collect_symbols;
+
+    use super::ConstEvaluator;
+
+    fn parse_fixture(name: &str) -> Program {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/emit")
+            .join(name);
+
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read fixture {}: {error}", path.display()));
+
+        let tokens = lexer::lex(&source).expect("fixture should lex");
+        parser::parse(tokens).expect("fixture should parse")
+    }
+
+    #[test]
+    fn struct_valued_const_referencing_another_is_skipped_not_rejected() {
+        let program = parse_fixture("named_const_reference.basm");
+        let symbols = collect_symbols(&program).unwrap();
+
+        // `zero = r0` is a bare identifier referencing a struct-valued
+        // const — `is_int_shaped` used to take that at face value and let
+        // `ConstEvaluator` try (and fail) to fold it as an Int. Neither
+        // `r0` nor `zero` is Int-shaped, so both should just be absent
+        // from the result, not blow up the whole evaluation.
+        let resolved = ConstEvaluator::new(&program, &symbols).evaluate_all().unwrap();
+
+        assert!(resolved.is_empty());
     }
 }

@@ -20,8 +20,9 @@ use crate::eval::{self, EvalError, Int};
 use crate::token::Span;
 
 use super::aliases::AliasResolver;
+use super::consts::find_const_declaration;
 use super::structs::describe_type;
-use super::symbols::SymbolId;
+use super::symbols::{SymbolId, SymbolKind};
 use super::types::{BuiltinType, ResolvedGenericArg, ResolvedType};
 use super::ResolveError;
 
@@ -33,6 +34,16 @@ pub enum Value {
         args: Vec<ResolvedGenericArg>,
         fields: Vec<(String, Value)>,
     },
+}
+
+// Lazy-resolve-and-memoize state for a top-level const's `Value`, mirroring
+// `aliases::AliasState`/`consts::ConstState` — see
+// `AliasResolver::resolve_const_value`.
+#[derive(Debug, Clone)]
+pub(super) enum ConstValueState {
+    Unvisited,
+    Visiting,
+    Resolved(Value),
 }
 
 impl<'a> AliasResolver<'a> {
@@ -55,12 +66,17 @@ impl<'a> AliasResolver<'a> {
                     .map_err(|error| into_value_error(error, scope))
             }
 
-            Expr::Identifier { name, span } => scope.get(name).cloned().ok_or_else(|| {
-                ResolveError::UnknownConstant {
-                    name: name.clone(),
-                    span: *span,
-                }
-            }),
+            // A name not bound in the current scope (a macro's own params,
+            // or nothing at all at the top level) falls back to a
+            // top-level `const` of the same name — `zero`/`x1`-style named
+            // constants need to resolve the same way whether they're used
+            // to build another const's value or passed as an invocation
+            // operand, not just when some enclosing macro happens to have
+            // bound that exact name itself.
+            Expr::Identifier { name, span } => match scope.get(name) {
+                Some(value) => Ok(value.clone()),
+                None => self.resolve_const_value(name, *span),
+            },
 
             Expr::Member { object, member, span } => match self.eval_value(object, scope)? {
                 Value::Struct { symbol, fields, .. } => fields
@@ -176,6 +192,73 @@ impl<'a> AliasResolver<'a> {
 
         Ok(Value::Struct { symbol, args, fields })
     }
+
+    /// Resolves a bare name that isn't bound in the current scope against
+    /// a top-level `const` of the same name, lazily and memoized — same
+    /// lazy-resolve-and-memoize shape as `AliasResolver`'s own type-alias
+    /// resolution (`const_value_states`/`const_value_stack`, tracked
+    /// separately from that mechanism's own `states`/`stack`; see their
+    /// declaration for why). A name that isn't a symbol at all, or is a
+    /// symbol but not a const (a struct or type alias used where a value
+    /// was expected), is `UnknownConstant` — the same error a truly
+    /// unbound name would produce, since neither case has a `Value` to
+    /// offer.
+    pub(super) fn resolve_const_value(&mut self, name: &str, span: Span) -> Result<Value, ResolveError> {
+        let Some(id) = self.symbols.lookup(name) else {
+            return Err(ResolveError::UnknownConstant { name: name.to_string(), span });
+        };
+
+        if self.symbols.get(id).kind != SymbolKind::Const {
+            return Err(ResolveError::UnknownConstant { name: name.to_string(), span });
+        }
+
+        match self.const_value_states.get(&id) {
+            Some(ConstValueState::Resolved(value)) => return Ok(value.clone()),
+            Some(ConstValueState::Visiting) => return Err(self.make_const_value_cycle_error(id)),
+            Some(ConstValueState::Unvisited) => {}
+            None => unreachable!("const_value_states is populated for every Const symbol in AliasResolver::new"),
+        }
+
+        self.const_value_states.insert(id, ConstValueState::Visiting);
+        self.const_value_stack.push(id);
+
+        let declaration = find_const_declaration(self.program, name, self.symbols);
+
+        let result = declaration.and_then(|declaration| {
+            let value = declaration.value.clone();
+            self.eval_value(&value, &HashMap::new())
+        });
+
+        self.const_value_stack.pop();
+
+        match result {
+            Ok(value) => {
+                self.const_value_states.insert(id, ConstValueState::Resolved(value.clone()));
+                Ok(value)
+            }
+
+            Err(error) => {
+                self.const_value_states.insert(id, ConstValueState::Unvisited);
+                Err(error)
+            }
+        }
+    }
+
+    fn make_const_value_cycle_error(&self, repeated: SymbolId) -> ResolveError {
+        let start = self.const_value_stack.iter().position(|id| *id == repeated).unwrap_or(0);
+
+        let mut cycle: Vec<String> = self.const_value_stack[start..]
+            .iter()
+            .map(|id| self.symbols.get(*id).name.clone())
+            .collect();
+
+        cycle.push(self.symbols.get(repeated).name.clone());
+
+        ResolveError::CyclicConstant {
+            cycle,
+            span: self.symbols.get(repeated).span,
+        }
+    }
 }
 
 // A `Value`'s type is already implicit in what it is — an Int, or which
@@ -224,7 +307,7 @@ mod tests {
 
     use std::path::Path;
 
-    use crate::ast::{Expr, MacroDeclaration, Program, Statement};
+    use crate::ast::{Expr, Invocation, MacroDeclaration, Program, Statement};
     use crate::eval::Int;
     use crate::lexer;
     use crate::parser;
@@ -261,6 +344,17 @@ mod tests {
         };
 
         &meta.args[0]
+    }
+
+    fn find_invocations<'a>(program: &'a Program, name: &str) -> Vec<&'a Invocation> {
+        program
+            .statements
+            .iter()
+            .filter_map(|statement| match statement {
+                Statement::Invocation(invocation) if invocation.name == name => Some(invocation),
+                _ => None,
+            })
+            .collect()
     }
 
     #[test]
@@ -440,5 +534,28 @@ mod tests {
             resolver.eval_value(emit_expr(declaration), &scope),
             Err(ResolveError::ExpectedStructCallee { .. })
         ));
+    }
+
+    #[test]
+    fn resolves_top_level_named_const_as_invocation_operand() {
+        let program = parse_fixture("named_const_reference.basm");
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new(&program, &symbols, &consts);
+
+        let invocations = find_invocations(&program, "read");
+        assert_eq!(invocations.len(), 2);
+
+        // `read r0` — a direct reference to a struct-valued top-level
+        // const, used as an invocation operand rather than passed down
+        // from an enclosing macro's own params.
+        let via_r0 = resolver.expand_invocation(invocations[0], &HashMap::new()).unwrap();
+        assert_eq!(via_r0.emitted, vec![Value::Int(Int::from(0))]);
+
+        // `read zero` — `zero`'s own value (`r0`) is itself a bare
+        // identifier referencing another struct-valued const, so this
+        // exercises the same fallback recursively.
+        let via_zero = resolver.expand_invocation(invocations[1], &HashMap::new()).unwrap();
+        assert_eq!(via_zero.emitted, vec![Value::Int(Int::from(0))]);
     }
 }
