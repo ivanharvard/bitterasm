@@ -1,0 +1,9 @@
+struct Bits<const width: int>
+    | invariant value >= 0 && value < (1 << width)
+{
+    value: int
+}
+
+type UByte = Bits<8> | invariant value < 100
+
+const TOO_BIG: UByte = 300

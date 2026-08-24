@@ -355,6 +355,15 @@ impl<'a> AliasResolver<'a> {
 
                 Statement::Const(decl) => {
                     let value = self.eval_value(&decl.value, &scope)?;
+
+                    let value = match &decl.ty {
+                        Some(ty) => {
+                            let target = self.resolve_type_expr(ty)?;
+                            self.convert_to(value, &target, decl.span)?
+                        }
+                        None => value,
+                    };
+
                     let name = self.resolve_spliced_name(&decl.name, &scope)?;
                     scope.insert(name, value);
                 }

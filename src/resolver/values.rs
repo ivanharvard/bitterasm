@@ -487,7 +487,7 @@ impl<'a> AliasResolver<'a> {
     // the way down") and the struct's own `invariant` is checked
     // (`check_struct_invariants`, the same check every other construction
     // path already goes through).
-    fn convert_to(
+    pub(super) fn convert_to(
         &mut self,
         value: Value,
         target: &ResolvedType,
@@ -586,7 +586,16 @@ impl<'a> AliasResolver<'a> {
 
         let result = declaration.and_then(|declaration| {
             let value = declaration.value.clone();
-            self.eval_value(&value, &HashMap::new())
+            let ty = declaration.ty.clone();
+            let value = self.eval_value(&value, &HashMap::new())?;
+
+            match ty {
+                Some(ty) => {
+                    let target = self.resolve_type_expr(&ty)?;
+                    self.convert_to(value, &target, declaration.span)
+                }
+                None => Ok(value),
+            }
         });
 
         self.const_value_stack.pop();
@@ -1354,5 +1363,69 @@ mod tests {
             resolver.run_macro_body(take_symbol, take_declaration, vec![untagged], &mut stack),
             Err(ResolveError::TypeMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn checked_const_wraps_and_tags_its_declared_value() {
+        let program = parse_fixture("checked_const.basm");
+        let symbols = collect_symbols(&program).unwrap();
+        let bits_id = symbols.lookup("Bits").unwrap();
+        let ubyte_id = symbols.lookup("UByte").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let value = resolver
+            .resolve_const_value("FIVE", crate::token::Span::new(0, 0))
+            .unwrap();
+
+        assert_eq!(
+            value,
+            Value::Struct {
+                symbol: bits_id,
+                args: vec![ResolvedGenericArg::Const(Int::from(8))],
+                fields: vec![("value".to_string(), Value::Int(Int::from(5)))],
+                nominal: Some(ubyte_id),
+            }
+        );
+    }
+
+    #[test]
+    fn checked_const_is_usable_as_an_invocation_operand_with_no_as_at_the_call_site() {
+        let program = parse_fixture("checked_const.basm");
+        let symbols = collect_symbols(&program).unwrap();
+        let bits_id = symbols.lookup("Bits").unwrap();
+        let ubyte_id = symbols.lookup("UByte").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let invocations = find_invocations(&program, "use_five");
+        assert_eq!(invocations.len(), 1);
+
+        let expansion = resolver.expand_invocation(invocations[0], &HashMap::new()).unwrap();
+
+        assert_eq!(
+            expansion.emitted,
+            vec![Value::Struct {
+                symbol: bits_id,
+                args: vec![ResolvedGenericArg::Const(Int::from(8))],
+                fields: vec![("value".to_string(), Value::Int(Int::from(5)))],
+                nominal: Some(ubyte_id),
+            }]
+        );
+    }
+
+    #[test]
+    fn checked_const_rejects_a_declared_value_failing_its_types_invariant() {
+        let program = parse_fixture("checked_const_out_of_range.basm");
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        match resolver.resolve_const_value("TOO_BIG", crate::token::Span::new(0, 0)) {
+            Err(ResolveError::InvariantViolated { type_name, .. }) => {
+                assert_eq!(type_name, "UByte");
+            }
+            other => panic!("expected an InvariantViolated on UByte, got {other:?}"),
+        }
     }
 }
