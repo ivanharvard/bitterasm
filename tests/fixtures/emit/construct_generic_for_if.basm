@@ -1,0 +1,17 @@
+struct Array<T, const n: int> {
+    @for i in 0..n {
+        __el`i`: T,
+    }
+}
+
+macro make_array(index: int, value: int) {
+    @emit Array<int, 3> {
+        @for i in 0..3 {
+            @if i == index {
+                __el`i`: value,
+            } @else {
+                __el`i`: 0,
+            }
+        }
+    }
+}

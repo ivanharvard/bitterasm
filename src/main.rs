@@ -208,7 +208,11 @@ fn resolve_structs_and_aliases(alias_resolver: &mut resolver::AliasResolver) {
     };
 
     for ty in aliases.values() {
-        if let resolver::ResolvedType::Struct { symbol, args } = ty {
+        // `strip_alias` here because this is field-resolvability
+        // validation, unrelated to whether `ty` is a nominal (invariant-
+        // bearing) alias — that struct's fields still need checking either
+        // way.
+        if let resolver::ResolvedType::Struct { symbol, args } = ty.strip_alias() {
             if let Err(error) = alias_resolver.instantiate_struct_fields(*symbol, args) {
                 eprintln!("resolver error: {error:?}");
                 std::process::exit(1);

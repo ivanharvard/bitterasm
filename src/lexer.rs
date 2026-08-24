@@ -145,6 +145,12 @@ impl<'src> Lexer<'src> {
                 self.lex_string()?;
             }
 
+            // chars — sugar for their codepoint as a plain integer literal,
+            // not a distinct kind of token; see `lex_char`.
+            '\'' => {
+                self.lex_char()?;
+            }
+
             // punctuation
             '.' => {
                 let start = self.pos;
@@ -474,6 +480,92 @@ impl<'src> Lexer<'src> {
         ))
     }
 
+    // chars — `'a'` desugars here, at lex time, straight into a plain
+    // `TokenKind::Integer` holding the one character's codepoint in
+    // decimal — the same relationship `0x61` has to `97`, not a distinct
+    // value kind downstream (see `crate::ast::Expr::Integer`). Exactly one
+    // (possibly escaped) character is required between the quotes; zero or
+    // more than one is a `LexError` — unlike a string, there's no length
+    // this could otherwise ambiguously mean.
+    fn lex_char(&mut self) -> Result<(), LexError> {
+        let start = self.pos;
+
+        // Opening quote.
+        self.advance();
+
+        let ch = match self.peek() {
+            Some('\'') => {
+                return Err(LexError::new(
+                    "a char literal can't be empty",
+                    start,
+                    self.pos,
+                ));
+            }
+
+            Some('\\') => {
+                self.advance();
+
+                let escape_start = self.pos;
+
+                match self.advance() {
+                    Some('n') => '\n',
+                    Some('r') => '\r',
+                    Some('t') => '\t',
+                    Some('0') => '\0',
+                    Some('\\') => '\\',
+                    Some('\'') => '\'',
+
+                    Some(other) => {
+                        return Err(LexError::new(
+                            format!("unknown escape sequence \\{other}"),
+                            escape_start.saturating_sub(1),
+                            self.pos,
+                        ));
+                    }
+
+                    None => {
+                        return Err(LexError::new(
+                            "unterminated escape sequence",
+                            start,
+                            self.pos,
+                        ));
+                    }
+                }
+            }
+
+            Some('\n') | None => {
+                return Err(LexError::new(
+                    "unterminated char literal",
+                    start,
+                    self.pos,
+                ));
+            }
+
+            Some(other) => {
+                self.advance();
+                other
+            }
+        };
+
+        match self.peek() {
+            Some('\'') => {
+                self.advance();
+            }
+
+            _ => {
+                return Err(LexError::new(
+                    "a char literal must contain exactly one character",
+                    start,
+                    self.pos,
+                ));
+            }
+        }
+
+        self.push(TokenKind::Integer((ch as u32).to_string()), start);
+
+        Ok(())
+    }
+
     // escapes outside strings — `` \` `` / `\$`, spelling out a literal
     // backtick/dollar sign in source text rather than the delimiter
     // meaning those characters carry unescaped (a splice, a capture).
@@ -739,6 +831,38 @@ mod tests {
                 TokenKind::Eof,
             ]
         );
+    }
+
+    #[test]
+    fn lexes_char_literal_as_its_codepoint() {
+        assert_eq!(
+            kinds("'a'"),
+            vec![
+                TokenKind::Integer("97".into()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn lexes_escaped_char_literal() {
+        assert_eq!(
+            kinds("'\\n'"),
+            vec![
+                TokenKind::Integer("10".into()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_empty_char_literal() {
+        assert!(lex("''").is_err());
+    }
+
+    #[test]
+    fn rejects_multi_character_char_literal() {
+        assert!(lex("'ab'").is_err());
     }
 
     #[test]

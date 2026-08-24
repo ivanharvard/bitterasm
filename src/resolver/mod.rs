@@ -278,6 +278,38 @@ pub enum ResolveError {
         span: Span,
     },
 
+    // A struct's declared `invariant` (see `crate::facets::invariant`)
+    // evaluated to `0` (falsy, same `Int` convention as `AssertionFailed`)
+    // against the fields/generic args a construction just produced.
+    InvariantViolated {
+        type_name: String,
+        invariant: String,
+        span: Span,
+    },
+
+    // `@as`'s target, after unwrapping every nominal alias layer, is a
+    // struct that isn't already the source value's own shape and doesn't
+    // have exactly one field to auto-wrap the source value into — there's
+    // no single rule for turning an arbitrary value into a multi-field (or
+    // zero-field) struct, so this needs to be constructed directly
+    // (`Struct { field: value, ... }`/`Struct(field = value, ...)`) instead.
+    CannotCoerce {
+        type_name: String,
+        span: Span,
+    },
+
+    // A `type` alias's `invariant` facet(s) reference more than one
+    // distinct identifier that isn't otherwise a known symbol or one of the
+    // alias's own generic params — there's no fixed name for "the value
+    // being converted" (the alias author picks their own, e.g. `invariant
+    // years >= 0`), so more than one candidate means the author almost
+    // certainly meant one name and wrote two by mistake.
+    AmbiguousInvariantBinder {
+        type_name: String,
+        names: Vec<String>,
+        span: Span,
+    },
+
     Internal {
         message: String,
         span: Span,

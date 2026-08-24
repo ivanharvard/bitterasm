@@ -1,0 +1,9 @@
+struct Bits<const width: int>
+    | invariant value >= 0 && value < (1 << width)
+{
+    value: int
+}
+
+macro make(v: int) {
+    @emit Bits<8> { value: v }
+}

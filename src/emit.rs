@@ -46,7 +46,10 @@ pub fn reify_value(symbols: &SymbolTable, value: &Value) -> EmittedValue {
     match value {
         Value::Int(int) => EmittedValue::Int { value: int.to_string() },
 
-        Value::Struct { symbol, args, fields } => EmittedValue::Struct {
+        // `nominal` is compile-time-only (an invariant is already checked
+        // by the time anything reaches emission) — same reasoning as
+        // `reify_type`'s `ResolvedType::Alias` handling just below.
+        Value::Struct { symbol, args, fields, .. } => EmittedValue::Struct {
             name: symbols.get(*symbol).name.clone(),
             args: args.iter().map(|arg| reify_generic_arg(symbols, arg)).collect(),
             fields: fields
@@ -90,6 +93,12 @@ fn reify_type(symbols: &SymbolTable, ty: &ResolvedType) -> EmittedType {
             "a fully-evaluated value's generic args can't carry an unresolved \
              type parameter (`{name}`)"
         ),
+
+        // Nominal wrapping is a compile-time-only concept — whatever
+        // invariant an alias carries has already been checked by the time
+        // anything reaches emission, so the emitted shape just describes
+        // the underlying structure `bitter` actually needs to encode.
+        ResolvedType::Alias { .. } => reify_type(symbols, ty.strip_alias()),
     }
 }
 

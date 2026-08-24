@@ -15,8 +15,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::ast::{
-    literal_name, Expr, Facet, FacetPayload, ImportItems, ImportStatement, MetaStatement,
-    ModulePath, NamePart, Program, Statement,
+    literal_name, ConstructItem, Expr, Facet, FacetPayload, ImportItems, ImportStatement,
+    MetaStatement, ModulePath, NamePart, Program, Statement,
 };
 use crate::lexer;
 use crate::parser::{self, ParserSeed};
@@ -380,6 +380,10 @@ fn rename_statement(statement: &mut Statement, renames: &HashMap<String, String>
             }
 
             rename_type_expr(&mut decl.ty, renames);
+
+            for facet in &mut decl.facets {
+                rename_facet(facet, renames);
+            }
         }
 
         Statement::Const(decl) => {
@@ -555,6 +559,50 @@ fn rename_expr(expr: &mut Expr, renames: &HashMap<String, String>) {
         }
 
         Expr::Splice { inner, .. } => rename_expr(inner, renames),
+
+        Expr::Construct { callee, generic_args, fields, .. } => {
+            rename_expr(callee, renames);
+
+            for arg in generic_args {
+                match arg {
+                    TypeArgument::Type(ty) => rename_type_expr(ty, renames),
+                    TypeArgument::Const(expr) => rename_expr(expr, renames),
+                }
+            }
+
+            rename_construct_items(fields, renames);
+        }
+
+        Expr::As { value, ty, .. } => {
+            rename_expr(value, renames);
+            rename_type_expr(ty, renames);
+        }
+    }
+}
+
+fn rename_construct_items(items: &mut [ConstructItem], renames: &HashMap<String, String>) {
+    for item in items {
+        match item {
+            ConstructItem::Field { name, value, .. } => {
+                rename_spliced_name(name, renames);
+                rename_expr(value, renames);
+            }
+
+            ConstructItem::For { start, end, body, .. } => {
+                rename_expr(start, renames);
+                rename_expr(end, renames);
+                rename_construct_items(body, renames);
+            }
+
+            ConstructItem::If { condition, body, else_body, .. } => {
+                rename_expr(condition, renames);
+                rename_construct_items(body, renames);
+
+                if let Some(else_body) = else_body {
+                    rename_construct_items(else_body, renames);
+                }
+            }
+        }
     }
 }
 

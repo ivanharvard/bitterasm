@@ -201,9 +201,11 @@ impl<'a> AliasResolver<'a> {
         self.states.insert(id, AliasState::Visiting);
         self.stack.push(id);
 
-        let declaration_ty = self.find_alias_declaration(id)?.ty.clone();
+        let declaration = self.find_alias_declaration(id)?.clone();
 
-        let result = self.resolve_type_expr(&declaration_ty);
+        let result = self.resolve_type_expr(&declaration.ty).and_then(|underlying| {
+            self.wrap_if_invariant(id, &declaration, underlying)
+        });
 
         self.stack.pop();
 
@@ -221,6 +223,42 @@ impl<'a> AliasResolver<'a> {
                 Err(err)
             }
         }
+    }
+
+    // Wraps `underlying` (what `id`'s target resolved to) in
+    // `ResolvedType::Alias` iff `id`'s own declaration carries at least one
+    // `invariant` facet — a plain alias with none of its own stays
+    // transparent, returning `underlying` untouched, even when `underlying`
+    // is itself already `Alias` (a deeper layer's invariant "holds all the
+    // way down" without this layer needing to add anything — see that
+    // variant's doc). See `crate::resolver::facets::alias_invariant_binder`
+    // for how the binder name is chosen.
+    fn wrap_if_invariant(
+        &self,
+        id: SymbolId,
+        declaration: &crate::ast::TypeAliasDeclaration,
+        underlying: ResolvedType,
+    ) -> Result<ResolvedType, ResolveError> {
+        let invariants = crate::facets::extract_invariants(&declaration.facets);
+
+        if invariants.is_empty() {
+            return Ok(underlying);
+        }
+
+        let binder = super::facets::alias_invariant_binder(
+            &declaration.name,
+            &declaration.generic_params,
+            &declaration.facets,
+            self.symbols,
+            declaration.span,
+        )?;
+
+        Ok(ResolvedType::Alias {
+            symbol: id,
+            binder,
+            invariants,
+            underlying: Box::new(underlying),
+        })
     }
 
     // ==============
@@ -369,6 +407,18 @@ impl<'a> AliasResolver<'a> {
             ResolvedType::TypeParameter { name } => {
                 Err(ResolveError::ExpectedType {
                     name,
+                    span,
+                })
+            }
+
+            // Applying generic args to an already-resolved alias isn't
+            // supported (a generic alias's own target has no mechanism to
+            // substitute its params into today, nominal or not) — same
+            // rejection as `Builtin`/`TypeParameter` just above, not a
+            // regression this variant introduces.
+            ResolvedType::Alias { symbol, .. } => {
+                Err(ResolveError::ExpectedType {
+                    name: self.symbols.get(symbol).name.clone(),
                     span,
                 })
             }
@@ -573,4 +623,104 @@ impl<'a> AliasResolver<'a> {
         }
     }
 
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::path::Path;
+
+    use crate::ast::Program;
+    use crate::eval::Int;
+    use crate::lexer;
+    use crate::parser;
+    use crate::resolver::{collect_symbols, AliasResolver, ResolveError};
+
+    use super::{ResolvedGenericArg, ResolvedType};
+
+    fn parse_fixture(name: &str) -> Program {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/emit")
+            .join(name);
+
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read fixture {}: {error}", path.display()));
+
+        let tokens = lexer::lex(&source).expect("fixture should lex");
+        parser::parse(tokens).expect("fixture should parse")
+    }
+
+    #[test]
+    fn invariant_bearing_alias_resolves_nominal() {
+        let program = parse_fixture("nominal_alias_invariant.basm");
+        let symbols = collect_symbols(&program).unwrap();
+        let bits_id = symbols.lookup("Bits").unwrap();
+        let ubyte_id = symbols.lookup("UByte").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let resolved = resolver.resolve_alias(ubyte_id).unwrap();
+
+        let ResolvedType::Alias { symbol, binder, invariants, underlying } = resolved else {
+            panic!("expected a nominal Alias, got {resolved:?}");
+        };
+
+        assert_eq!(symbol, ubyte_id);
+        assert_eq!(binder, Some("value".to_string()));
+        assert_eq!(invariants.len(), 1);
+        assert_eq!(
+            *underlying,
+            ResolvedType::Struct { symbol: bits_id, args: vec![ResolvedGenericArg::Const(Int::from(8))] }
+        );
+    }
+
+    #[test]
+    fn plain_alias_stays_transparent() {
+        let program = parse_fixture("nominal_alias_invariant.basm");
+        let symbols = collect_symbols(&program).unwrap();
+        let bits_id = symbols.lookup("Bits").unwrap();
+        let byte_id = symbols.lookup("Byte").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let resolved = resolver.resolve_alias(byte_id).unwrap();
+
+        assert_eq!(
+            resolved,
+            ResolvedType::Struct { symbol: bits_id, args: vec![ResolvedGenericArg::Const(Int::from(8))] }
+        );
+    }
+
+    #[test]
+    fn nominal_alias_is_not_equal_to_its_underlying_type() {
+        let program = parse_fixture("nominal_alias_invariant.basm");
+        let symbols = collect_symbols(&program).unwrap();
+        let bits_id = symbols.lookup("Bits").unwrap();
+        let ubyte_id = symbols.lookup("UByte").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let nominal = resolver.resolve_alias(ubyte_id).unwrap();
+        let underlying = ResolvedType::Struct { symbol: bits_id, args: vec![ResolvedGenericArg::Const(Int::from(8))] };
+
+        // A plain `Bits<8>` value doesn't satisfy `UByte` just because it's
+        // shaped the same — that's the whole point of nominal typing: only
+        // going through the checked gate (`@as`/a checked `const`, neither
+        // built yet) produces a value that type-checks as `UByte`.
+        assert_ne!(nominal, underlying);
+    }
+
+    #[test]
+    fn ambiguous_invariant_binder_is_rejected() {
+        let program = parse_fixture("ambiguous_alias_invariant.basm");
+        let symbols = collect_symbols(&program).unwrap();
+        let bad_id = symbols.lookup("Bad").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        assert!(matches!(
+            resolver.resolve_alias(bad_id),
+            Err(ResolveError::AmbiguousInvariantBinder { .. })
+        ));
+    }
 }

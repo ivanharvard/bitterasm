@@ -58,15 +58,17 @@
 use std::collections::HashMap;
 
 use crate::ast::{
-    CallArgument, ConstDeclaration, Expr, Invocation, MacroDeclaration, NamePart, Statement,
+    CallArgument, ConstDeclaration, ConstructItem, Expr, Invocation, MacroDeclaration, NamePart,
+    Statement,
 };
 use crate::eval::Int;
 use crate::token::Span;
+use crate::types::TypeArgument;
 
 use super::aliases::AliasResolver;
 use super::structs::describe_type;
 use super::symbols::SymbolId;
-use super::values::{value_type, Value};
+use super::values::Value;
 use super::ResolveError;
 
 /// Safety cap on `@for`'s iteration count — `Int` is arbitrary-precision,
@@ -158,7 +160,7 @@ impl<'a> AliasResolver<'a> {
 
         for (param, value) in declaration.params.iter().zip(arguments) {
             let expected = self.resolve_type_expr(&param.ty)?;
-            let actual = value_type(&value);
+            let actual = self.value_type(&value)?;
 
             if actual != expected {
                 return Err(ResolveError::TypeMismatch {
@@ -449,7 +451,74 @@ impl<'a> AliasResolver<'a> {
                 right: Box::new(self.splice_expr(right, scope)?),
                 span: *span,
             }),
+
+            // Same treatment as `Call`'s callee/arguments just above:
+            // spliced now against `scope`, everything else left as
+            // written. A generic `Type` argument isn't dug into for
+            // nested splices — mirrors `resolver::consts::referenced_identifiers`'s
+            // identical scoping choice, for the same reason: a type
+            // position isn't where an "already evaluated, splice this in"
+            // value is expected to live.
+            Expr::Construct { callee, generic_args, fields, span } => Ok(Expr::Construct {
+                callee: Box::new(self.splice_expr(callee, scope)?),
+                generic_args: generic_args
+                    .iter()
+                    .map(|arg| match arg {
+                        TypeArgument::Type(ty) => Ok(TypeArgument::Type(ty.clone())),
+                        TypeArgument::Const(expr) => Ok(TypeArgument::Const(self.splice_expr(expr, scope)?)),
+                    })
+                    .collect::<Result<_, ResolveError>>()?,
+                fields: self.splice_construct_items(fields, scope)?,
+                span: *span,
+            }),
+
+            // Same scoping choice as `Construct` just above — the type
+            // isn't dug into for splices.
+            Expr::As { value, ty, span } => Ok(Expr::As {
+                value: Box::new(self.splice_expr(value, scope)?),
+                ty: ty.clone(),
+                span: *span,
+            }),
         }
+    }
+
+    // `splice_expr`'s counterpart for a construction's own field list —
+    // each field's name is fully resolved now (mirrors `splice_const`
+    // resolving a generated `pub const`'s name), its value spliced the same
+    // way `splice_expr` handles any other value position.
+    fn splice_construct_items(
+        &mut self,
+        items: &[ConstructItem],
+        scope: &HashMap<String, Value>,
+    ) -> Result<Vec<ConstructItem>, ResolveError> {
+        items
+            .iter()
+            .map(|item| match item {
+                ConstructItem::Field { name, value, span } => Ok(ConstructItem::Field {
+                    name: vec![NamePart::Literal(self.resolve_spliced_name(name, scope)?)],
+                    value: self.splice_expr(value, scope)?,
+                    span: *span,
+                }),
+
+                ConstructItem::For { var, start, end, body, span } => Ok(ConstructItem::For {
+                    var: var.clone(),
+                    start: self.splice_expr(start, scope)?,
+                    end: self.splice_expr(end, scope)?,
+                    body: self.splice_construct_items(body, scope)?,
+                    span: *span,
+                }),
+
+                ConstructItem::If { condition, body, else_body, span } => Ok(ConstructItem::If {
+                    condition: self.splice_expr(condition, scope)?,
+                    body: self.splice_construct_items(body, scope)?,
+                    else_body: else_body
+                        .as_ref()
+                        .map(|else_body| self.splice_construct_items(else_body, scope))
+                        .transpose()?,
+                    span: *span,
+                }),
+            })
+            .collect()
     }
 
     // Mirrors AliasResolver::make_cycle_error / ConstEvaluator::make_cycle_error's
@@ -581,6 +650,7 @@ mod tests {
                     symbol: bits_id,
                     args: vec![ResolvedGenericArg::Const(Int::from(8))],
                     fields: vec![("value".to_string(), Value::Int(Int::from(3)))],
+                    nominal: None,
                 }],
                 generated: vec![],
                 returned: None,

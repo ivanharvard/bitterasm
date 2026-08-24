@@ -36,13 +36,14 @@ mod return_type;
 pub(crate) mod syntax;
 mod visibility;
 
-use crate::ast::Facet;
+use crate::ast::{Expr, Facet};
 use crate::types::TypeExpr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeclKind {
     Struct,
     Macro,
+    TypeAlias,
 }
 
 /// What a facet's payload looks like after its name, e.g. `before qux()`
@@ -106,4 +107,10 @@ pub fn is_pub(facets: &[Facet]) -> bool {
 /// The type from a `return` (`-> Type`) entry in `facets`, if any.
 pub fn extract_return_type(facets: &[Facet]) -> Option<TypeExpr> {
     return_type::extract(facets)
+}
+
+/// Every `invariant` entry's condition in `facets`, in declaration order —
+/// empty if there are none.
+pub fn extract_invariants(facets: &[Facet]) -> Vec<Expr> {
+    invariant::extract(facets)
 }

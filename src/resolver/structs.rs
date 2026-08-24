@@ -19,6 +19,7 @@ use std::collections::HashMap;
 
 use crate::ast::{literal_name, Expr, NamePart};
 use crate::eval::Int;
+use crate::facets;
 use crate::token::Span;
 use crate::types::{GenericParameter, StructBodyItem, TypeExpr};
 
@@ -26,6 +27,7 @@ use super::aliases::{AliasResolver, GenericBinding};
 use super::macro_body::MAX_FOR_ITERATIONS;
 use super::symbols::{SymbolId, SymbolKind, SymbolTable};
 use super::types::{BuiltinType, ResolvedGenericArg, ResolvedType};
+use super::values::Value;
 use super::ResolveError;
 
 /// A struct body item, fully unrolled down to a concrete field: a
@@ -95,6 +97,91 @@ impl<'a> AliasResolver<'a> {
         self.resolve_fields_in_scope(id, scope)
     }
 
+    // Like `instantiate_struct_fields`, but keeps each field's name
+    // alongside its resolved type instead of discarding it —
+    // brace-literal construction (`resolver::values::eval_construct_value`)
+    // needs both: the name, to match a declared field against a provided
+    // one; the type, to check the provided value against it.
+    pub(super) fn instantiate_struct_fields_named(
+        &mut self,
+        id: SymbolId,
+        args: &[ResolvedGenericArg],
+    ) -> Result<Vec<(String, ResolvedType)>, ResolveError> {
+        let declaration = self.find_struct_declaration(id)?;
+        let scope = generic_arg_scope(&declaration.generic_params, args);
+        let items = declaration.fields.clone();
+
+        let previous = std::mem::replace(&mut self.generic_scope, scope);
+
+        let result = match self.unroll_struct_body(&items) {
+            Ok(fields) => fields
+                .into_iter()
+                .map(|field| {
+                    let ty = self.resolve_type_expr(&field.ty)?;
+                    Ok((field.name, ty))
+                })
+                .collect(),
+            Err(error) => Err(error),
+        };
+
+        self.generic_scope = previous;
+
+        result
+    }
+
+    // Checks every `invariant` facet (`crate::facets::invariant`) declared
+    // on `symbol`'s struct against a construction that just produced
+    // `fields` under `args` — called from both `values::eval_call_value`
+    // and `values::eval_construct_value`, right before they hand back the
+    // `Value::Struct` they built. `bits<const width: int> | invariant
+    // fits_inside_width(width, value) { value: int }` is the motivating
+    // case: `width` comes from `args` (bound to the generic param it
+    // instantiates), `value` from `fields` (bound to the field it names) —
+    // together they're exactly the scope `fits_inside_width(width, value)`
+    // needs to evaluate.
+    pub(super) fn check_struct_invariants(
+        &mut self,
+        symbol: SymbolId,
+        args: &[ResolvedGenericArg],
+        fields: &[(String, Value)],
+        span: Span,
+    ) -> Result<(), ResolveError> {
+        let declaration = self.find_struct_declaration(symbol)?;
+        let invariants = facets::extract_invariants(&declaration.facets);
+
+        if invariants.is_empty() {
+            return Ok(());
+        }
+
+        let generic_params = declaration.generic_params.clone();
+
+        let mut scope: HashMap<String, Value> = HashMap::new();
+
+        for (param, arg) in generic_params.iter().zip(args) {
+            if let (GenericParameter::Const { name, .. }, ResolvedGenericArg::Const(value)) =
+                (param, arg)
+            {
+                scope.insert(name.clone(), Value::Int(value.clone()));
+            }
+        }
+
+        for (name, value) in fields {
+            scope.insert(name.clone(), value.clone());
+        }
+
+        for invariant in &invariants {
+            if !self.eval_truthy(invariant, &scope)? {
+                return Err(ResolveError::InvariantViolated {
+                    type_name: self.symbols.get(symbol).name.clone(),
+                    invariant: crate::printer::print_expr(invariant),
+                    span,
+                });
+            }
+        }
+
+        Ok(())
+    }
+
     // Resolves the type of a single named field on a (possibly generic)
     // struct type, e.g. `field_type(Reg<64>, "value")` returns `bits<64>`.
     // This is the semantic entry point field access should go through:
@@ -106,7 +193,12 @@ impl<'a> AliasResolver<'a> {
         field_name: &str,
         span: Span,
     ) -> Result<ResolvedType, ResolveError> {
-        let ResolvedType::Struct { symbol, args } = ty else {
+        // Field access reaches through nominal wrapping transparently —
+        // only type-*equality* checks (macro param binding, construction
+        // field checks) care whether a value went through the checked gate
+        // a nominal alias requires; a field genuinely on the struct
+        // underneath is still just there.
+        let ResolvedType::Struct { symbol, args } = ty.strip_alias() else {
             return Err(ResolveError::UnknownField {
                 type_name: describe_type(ty, self.symbols),
                 field: field_name.to_string(),
@@ -277,7 +369,7 @@ fn references_unbound_generic(expr: &Expr, generic_scope: &HashMap<String, Gener
     )
 }
 
-fn param_name(param: &GenericParameter) -> &str {
+pub(super) fn param_name(param: &GenericParameter) -> &str {
     match param {
         GenericParameter::Type { name, .. } => name,
         GenericParameter::Const { name, .. } => name,
@@ -317,6 +409,11 @@ pub(super) fn describe_type(ty: &ResolvedType, symbols: &SymbolTable) -> String 
         ResolvedType::Builtin(BuiltinType::Int) => "int".to_string(),
         ResolvedType::Struct { symbol, .. } => symbols.get(*symbol).name.clone(),
         ResolvedType::TypeParameter { name } => name.clone(),
+
+        // The alias's own name reads better in a diagnostic than its
+        // underlying struct's — "expected `uint8_t`, got `int`" over
+        // "expected `bits`, got `int`".
+        ResolvedType::Alias { symbol, .. } => symbols.get(*symbol).name.clone(),
     }
 }
 

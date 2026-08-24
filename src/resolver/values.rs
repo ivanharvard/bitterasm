@@ -15,13 +15,14 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{literal_name, CallArgument, Expr, NamePart};
+use crate::ast::{literal_name, CallArgument, ConstructItem, Expr, NamePart};
 use crate::eval::{self, EvalError, Int};
 use crate::token::Span;
-use crate::types::StructBodyItem;
+use crate::types::{StructBodyItem, TypeArgument};
 
 use super::aliases::{AliasResolver, LabelMode};
 use super::consts::find_const_declaration;
+use super::macro_body::MAX_FOR_ITERATIONS;
 use super::structs::describe_type;
 use super::symbols::{SymbolId, SymbolKind};
 use super::types::{BuiltinType, ResolvedGenericArg, ResolvedType};
@@ -34,6 +35,19 @@ pub enum Value {
         symbol: SymbolId,
         args: Vec<ResolvedGenericArg>,
         fields: Vec<(String, Value)>,
+
+        /// The outermost nominal (invariant-bearing) `type` alias this
+        /// value was produced *as*, if any — set only by `@as`
+        /// (`AliasResolver::convert_to`), `None` everywhere else (a struct
+        /// built by `eval_call_value`/`eval_construct_value` directly, even
+        /// through an alias name, isn't tagged — see those functions' own
+        /// comments). Re-resolving this symbol (`AliasResolver::resolve_alias`,
+        /// already memoized) reconstructs the full `ResolvedType::Alias` —
+        /// including any *further* nesting, since "holds all the way down"
+        /// means the outermost alias's own resolution already carries its
+        /// whole chain — so this is the only piece `Value` itself needs to
+        /// remember; see `AliasResolver::value_type`.
+        nominal: Option<SymbolId>,
     },
 }
 
@@ -114,7 +128,28 @@ impl<'a> AliasResolver<'a> {
                 self.eval_call_value(callee, arguments, *span, scope)
             }
 
-            Expr::String { span, .. } => Err(ResolveError::ExpectedValueExpression { span: *span }),
+            Expr::Construct { callee, generic_args, fields, span } => {
+                self.eval_construct_value(callee, generic_args, fields, *span, scope)
+            }
+
+            Expr::As { value, ty, span } => {
+                let value = self.eval_value(value, scope)?;
+                let target = self.resolve_type_expr(ty)?;
+
+                self.convert_to(value, &target, *span)
+            }
+
+            // A string literal is just a (possibly large) `Int` — its bytes
+            // packed big-endian into one arbitrary-precision integer, the
+            // same way a char literal already desugars to its codepoint at
+            // lex time (`lexer::lex_char`). Nothing about *length* survives
+            // this: `"\0A"` and `"A"` pack to the identical value, which is
+            // exactly why interpreting a packed int as "a string of length
+            // N" always requires an explicit `N` (`@as String<N>`) rather
+            // than ever being inferred back out of the number itself.
+            Expr::String { value, .. } => {
+                Ok(Value::Int(Int::from_bytes_be(num_bigint::Sign::Plus, value.as_bytes())))
+            }
 
             // Transparent here too — `@emit`'s argument is already always
             // evaluated, so a splice around it changes nothing.
@@ -135,7 +170,15 @@ impl<'a> AliasResolver<'a> {
 
         let resolved = self.resolve_named_type(std::slice::from_ref(name), *callee_span)?;
 
-        let ResolvedType::Struct { symbol, args } = resolved else {
+        // A callee naming a nominal alias (`Percent(value = 50)` where
+        // `Percent` carries its own `invariant`) still constructs the
+        // underlying struct — unwrapping here just preserves that this
+        // already worked for a *plain* alias before nominal wrapping
+        // existed. It does mean the alias's own invariant isn't checked
+        // through this path yet (only the underlying struct's, via
+        // `check_struct_invariants` below) — only `@as`/a checked `const`
+        // check an alias's own invariant, once those exist.
+        let ResolvedType::Struct { symbol, args } = resolved.strip_alias().clone() else {
             return Err(ResolveError::ExpectedStructCallee {
                 name: name.clone(),
                 span: *callee_span,
@@ -204,7 +247,7 @@ impl<'a> AliasResolver<'a> {
             })?;
 
             let expected = self.field_type(&struct_ty, &field_name, span)?;
-            let actual = value_type(&value);
+            let actual = self.value_type(&value)?;
 
             if actual != expected {
                 return Err(ResolveError::TypeMismatch {
@@ -218,7 +261,296 @@ impl<'a> AliasResolver<'a> {
             fields.push((field_name, value));
         }
 
-        Ok(Value::Struct { symbol, args, fields })
+        self.check_struct_invariants(symbol, &args, &fields, span)?;
+
+        // Constructing directly through a nominal alias's own name (rather
+        // than `@as`) doesn't tag the result — see the comment where its
+        // callee gets resolved, above. `nominal: None` here is that
+        // decision made concrete, not an oversight.
+        Ok(Value::Struct { symbol, args, fields, nominal: None })
+    }
+
+    /// `Array<u8, N> { field: value, ... }` — the brace-literal counterpart
+    /// of `eval_call_value`, which predates generative struct bodies and
+    /// can only see a struct's flat, non-`@for`/`@if` fields (see that
+    /// function's comment). This one goes through
+    /// `structs::AliasResolver::instantiate_struct_fields_named` instead, so
+    /// every field the concrete instantiation actually generates —
+    /// including `@for`/`@if`-produced ones — is visible to match against.
+    fn eval_construct_value(
+        &mut self,
+        callee: &Expr,
+        generic_args: &[TypeArgument],
+        fields: &[ConstructItem],
+        span: Span,
+        scope: &HashMap<String, Value>,
+    ) -> Result<Value, ResolveError> {
+        let Expr::Identifier { name, span: callee_span } = callee else {
+            return Err(ResolveError::UnsupportedCallExpression { span: callee.span() });
+        };
+
+        let resolved = self.resolve_named_type(std::slice::from_ref(name), *callee_span)?;
+
+        // See the identical unwrap in `eval_call_value` just above — same
+        // reasoning applies to brace-literal construction through an alias
+        // name.
+        let ResolvedType::Struct { symbol, args: bare_args } = resolved.strip_alias().clone() else {
+            return Err(ResolveError::ExpectedStructCallee {
+                name: name.clone(),
+                span: *callee_span,
+            });
+        };
+
+        let args = if generic_args.is_empty() {
+            bare_args
+        } else {
+            self.resolve_construct_generic_args(symbol, generic_args, span, scope)?
+        };
+
+        let declared = self.instantiate_struct_fields_named(symbol, &args)?;
+        let provided = self.unroll_construct_items(fields, scope)?;
+
+        if declared.len() != provided.len() {
+            return Err(ResolveError::InvalidArgumentCount {
+                name: name.clone(),
+                expected: declared.len(),
+                actual: provided.len(),
+                span,
+            });
+        }
+
+        let mut by_name: HashMap<String, Value> = HashMap::new();
+
+        for (field_name, value) in provided {
+            if !declared.iter().any(|(declared_name, _)| *declared_name == field_name) {
+                return Err(ResolveError::UnknownField {
+                    type_name: name.clone(),
+                    field: field_name,
+                    span,
+                });
+            }
+
+            by_name.insert(field_name, value);
+        }
+
+        let mut result_fields = Vec::with_capacity(declared.len());
+
+        for (field_name, expected) in declared {
+            let value = by_name.remove(&field_name).ok_or_else(|| ResolveError::Internal {
+                message: format!(
+                    "brace construction of `{name}` had the right field count but field \
+                     `{field_name}` was never targeted — likely two provided fields named the same field",
+                ),
+                span,
+            })?;
+
+            let actual = self.value_type(&value)?;
+
+            if actual != expected {
+                return Err(ResolveError::TypeMismatch {
+                    name: field_name,
+                    expected: describe_type(&expected, self.symbols),
+                    actual: describe_type(&actual, self.symbols),
+                    span,
+                });
+            }
+
+            result_fields.push((field_name, value));
+        }
+
+        self.check_struct_invariants(symbol, &args, &result_fields, span)?;
+
+        // See the identical comment in `eval_call_value` — not tagged.
+        Ok(Value::Struct { symbol, args, fields: result_fields, nominal: None })
+    }
+
+    // Resolves a brace-literal construction's already-parsed generic
+    // arguments (`Array<u8, N>`'s `<u8, N>`) into `ResolvedGenericArg`s.
+    // Deliberately doesn't reuse `aliases::AliasResolver::resolve_generic_args`
+    // (the type-position equivalent): a const argument here — `N` in
+    // `Array<u8, arr.len>` — may reference a bound macro parameter
+    // (`arr.len`, a member access on one), which only exists in this live
+    // `scope: Value` map, not in the consts/generic-scope-only world
+    // `eval_const_expr` evaluates against. `eval_int` (below) is what
+    // already threads a macro's own arguments through arithmetic, so a
+    // construction's generic const args go through it too.
+    fn resolve_construct_generic_args(
+        &mut self,
+        symbol: SymbolId,
+        args: &[TypeArgument],
+        span: Span,
+        scope: &HashMap<String, Value>,
+    ) -> Result<Vec<ResolvedGenericArg>, ResolveError> {
+        let expected = self.find_struct_declaration(symbol)?.generic_params.len();
+
+        if args.len() != expected {
+            let name = self.symbols.get(symbol).name.clone();
+
+            return Err(ResolveError::InvalidGenericArity {
+                name,
+                expected,
+                actual: args.len(),
+                span,
+            });
+        }
+
+        args.iter()
+            .map(|arg| match arg {
+                TypeArgument::Type(ty) => {
+                    Ok(ResolvedGenericArg::Type(Box::new(self.resolve_type_expr(ty)?)))
+                }
+
+                TypeArgument::Const(expr) => Ok(ResolvedGenericArg::Const(self.eval_int(expr, scope)?)),
+            })
+            .collect()
+    }
+
+    // Expands a construction's own `@for`/`@if` items into concrete
+    // `(field_name, Value)` pairs, given the live macro invocation `scope`
+    // (not `self.generic_scope` — a construction's `@for`/`@if` bounds and
+    // field values are ordinary expressions evaluated against bound
+    // parameters, e.g. `@for i in 0..arr.len`, the same as a macro body's
+    // own `@for`/`@if` in `macro_body::walk_macro_body`, which this mirrors
+    // exactly). Each field's value is evaluated *eagerly*, inside its own
+    // iteration's scope — unlike `structs::unroll_struct_body`, which
+    // defers resolving a field's type until after unrolling completes, a
+    // field's *value* commonly depends directly on the loop variable
+    // (`__el\`i\`: i * 2`), so there's no scope left to resolve it in once
+    // unrolling is done.
+    fn unroll_construct_items(
+        &mut self,
+        items: &[ConstructItem],
+        scope: &HashMap<String, Value>,
+    ) -> Result<Vec<(String, Value)>, ResolveError> {
+        let mut fields = Vec::new();
+
+        for item in items {
+            match item {
+                ConstructItem::Field { name, value, .. } => {
+                    let field_name = self.resolve_spliced_name(name, scope)?;
+                    let field_value = self.eval_value(value, scope)?;
+                    fields.push((field_name, field_value));
+                }
+
+                ConstructItem::For { var, start, end, body, span } => {
+                    let start_value = self.eval_int(start, scope)?;
+                    let end_value = self.eval_int(end, scope)?;
+
+                    let mut i = start_value;
+                    let mut iterations: u64 = 0;
+
+                    while i < end_value {
+                        iterations += 1;
+
+                        if iterations > MAX_FOR_ITERATIONS {
+                            return Err(ResolveError::ForLoopTooLarge { span: *span });
+                        }
+
+                        let mut iter_scope = scope.clone();
+                        iter_scope.insert(var.clone(), Value::Int(i.clone()));
+
+                        fields.extend(self.unroll_construct_items(body, &iter_scope)?);
+
+                        i += Int::from(1);
+                    }
+                }
+
+                ConstructItem::If { condition, body, else_body, .. } => {
+                    let chosen = if self.eval_truthy(condition, scope)? {
+                        Some(body)
+                    } else {
+                        else_body.as_ref()
+                    };
+
+                    if let Some(chosen) = chosen {
+                        fields.extend(self.unroll_construct_items(chosen, scope)?);
+                    }
+                }
+            }
+        }
+
+        Ok(fields)
+    }
+
+    // `@as`'s entire job: convert `value` into `target`, which may be a
+    // chain of nominal `ResolvedType::Alias` layers wrapping an eventual
+    // `Builtin`/`Struct`. Each alias layer's own `invariant`(s) are checked
+    // against `value` *as given* (never against some already-wrapped
+    // shape — see this session's "\0A" vs "A" discussion: a layer's binder
+    // means "the value being converted right now," consistently, no matter
+    // how deep the chain goes), using that layer's own chosen binder name
+    // (`crate::facets::invariant`'s module doc). Once every alias layer is
+    // unwrapped, the terminal struct is handled two ways: `value` is
+    // already that exact struct (nothing to do — its own invariant was
+    // already checked when it was built), or it isn't, in which case it's
+    // auto-wrapped into the struct's one field (recursively — "holds all
+    // the way down") and the struct's own `invariant` is checked
+    // (`check_struct_invariants`, the same check every other construction
+    // path already goes through).
+    fn convert_to(
+        &mut self,
+        value: Value,
+        target: &ResolvedType,
+        span: Span,
+    ) -> Result<Value, ResolveError> {
+        match target {
+            ResolvedType::Alias { symbol, binder, invariants, underlying } => {
+                let mut layer_scope: HashMap<String, Value> = HashMap::new();
+
+                if let Some(binder) = binder {
+                    layer_scope.insert(binder.clone(), value.clone());
+                }
+
+                for invariant in invariants {
+                    if !self.eval_truthy(invariant, &layer_scope)? {
+                        return Err(ResolveError::InvariantViolated {
+                            type_name: self.symbols.get(*symbol).name.clone(),
+                            invariant: crate::printer::print_expr(invariant),
+                            span,
+                        });
+                    }
+                }
+
+                let converted = self.convert_to(value, underlying, span)?;
+
+                Ok(tag_nominal(converted, *symbol))
+            }
+
+            ResolvedType::Struct { symbol, args } => match &value {
+                Value::Struct { symbol: value_symbol, args: value_args, .. }
+                    if value_symbol == symbol && value_args == args =>
+                {
+                    Ok(value)
+                }
+
+                _ => {
+                    let declared = self.instantiate_struct_fields_named(*symbol, args)?;
+
+                    let [(field_name, field_ty)] = declared.as_slice() else {
+                        return Err(ResolveError::CannotCoerce {
+                            type_name: self.symbols.get(*symbol).name.clone(),
+                            span,
+                        });
+                    };
+
+                    let wrapped = self.convert_to(value, field_ty, span)?;
+                    let fields = vec![(field_name.clone(), wrapped)];
+
+                    self.check_struct_invariants(*symbol, args, &fields, span)?;
+
+                    Ok(Value::Struct { symbol: *symbol, args: args.clone(), fields, nominal: None })
+                }
+            },
+
+            ResolvedType::Builtin(BuiltinType::Int) => match value {
+                Value::Int(_) => Ok(value),
+                Value::Struct { .. } => Err(ResolveError::ExpectedIntValue { span }),
+            },
+
+            ResolvedType::TypeParameter { name } => {
+                Err(ResolveError::ExpectedType { name: name.clone(), span })
+            }
+        }
     }
 
     /// Resolves a bare name that isn't bound in the current scope against
@@ -371,17 +703,54 @@ impl<'a> AliasResolver<'a> {
             span: self.symbols.get(repeated).span,
         }
     }
+
+    // A `Value`'s type is already implicit in what it is — an Int, or which
+    // struct (identity + resolved generic args) — except for `nominal`,
+    // which needs re-resolving (`resolve_alias`, already memoized) to
+    // reconstruct the full `ResolvedType::Alias` a tagged value's type
+    // actually is — see `Value::Struct::nominal`'s doc.
+    pub(super) fn value_type(&mut self, value: &Value) -> Result<ResolvedType, ResolveError> {
+        Ok(match value {
+            Value::Int(_) => ResolvedType::Builtin(BuiltinType::Int),
+
+            Value::Struct { symbol, args, nominal: Some(alias), .. } => {
+                let resolved = self.resolve_alias(*alias)?;
+
+                debug_assert!(
+                    matches!(&resolved, ResolvedType::Alias { .. }),
+                    "a Value tagged `nominal` should only ever be tagged with a symbol that \
+                     actually resolves to ResolvedType::Alias — {symbol:?}/{args:?} tagged with \
+                     {alias:?}, which resolved to {resolved:?} instead",
+                );
+
+                resolved
+            }
+
+            Value::Struct { symbol, args, nominal: None, .. } => ResolvedType::Struct {
+                symbol: *symbol,
+                args: args.clone(),
+            },
+        })
+    }
 }
 
-// A `Value`'s type is already implicit in what it is — an Int, or which
-// struct (identity + resolved generic args) — no separate inference needed.
-pub(super) fn value_type(value: &Value) -> ResolvedType {
+// `AliasResolver::convert_to`'s final step: mark `value` as having been
+// produced *as* the nominal alias `symbol`, once every layer's invariant
+// along the way already checked out. A plain `Value::Int` has nowhere to
+// remember this — unlike `Value::Struct`, it carries no `nominal` slot — so
+// tagging one is a no-op: the invariant was still enforced right now by the
+// caller, but the *value* itself can't carry "this is a PositiveInt"
+// forward the way a tagged struct can, meaning a macro param/field typed as
+// such an alias needs its own `@as` at that point too. A known scope
+// boundary of today's `Value` shape, not an oversight — see
+// `Value::Struct::nominal`'s doc.
+fn tag_nominal(value: Value, symbol: SymbolId) -> Value {
     match value {
-        Value::Int(_) => ResolvedType::Builtin(BuiltinType::Int),
-        Value::Struct { symbol, args, .. } => ResolvedType::Struct {
-            symbol: *symbol,
-            args: args.clone(),
-        },
+        Value::Struct { symbol: inner_symbol, args, fields, .. } => {
+            Value::Struct { symbol: inner_symbol, args, fields, nominal: Some(symbol) }
+        }
+
+        Value::Int(_) => value,
     }
 }
 
@@ -450,7 +819,7 @@ mod tests {
     use crate::parser;
     use crate::resolver::{collect_symbols, AliasResolver, ResolveError};
 
-    use super::Value;
+    use super::{BuiltinType, ResolvedGenericArg, ResolvedType, Value};
 
     fn parse_fixture(name: &str) -> Program {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -534,6 +903,7 @@ mod tests {
                     ("id".to_string(), Value::Int(Int::from(0))),
                     ("width".to_string(), Value::Int(Int::from(2))),
                 ],
+                nominal: None,
             }
         );
     }
@@ -562,6 +932,7 @@ mod tests {
                     ("id".to_string(), Value::Int(Int::from(0))),
                     ("width".to_string(), Value::Int(Int::from(2))),
                 ],
+                nominal: None,
             }
         );
     }
@@ -586,6 +957,7 @@ mod tests {
                     ("id".to_string(), Value::Int(Int::from(7))),
                     ("width".to_string(), Value::Int(Int::from(2))),
                 ],
+                nominal: None,
             },
         );
 
@@ -694,5 +1066,293 @@ mod tests {
         // exercises the same fallback recursively.
         let via_zero = resolver.expand_invocation(invocations[1], &HashMap::new()).unwrap();
         assert_eq!(via_zero.emitted, vec![Value::Int(Int::from(0))]);
+    }
+
+    #[test]
+    fn brace_construction_with_flat_fields() {
+        let program = parse_fixture("construct_flat_fields.basm");
+
+        let declaration = find_macro(&program, "make_reg");
+        let symbols = collect_symbols(&program).unwrap();
+        let reg_id = symbols.lookup("Reg").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut scope = HashMap::new();
+        scope.insert("v".to_string(), Value::Int(Int::from(2)));
+
+        let value = resolver.eval_value(emit_expr(declaration), &scope).unwrap();
+
+        assert_eq!(
+            value,
+            Value::Struct {
+                symbol: reg_id,
+                args: vec![],
+                fields: vec![
+                    ("id".to_string(), Value::Int(Int::from(0))),
+                    ("width".to_string(), Value::Int(Int::from(2))),
+                ],
+                nominal: None,
+            }
+        );
+    }
+
+    #[test]
+    fn brace_construction_with_generic_callee_and_for_generated_fields() {
+        let program = parse_fixture("construct_generic_for.basm");
+
+        let declaration = find_macro(&program, "make_array");
+        let symbols = collect_symbols(&program).unwrap();
+        let array_id = symbols.lookup("Array").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let value = resolver.eval_value(emit_expr(declaration), &HashMap::new()).unwrap();
+
+        assert_eq!(
+            value,
+            Value::Struct {
+                symbol: array_id,
+                args: vec![
+                    ResolvedGenericArg::Type(Box::new(ResolvedType::Builtin(BuiltinType::Int))),
+                    ResolvedGenericArg::Const(Int::from(3)),
+                ],
+                fields: vec![
+                    ("__el0".to_string(), Value::Int(Int::from(0))),
+                    ("__el1".to_string(), Value::Int(Int::from(2))),
+                    ("__el2".to_string(), Value::Int(Int::from(4))),
+                ],
+                nominal: None,
+            }
+        );
+    }
+
+    #[test]
+    fn brace_construction_with_nested_for_if_else() {
+        let program = parse_fixture("construct_generic_for_if.basm");
+
+        let declaration = find_macro(&program, "make_array");
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut scope = HashMap::new();
+        scope.insert("index".to_string(), Value::Int(Int::from(1)));
+        scope.insert("value".to_string(), Value::Int(Int::from(9)));
+
+        let value = resolver.eval_value(emit_expr(declaration), &scope).unwrap();
+
+        let Value::Struct { fields, .. } = value else {
+            panic!("expected a struct value");
+        };
+
+        assert_eq!(
+            fields,
+            vec![
+                ("__el0".to_string(), Value::Int(Int::from(0))),
+                ("__el1".to_string(), Value::Int(Int::from(9))),
+                ("__el2".to_string(), Value::Int(Int::from(0))),
+            ]
+        );
+    }
+
+    #[test]
+    fn brace_construction_honors_a_passing_struct_invariant() {
+        let program = parse_fixture("construct_with_invariant.basm");
+
+        let declaration = find_macro(&program, "make");
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut scope = HashMap::new();
+        scope.insert("v".to_string(), Value::Int(Int::from(3)));
+
+        assert!(resolver.eval_value(emit_expr(declaration), &scope).is_ok());
+    }
+
+    #[test]
+    fn brace_construction_rejects_a_failing_struct_invariant() {
+        let program = parse_fixture("construct_with_invariant.basm");
+
+        let declaration = find_macro(&program, "make");
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut scope = HashMap::new();
+        scope.insert("v".to_string(), Value::Int(Int::from(300)));
+
+        assert!(matches!(
+            resolver.eval_value(emit_expr(declaration), &scope),
+            Err(ResolveError::InvariantViolated { .. })
+        ));
+    }
+
+    #[test]
+    fn paren_call_honors_a_passing_struct_invariant() {
+        let program = parse_fixture("call_with_invariant.basm");
+
+        let declaration = find_macro(&program, "make");
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut scope = HashMap::new();
+        scope.insert("v".to_string(), Value::Int(Int::from(50)));
+
+        assert!(resolver.eval_value(emit_expr(declaration), &scope).is_ok());
+    }
+
+    #[test]
+    fn string_literal_evaluates_to_its_packed_bytes_as_an_int() {
+        let program = parse_fixture("string_literal_value.basm");
+
+        let declaration = find_macro(&program, "make");
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let value = resolver.eval_value(emit_expr(declaration), &HashMap::new()).unwrap();
+
+        // "A" is one byte, 0x41 = 65.
+        assert_eq!(value, Value::Int(Int::from(65)));
+    }
+
+    #[test]
+    fn multi_byte_string_literal_packs_big_endian() {
+        let program = parse_fixture("string_literal_value.basm");
+
+        let declaration = find_macro(&program, "make_multi");
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let value = resolver.eval_value(emit_expr(declaration), &HashMap::new()).unwrap();
+
+        // "AB" is bytes [0x41, 0x42] big-endian == 0x4142 == 16706.
+        assert_eq!(value, Value::Int(Int::from(16706)));
+    }
+
+    #[test]
+    fn paren_call_rejects_a_failing_struct_invariant() {
+        let program = parse_fixture("call_with_invariant.basm");
+
+        let declaration = find_macro(&program, "make");
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut scope = HashMap::new();
+        scope.insert("v".to_string(), Value::Int(Int::from(-1)));
+
+        assert!(matches!(
+            resolver.eval_value(emit_expr(declaration), &scope),
+            Err(ResolveError::InvariantViolated { .. })
+        ));
+    }
+
+    #[test]
+    fn as_conversion_wraps_and_tags_a_passing_value() {
+        let program = parse_fixture("as_conversion.basm");
+
+        let declaration = find_macro(&program, "make");
+        let symbols = collect_symbols(&program).unwrap();
+        let bits_id = symbols.lookup("Bits").unwrap();
+        let ubyte_id = symbols.lookup("UByte").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut scope = HashMap::new();
+        scope.insert("v".to_string(), Value::Int(Int::from(50)));
+
+        let value = resolver.eval_value(emit_expr(declaration), &scope).unwrap();
+
+        assert_eq!(
+            value,
+            Value::Struct {
+                symbol: bits_id,
+                args: vec![ResolvedGenericArg::Const(Int::from(8))],
+                fields: vec![("value".to_string(), Value::Int(Int::from(50)))],
+                nominal: Some(ubyte_id),
+            }
+        );
+    }
+
+    #[test]
+    fn as_conversion_rejects_a_value_failing_the_aliass_own_invariant() {
+        let program = parse_fixture("as_conversion.basm");
+
+        let declaration = find_macro(&program, "make");
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        // 150 fits inside `Bits<8>` (< 256) but fails `UByte`'s own,
+        // stricter `value < 100` — must be caught at the alias layer, not
+        // silently accepted because the underlying struct is happy.
+        let mut scope = HashMap::new();
+        scope.insert("v".to_string(), Value::Int(Int::from(150)));
+
+        match resolver.eval_value(emit_expr(declaration), &scope) {
+            Err(ResolveError::InvariantViolated { type_name, .. }) => {
+                assert_eq!(type_name, "UByte");
+            }
+            other => panic!("expected an InvariantViolated on UByte, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn as_conversion_rejects_a_value_failing_the_underlying_structs_invariant() {
+        let program = parse_fixture("as_conversion.basm");
+
+        let declaration = find_macro(&program, "make");
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        // -5 satisfies `UByte`'s own `value < 100` (checked first, at the
+        // alias layer) but not `Bits`'s `value >= 0` — caught after
+        // auto-wrapping, by the terminal struct's own invariant.
+        let mut scope = HashMap::new();
+        scope.insert("v".to_string(), Value::Int(Int::from(-5)));
+
+        match resolver.eval_value(emit_expr(declaration), &scope) {
+            Err(ResolveError::InvariantViolated { type_name, .. }) => {
+                assert_eq!(type_name, "Bits");
+            }
+            other => panic!("expected an InvariantViolated on Bits, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_value_bypassing_as_does_not_satisfy_a_nominal_parameter() {
+        let program = parse_fixture("as_conversion.basm");
+
+        let symbols = collect_symbols(&program).unwrap();
+        let bits_id = symbols.lookup("Bits").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        // A plain, untagged `Bits<8>` value that would satisfy `UByte`'s
+        // own invariant structurally (50 < 100) still can't be handed to a
+        // `UByte`-typed parameter directly — only `@as` (or a checked
+        // `const`) may produce a value that type-checks as `UByte`.
+        let untagged = Value::Struct {
+            symbol: bits_id,
+            args: vec![ResolvedGenericArg::Const(Int::from(8))],
+            fields: vec![("value".to_string(), Value::Int(Int::from(50)))],
+            nominal: None,
+        };
+
+        let take_symbol = symbols.lookup("take").unwrap();
+        let take_declaration = find_macro(&program, "take");
+
+        let mut stack = Vec::new();
+
+        assert!(matches!(
+            resolver.run_macro_body(take_symbol, take_declaration, vec![untagged], &mut stack),
+            Err(ResolveError::TypeMismatch { .. })
+        ));
     }
 }

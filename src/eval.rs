@@ -48,9 +48,11 @@ pub fn eval(expr: &Expr, scope: &HashMap<String, Int>) -> Result<Int, EvalError>
             }
         }),
 
-        Expr::String { span, .. } | Expr::Member { span, .. } | Expr::Call { span, .. } => {
-            Err(EvalError::NotConstant { span: *span })
-        }
+        Expr::String { span, .. }
+        | Expr::Member { span, .. }
+        | Expr::Call { span, .. }
+        | Expr::Construct { span, .. }
+        | Expr::As { span, .. } => Err(EvalError::NotConstant { span: *span }),
 
         // `@here` needs a live macro expansion in progress (see
         // `resolver::values::eval_value`) — meaningless in this

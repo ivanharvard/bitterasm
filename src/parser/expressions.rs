@@ -82,6 +82,93 @@ impl Parser {
                 continue;
             }
 
+            // postfix: brace-literal construction
+            //
+            //  U8String { chars: ... }
+            //  Array<u8, N> { __el0: value, ... }
+            //
+            // Only reachable for a bare identifier callee (matching
+            // `Expr::Call`'s existing constraint) and only when not
+            // `restrict_brace_construction` — see that flag's doc for why:
+            // an `@if`/`@for` header's condition/range bound also ends in a
+            // bare identifier immediately followed by `{`, and that `{`
+            // means something else entirely there.
+            let callee_name = match &left {
+                Expr::Identifier { name, .. } if !self.restrict_brace_construction => Some(name.clone()),
+                _ => None,
+            };
+
+            if let Some(name) = callee_name {
+                if self.check(&TokenKind::LBrace) {
+                    let binding_power = 100;
+
+                    if binding_power < min_bp {
+                        break;
+                    }
+
+                    left = self.finish_construct(left, Vec::new())?;
+                    continue;
+                }
+
+                // Gating on a known generic signature (rather than just
+                // "next token is `<`") is what keeps this from misreading
+                // an ordinary `x < y` comparison as the start of generic
+                // arguments — mirrors how type position already knows a
+                // name's generic signature before committing to parsing
+                // `<...>` as arguments.
+                if self.check(&TokenKind::Less) && self.generic_signatures.contains_key(&name) {
+                    let binding_power = 100;
+
+                    if binding_power < min_bp {
+                        break;
+                    }
+
+                    let start = left.span().start;
+                    let (generic_args, _) = self.parse_generic_argument_list(Some(&name), start)?;
+
+                    if !self.check(&TokenKind::LBrace) {
+                        return Err(ParseError::new(
+                            "expected `{` after generic arguments in a brace-literal \
+                             construction (a generic callee without a trailing `{ ... }` \
+                             isn't supported here)",
+                            self.current().span,
+                        ));
+                    }
+
+                    left = self.finish_construct(left, generic_args)?;
+                    continue;
+                }
+            }
+
+            // postfix: `@as` — the only way to produce a value of a nominal
+            // (invariant-bearing) `type` alias.
+            //
+            //  3 @as int16_t
+            //  "Abc" @as String<3>
+            if self.at_as_meta() {
+                let binding_power = 100;
+
+                if binding_power < min_bp {
+                    break;
+                }
+
+                let start = left.span().start;
+
+                self.advance(); // `@`
+                self.advance(); // `as`
+
+                let ty = self.parse_type_expr()?;
+                let end = ty.span().end;
+
+                left = Expr::As {
+                    value: Box::new(left),
+                    ty,
+                    span: Span::new(start, end),
+                };
+
+                continue;
+            }
+
             // ============
             // binary ops
             // ============
@@ -163,13 +250,19 @@ impl Parser {
                 // Parens have their own explicit close, so `>`-shaped
                 // tokens inside them are never ambiguous with closing a
                 // generic argument list — same as C++ allowing `(a > b)`
-                // there but not a bare `a > b`.
-                let outer_restriction = self.restrict_closing_ops;
+                // there but not a bare `a > b`. Brace construction is
+                // similarly unambiguous once inside parens — same as Rust
+                // allowing a struct literal inside parens in `if`/`while`
+                // scrutinee position.
+                let outer_closing_restriction = self.restrict_closing_ops;
+                let outer_brace_restriction = self.restrict_brace_construction;
                 self.restrict_closing_ops = false;
+                self.restrict_brace_construction = false;
 
                 let result = self.parse_expr();
 
-                self.restrict_closing_ops = outer_restriction;
+                self.restrict_closing_ops = outer_closing_restriction;
+                self.restrict_brace_construction = outer_brace_restriction;
 
                 let mut expr = result?;
 
@@ -195,13 +288,17 @@ impl Parser {
 
                 // Same reasoning as the LParen case just below: a splice
                 // has its own explicit close, so a `>`-shaped token inside
-                // it can't be closing a generic argument list.
-                let outer_restriction = self.restrict_closing_ops;
+                // it can't be closing a generic argument list, and a `{`
+                // inside it can't be an enclosing `@if`/`@for` header's body.
+                let outer_closing_restriction = self.restrict_closing_ops;
+                let outer_brace_restriction = self.restrict_brace_construction;
                 self.restrict_closing_ops = false;
+                self.restrict_brace_construction = false;
 
                 let result = self.parse_expr();
 
-                self.restrict_closing_ops = outer_restriction;
+                self.restrict_closing_ops = outer_closing_restriction;
+                self.restrict_brace_construction = outer_brace_restriction;
 
                 let inner = result?;
 
@@ -459,6 +556,8 @@ fn set_expr_span(expr: &mut Expr, new_span: Span) {
         | Expr::String { span, .. }
         | Expr::Member { span, .. }
         | Expr::Call { span, .. }
+        | Expr::Construct { span, .. }
+        | Expr::As { span, .. }
         | Expr::Unary { span, .. }
         | Expr::Binary { span, .. }
         | Expr::Splice { span, .. }

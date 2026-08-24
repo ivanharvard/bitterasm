@@ -13,8 +13,8 @@
 //! custom pattern.
 
 use crate::ast::{
-    BinaryOp, CallArgument, Expr, Facet, FacetPayload, ImportItems, MacroDeclaration,
-    MacroParameter, NamePart, Statement, StructDeclaration, UnaryOp,
+    BinaryOp, CallArgument, ConstructItem, Expr, Facet, FacetPayload, ImportItems,
+    MacroDeclaration, MacroParameter, NamePart, Statement, StructDeclaration, UnaryOp,
 };
 use crate::types::{GenericParameter, StructBodyItem, StructField, TypeArgument, TypeExpr};
 
@@ -49,9 +49,10 @@ pub fn print_statement(statement: &Statement, indent: usize) -> String {
         Statement::TypeAlias(decl) => {
             let pub_kw = if decl.is_pub { "pub " } else { "" };
             let generics = print_generic_params(&decl.generic_params);
+            let facets = print_facet_list(&decl.facets, None);
 
             format!(
-                "{pad}{pub_kw}type {name}{generics} = {ty}",
+                "{pad}{pub_kw}type {name}{generics} = {ty}{facets}",
                 name = decl.name,
                 ty = print_type_expr(&decl.ty),
             )
@@ -309,7 +310,65 @@ pub fn print_expr(expr: &Expr) -> String {
 
         Expr::Splice { inner, .. } => format!("`{}`", print_expr(inner)),
 
+        Expr::As { value, ty, .. } => format!("{} @as {}", print_expr(value), print_type_expr(ty)),
+
         Expr::Here { .. } => "@here".to_string(),
+
+        Expr::Construct { callee, generic_args, fields, .. } => {
+            let generics = print_generic_arguments(generic_args);
+            let body = fields.iter().map(print_construct_item).collect::<Vec<_>>().join(", ");
+
+            format!("{}{generics} {{ {body} }}", print_expr(callee))
+        }
+    }
+}
+
+fn print_generic_arguments(args: &[TypeArgument]) -> String {
+    if args.is_empty() {
+        return String::new();
+    }
+
+    let rendered = args
+        .iter()
+        .map(|arg| match arg {
+            TypeArgument::Type(ty) => print_type_expr(ty),
+            TypeArgument::Const(expr) => print_expr(expr),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    format!("<{rendered}>")
+}
+
+fn print_construct_item(item: &ConstructItem) -> String {
+    match item {
+        ConstructItem::Field { name, value, .. } => {
+            format!("{}: {}", print_spliced_name(name), print_expr(value))
+        }
+
+        ConstructItem::For { var, start, end, body, .. } => format!(
+            "@for {var} in {}..{} {{ {} }}",
+            print_expr(start),
+            print_expr(end),
+            body.iter().map(print_construct_item).collect::<Vec<_>>().join(", "),
+        ),
+
+        ConstructItem::If { condition, body, else_body, .. } => {
+            let then_block = format!(
+                "@if {} {{ {} }}",
+                print_expr(condition),
+                body.iter().map(print_construct_item).collect::<Vec<_>>().join(", "),
+            );
+
+            match else_body {
+                Some(else_body) => format!(
+                    "{then_block} @else {{ {} }}",
+                    else_body.iter().map(print_construct_item).collect::<Vec<_>>().join(", "),
+                ),
+
+                None => then_block,
+            }
+        }
     }
 }
 

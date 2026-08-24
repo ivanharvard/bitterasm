@@ -1,0 +1,9 @@
+struct Percent
+    | invariant value >= 0 && value <= 100
+{
+    value: int
+}
+
+macro make(v: int) {
+    @emit Percent(value = v)
+}

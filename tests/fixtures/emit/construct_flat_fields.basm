@@ -1,0 +1,8 @@
+struct Reg {
+    id: int,
+    width: int
+}
+
+macro make_reg(v: int) {
+    @emit Reg { id: 0, width: v }
+}

@@ -26,53 +26,68 @@ impl Parser {
         };
 
         if self.check(&TokenKind::Less) {
-            self.advance();
-            self.skip_newlines();
-
-            let mut args = Vec::new();
-
-            if self.check(&TokenKind::Greater) {
-                return Err(ParseError::new(
-                    "generic argument list cannot be empty",
-                    self.current().span,
-                ));
-            }
-
-            let signature = ty.name().and_then(|name| {
-                self.generic_signatures.get(name)
-            }).cloned();
-
-            let mut index = 0;
-
-            loop {
-                let expected_kind = signature
-                    .as_ref()
-                    .and_then(|kinds| kinds.get(index))
-                    .copied();
-
-                args.push(self.parse_type_argument(expected_kind)?);
-                index += 1;
-                self.skip_newlines();
-
-                if self.check(&TokenKind::Comma) {
-                    self.advance();
-                    self.skip_newlines();
-                    continue;
-                }
-
-                break;
-            }
-
-            let closing = self.expect_generic_close()?;
+            let (args, span) = self.parse_generic_argument_list(ty.name(), start)?;
 
             ty = TypeExpr::Apply {
                 base: Box::new(ty),
                 args,
-                span: Span::new(start, closing.span.end),
+                span,
             };
         }
 
         Ok(ty)
+    }
+
+    // Parses a `<Arg, Arg, ...>` generic argument list, given the parser is
+    // sitting on the opening `<` (not yet consumed). `name` is the callee's
+    // own name (ignoring any module-path qualification), used to look up
+    // its generic signature the same way type position always has; shared
+    // with expression-position brace construction
+    // (`expressions::parse_expr_bp_until`), which needs the identical
+    // const-vs-type disambiguation for `Array<u8, N> { ... }`.
+    pub(super) fn parse_generic_argument_list(
+        &mut self,
+        name: Option<&str>,
+        start: usize,
+    ) -> Result<(Vec<TypeArgument>, Span), ParseError> {
+        self.advance();
+        self.skip_newlines();
+
+        let mut args = Vec::new();
+
+        if self.check(&TokenKind::Greater) {
+            return Err(ParseError::new(
+                "generic argument list cannot be empty",
+                self.current().span,
+            ));
+        }
+
+        let signature = name.and_then(|name| self.generic_signatures.get(name)).cloned();
+
+        let mut index = 0;
+
+        loop {
+            let expected_kind = signature
+                .as_ref()
+                .and_then(|kinds| kinds.get(index))
+                .copied();
+
+            args.push(self.parse_type_argument(expected_kind)?);
+            index += 1;
+            self.skip_newlines();
+
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+                self.skip_newlines();
+                continue;
+            }
+
+            break;
+        }
+
+        let closing = self.expect_generic_close()?;
+
+        Ok((args, Span::new(start, closing.span.end)))
     }
 
     fn parse_type_argument(

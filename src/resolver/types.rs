@@ -3,6 +3,7 @@
 //! confirmed to actually refer to a struct, a builtin, or a generic
 //! parameter in scope, rather than just a path of identifiers.
 
+use crate::ast::Expr;
 use crate::eval::Int;
 
 use super::symbols::SymbolId;
@@ -25,6 +26,40 @@ pub enum ResolvedType {
     TypeParameter {
         name: String
     },
+
+    /// A `type` alias that declares its own `invariant` facet(s), or whose
+    /// target itself resolved to `Alias` (chained — see
+    /// `crate::facets::invariant`'s module doc, "holds all the way down").
+    /// A *plain* alias with no invariant anywhere in its chain stays fully
+    /// transparent, exactly as before this variant existed — resolving it
+    /// returns `underlying` directly, not `Alias` — so this only exists (and
+    /// only changes type-equality behavior) where an invariant genuinely
+    /// needs enforcing. `binder` is the alias's own chosen name for "the
+    /// value being converted" (`None` if `invariants` is empty — a
+    /// pointless-but-harmless invariant-free alias never reaches this
+    /// variant in practice, since it'd have been left transparent, but the
+    /// shape stays sound either way).
+    Alias {
+        symbol: SymbolId,
+        binder: Option<String>,
+        invariants: Vec<Expr>,
+        underlying: Box<ResolvedType>,
+    },
+}
+
+impl ResolvedType {
+    /// Unwraps through every `Alias` layer down to the underlying
+    /// `Builtin`/`Struct`/`TypeParameter` — for the (common) call sites that
+    /// only care about a type's *structure* (field lookup, diagnostics'
+    /// "which struct is this", generic-argument application) and
+    /// deliberately don't care about nominal identity, unlike the handful
+    /// of `==`/`!=` type-equality checks that do.
+    pub fn strip_alias(&self) -> &ResolvedType {
+        match self {
+            ResolvedType::Alias { underlying, .. } => underlying.strip_alias(),
+            other => other,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

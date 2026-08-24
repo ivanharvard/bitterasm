@@ -17,9 +17,9 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
 use crate::ast::{
-    CallArgument, ConstDeclaration, Expr, Facet, FacetPayload, Invocation, MacroDeclaration,
-    MacroParameter, MetaStatement, NamePart, Program, Statement, StructDeclaration,
-    TypeAliasDeclaration,
+    CallArgument, ConstDeclaration, ConstructItem, Expr, Facet, FacetPayload, Invocation,
+    MacroDeclaration, MacroParameter, MetaStatement, NamePart, Program, Statement,
+    StructDeclaration, TypeAliasDeclaration,
 };
 use crate::printer;
 use crate::token::Span;
@@ -305,6 +305,7 @@ fn substitute_type_alias(
         name: decl.name.clone(),
         is_pub: decl.is_pub,
         generic_params: decl.generic_params.clone(),
+        facets: substitute_facets(&decl.facets, &inner),
         ty: substitute_type_expr(&decl.ty, &inner),
         span: decl.span,
     }
@@ -413,7 +414,63 @@ pub fn substitute_expr(expr: &Expr, substitutions: &HashMap<String, Expr>) -> Ex
             inner: Box::new(substitute_expr(inner, substitutions)),
             span: *span,
         },
+
+        Expr::Construct { callee, generic_args, fields, span } => Expr::Construct {
+            callee: Box::new(substitute_expr(callee, substitutions)),
+            generic_args: generic_args
+                .iter()
+                .map(|arg| match arg {
+                    TypeArgument::Type(ty) => TypeArgument::Type(substitute_type_expr(ty, substitutions)),
+                    TypeArgument::Const(expr) => TypeArgument::Const(substitute_expr(expr, substitutions)),
+                })
+                .collect(),
+            fields: substitute_construct_items(fields, substitutions),
+            span: *span,
+        },
+
+        Expr::As { value, ty, span } => Expr::As {
+            value: Box::new(substitute_expr(value, substitutions)),
+            ty: substitute_type_expr(ty, substitutions),
+            span: *span,
+        },
     }
+}
+
+fn substitute_construct_items(
+    items: &[ConstructItem],
+    substitutions: &HashMap<String, Expr>,
+) -> Vec<ConstructItem> {
+    items
+        .iter()
+        .map(|item| match item {
+            ConstructItem::Field { name, value, span } => ConstructItem::Field {
+                name: substitute_spliced_name(name, substitutions),
+                value: substitute_expr(value, substitutions),
+                span: *span,
+            },
+
+            ConstructItem::For { var, start, end, body, span } => {
+                let inner = without_shadowed(substitutions, std::iter::once(var.as_str()));
+
+                ConstructItem::For {
+                    var: var.clone(),
+                    start: substitute_expr(start, substitutions),
+                    end: substitute_expr(end, substitutions),
+                    body: substitute_construct_items(body, &inner),
+                    span: *span,
+                }
+            }
+
+            ConstructItem::If { condition, body, else_body, span } => ConstructItem::If {
+                condition: substitute_expr(condition, substitutions),
+                body: substitute_construct_items(body, substitutions),
+                else_body: else_body
+                    .as_ref()
+                    .map(|else_body| substitute_construct_items(else_body, substitutions)),
+                span: *span,
+            },
+        })
+        .collect()
 }
 
 #[cfg(test)]

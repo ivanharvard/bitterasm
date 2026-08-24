@@ -8,8 +8,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{literal_name, ConstDeclaration, Expr, Program, Statement};
+use crate::ast::{literal_name, ConstDeclaration, ConstructItem, Expr, Program, Statement};
 use crate::eval::{self, EvalError, Int};
+use crate::types::TypeArgument;
 
 use super::symbols::{SymbolId, SymbolKind, SymbolTable};
 use super::ResolveError;
@@ -176,7 +177,7 @@ impl<'a> ConstEvaluator<'a> {
 // evaluated can pre-populate its scope without needing a full symbol
 // resolver pass over expressions (which doesn't exist yet — this is
 // intentionally a simple textual walk, not a scoped name resolver).
-fn referenced_identifiers(expr: &crate::ast::Expr) -> Vec<String> {
+pub(super) fn referenced_identifiers(expr: &crate::ast::Expr) -> Vec<String> {
     use crate::ast::Expr;
 
     let mut names = Vec::new();
@@ -197,10 +198,62 @@ fn referenced_identifiers(expr: &crate::ast::Expr) -> Vec<String> {
                 stack.push(right);
             }
             Expr::Splice { inner, .. } => stack.push(inner),
+
+            Expr::Construct { callee, generic_args, fields, .. } => {
+                stack.push(callee);
+
+                for arg in generic_args {
+                    if let TypeArgument::Const(expr) = arg {
+                        stack.push(expr);
+                    }
+                }
+
+                push_construct_item_exprs(fields, &mut stack);
+            }
+
+            Expr::As { value, ty, .. } => {
+                stack.push(value);
+
+                if let crate::types::TypeExpr::Apply { args, .. } = ty {
+                    for arg in args {
+                        if let TypeArgument::Const(expr) = arg {
+                            stack.push(expr);
+                        }
+                    }
+                }
+            }
         }
     }
 
     names
+}
+
+// `referenced_identifiers`'s stack is `Vec<&Expr>`, so a `ConstructItem`
+// tree (which isn't itself an `Expr`) needs its own walk to flatten down to
+// the `Expr` leaves it contains — mirrors that function's `Call`-arguments
+// case, just for a brace-literal construction's fields instead of a
+// paren-call's arguments.
+fn push_construct_item_exprs<'a>(items: &'a [ConstructItem], stack: &mut Vec<&'a Expr>) {
+    for item in items {
+        match item {
+            ConstructItem::Field { value, .. } => stack.push(value),
+
+            ConstructItem::For { start, end, body, .. } => {
+                stack.push(start);
+                stack.push(end);
+                push_construct_item_exprs(body, stack);
+            }
+
+            ConstructItem::If { condition, body, else_body, .. } => {
+                stack.push(condition);
+                push_construct_item_exprs(body, stack);
+
+                if let Some(else_body) = else_body {
+                    push_construct_item_exprs(else_body, stack);
+                }
+            }
+        }
+    }
 }
 
 fn into_resolve_error(error: EvalError, const_name: &str) -> ResolveError {
@@ -289,7 +342,14 @@ fn is_int_shaped_inner(program: &Program, expr: &Expr, visiting: &mut HashSet<St
             shaped
         }
 
-        _ => !matches!(expr, Expr::Member { .. } | Expr::Call { .. } | Expr::String { .. }),
+        // `@as`'s shape isn't knowable syntactically — `x @as int` is
+        // int-shaped, `x @as SomeStruct` isn't — so, same as `Member`/
+        // `Call`/`Construct`, it's conservatively treated as not, deferring
+        // to the general `Value` evaluator rather than guessing.
+        _ => !matches!(
+            expr,
+            Expr::Member { .. } | Expr::Call { .. } | Expr::Construct { .. } | Expr::As { .. } | Expr::String { .. }
+        ),
     }
 }
 

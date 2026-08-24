@@ -35,6 +35,7 @@ mod statements;
 mod type_exprs;
 mod declarations;
 mod macros;
+mod construct;
 mod facets;
 mod invocation_syntax;
 
@@ -182,6 +183,16 @@ struct Parser {
     // Lifted while parsing inside parens, same as `Foo<(a > b)>` needing
     // parens in C++ for the same reason.
     pub(super) restrict_closing_ops: bool,
+
+    // While parsing an `@if`/`@for` header's condition/range-bound
+    // expression, a bare identifier immediately followed by `{` can't be
+    // read as the start of a brace-literal construction (`expressions.rs`'s
+    // postfix loop) — that `{` is the header's own body, e.g. `@if i ==
+    // index { ... }`. Same ambiguity Rust avoids by banning bare struct
+    // literals in `if`/`while`/`for` scrutinee position; lifted inside
+    // parens for the same reason `restrict_closing_ops` is, so `@if (Foo {
+    // x: 1 }).y { ... }` still allows construction there.
+    pub(super) restrict_brace_construction: bool,
 }
 
 impl Parser {
@@ -193,6 +204,7 @@ impl Parser {
             macro_syntaxes: HashMap::new(),
             imports: Vec::new(),
             restrict_closing_ops: false,
+            restrict_brace_construction: false,
         }
     }
 
@@ -306,6 +318,19 @@ impl Parser {
                 .is_some_and(|token| matches!(&token.kind, TokenKind::Identifier(name) if name == "else"))
     }
 
+    // True when the upcoming tokens are `@as` — used by the postfix `expr
+    // @as Type` cast/coercion form in expression position, same lookahead
+    // shape as `at_else_meta`. `as` is its own reserved token
+    // (`TokenKind::As`), not a plain identifier — unlike `@else`/`@here`,
+    // whose second word is lexed as `Identifier`.
+    fn at_as_meta(&self) -> bool {
+        self.check(&TokenKind::At)
+            && self
+                .tokens
+                .get(self.pos + 1)
+                .is_some_and(|token| matches!(&token.kind, TokenKind::As))
+    }
+
     // Optional trailing newline after a block's closing `}`, mirroring
     // `parse_macro_declaration`/`parse_struct_declaration`'s own
     // closing-brace handling.
@@ -349,6 +374,19 @@ impl Parser {
         }
 
         Ok((parts, Span::new(first_token.span.start, end)))
+    }
+
+    // `start..end`, as used by both a macro-body `@for` (macros.rs) and a
+    // struct body's own `@for` (declarations.rs) — factored out purely so
+    // both callers can wrap the same `restrict_brace_construction`
+    // save/restore around one call instead of duplicating it around two
+    // separate `parse_expr` calls each.
+    fn parse_range_bounds(&mut self) -> Result<(Expr, Expr), ParseError> {
+        let start = self.parse_expr()?;
+        self.expect_simple(TokenKind::DotDot)?;
+        let end = self.parse_expr()?;
+
+        Ok((start, end))
     }
 
     // =============

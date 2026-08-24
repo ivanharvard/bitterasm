@@ -1,0 +1,7 @@
+macro make() {
+    @emit "A"
+}
+
+macro make_multi() {
+    @emit "AB"
+}

@@ -21,7 +21,7 @@ impl Parser {
 
         self.register_generic_signature(&name, &generic_params);
 
-        let facets = self.parse_facet_list(false)?;
+        let facets = self.parse_facet_list(false, true)?;
         let is_pub = is_pub || crate::facets::is_pub(&facets);
 
         self.skip_newlines();
@@ -115,9 +115,14 @@ impl Parser {
 
         self.expect_keyword("in")?;
 
-        let range_start = self.parse_expr()?;
-        self.expect_simple(TokenKind::DotDot)?;
-        let range_end = self.parse_expr()?;
+        let outer_restriction = self.restrict_brace_construction;
+        self.restrict_brace_construction = true;
+
+        let result = self.parse_range_bounds();
+
+        self.restrict_brace_construction = outer_restriction;
+
+        let (range_start, range_end) = result?;
 
         self.skip_newlines();
 
@@ -133,7 +138,14 @@ impl Parser {
     }
 
     fn parse_struct_if_item(&mut self, start: usize) -> Result<StructBodyItem, ParseError> {
-        let condition = self.parse_expr()?;
+        let outer_restriction = self.restrict_brace_construction;
+        self.restrict_brace_construction = true;
+
+        let condition = self.parse_expr();
+
+        self.restrict_brace_construction = outer_restriction;
+
+        let condition = condition?;
 
         self.skip_newlines();
 
@@ -203,6 +215,9 @@ impl Parser {
 
         let target = self.parse_type_expr()?;
 
+        let facets = self.parse_facet_list(false, false)?;
+        let is_pub = is_pub || crate::facets::is_pub(&facets);
+
         if !self.at_statement_end() {
             return Err(ParseError::new(
                 format!(
@@ -218,7 +233,8 @@ impl Parser {
         Ok(TypeAliasDeclaration {
             name,
             is_pub,
-            generic_params: generic_params,
+            generic_params,
+            facets,
             ty: target,
             span: Span::new(start, end),
         })

@@ -13,6 +13,7 @@ use crate::token::Span;
 use crate::types::{
     GenericParameter,
     StructBodyItem,
+    TypeArgument,
     TypeExpr,
 };
 
@@ -100,6 +101,34 @@ pub enum Expr {
         span: Span,
     },
 
+    /// `Array<u8, N> { field: value, ... }` — brace-literal struct
+    /// construction. `generic_args` is empty for a non-generic callee (e.g.
+    /// `U8String { chars: ... }`); when present, they're parsed only when
+    /// `callee`'s name is already known (via `Parser::generic_signatures`)
+    /// to take generics — see `parser::expressions`. `fields` mirrors
+    /// `types::StructBodyItem`'s `@for`/`@if`-generative shape, but built
+    /// from value expressions ([`ConstructItem`]) rather than declared
+    /// field types, since a construction supplies values, not a schema.
+    Construct {
+        callee: Box<Expr>,
+        generic_args: Vec<TypeArgument>,
+        fields: Vec<ConstructItem>,
+        span: Span,
+    },
+
+    /// `expr @as Type` — the only way to produce a value of a nominal
+    /// (invariant-bearing) `type` alias: checks every invariant along
+    /// `Type`'s alias chain, auto-wrapping `expr`'s value into a
+    /// single-field struct's field where needed (recursing — "holds all
+    /// the way down"). `Type`'s own generic arguments (if any) are always
+    /// spelled out explicitly here, never inferred — see
+    /// `resolver::values::AliasResolver::convert_to`.
+    As {
+        value: Box<Expr>,
+        ty: TypeExpr,
+        span: Span,
+    },
+
     Unary {
         op: UnaryOp,
         operand: Box<Expr>,
@@ -143,6 +172,8 @@ impl Expr {
             | Expr::String { span, .. }
             | Expr::Member { span, .. }
             | Expr::Call { span, .. }
+            | Expr::Construct { span, .. }
+            | Expr::As { span, .. }
             | Expr::Unary { span, .. }
             | Expr::Binary { span, .. }
             | Expr::Splice { span, .. }
@@ -156,6 +187,37 @@ pub struct CallArgument {
     pub name: Option<String>,
     pub value: Expr,
     pub span: Span,
+}
+
+/// One item in a brace-literal construction's field list — either a field
+/// written directly, or an `@for`/`@if` that generates zero or more fields
+/// once evaluated. The value-expression counterpart of
+/// [`crate::types::StructBodyItem`]: a struct *declaration*'s body is
+/// field-shaped types waiting to be resolved, a *construction*'s body is
+/// field-shaped values waiting to be evaluated, so they're deliberately
+/// separate types even though the `@for`/`@if` shape is identical.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConstructItem {
+    Field {
+        name: SplicedName,
+        value: Expr,
+        span: Span,
+    },
+
+    For {
+        var: String,
+        start: Expr,
+        end: Expr,
+        body: Vec<ConstructItem>,
+        span: Span,
+    },
+
+    If {
+        condition: Expr,
+        body: Vec<ConstructItem>,
+        else_body: Option<Vec<ConstructItem>>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -262,6 +324,7 @@ pub struct TypeAliasDeclaration {
     pub name: String,
     pub is_pub: bool,
     pub generic_params: Vec<GenericParameter>,
+    pub facets: Vec<Facet>,
     pub ty: TypeExpr,
     pub span: Span,
 }
