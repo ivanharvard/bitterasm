@@ -255,16 +255,18 @@ fn substitute_struct_body_items(
             StructBodyItem::Field(field) => StructBodyItem::Field(StructField {
                 name: substitute_spliced_name(&field.name, substitutions),
                 ty: substitute_type_expr(&field.ty, substitutions),
+                is_pub: field.is_pub,
+                is_const: field.is_const,
+                default: field.default.as_ref().map(|d| substitute_expr(d, substitutions)),
                 span: field.span,
             }),
 
-            StructBodyItem::For { var, start, end, body, span } => {
+            StructBodyItem::For { var, source, body, span } => {
                 let inner = without_shadowed(substitutions, std::iter::once(var.as_str()));
 
                 StructBodyItem::For {
                     var: var.clone(),
-                    start: substitute_expr(start, substitutions),
-                    end: substitute_expr(end, substitutions),
+                    source: substitute_expr(source, substitutions),
                     body: substitute_struct_body_items(body, &inner),
                     span: *span,
                 }
@@ -433,6 +435,12 @@ pub fn substitute_expr(expr: &Expr, substitutions: &HashMap<String, Expr>) -> Ex
             ty: substitute_type_expr(ty, substitutions),
             span: *span,
         },
+
+        Expr::Range { start, end, span } => Expr::Range {
+            start: Box::new(substitute_expr(start, substitutions)),
+            end: Box::new(substitute_expr(end, substitutions)),
+            span: *span,
+        },
     }
 }
 
@@ -449,13 +457,12 @@ fn substitute_construct_items(
                 span: *span,
             },
 
-            ConstructItem::For { var, start, end, body, span } => {
+            ConstructItem::For { var, source, body, span } => {
                 let inner = without_shadowed(substitutions, std::iter::once(var.as_str()));
 
                 ConstructItem::For {
                     var: var.clone(),
-                    start: substitute_expr(start, substitutions),
-                    end: substitute_expr(end, substitutions),
+                    source: substitute_expr(source, substitutions),
                     body: substitute_construct_items(body, &inner),
                     span: *span,
                 }

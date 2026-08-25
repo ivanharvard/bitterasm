@@ -169,6 +169,36 @@ impl Parser {
                 continue;
             }
 
+            // infix: `start..end` range sugar — see `ast::Expr::Range`'s doc.
+            // Binds looser than every real binary operator (including `||`,
+            // the loosest of those) since the only expressions ever written
+            // on either side in practice are simple ones (`0..N`,
+            // `0..arr.len`, `arr.len..0`); this just keeps
+            // `a + b..c + d` reading as `(a + b)..(c + d)` rather than
+            // requiring parens.
+            if self.check(&TokenKind::DotDot) {
+                let left_bp = 1;
+                let right_bp = 2;
+
+                if left_bp < min_bp {
+                    break;
+                }
+
+                self.advance();
+
+                let end = self.parse_expr_bp_until(right_bp, stop)?;
+
+                let span = Span::new(left.span().start, end.span().end);
+
+                left = Expr::Range {
+                    start: Box::new(left),
+                    end: Box::new(end),
+                    span,
+                };
+
+                continue;
+            }
+
             // ============
             // binary ops
             // ============
@@ -561,7 +591,8 @@ fn set_expr_span(expr: &mut Expr, new_span: Span) {
         | Expr::Unary { span, .. }
         | Expr::Binary { span, .. }
         | Expr::Splice { span, .. }
-        | Expr::Here { span, .. } => {
+        | Expr::Here { span, .. }
+        | Expr::Range { span, .. } => {
             *span = new_span;
         }
     }

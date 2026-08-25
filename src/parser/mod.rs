@@ -376,19 +376,6 @@ impl Parser {
         Ok((parts, Span::new(first_token.span.start, end)))
     }
 
-    // `start..end`, as used by both a macro-body `@for` (macros.rs) and a
-    // struct body's own `@for` (declarations.rs) — factored out purely so
-    // both callers can wrap the same `restrict_brace_construction`
-    // save/restore around one call instead of duplicating it around two
-    // separate `parse_expr` calls each.
-    fn parse_range_bounds(&mut self) -> Result<(Expr, Expr), ParseError> {
-        let start = self.parse_expr()?;
-        self.expect_simple(TokenKind::DotDot)?;
-        let end = self.parse_expr()?;
-
-        Ok((start, end))
-    }
-
     // =============
     // expectations
     // =============

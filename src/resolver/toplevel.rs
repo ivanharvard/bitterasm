@@ -79,9 +79,9 @@ fn unroll_meta(
 ) -> Result<(), ResolveError> {
     match meta.name.as_str() {
         "for" => {
-            let [var, start_expr, end_expr] = meta.args.as_slice() else {
+            let [var, source] = meta.args.as_slice() else {
                 return Err(ResolveError::Internal {
-                    message: "top-level `@for`'s args should always be [var, start, end] — \
+                    message: "top-level `@for`'s args should always be [var, source] — \
                               the parser guarantees this shape"
                         .to_string(),
                     span: meta.span,
@@ -95,6 +95,15 @@ fn unroll_meta(
                         .to_string(),
                     span: meta.span,
                 });
+            };
+
+            // Unlike the other three `@for` sites, top-level `@for` runs
+            // before any symbol/struct resolution exists, so it can only
+            // ever unroll literal `start..end` range sugar — see the
+            // module doc and `ResolveError::TopLevelForRequiresRange`'s
+            // doc.
+            let Expr::Range { start: start_expr, end: end_expr, .. } = source else {
+                return Err(ResolveError::TopLevelForRequiresRange { span: source.span() });
             };
 
             let body = meta.body.as_ref().ok_or_else(|| ResolveError::Internal {
@@ -237,6 +246,18 @@ mod tests {
     fn for_bound_referencing_a_later_const_is_rejected_as_a_forward_reference() {
         let error = unroll("@for i in 0..n {\n    make_reg(i)\n}\nconst n = 2\n").unwrap_err();
         assert!(matches!(error, ResolveError::UnknownConstant { .. }));
+    }
+
+    // Top-level `@for` is the one call site that stays restricted to
+    // `start..end` sugar (see the module doc and
+    // `ResolveError::TopLevelForRequiresRange`'s doc) — a deliberate,
+    // confirmed exception to the other three sites' "iterate any struct's
+    // pub fields" generality, since this pass runs before any symbol/struct
+    // resolution exists to make that possible.
+    #[test]
+    fn for_over_a_non_range_source_is_rejected_with_a_dedicated_error() {
+        let error = unroll("@for i in some_name {\n    make_reg(i)\n}\n").unwrap_err();
+        assert!(matches!(error, ResolveError::TopLevelForRequiresRange { .. }));
     }
 
     #[test]

@@ -1,0 +1,13 @@
+struct Leaf {
+    v: int
+}
+
+struct Wrapper {
+    pub inner: Leaf
+}
+
+struct UsesFor<const n: int> {
+    @for i in Wrapper(inner = Leaf(v = n)) {
+        __el`i`: int,
+    }
+}

@@ -158,10 +158,9 @@ fn print_struct_body_item(item: &StructBodyItem, indent: usize) -> String {
     match item {
         StructBodyItem::Field(field) => print_struct_field(field, indent),
 
-        StructBodyItem::For { var, start, end, body, .. } => format!(
-            "{pad}@for {var} in {start}..{end} {{\n{body}\n{pad}}}",
-            start = print_expr(start),
-            end = print_expr(end),
+        StructBodyItem::For { var, source, body, .. } => format!(
+            "{pad}@for {var} in {source} {{\n{body}\n{pad}}}",
+            source = print_expr(source),
             body = print_struct_body_items(body, indent + 1),
         ),
 
@@ -320,6 +319,8 @@ pub fn print_expr(expr: &Expr) -> String {
 
             format!("{}{generics} {{ {body} }}", print_expr(callee))
         }
+
+        Expr::Range { start, end, .. } => format!("{}..{}", print_expr(start), print_expr(end)),
     }
 }
 
@@ -346,10 +347,9 @@ fn print_construct_item(item: &ConstructItem) -> String {
             format!("{}: {}", print_spliced_name(name), print_expr(value))
         }
 
-        ConstructItem::For { var, start, end, body, .. } => format!(
-            "@for {var} in {}..{} {{ {} }}",
-            print_expr(start),
-            print_expr(end),
+        ConstructItem::For { var, source, body, .. } => format!(
+            "@for {var} in {} {{ {} }}",
+            print_expr(source),
             body.iter().map(print_construct_item).collect::<Vec<_>>().join(", "),
         ),
 

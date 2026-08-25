@@ -273,9 +273,9 @@ impl<'a> AliasResolver<'a> {
                     }
 
                     "for" => {
-                        let [var, start_expr, end_expr] = meta.args.as_slice() else {
+                        let [var, source_expr] = meta.args.as_slice() else {
                             return Err(ResolveError::Internal {
-                                message: "`@for`'s args should always be [var, start, end] — \
+                                message: "`@for`'s args should always be [var, source] — \
                                           the parser guarantees this shape"
                                     .to_string(),
                                 span: meta.span,
@@ -291,9 +291,6 @@ impl<'a> AliasResolver<'a> {
                             });
                         };
 
-                        let start = self.eval_int(start_expr, &scope)?;
-                        let end = self.eval_int(end_expr, &scope)?;
-
                         let for_body = meta.body.as_ref().ok_or_else(|| ResolveError::Internal {
                             message: "`@for` should always carry a body — the parser \
                                       guarantees this shape"
@@ -301,18 +298,11 @@ impl<'a> AliasResolver<'a> {
                             span: meta.span,
                         })?;
 
-                        let mut i = start;
-                        let mut iterations: u64 = 0;
+                        let bindings = self.eval_for_source(source_expr, &scope)?;
 
-                        while i < end {
-                            iterations += 1;
-
-                            if iterations > MAX_FOR_ITERATIONS {
-                                return Err(ResolveError::ForLoopTooLarge { span: meta.span });
-                            }
-
+                        for (_, value) in bindings {
                             let mut iter_scope = scope.clone();
-                            iter_scope.insert(var_name.clone(), Value::Int(i.clone()));
+                            iter_scope.insert(var_name.clone(), value);
 
                             let nested = self.walk_macro_body(for_body, &iter_scope, stack)?;
                             emitted.extend(nested.emitted);
@@ -325,8 +315,6 @@ impl<'a> AliasResolver<'a> {
                                     returned: nested.returned,
                                 });
                             }
-
-                            i += Int::from(1);
                         }
                     }
 
@@ -350,7 +338,9 @@ impl<'a> AliasResolver<'a> {
                 }
 
                 Statement::Const(decl) if decl.is_pub => {
-                    generated.push(Statement::Const(self.splice_const(decl, &scope)?));
+                    let spliced = Statement::Const(self.splice_const(decl, &scope)?);
+                    self.register_generated(&spliced)?;
+                    generated.push(spliced);
                 }
 
                 Statement::Const(decl) => {
@@ -376,6 +366,7 @@ impl<'a> AliasResolver<'a> {
                     // the module doc), so there's nothing to rewrite —
                     // captured verbatim, to be spliced into the program
                     // wherever this expansion's call site was.
+                    self.register_generated(statement)?;
                     generated.push(statement.clone());
                 }
 
@@ -488,6 +479,12 @@ impl<'a> AliasResolver<'a> {
                 ty: ty.clone(),
                 span: *span,
             }),
+
+            Expr::Range { start, end, span } => Ok(Expr::Range {
+                start: Box::new(self.splice_expr(start, scope)?),
+                end: Box::new(self.splice_expr(end, scope)?),
+                span: *span,
+            }),
         }
     }
 
@@ -509,10 +506,9 @@ impl<'a> AliasResolver<'a> {
                     span: *span,
                 }),
 
-                ConstructItem::For { var, start, end, body, span } => Ok(ConstructItem::For {
+                ConstructItem::For { var, source, body, span } => Ok(ConstructItem::For {
                     var: var.clone(),
-                    start: self.splice_expr(start, scope)?,
-                    end: self.splice_expr(end, scope)?,
+                    source: self.splice_expr(source, scope)?,
                     body: self.splice_construct_items(body, scope)?,
                     span: *span,
                 }),
@@ -541,14 +537,14 @@ impl<'a> AliasResolver<'a> {
 
         let mut cycle: Vec<String> = stack[start..]
             .iter()
-            .map(|id| self.symbols.get(*id).name.clone())
+            .map(|id| self.get_symbol(*id).name.clone())
             .collect();
 
-        cycle.push(self.symbols.get(repeated).name.clone());
+        cycle.push(self.get_symbol(repeated).name.clone());
 
         ResolveError::CyclicMacroExpansion {
             cycle,
-            span: self.symbols.get(repeated).span,
+            span: self.get_symbol(repeated).span,
         }
     }
 }
@@ -984,6 +980,25 @@ mod tests {
     }
 
     #[test]
+    fn two_invocations_generating_the_same_declaration_name_collide() {
+        let program = parse_fixture("generated_duplicate_name.basm");
+
+        let declaration = find_macro(&program, "outer_twice");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("outer_twice").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let result = resolver.run_macro_body(symbol, declaration, vec![], &mut stack);
+
+        assert!(matches!(
+            result,
+            Err(ResolveError::DuplicateSymbol { name, .. }) if name == "the_const"
+        ));
+    }
+
+    #[test]
     fn generated_const_leaves_non_spliced_identifiers_alone() {
         let program = parse_fixture("generated_const_leaves_bare_identifiers.basm");
 
@@ -1381,6 +1396,43 @@ mod tests {
         assert_eq!(
             result,
             MacroExpansion { emitted: vec![], generated: vec![], returned: None }
+        );
+    }
+
+    #[test]
+    fn for_over_a_struct_value_visits_only_pub_fields_in_declaration_order() {
+        let program = parse_fixture("for_over_struct_pub_fields.basm");
+
+        let declaration = find_macro(&program, "emit_pub_fields");
+        let symbols = collect_symbols(&program).unwrap();
+        let macro_symbol = symbols.lookup("emit_pub_fields").unwrap();
+        let mixed_symbol = symbols.lookup("Mixed").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let arg = Value::Struct {
+            symbol: mixed_symbol,
+            args: vec![],
+            fields: vec![
+                ("a".to_string(), Value::Int(Int::from(1))),
+                ("b".to_string(), Value::Int(Int::from(2))),
+                ("c".to_string(), Value::Int(Int::from(3))),
+            ],
+            nominal: None,
+        };
+
+        let mut stack = Vec::new();
+        let result = resolver
+            .run_macro_body(macro_symbol, declaration, vec![arg], &mut stack)
+            .unwrap();
+
+        assert_eq!(
+            result,
+            MacroExpansion {
+                emitted: vec![Value::Int(Int::from(1)), Value::Int(Int::from(3))],
+                generated: vec![],
+                returned: None,
+            }
         );
     }
 

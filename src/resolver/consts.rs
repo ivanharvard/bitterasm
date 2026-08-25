@@ -222,6 +222,11 @@ pub(super) fn referenced_identifiers(expr: &crate::ast::Expr) -> Vec<String> {
                     }
                 }
             }
+
+            Expr::Range { start, end, .. } => {
+                stack.push(start);
+                stack.push(end);
+            }
         }
     }
 
@@ -238,9 +243,8 @@ fn push_construct_item_exprs<'a>(items: &'a [ConstructItem], stack: &mut Vec<&'a
         match item {
             ConstructItem::Field { value, .. } => stack.push(value),
 
-            ConstructItem::For { start, end, body, .. } => {
-                stack.push(start);
-                stack.push(end);
+            ConstructItem::For { source, body, .. } => {
+                stack.push(source);
                 push_construct_item_exprs(body, stack);
             }
 

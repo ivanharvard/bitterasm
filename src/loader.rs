@@ -460,9 +460,8 @@ fn rename_struct_body_items(items: &mut [StructBodyItem], renames: &HashMap<Stri
                 rename_spliced_name(&mut field.name, renames);
             }
 
-            StructBodyItem::For { start, end, body, .. } => {
-                rename_expr(start, renames);
-                rename_expr(end, renames);
+            StructBodyItem::For { source, body, .. } => {
+                rename_expr(source, renames);
                 rename_struct_body_items(body, renames);
             }
 
@@ -577,6 +576,11 @@ fn rename_expr(expr: &mut Expr, renames: &HashMap<String, String>) {
             rename_expr(value, renames);
             rename_type_expr(ty, renames);
         }
+
+        Expr::Range { start, end, .. } => {
+            rename_expr(start, renames);
+            rename_expr(end, renames);
+        }
     }
 }
 
@@ -588,9 +592,8 @@ fn rename_construct_items(items: &mut [ConstructItem], renames: &HashMap<String,
                 rename_expr(value, renames);
             }
 
-            ConstructItem::For { start, end, body, .. } => {
-                rename_expr(start, renames);
-                rename_expr(end, renames);
+            ConstructItem::For { source, body, .. } => {
+                rename_expr(source, renames);
                 rename_construct_items(body, renames);
             }
 

@@ -15,14 +15,13 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{literal_name, CallArgument, ConstructItem, Expr, NamePart};
+use crate::ast::{literal_name, CallArgument, ConstructItem, Expr, NamePart, Statement};
 use crate::eval::{self, EvalError, Int};
 use crate::token::Span;
-use crate::types::{StructBodyItem, TypeArgument};
+use crate::types::{GenericParameter, StructBodyItem, TypeArgument};
 
 use super::aliases::{AliasResolver, LabelMode};
 use super::consts::find_const_declaration;
-use super::macro_body::MAX_FOR_ITERATIONS;
 use super::structs::describe_type;
 use super::symbols::{SymbolId, SymbolKind};
 use super::types::{BuiltinType, ResolvedGenericArg, ResolvedType};
@@ -97,8 +96,8 @@ impl<'a> AliasResolver<'a> {
             Expr::Identifier { name, span } => match scope.get(name) {
                 Some(value) => Ok(value.clone()),
 
-                None => match self.symbols.lookup(name) {
-                    Some(id) if self.symbols.get(id).kind == SymbolKind::Label => {
+                None => match self.lookup_symbol(name) {
+                    Some(id) if self.get_symbol(id).kind == SymbolKind::Label => {
                         self.resolve_label_value(id, *span)
                     }
 
@@ -116,7 +115,7 @@ impl<'a> AliasResolver<'a> {
                     .find(|(name, _)| name == member)
                     .map(|(_, value)| value)
                     .ok_or_else(|| ResolveError::UnknownField {
-                        type_name: self.symbols.get(symbol).name.clone(),
+                        type_name: self.get_symbol(symbol).name.clone(),
                         field: member.clone(),
                         span: *span,
                     }),
@@ -154,6 +153,13 @@ impl<'a> AliasResolver<'a> {
             // Transparent here too — `@emit`'s argument is already always
             // evaluated, so a splice around it changes nothing.
             Expr::Splice { inner, .. } => self.eval_value(inner, scope),
+
+            // `start..end` sugar — synthesizes a private struct value with
+            // one pub field per element (see
+            // `resolver::generated::eval_range_value`). `@for`'s four call
+            // sites all consume the result uniformly, like any other
+            // struct-valued `in`-expression.
+            Expr::Range { start, end, span } => self.eval_range_value(start, end, *span, scope),
         }
     }
 
@@ -185,24 +191,29 @@ impl<'a> AliasResolver<'a> {
             });
         };
 
-        let field_names: Vec<String> = self
+        let declared_fields: Vec<(String, Option<Expr>)> = self
             .find_struct_declaration(symbol)?
             .fields
             .iter()
             .filter_map(|item| match item {
-                StructBodyItem::Field(field) => literal_name(&field.name),
+                StructBodyItem::Field(field) => {
+                    literal_name(&field.name).map(|name| (name, field.default.clone()))
+                }
 
                 // `@for`/`@if`-generated fields aren't visible through
                 // this paren-call construction path yet — it predates
                 // generative struct bodies and doesn't set up the
                 // generic-const scope their `@for`/`@if` would need to
-                // unroll against. Brace-literal construction (not yet
-                // implemented) is where that support belongs.
+                // unroll against. Brace-literal construction is where that
+                // support belongs.
                 StructBodyItem::For { .. } | StructBodyItem::If { .. } => None,
             })
             .collect();
 
-        if arguments.len() != field_names.len() {
+        let field_names: Vec<String> = declared_fields.iter().map(|(name, _)| name.clone()).collect();
+        let required_count = declared_fields.iter().filter(|(_, default)| default.is_none()).count();
+
+        if arguments.len() < required_count || arguments.len() > field_names.len() {
             return Err(ResolveError::InvalidArgumentCount {
                 name: name.clone(),
                 expected: field_names.len(),
@@ -234,17 +245,43 @@ impl<'a> AliasResolver<'a> {
             by_name.insert(field_name, value);
         }
 
+        // A field the caller didn't supply falls back to its own declared
+        // default, evaluated against the struct's own bound generic const
+        // args only — never sibling field values, so field-to-field
+        // dependencies (and the evaluation-order question they'd raise)
+        // never come up.
+        let default_scope: HashMap<String, Value> = self
+            .find_struct_declaration(symbol)?
+            .generic_params
+            .clone()
+            .iter()
+            .zip(&args)
+            .filter_map(|(param, arg)| match (param, arg) {
+                (GenericParameter::Const { name, .. }, ResolvedGenericArg::Const(value)) => {
+                    Some((name.clone(), Value::Int(value.clone())))
+                }
+                _ => None,
+            })
+            .collect();
+
         let struct_ty = ResolvedType::Struct { symbol, args: args.clone() };
         let mut fields = Vec::with_capacity(field_names.len());
 
-        for field_name in field_names {
-            let value = by_name.remove(&field_name).ok_or_else(|| ResolveError::Internal {
-                message: format!(
-                    "struct call to `{name}` had the right argument count but field \
-                     `{field_name}` was never targeted — likely two arguments named the same field",
-                ),
-                span,
-            })?;
+        for (field_name, default) in declared_fields {
+            let value = match by_name.remove(&field_name) {
+                Some(value) => value,
+                None => {
+                    let default = default.ok_or_else(|| ResolveError::Internal {
+                        message: format!(
+                            "struct call to `{name}` passed arity/default checks but field \
+                             `{field_name}` has neither an argument nor a default",
+                        ),
+                        span,
+                    })?;
+
+                    self.eval_value(&default, &default_scope)?
+                }
+            };
 
             let expected = self.field_type(&struct_ty, &field_name, span)?;
             let actual = self.value_type(&value)?;
@@ -310,7 +347,9 @@ impl<'a> AliasResolver<'a> {
         let declared = self.instantiate_struct_fields_named(symbol, &args)?;
         let provided = self.unroll_construct_items(fields, scope)?;
 
-        if declared.len() != provided.len() {
+        let required_count = declared.iter().filter(|(_, _, _, default)| default.is_none()).count();
+
+        if provided.len() < required_count || provided.len() > declared.len() {
             return Err(ResolveError::InvalidArgumentCount {
                 name: name.clone(),
                 expected: declared.len(),
@@ -322,7 +361,7 @@ impl<'a> AliasResolver<'a> {
         let mut by_name: HashMap<String, Value> = HashMap::new();
 
         for (field_name, value) in provided {
-            if !declared.iter().any(|(declared_name, _)| *declared_name == field_name) {
+            if !declared.iter().any(|(declared_name, ..)| *declared_name == field_name) {
                 return Err(ResolveError::UnknownField {
                     type_name: name.clone(),
                     field: field_name,
@@ -333,16 +372,39 @@ impl<'a> AliasResolver<'a> {
             by_name.insert(field_name, value);
         }
 
+        // Same default-eval scope choice as `eval_call_value`: the struct's
+        // own bound generic const args only, never sibling field values.
+        let default_scope: HashMap<String, Value> = self
+            .find_struct_declaration(symbol)?
+            .generic_params
+            .clone()
+            .iter()
+            .zip(&args)
+            .filter_map(|(param, arg)| match (param, arg) {
+                (GenericParameter::Const { name, .. }, ResolvedGenericArg::Const(value)) => {
+                    Some((name.clone(), Value::Int(value.clone())))
+                }
+                _ => None,
+            })
+            .collect();
+
         let mut result_fields = Vec::with_capacity(declared.len());
 
-        for (field_name, expected) in declared {
-            let value = by_name.remove(&field_name).ok_or_else(|| ResolveError::Internal {
-                message: format!(
-                    "brace construction of `{name}` had the right field count but field \
-                     `{field_name}` was never targeted — likely two provided fields named the same field",
-                ),
-                span,
-            })?;
+        for (field_name, expected, _is_pub, default) in declared {
+            let value = match by_name.remove(&field_name) {
+                Some(value) => value,
+                None => {
+                    let default = default.ok_or_else(|| ResolveError::Internal {
+                        message: format!(
+                            "brace construction of `{name}` passed arity/default checks but field \
+                             `{field_name}` has neither a provided value nor a default",
+                        ),
+                        span,
+                    })?;
+
+                    self.eval_value(&default, &default_scope)?
+                }
+            };
 
             let actual = self.value_type(&value)?;
 
@@ -384,7 +446,7 @@ impl<'a> AliasResolver<'a> {
         let expected = self.find_struct_declaration(symbol)?.generic_params.len();
 
         if args.len() != expected {
-            let name = self.symbols.get(symbol).name.clone();
+            let name = self.get_symbol(symbol).name.clone();
 
             return Err(ResolveError::InvalidGenericArity {
                 name,
@@ -432,26 +494,14 @@ impl<'a> AliasResolver<'a> {
                     fields.push((field_name, field_value));
                 }
 
-                ConstructItem::For { var, start, end, body, span } => {
-                    let start_value = self.eval_int(start, scope)?;
-                    let end_value = self.eval_int(end, scope)?;
+                ConstructItem::For { var, source, body, .. } => {
+                    let bindings = self.eval_for_source(source, scope)?;
 
-                    let mut i = start_value;
-                    let mut iterations: u64 = 0;
-
-                    while i < end_value {
-                        iterations += 1;
-
-                        if iterations > MAX_FOR_ITERATIONS {
-                            return Err(ResolveError::ForLoopTooLarge { span: *span });
-                        }
-
+                    for (_, value) in bindings {
                         let mut iter_scope = scope.clone();
-                        iter_scope.insert(var.clone(), Value::Int(i.clone()));
+                        iter_scope.insert(var.clone(), value);
 
                         fields.extend(self.unroll_construct_items(body, &iter_scope)?);
-
-                        i += Int::from(1);
                     }
                 }
 
@@ -504,7 +554,7 @@ impl<'a> AliasResolver<'a> {
                 for invariant in invariants {
                     if !self.eval_truthy(invariant, &layer_scope)? {
                         return Err(ResolveError::InvariantViolated {
-                            type_name: self.symbols.get(*symbol).name.clone(),
+                            type_name: self.get_symbol(*symbol).name.clone(),
                             invariant: crate::printer::print_expr(invariant),
                             span,
                         });
@@ -526,9 +576,9 @@ impl<'a> AliasResolver<'a> {
                 _ => {
                     let declared = self.instantiate_struct_fields_named(*symbol, args)?;
 
-                    let [(field_name, field_ty)] = declared.as_slice() else {
+                    let [(field_name, field_ty, ..)] = declared.as_slice() else {
                         return Err(ResolveError::CannotCoerce {
-                            type_name: self.symbols.get(*symbol).name.clone(),
+                            type_name: self.get_symbol(*symbol).name.clone(),
                             span,
                         });
                     };
@@ -564,11 +614,11 @@ impl<'a> AliasResolver<'a> {
     /// unbound name would produce, since neither case has a `Value` to
     /// offer.
     pub(super) fn resolve_const_value(&mut self, name: &str, span: Span) -> Result<Value, ResolveError> {
-        let Some(id) = self.symbols.lookup(name) else {
+        let Some(id) = self.lookup_symbol(name) else {
             return Err(ResolveError::UnknownConstant { name: name.to_string(), span });
         };
 
-        if self.symbols.get(id).kind != SymbolKind::Const {
+        if self.get_symbol(id).kind != SymbolKind::Const {
             return Err(ResolveError::UnknownConstant { name: name.to_string(), span });
         }
 
@@ -576,13 +626,33 @@ impl<'a> AliasResolver<'a> {
             Some(ConstValueState::Resolved(value)) => return Ok(value.clone()),
             Some(ConstValueState::Visiting) => return Err(self.make_const_value_cycle_error(id)),
             Some(ConstValueState::Unvisited) => {}
-            None => unreachable!("const_value_states is populated for every Const symbol in AliasResolver::new"),
+
+            // Not pre-seeded by `AliasResolver::new` (which only ever saw
+            // `self.symbols`, before this `id` existed) — a symbol
+            // discovered mid-resolution starts out `Unvisited` the first
+            // time anything actually references it, exactly as if it had
+            // been seeded from the start.
+            None => {
+                self.const_value_states.insert(id, ConstValueState::Unvisited);
+            }
         }
 
         self.const_value_states.insert(id, ConstValueState::Visiting);
         self.const_value_stack.push(id);
 
-        let declaration = find_const_declaration(self.program, name, self.symbols);
+        let declaration = match find_const_declaration(self.program, name, self.symbols) {
+            Ok(declaration) => Ok(declaration.clone()),
+            Err(error) => self
+                .generated
+                .iter()
+                .find_map(|statement| match statement {
+                    Statement::Const(decl) if literal_name(&decl.name).as_deref() == Some(name) => {
+                        Some(decl.clone())
+                    }
+                    _ => None,
+                })
+                .ok_or(error),
+        };
 
         let result = declaration.and_then(|declaration| {
             let value = declaration.value.clone();
@@ -640,7 +710,7 @@ impl<'a> AliasResolver<'a> {
                     message: format!(
                         "label `{}` has no recorded position — the position-discovery pass \
                          should have found every top-level label before this pass ran",
-                        self.symbols.get(id).name,
+                        self.get_symbol(id).name,
                     ),
                     span,
                 }),
@@ -702,14 +772,14 @@ impl<'a> AliasResolver<'a> {
 
         let mut cycle: Vec<String> = self.const_value_stack[start..]
             .iter()
-            .map(|id| self.symbols.get(*id).name.clone())
+            .map(|id| self.get_symbol(*id).name.clone())
             .collect();
 
-        cycle.push(self.symbols.get(repeated).name.clone());
+        cycle.push(self.get_symbol(repeated).name.clone());
 
         ResolveError::CyclicConstant {
             cycle,
-            span: self.symbols.get(repeated).span,
+            span: self.get_symbol(repeated).span,
         }
     }
 
@@ -1104,6 +1174,77 @@ mod tests {
                 nominal: None,
             }
         );
+    }
+
+    #[test]
+    fn paren_call_omitting_a_defaulted_field_uses_its_declared_default() {
+        let program = parse_fixture("struct_field_default.basm");
+
+        let declaration = find_macro(&program, "make_reg_call_with_default");
+        let symbols = collect_symbols(&program).unwrap();
+        let reg_id = symbols.lookup("Reg").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut scope = HashMap::new();
+        scope.insert("v".to_string(), Value::Int(Int::from(3)));
+
+        let value = resolver.eval_value(emit_expr(declaration), &scope).unwrap();
+
+        assert_eq!(
+            value,
+            Value::Struct {
+                symbol: reg_id,
+                args: vec![],
+                fields: vec![
+                    ("id".to_string(), Value::Int(Int::from(3))),
+                    ("width".to_string(), Value::Int(Int::from(8))),
+                ],
+                nominal: None,
+            }
+        );
+    }
+
+    #[test]
+    fn paren_call_supplying_a_defaulted_field_overrides_the_default() {
+        let program = parse_fixture("struct_field_default.basm");
+
+        let declaration = find_macro(&program, "make_reg_call_override_default");
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut scope = HashMap::new();
+        scope.insert("v".to_string(), Value::Int(Int::from(3)));
+
+        let value = resolver.eval_value(emit_expr(declaration), &scope).unwrap();
+
+        let Value::Struct { fields, .. } = value else {
+            panic!("expected a struct value");
+        };
+
+        assert_eq!(fields[1], ("width".to_string(), Value::Int(Int::from(16))));
+    }
+
+    #[test]
+    fn brace_construction_omitting_a_defaulted_field_uses_its_declared_default() {
+        let program = parse_fixture("struct_field_default.basm");
+
+        let declaration = find_macro(&program, "make_reg_construct_with_default");
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut scope = HashMap::new();
+        scope.insert("v".to_string(), Value::Int(Int::from(5)));
+
+        let value = resolver.eval_value(emit_expr(declaration), &scope).unwrap();
+
+        let Value::Struct { fields, .. } = value else {
+            panic!("expected a struct value");
+        };
+
+        assert_eq!(fields[1], ("width".to_string(), Value::Int(Int::from(8))));
     }
 
     #[test]

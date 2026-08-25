@@ -108,11 +108,11 @@ impl Parser {
         let outer_restriction = self.restrict_brace_construction;
         self.restrict_brace_construction = true;
 
-        let result = self.parse_range_bounds();
+        let result = self.parse_expr();
 
         self.restrict_brace_construction = outer_restriction;
 
-        let (range_start, range_end) = result?;
+        let source = result?;
 
         self.skip_newlines();
 
@@ -120,8 +120,7 @@ impl Parser {
 
         Ok(ConstructItem::For {
             var,
-            start: range_start,
-            end: range_end,
+            source,
             body,
             span: Span::new(start, body_end),
         })

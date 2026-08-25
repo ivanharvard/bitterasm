@@ -24,7 +24,6 @@ use crate::token::Span;
 use crate::types::{GenericParameter, StructBodyItem, TypeExpr};
 
 use super::aliases::{AliasResolver, GenericBinding};
-use super::macro_body::MAX_FOR_ITERATIONS;
 use super::symbols::{SymbolId, SymbolKind, SymbolTable};
 use super::types::{BuiltinType, ResolvedGenericArg, ResolvedType};
 use super::values::Value;
@@ -36,6 +35,8 @@ use super::ResolveError;
 struct UnrolledField {
     name: String,
     ty: TypeExpr,
+    is_pub: bool,
+    default: Option<Expr>,
 }
 
 impl<'a> AliasResolver<'a> {
@@ -98,15 +99,19 @@ impl<'a> AliasResolver<'a> {
     }
 
     // Like `instantiate_struct_fields`, but keeps each field's name
-    // alongside its resolved type instead of discarding it —
-    // brace-literal construction (`resolver::values::eval_construct_value`)
-    // needs both: the name, to match a declared field against a provided
-    // one; the type, to check the provided value against it.
+    // (plus its `is_pub`/`default`) alongside its resolved type instead of
+    // discarding them — brace-literal construction
+    // (`resolver::values::eval_construct_value`) needs the name to match a
+    // declared field against a provided one and the type to check the
+    // provided value against it; `is_pub` is what `eval_for_source`
+    // (`struct_field_pub_flags`, just below) filters `@for` on, and
+    // `default` is what a construction falls back to when a field's
+    // omitted.
     pub(super) fn instantiate_struct_fields_named(
         &mut self,
         id: SymbolId,
         args: &[ResolvedGenericArg],
-    ) -> Result<Vec<(String, ResolvedType)>, ResolveError> {
+    ) -> Result<Vec<(String, ResolvedType, bool, Option<Expr>)>, ResolveError> {
         let declaration = self.find_struct_declaration(id)?;
         let scope = generic_arg_scope(&declaration.generic_params, args);
         let items = declaration.fields.clone();
@@ -118,7 +123,7 @@ impl<'a> AliasResolver<'a> {
                 .into_iter()
                 .map(|field| {
                     let ty = self.resolve_type_expr(&field.ty)?;
-                    Ok((field.name, ty))
+                    Ok((field.name, ty, field.is_pub, field.default))
                 })
                 .collect(),
             Err(error) => Err(error),
@@ -127,6 +132,23 @@ impl<'a> AliasResolver<'a> {
         self.generic_scope = previous;
 
         result
+    }
+
+    // Thin sibling of `instantiate_struct_fields_named` that only the
+    // `is_pub` flag survives from — `resolver::generated::eval_for_source`
+    // uses this to filter a struct value's fields down to the ones `@for`
+    // should actually visit, without needing to resolve every field's full
+    // type just to read one bit off it.
+    pub(super) fn struct_field_pub_flags(
+        &mut self,
+        id: SymbolId,
+        args: &[ResolvedGenericArg],
+    ) -> Result<Vec<bool>, ResolveError> {
+        Ok(self
+            .instantiate_struct_fields_named(id, args)?
+            .into_iter()
+            .map(|(_, _, is_pub, _)| is_pub)
+            .collect())
     }
 
     // Checks every `invariant` facet (`crate::facets::invariant`) declared
@@ -172,7 +194,7 @@ impl<'a> AliasResolver<'a> {
         for invariant in &invariants {
             if !self.eval_truthy(invariant, &scope)? {
                 return Err(ResolveError::InvariantViolated {
-                    type_name: self.symbols.get(symbol).name.clone(),
+                    type_name: self.get_symbol(symbol).name.clone(),
                     invariant: crate::printer::print_expr(invariant),
                     span,
                 });
@@ -217,7 +239,7 @@ impl<'a> AliasResolver<'a> {
                 Some(field) => self.resolve_type_expr(&field.ty),
 
                 None => Err(ResolveError::UnknownField {
-                    type_name: self.symbols.get(*symbol).name.clone(),
+                    type_name: self.get_symbol(*symbol).name.clone(),
                     field: field_name.to_string(),
                     span,
                 }),
@@ -270,32 +292,48 @@ impl<'a> AliasResolver<'a> {
             match item {
                 StructBodyItem::Field(field) => {
                     let name = self.resolve_spliced_name_as_const(&field.name)?;
-                    fields.push(UnrolledField { name, ty: field.ty.clone() });
+                    fields.push(UnrolledField {
+                        name,
+                        ty: field.ty.clone(),
+                        is_pub: field.is_pub,
+                        default: field.default.clone(),
+                    });
                 }
 
-                StructBodyItem::For { var, start, end, body, span } => {
-                    if references_unbound_generic(start, &self.generic_scope)
-                        || references_unbound_generic(end, &self.generic_scope)
-                    {
+                StructBodyItem::For { var, source, body, span } => {
+                    if references_unbound_generic(source, &self.generic_scope) {
                         continue;
                     }
 
-                    let start_value = self.eval_const_expr(start)?;
-                    let end_value = self.eval_const_expr(end)?;
+                    // Struct-body `@for` stays in the const-generic world:
+                    // it has no general `Value`-scope, only whatever's
+                    // currently bound in `self.generic_scope`, so build a
+                    // throwaway `Value` scope out of that (dropping
+                    // `Type`/still-unbound `Const(None)` entries, which have
+                    // no `Value` form) to evaluate `source` against, and
+                    // require every yielded element to be an `Int` — a
+                    // struct-valued element doesn't fit this model (see
+                    // `references_unbound_generic`'s doc for why this isn't
+                    // extended further).
+                    let value_scope: HashMap<String, Value> = self
+                        .generic_scope
+                        .iter()
+                        .filter_map(|(name, binding)| match binding {
+                            GenericBinding::Const(Some(i)) => Some((name.clone(), Value::Int(i.clone()))),
+                            _ => None,
+                        })
+                        .collect();
 
-                    let mut i = start_value;
-                    let mut iterations: u64 = 0;
+                    let bindings = self.eval_for_source(source, &value_scope)?;
 
-                    while i < end_value {
-                        iterations += 1;
-
-                        if iterations > MAX_FOR_ITERATIONS {
-                            return Err(ResolveError::ForLoopTooLarge { span: *span });
-                        }
+                    for (_, value) in bindings {
+                        let Value::Int(i) = value else {
+                            return Err(ResolveError::ExpectedIntValue { span: *span });
+                        };
 
                         let previous = self
                             .generic_scope
-                            .insert(var.clone(), GenericBinding::Const(Some(i.clone())));
+                            .insert(var.clone(), GenericBinding::Const(Some(i)));
 
                         let nested = self.unroll_struct_body(body);
 
@@ -309,8 +347,6 @@ impl<'a> AliasResolver<'a> {
                         }
 
                         fields.extend(nested?);
-
-                        i += Int::from(1);
                     }
                 }
 
@@ -363,10 +399,17 @@ impl<'a> AliasResolver<'a> {
 // identical check for a field's *type* (`bits<N>` staying symbolic rather
 // than folded), applied here to a `@for`/`@if`'s bound/condition instead.
 fn references_unbound_generic(expr: &Expr, generic_scope: &HashMap<String, GenericBinding>) -> bool {
-    matches!(
-        expr,
-        Expr::Identifier { name, .. } if matches!(generic_scope.get(name), Some(GenericBinding::Const(None)))
-    )
+    match expr {
+        Expr::Identifier { name, .. } => {
+            matches!(generic_scope.get(name), Some(GenericBinding::Const(None)))
+        }
+
+        Expr::Range { start, end, .. } => {
+            references_unbound_generic(start, generic_scope) || references_unbound_generic(end, generic_scope)
+        }
+
+        _ => false,
+    }
 }
 
 pub(super) fn param_name(param: &GenericParameter) -> &str {
@@ -426,7 +469,7 @@ mod tests {
     use crate::eval::Int;
     use crate::lexer;
     use crate::parser;
-    use crate::resolver::{collect_symbols, AliasResolver};
+    use crate::resolver::{collect_symbols, AliasResolver, ResolveError};
 
     use super::{BuiltinType, ResolvedGenericArg, ResolvedType};
 
@@ -504,6 +547,24 @@ mod tests {
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         assert!(resolver.resolve_all_structs().is_ok());
+    }
+
+    #[test]
+    fn struct_body_for_over_a_struct_valued_pub_field_errors() {
+        // Struct-body `@for` stays in the const-generic world: its source
+        // is evaluated against a throwaway scope built only from bound
+        // `Const` generic args, and every visited element must be an
+        // `Int` — a struct-valued element (like `Wrapper`'s `inner` field
+        // here) doesn't fit that model. See `AliasResolver::unroll_struct_body`.
+        let program = parse_fixture("struct_body_for_over_struct_valued_field.basm");
+        let symbols = collect_symbols(&program).unwrap();
+        let uses_for_id = symbols.lookup("UsesFor").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let result = resolver.instantiate_struct_fields(uses_for_id, &[ResolvedGenericArg::Const(Int::from(1))]);
+
+        assert!(matches!(result, Err(ResolveError::ExpectedIntValue { .. })));
     }
 
     #[test]

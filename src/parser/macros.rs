@@ -45,10 +45,13 @@ impl Parser {
         }
     }
 
-    // `@for name in start..end { body }` — the loop variable and range
-    // bounds are packed positionally into `args` (`[Identifier, start,
-    // end]`) rather than given their own `MetaStatement` fields, the same
-    // way `@assert`'s `[condition, message]` already overloads `args`.
+    // `@for name in source { body }` — the loop variable and iteration
+    // source are packed positionally into `args` (`[Identifier, source]`)
+    // rather than given their own `MetaStatement` fields, the same way
+    // `@assert`'s `[condition, message]` already overloads `args`. `source`
+    // is evaluated to a `Value::Struct` and its pub fields walked in order
+    // (see `resolver::generated::eval_for_source`) — `start..end` is just
+    // the common case, `Expr::Range` sugar for a synthesized struct.
     fn parse_for_meta(&mut self, start: usize) -> Result<MetaStatement, ParseError> {
         let var_token = self.current().clone();
         let var_name = self.expect_identifier()?;
@@ -59,11 +62,11 @@ impl Parser {
         let outer_restriction = self.restrict_brace_construction;
         self.restrict_brace_construction = true;
 
-        let result = self.parse_range_bounds();
+        let result = self.parse_expr();
 
         self.restrict_brace_construction = outer_restriction;
 
-        let (range_start, range_end) = result?;
+        let source = result?;
 
         self.skip_newlines();
 
@@ -74,7 +77,7 @@ impl Parser {
 
         Ok(MetaStatement {
             name: "for".to_string(),
-            args: vec![var, range_start, range_end],
+            args: vec![var, source],
             body: Some(body),
             else_body: None,
             span: Span::new(start, body_end),

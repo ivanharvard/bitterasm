@@ -412,13 +412,18 @@ fn parses_for_meta_with_range_and_body() {
     assert_eq!(meta.name, "for");
     assert!(meta.else_body.is_none());
 
-    let [var, start, end] = meta.args.as_slice() else {
-        panic!("expected [var, start, end] args, got {:?}", meta.args);
+    let [var, source] = meta.args.as_slice() else {
+        panic!("expected [var, source] args, got {:?}", meta.args);
     };
 
     assert!(matches!(var, Expr::Identifier { name, .. } if name == "i"));
-    assert!(matches!(start, Expr::Integer { raw, .. } if raw == "0"));
-    assert!(matches!(end, Expr::Integer { raw, .. } if raw == "16"));
+
+    let Expr::Range { start, end, .. } = source else {
+        panic!("expected a Range source, got {source:?}");
+    };
+
+    assert!(matches!(start.as_ref(), Expr::Integer { raw, .. } if raw == "0"));
+    assert!(matches!(end.as_ref(), Expr::Integer { raw, .. } if raw == "16"));
 
     let body = meta.body.as_ref().expect("@for should carry a body");
     assert_eq!(body.len(), 1);
@@ -501,11 +506,27 @@ fn for_meta_requires_the_in_keyword() {
     );
 }
 
+// `@for`'s `in`-clause is any expression, not just `start..end` sugar — a
+// non-range source (like a bare `0` here) is syntactically fine; whether
+// it's actually iterable (a `Value::Struct`) is a resolve-time question,
+// not a parse-time one. See `resolver::generated::eval_for_source`.
 #[test]
-fn for_meta_requires_a_range() {
-    let error = parse(lex("macro foo() {\n    @for i in 0 {\n    }\n}\n").unwrap()).unwrap_err();
+fn for_meta_accepts_any_expression_as_its_source() {
+    let program = parse(lex("macro foo() {\n    @for i in 0 {\n    }\n}\n").unwrap()).unwrap();
 
-    assert!(format!("{error}").contains("DotDot") || format!("{error}").contains("LBrace"));
+    let Statement::Macro(decl) = &program.statements[0] else {
+        panic!("expected macro declaration");
+    };
+
+    let Statement::Meta(meta) = &decl.body[0] else {
+        panic!("expected meta statement");
+    };
+
+    let [_, source] = meta.args.as_slice() else {
+        panic!("expected [var, source] args, got {:?}", meta.args);
+    };
+
+    assert!(matches!(source, Expr::Integer { raw, .. } if raw == "0"));
 }
 
 #[test]
@@ -562,6 +583,45 @@ struct Reg<const width: uint> {
     };
 
     assert_eq!(literal_name(&field.name), Some("id".to_string()));
+}
+
+#[test]
+fn parses_struct_field_pub_const_and_default_modifiers() {
+    let source = r#"
+struct Reg<const width: int> {
+    pub const id: bits<2>,
+    pub len: int = width
+}
+"#;
+
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    let Statement::Struct(declaration) = &program.statements[0] else {
+        panic!("expected struct");
+    };
+
+    assert_eq!(declaration.fields.len(), 2);
+
+    let StructBodyItem::Field(id_field) = &declaration.fields[0] else {
+        panic!("expected a plain field");
+    };
+
+    assert_eq!(literal_name(&id_field.name), Some("id".to_string()));
+    assert!(id_field.is_pub);
+    assert!(id_field.is_const);
+    assert!(id_field.default.is_none());
+
+    let StructBodyItem::Field(len_field) = &declaration.fields[1] else {
+        panic!("expected a plain field");
+    };
+
+    assert_eq!(literal_name(&len_field.name), Some("len".to_string()));
+    assert!(len_field.is_pub);
+    assert!(!len_field.is_const);
+    assert!(matches!(
+        len_field.default,
+        Some(Expr::Identifier { ref name, .. }) if name == "width"
+    ));
 }
 
 #[test]

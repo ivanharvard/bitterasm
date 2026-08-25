@@ -1,0 +1,16 @@
+struct Reg {
+    id: int,
+    width: int = 8
+}
+
+macro make_reg_call_with_default(v: int) {
+    @emit Reg(id = v)
+}
+
+macro make_reg_call_override_default(v: int) {
+    @emit Reg(id = v, width = 16)
+}
+
+macro make_reg_construct_with_default(v: int) {
+    @emit Reg { id: v }
+}

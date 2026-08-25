@@ -8,6 +8,7 @@
 mod aliases;
 mod consts;
 mod facets;
+mod generated;
 mod macro_body;
 mod metas;
 mod structs;
@@ -327,6 +328,15 @@ pub enum ResolveError {
     // top-level `const` (see `collect_symbols`). Only a `pub const`
     // produced from inside a macro body can have a computed name.
     ComputedNameNotAllowed {
+        span: Span,
+    },
+
+    // Top-level `@for` runs before symbol/struct resolution exists at all
+    // (see `toplevel`'s module doc) — unlike the other three `@for` sites,
+    // it can only ever unroll `start..end` range sugar, never a general
+    // struct-valued source. A deliberate, confirmed exception to "`@for` is
+    // uniform everywhere", not an oversight.
+    TopLevelForRequiresRange {
         span: Span,
     },
 }

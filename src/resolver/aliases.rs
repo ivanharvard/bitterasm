@@ -85,6 +85,18 @@ pub struct AliasResolver<'a> {
     pub(super) values_emitted: Int,
     pub(super) label_positions: HashMap<SymbolId, Int>,
     pub(super) label_mode: LabelMode,
+
+    // Declarations discovered mid-resolution — a macro's `generated`
+    // output, or a `0..N` range's synthesized struct — rather than present
+    // in `program` from the start. `generated_symbols` shares the same
+    // `SymbolId` space as `symbols` (via `SymbolTable::with_base`, offset
+    // past every id `symbols` could ever hand out) so a `SymbolId` alone
+    // tells `get_symbol`/`lookup_symbol` which table to check; `generated`
+    // holds the actual declaration bodies, scanned by
+    // `find_struct_declaration`/`find_macro_declaration`/etc. as a fallback
+    // after `program.statements`. See `super::generated`.
+    pub(super) generated_symbols: SymbolTable,
+    pub(super) generated: Vec<Statement>,
 }
 
 impl<'a> AliasResolver<'a> {
@@ -129,6 +141,8 @@ impl<'a> AliasResolver<'a> {
             values_emitted: Int::from(0),
             label_positions: known_label_positions,
             label_mode,
+            generated_symbols: SymbolTable::with_base(symbols.len()),
+            generated: Vec::new(),
         }
     }
 
@@ -188,8 +202,20 @@ impl<'a> AliasResolver<'a> {
             Some(AliasState::Resolved(ty)) => return Ok(ty.clone()),
             Some(AliasState::Visiting) => return Err(self.make_cycle_error(id)),
             Some(AliasState::Unvisited) => {}
+
+            // Not pre-seeded by `AliasResolver::new` — a type alias
+            // generated mid-resolution starts `Unvisited` the first time
+            // it's actually referenced, same as if it had been seeded from
+            // the start. A symbol that isn't a type alias at all (wrong
+            // `SymbolKind`) still isn't reachable through here — this arm
+            // only ever sees ids `resolve_named_type` already confirmed are
+            // `SymbolKind::TypeAlias`.
+            None if self.get_symbol(id).kind == SymbolKind::TypeAlias => {
+                self.states.insert(id, AliasState::Unvisited);
+            }
+
             None => {
-                let symbol = self.symbols.get(id);
+                let symbol = self.get_symbol(id);
 
                 return Err(ResolveError::ExpectedType {
                     name: symbol.name.clone(),
@@ -314,14 +340,14 @@ impl<'a> AliasResolver<'a> {
             _ => {}
         }
 
-        let Some(id) = self.symbols.lookup(name) else {
+        let Some(id) = self.lookup_symbol(name) else {
             return Err(ResolveError::UnknownType {
                 name: name.clone(),
                 span,
             });
         };
 
-        let symbol = self.symbols.get(id);
+        let symbol = self.get_symbol(id);
 
         match symbol.kind {
             SymbolKind::Struct => {
@@ -371,7 +397,7 @@ impl<'a> AliasResolver<'a> {
                 let expected = self.find_struct_declaration(symbol)?.generic_params.len();
 
                 if args.len() != expected {
-                    let name = self.symbols.get(symbol).name.clone();
+                    let name = self.get_symbol(symbol).name.clone();
 
                     return Err(ResolveError::InvalidGenericArity {
                         name,
@@ -418,7 +444,7 @@ impl<'a> AliasResolver<'a> {
             // regression this variant introduces.
             ResolvedType::Alias { symbol, .. } => {
                 Err(ResolveError::ExpectedType {
-                    name: self.symbols.get(symbol).name.clone(),
+                    name: self.get_symbol(symbol).name.clone(),
                     span,
                 })
             }
@@ -472,7 +498,7 @@ impl<'a> AliasResolver<'a> {
                 // macro, a type-generic param, or a const that isn't
                 // int-valued) rather than nothing at all — a clearer
                 // diagnostic than a bare "unknown" either way.
-                let known = self.symbols.lookup(&name).is_some()
+                let known = self.lookup_symbol(&name).is_some()
                     || self.generic_scope.contains_key(&name);
 
                 if known {
@@ -498,9 +524,9 @@ impl<'a> AliasResolver<'a> {
         &self,
         id: SymbolId,
     ) -> Result<&crate::ast::TypeAliasDeclaration, ResolveError> {
-        let symbol = self.symbols.get(id);
+        let symbol = self.get_symbol(id);
 
-        for statement in &self.program.statements {
+        for statement in self.program.statements.iter().chain(&self.generated) {
             if let Statement::TypeAlias(declaration) = statement {
                 if declaration.name == symbol.name {
                     return Ok(declaration);
@@ -523,9 +549,9 @@ impl<'a> AliasResolver<'a> {
         &self,
         id: SymbolId,
     ) -> Result<&crate::ast::StructDeclaration, ResolveError> {
-        let symbol = self.symbols.get(id);
+        let symbol = self.get_symbol(id);
 
-        for statement in &self.program.statements {
+        for statement in self.program.statements.iter().chain(&self.generated) {
             if let Statement::Struct(declaration) = statement {
                 if declaration.name == symbol.name {
                     return Ok(declaration);
@@ -549,14 +575,14 @@ impl<'a> AliasResolver<'a> {
         name: &str,
         span: Span,
     ) -> Result<SymbolId, ResolveError> {
-        let Some(id) = self.symbols.lookup(name) else {
+        let Some(id) = self.lookup_symbol(name) else {
             return Err(ResolveError::UnknownMacro {
                 name: name.to_string(),
                 span,
             });
         };
 
-        if self.symbols.get(id).kind != SymbolKind::Macro {
+        if self.get_symbol(id).kind != SymbolKind::Macro {
             return Err(ResolveError::ExpectedMacro {
                 name: name.to_string(),
                 span,
@@ -570,9 +596,9 @@ impl<'a> AliasResolver<'a> {
         &self,
         id: SymbolId,
     ) -> Result<&crate::ast::MacroDeclaration, ResolveError> {
-        let symbol = self.symbols.get(id);
+        let symbol = self.get_symbol(id);
 
-        for statement in &self.program.statements {
+        for statement in self.program.statements.iter().chain(&self.generated) {
             if let Statement::Macro(declaration) = statement {
                 if declaration.name == symbol.name {
                     return Ok(declaration);
@@ -607,19 +633,19 @@ impl<'a> AliasResolver<'a> {
 
         let mut cycle: Vec<String> = self.stack[start..]
             .iter()
-            .map(|id| self.symbols.get(*id).name.clone())
+            .map(|id| self.get_symbol(*id).name.clone())
             .collect();
 
         // Close the loop:
         //
         //     A -> B -> C -> A
         cycle.push(
-            self.symbols.get(repeated).name.clone()
+            self.get_symbol(repeated).name.clone()
         );
 
         ResolveError::CyclicTypeAlias {
             cycle,
-            span: self.symbols.get(repeated).span,
+            span: self.get_symbol(repeated).span,
         }
     }
 

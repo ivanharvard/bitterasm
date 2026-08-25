@@ -1,0 +1,8 @@
+macro inner(v: int) {
+    pub const the_const = `v`
+}
+
+macro outer_twice() {
+    inner(1)
+    inner(2)
+}

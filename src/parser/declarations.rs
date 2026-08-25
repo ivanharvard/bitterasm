@@ -118,11 +118,11 @@ impl Parser {
         let outer_restriction = self.restrict_brace_construction;
         self.restrict_brace_construction = true;
 
-        let result = self.parse_range_bounds();
+        let result = self.parse_expr();
 
         self.restrict_brace_construction = outer_restriction;
 
-        let (range_start, range_end) = result?;
+        let source = result?;
 
         self.skip_newlines();
 
@@ -130,8 +130,7 @@ impl Parser {
 
         Ok(StructBodyItem::For {
             var,
-            start: range_start,
-            end: range_end,
+            source,
             body,
             span: Span::new(start, body_end),
         })
@@ -177,17 +176,45 @@ impl Parser {
     ) -> Result<StructField, ParseError> {
         let start = self.current().span.start;
 
+        let is_pub = if self.check(&TokenKind::Pub) {
+            self.advance();
+            true
+        } else {
+            false
+        };
+
+        let is_const = if self.check(&TokenKind::Const) {
+            self.advance();
+            true
+        } else {
+            false
+        };
+
         let (name, _) = self.parse_spliced_name()?;
 
         self.expect_simple(TokenKind::Colon)?;
 
         let ty = self.parse_type_expr()?;
 
-        let end = ty.span().end;
+        let mut end = ty.span().end;
+
+        let default = if self.check(&TokenKind::Equal) {
+            self.advance();
+
+            let default = self.parse_expr()?;
+            end = default.span().end;
+
+            Some(default)
+        } else {
+            None
+        };
 
         Ok(StructField {
             name,
             ty,
+            is_pub,
+            is_const,
+            default,
             span: Span::new(start, end),
         })
     }

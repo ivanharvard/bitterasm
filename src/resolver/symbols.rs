@@ -45,11 +45,34 @@ pub struct Symbol {
 pub struct SymbolTable {
     symbols: Vec<Symbol>,
     by_name: HashMap<String, SymbolId>,
+
+    /// `SymbolId`s handed out by this table start at `base` rather than 0
+    /// — lets a second table (e.g. `AliasResolver::generated_symbols`)
+    /// share the same `SymbolId` space as a first one without either
+    /// table's ids colliding. See `AliasResolver::get_symbol`.
+    base: usize,
 }
 
 impl SymbolTable {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A table whose ids start at `base` instead of 0 — see the `base`
+    /// field's doc.
+    pub fn with_base(base: usize) -> Self {
+        Self {
+            base,
+            ..Self::default()
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.symbols.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.symbols.is_empty()
     }
 
     pub fn insert(
@@ -63,7 +86,7 @@ impl SymbolTable {
             });
         }
 
-        let id = SymbolId(self.symbols.len());
+        let id = SymbolId(self.base + self.symbols.len());
 
         self.symbols.push(Symbol {
             id,
@@ -82,7 +105,7 @@ impl SymbolTable {
     }
 
     pub fn get(&self, id: SymbolId) -> &Symbol {
-        &self.symbols[id.0]
+        &self.symbols[id.0 - self.base]
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Symbol> {

@@ -104,6 +104,23 @@ pub enum GenericParameter {
 pub struct StructField {
     pub name: SplicedName,
     pub ty: TypeExpr,
+
+    /// Whether `@for i in X` (`X` resolving to this struct's type) visits
+    /// this field — a non-`pub` field stays internal bookkeeping (e.g.
+    /// whatever an `invariant` needs) even when the rest of the struct is
+    /// iterated. See `resolver::generated::eval_for_source`.
+    pub is_pub: bool,
+
+    /// `const name: Type` — parsed, not yet enforced (no additional
+    /// resolver checking beyond ordinary type-checking). See
+    /// `std/tinycpu/native.basm`'s `pub const id: bits<2>`.
+    pub is_const: bool,
+
+    /// `= expr` — evaluated (against the struct's own bound generic const
+    /// args, not sibling field values) and used only when this field is
+    /// omitted from a paren-call or brace-literal construction.
+    pub default: Option<Expr>,
+
     pub span: Span,
 }
 
@@ -121,8 +138,7 @@ pub enum StructBodyItem {
 
     For {
         var: String,
-        start: Expr,
-        end: Expr,
+        source: Expr,
         body: Vec<StructBodyItem>,
         span: Span,
     },
