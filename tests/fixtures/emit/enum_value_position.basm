@@ -1,0 +1,8 @@
+pub enum Endian {
+    Little,
+    Big
+}
+
+macro use_variant() {
+    @emit Endian.Little
+}

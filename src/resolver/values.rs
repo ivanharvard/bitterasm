@@ -958,6 +958,24 @@ mod tests {
         assert_eq!(value, Value::Int(Int::from(42)));
     }
 
+    // Enum declarations are parsed and registered as symbols, but not
+    // wired into `Value`/`ResolvedType` — see `ast::EnumDeclaration`'s doc.
+    // A value-position use of a variant should fail with an ordinary
+    // resolve error, not panic.
+    #[test]
+    fn enum_variant_in_value_position_is_a_resolve_error_not_a_panic() {
+        let program = parse_fixture("enum_value_position.basm");
+
+        let declaration = find_macro(&program, "use_variant");
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let result = resolver.eval_value(emit_expr(declaration), &HashMap::new());
+
+        assert!(result.is_err());
+    }
+
     #[test]
     fn evaluates_struct_emit_with_named_args() {
         let program = parse_fixture("make_reg_named.basm");

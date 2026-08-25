@@ -28,6 +28,7 @@ pub enum Statement {
     Import(ImportStatement),
 
     Struct(StructDeclaration),
+    Enum(EnumDeclaration),
     TypeAlias(TypeAliasDeclaration),
     Const(ConstDeclaration),
 
@@ -319,6 +320,19 @@ pub struct ConstDeclaration {
     /// Optional explicit annotation
     pub ty: Option<TypeExpr>,
     pub value: Expr,
+    pub span: Span,
+}
+
+/// `pub enum Endian { Little, Big }` — bare-variant-list only, parsed and
+/// registered as a symbol (`SymbolKind::Enum`) but not otherwise wired into
+/// `Value`/`ResolvedType`; a value-position use of a variant (`Endian.Little`)
+/// isn't resolvable yet. Minimal on purpose — see `resolver::mod`'s
+/// `SymbolKind::Enum` doc.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumDeclaration {
+    pub name: String,
+    pub is_pub: bool,
+    pub variants: Vec<String>,
     pub span: Span,
 }
 

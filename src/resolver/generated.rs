@@ -54,6 +54,11 @@ impl<'a> AliasResolver<'a> {
             Statement::Macro(decl) => (decl.name.clone(), SymbolKind::Macro, decl.span),
             Statement::Label(label) => (label.name.clone(), SymbolKind::Label, label.span),
 
+            // No macro-body syntax produces a generated `enum` today (see
+            // `ast::EnumDeclaration`'s doc — enums aren't wired into macro
+            // bodies at all yet), but the shape costs nothing to support.
+            Statement::Enum(decl) => (decl.name.clone(), SymbolKind::Enum, decl.span),
+
             // Only ever reached with an already-literal-named `pub const`
             // (the caller resolves any splice in the name first via
             // `splice_const` — see `macro_body::walk_macro_body`).
@@ -202,6 +207,7 @@ fn statement_span(statement: &Statement) -> Span {
     match statement {
         Statement::Import(s) => s.span,
         Statement::Struct(s) => s.span,
+        Statement::Enum(s) => s.span,
         Statement::TypeAlias(s) => s.span,
         Statement::Const(s) => s.span,
         Statement::Label(s) => s.span,

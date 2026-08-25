@@ -14,6 +14,7 @@ pub struct SymbolId(pub usize);
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SymbolKind {
     Struct,
+    Enum,
     TypeAlias,
     Const,
     Macro,

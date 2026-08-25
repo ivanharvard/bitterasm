@@ -359,6 +359,7 @@ impl<'a> AliasResolver<'a> {
                 }
 
                 Statement::Struct(_)
+                | Statement::Enum(_)
                 | Statement::TypeAlias(_)
                 | Statement::Macro(_)
                 | Statement::Label(_) => {

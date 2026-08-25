@@ -42,6 +42,14 @@ pub fn collect_symbols(program: &Program) -> Result<SymbolTable, ResolveError> {
                 )
             }
 
+            Statement::Enum(decl) => {
+                table.insert(
+                    decl.name.clone(),
+                    SymbolKind::Enum,
+                    decl.span,
+                )
+            }
+
             Statement::TypeAlias(decl) => {
                 table.insert(
                     decl.name.clone(),

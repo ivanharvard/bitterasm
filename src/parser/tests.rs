@@ -625,6 +625,19 @@ struct Reg<const width: int> {
 }
 
 #[test]
+fn parses_pub_enum() {
+    let program = parse(lex("pub enum Endian {\n    Little,\n    Big\n}\n").unwrap()).unwrap();
+
+    let Statement::Enum(decl) = &program.statements[0] else {
+        panic!("expected enum declaration");
+    };
+
+    assert_eq!(decl.name, "Endian");
+    assert!(decl.is_pub);
+    assert_eq!(decl.variants, vec!["Little".to_string(), "Big".to_string()]);
+}
+
+#[test]
 fn parses_type_alias() {
     let source = "type Reg64 = Reg<64>\n";
 

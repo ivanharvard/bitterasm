@@ -381,6 +381,15 @@ impl<'a> AliasResolver<'a> {
                     span,
                 })
             }
+
+            // Not wired into `Value`/`ResolvedType` yet — see
+            // `ast::EnumDeclaration`'s doc.
+            SymbolKind::Enum => {
+                Err(ResolveError::ExpectedType {
+                    name: name.clone(),
+                    span,
+                })
+            }
         }
     }
 

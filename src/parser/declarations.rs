@@ -1,4 +1,4 @@
-use crate::ast::StructDeclaration;
+use crate::ast::{EnumDeclaration, StructDeclaration};
 
 use super::*;
 
@@ -6,6 +6,57 @@ impl Parser {
     // =============
     // structs
     // =============
+
+    pub(super) fn parse_enum_declaration(
+        &mut self,
+        is_pub: bool,
+    ) -> Result<EnumDeclaration, ParseError> {
+        let start = self.current().span.start;
+
+        self.expect_simple(TokenKind::Enum)?;
+
+        let name = self.expect_identifier()?;
+
+        self.skip_newlines();
+        self.expect_simple(TokenKind::LBrace)?;
+        self.skip_newlines();
+
+        let mut variants = Vec::new();
+
+        while !self.check(&TokenKind::RBrace) {
+            if self.at_eof() {
+                return Err(ParseError::new(
+                    "unterminated enum declaration",
+                    self.current().span,
+                ));
+            }
+
+            variants.push(self.expect_identifier()?);
+
+            self.skip_newlines();
+
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+                self.skip_newlines();
+            } else if !self.check(&TokenKind::RBrace) {
+                return Err(ParseError::new(
+                    "expected ',' or '}' after enum variant",
+                    self.current().span,
+                ));
+            }
+        }
+
+        let closing = self.current().clone();
+        self.expect_simple(TokenKind::RBrace)?;
+        self.consume_trailing_newline();
+
+        Ok(EnumDeclaration {
+            name,
+            is_pub,
+            variants,
+            span: Span::new(start, closing.span.end),
+        })
+    }
 
     pub(super) fn parse_struct_declaration(
         &mut self,

@@ -46,6 +46,13 @@ pub fn print_statement(statement: &Statement, indent: usize) -> String {
 
         Statement::Struct(decl) => print_struct(decl, indent),
 
+        Statement::Enum(decl) => {
+            let pub_kw = if decl.is_pub { "pub " } else { "" };
+            let variants = decl.variants.join(", ");
+
+            format!("{pad}{pub_kw}enum {name} {{ {variants} }}", name = decl.name)
+        }
+
         Statement::TypeAlias(decl) => {
             let pub_kw = if decl.is_pub { "pub " } else { "" };
             let generics = print_generic_params(&decl.generic_params);

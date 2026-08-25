@@ -19,6 +19,12 @@ impl Parser {
                 ))
             }
 
+            TokenKind::Enum => {
+                Ok(Statement::Enum(
+                    self.parse_enum_declaration(false)?
+                ))
+            }
+
             TokenKind::Type => {
                 Ok(Statement::TypeAlias(
                     self.parse_type_alias(false)?
@@ -43,6 +49,10 @@ impl Parser {
                 match &self.current().kind {
                     TokenKind::Struct => Ok(Statement::Struct(
                         self.parse_struct_declaration(true)?
+                    )),
+
+                    TokenKind::Enum => Ok(Statement::Enum(
+                        self.parse_enum_declaration(true)?
                     )),
 
                     TokenKind::Type => Ok(Statement::TypeAlias(
