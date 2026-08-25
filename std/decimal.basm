@@ -1,0 +1,29 @@
+from std.unsigned import uint
+
+pub enum Infinity {
+    Positive,
+    Negative
+}
+
+# Interpreted as `value` / (10 ** `scale`)
+pub struct Decimal {
+    value: int,
+    scale: uint
+}   
+
+pub macro to_int(x: Decimal) -> int {
+    @assert x.scale == 0
+    @return x.value
+}
+
+pub struct Fraction
+    | invariant { d != 0 }
+{
+    n: int,
+    d: int
+}
+
+pub macro to_int(x: Fraction) -> int {
+    @assert x.d == 1
+    @return x.n
+}

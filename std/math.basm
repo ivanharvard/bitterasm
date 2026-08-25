@@ -1,0 +1,43 @@
+from std.decimal import Decimal, Fraction
+
+pub macro ceil(x: int) -> int {
+    @return x
+}
+
+pub macro ceil(x: Decimal) -> int {
+    @return -((-x.value) // (10 ** x.scale))
+}
+
+pub macro ceil(x: Fraction) -> int {
+    @return -((-x.n) // x.d)
+}
+
+pub macro abs(x: int) -> int {
+    @if x < 0 {
+        @return -x
+    } 
+    
+    @return x
+}
+
+pub macro abs(x: Decimal) -> Decimal {
+    @return Decimal(abs(x.value), x.scale)
+}
+
+pub macro abs(x: Fraction) -> Fraction {
+    @return Fraction(abs(x.n), abs(x.d))
+}
+
+pub macro gcd(a: int, b: int) -> int {
+    @if b == 0 {
+        @return abs(a)
+    }
+
+    @return gcd(b, a % b)
+}
+
+pub macro simplify(x: Fraction) -> Fraction {
+    const g = gcd(x.n, x.d)
+    @return Fraction(x.n / g, x.d / g)
+}
+

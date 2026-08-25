@@ -1,52 +1,84 @@
 from std.array import *
 from std.ctypes import uint8_t
+from std.binary import Endian
 
-pub struct U8String {
-    pub chars: Array<uint8_t, ...>,
+pub struct String<const len: int>
+    | invariant { len >= 0 }
+{
+    value: int
+    len: int
 }
 
-pub macro string(s: str) -> U8String
-    | syntax { "$s$" }
+# ========================
+# Binary-based Interpretations
+# ========================
+
+macro byte_at(
+    value: int,
+    len: int,
+    index: int,
+    endian: Endian
+) -> uint8_t {
+    @if endian == Endian.Little {
+        return (value >> (index * 8)) & 0xFF
+    } @else {
+        return (value >> ((len - index - 1) * 8)) & 0xFF
+    }
+}
+
+macro validate_asciistring(value: int, len: int, endian: Endian) -> int {
+    @assert len >= 0
+    @assert value >= 0
+    @assert value < (1 << (BITS_PER_BYTE * len))
+    
+    @for i in 0..len {
+        @assert byte_at(value, len, i, endian) < 0x80
+    }
+
+    @return 1
+}
+
+pub struct AsciiString<const len: int, const endian: Endian>
+    | invariant validate_asciistring(value, len, endian)
 {
-    @return U8String {
-        chars: Array<u8, len(s)> {
-            @for i in 0..len(s) {
-                __el`i`: s[i],
-            }
+    value: int,
+    len: int,
+    endian: Endian
+}
+
+pub macro to_array(s: AsciiString) -> Array {
+    @return Array<uint8_t, s.len> {
+        @for i in 0..(s.len) {
+            __el`i`: byte_at(s.value, s.len, i, s.endian)
         }
     }
 }
 
-pub macro string_len(s: U8String) -> int
-    | syntax { len($s$) }
-{
-    @return len(s.chars)
+pub macro ascii_from_array(arr: Array, endian: Endian) {
+    as
 }
 
-pub macro string_get(s: U8String, index: int) -> u8
-    | syntax { $s$[$index$] }
-{
-    @return s.chars[index]
-}
+macro validate_Utf8String(value: int, len: int, endian: Endian) {
+    @assert len >= 0
+    @assert value >= 0
+    @assert value < (1 << (BITS_PER_BYTE * len))
 
-pub macro string_updated(s: U8String, index: int, value: u8)
-{
-    @return U8String {
-        chars: updated(s.chars, index, value),
-    }
+    @assert 
 }
 
 # =========================
-# U8String helpers
+# Binary-based transformations
 # =========================
+
+
 
 pub macro title(s: U8String) -> U8String {
     @return U8String {
         chars: Array<u8, len(s.chars)> {
             @for i in 0..len(s.chars) {
                 @if i == 0 {
-                    @if s.chars[i] >= 97 && s.chars[i] <= 122 {
-                        __el`i`: s.chars[i] - 32,
+                    @if s.chars[i] >= 'A' && s.chars[i] <= 'Z' {
+                        __el`i`: s.chars[i] - 'a',
                     } @else {
                         __el`i`: s.chars[i],
                     }

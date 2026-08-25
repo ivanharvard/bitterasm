@@ -4,11 +4,34 @@ pub struct bits<const width: int>
     value: int
 }
 
-const BITS_PER_BYTE: int = 8
+pub const BITS_PER_BYTE: int = 8
 
-type bool = bits<1>
+pub type bool         = bits<1>
+pub const true: bool  = 1
+pub const false: bool = 0
 
+# Returns `true` if the given value fits inside `width` many bits 
 pub macro fits_inside_width(width: int, value: int) -> bool
 {
     @return value >= 0 && value < (1 << width)
+}
+
+# Calculates the number of bits required to represent this integer.
+pub macro bit_width(n: int) {
+    @if n <= 0xFF {
+        @return 1
+    } @else {
+        @return 1 + bit_width(n >> BITS_PER_BYTE)
+    }
+}
+
+# Calculates the number of bytes required to represent this integer.
+pub macro byte_width(n: int) {
+    @return bit_width(n) / 8 
+}
+
+# Useful for functions that change behaviors based on Endianness  
+pub enum Endian {
+    Little,
+    Big
 }

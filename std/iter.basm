@@ -1,0 +1,32 @@
+from std.math import abs
+
+pub struct Range<
+    const start: int, 
+    const stop: int, 
+    const step: int
+>
+    | invariant step != 0
+    | invariant (step > 0 && stop > start) || (step < 0 && stop < start)
+{
+    @for i in 0..abs(stop - start) {
+        @if i % abs(step) == 0 {
+            # Although we call it __el`i`, we just need a distinct name
+            # for each element. This is the easiest way to do that.
+            pub __el`i`: int
+        }
+    }
+}
+
+def macro range(start: int, stop: int, step: int = 1) {
+    Range<start, stop, step>{
+        @for i in 0..abs(stop - start) {
+            @if i % abs(step) == 0 {
+                @if step > 0 {
+                    __el`i`: (start + i)
+                } @else {
+                    __el`i`: (start - i)
+                }
+            }
+        }
+    }
+}

@@ -1,3 +1,5 @@
+from std.iter import range
+
 pub struct Array<T, const N: int>
     | invariant N >= 0
 {
@@ -29,8 +31,10 @@ pub macro updated(arr: Array<T, ...>, index: int, value: T) -> Array<T, ...>{
     }
 }
 
-pub macro len(arr: Array<T, ...>) -> int
-    | syntax { len($arr$) }
-{
-    @return arr.len
+pub macro reversed(arr: Array<T, ...>, index: int, value: T) -> Array<T, ...> {
+    @return Array<T, arr.len> {
+        @for i in range(arr.len, 0, -1) {
+            __el`i - arr.len`: arr.__el`i`
+        }
+    }
 }
