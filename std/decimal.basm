@@ -17,7 +17,7 @@ pub macro to_int(x: Decimal) -> int {
 }
 
 pub struct Fraction
-    | invariant { d != 0 }
+    | invariant d != 0
 {
     n: int,
     d: int

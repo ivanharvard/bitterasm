@@ -22,6 +22,7 @@ pub enum TokenKind {
     // Punctuation
     Dot,
     DotDot,
+    Ellipsis,
     Comma,
     Colon,
     Semicolon,

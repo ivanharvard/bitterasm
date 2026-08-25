@@ -17,8 +17,8 @@ pub struct Range<
     }
 }
 
-def macro range(start: int, stop: int, step: int = 1) {
-    Range<start, stop, step>{
+pub macro range(start: int, stop: int, step: int) {
+    @return Range<start, stop, step>{
         @for i in 0..abs(stop - start) {
             @if i % abs(step) == 0 {
                 @if step > 0 {

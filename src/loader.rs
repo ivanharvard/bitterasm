@@ -181,11 +181,17 @@ fn load_module(
     let mut seed = ParserSeed::default();
 
     for import in &imports {
-        let child_path = resolve_module_path(&import.module, path)?;
-        load_module(&child_path, cache, stack)?;
-        let child_seed = &cache[&child_path].seed;
-        seed.generic_signatures.extend(child_seed.generic_signatures.clone());
-        seed.macro_syntaxes.extend(child_seed.macro_syntaxes.clone());
+        let child_paths = match resolve_import_paths(import, path)? {
+            ImportResolution::Plain(child_path) => vec![child_path],
+            ImportResolution::Package(child_paths) => child_paths,
+        };
+
+        for child_path in child_paths {
+            load_module(&child_path, cache, stack)?;
+            let child_seed = &cache[&child_path].seed;
+            seed.generic_signatures.extend(child_seed.generic_signatures.clone());
+            seed.macro_syntaxes.extend(child_seed.macro_syntaxes.clone());
+        }
     }
 
     let (program, mut seed) = parser::parse_seeded(tokens, &seed).map_err(|error| {
@@ -230,41 +236,85 @@ fn load_module(
 // it brings in, recursing into that module's own imports. Modules already
 // spliced elsewhere in this build (diamond imports) contribute nothing the
 // second time, since their declarations are already present.
+// Resolves one `from <module> import <items>` statement to every file path
+// it draws from: a plain module (`<module>` resolves directly to a `.basm`
+// file) is `Plain`, one path; a package-style import (`<module>` is a
+// directory rather than a file — see `resolve_submodule_path`) is
+// `Package`, one path per named item, each treated as sugar for
+// `from <module>.<name> import *`. `import *` has no name list to fall back
+// through, so a directory-shaped `<module>` there is just whatever error
+// plain resolution produces — there's no `Package` variant for it.
+enum ImportResolution {
+    Plain(PathBuf),
+    Package(Vec<PathBuf>),
+}
+
+fn resolve_import_paths(
+    import: &ImportStatement,
+    importer: &Path,
+) -> Result<ImportResolution, LoadError> {
+    match (resolve_module_path(&import.module, importer), &import.items) {
+        (Ok(target_path), _) => Ok(ImportResolution::Plain(target_path)),
+
+        (Err(_), ImportItems::Names(names)) => names
+            .iter()
+            .map(|name| resolve_submodule_path(&import.module, name, importer))
+            .collect::<Result<_, _>>()
+            .map(ImportResolution::Package),
+
+        (Err(error), ImportItems::All) => Err(error),
+    }
+}
+
 fn splice_import(
     import: &ImportStatement,
     importer: &Path,
     cache: &HashMap<PathBuf, LoadedModule>,
     spliced: &mut HashSet<PathBuf>,
 ) -> Result<Vec<Statement>, LoadError> {
-    let target_path = resolve_module_path(&import.module, importer)?;
+    let target_paths: Vec<PathBuf> = match resolve_import_paths(import, importer)? {
+        ImportResolution::Plain(target_path) => {
+            // Only a plain import's names are "declarations inside one
+            // target file" that can be validated this way — a package
+            // import's names were already each individually resolved to
+            // their own whole file by `resolve_import_paths`, so there's
+            // nothing further to check here for those.
+            if let ImportItems::Names(names) = &import.items {
+                let target = &cache[&target_path];
+                let declared: HashSet<String> = target
+                    .statements
+                    .iter()
+                    .filter_map(declaration_name)
+                    .filter(|(_, is_pub)| *is_pub)
+                    .map(|(name, _)| name)
+                    .collect();
 
-    if let ImportItems::Names(names) = &import.items {
-        let target = &cache[&target_path];
-        let declared: HashSet<String> = target
-            .statements
-            .iter()
-            .filter_map(declaration_name)
-            .filter(|(_, is_pub)| *is_pub)
-            .map(|(name, _)| name)
-            .collect();
-
-        for name in names {
-            if !declared.contains(name.as_str()) {
-                return Err(LoadError::UnknownImportedName {
-                    module: module_display(&import.module),
-                    name: name.clone(),
-                });
+                for name in names {
+                    if !declared.contains(name.as_str()) {
+                        return Err(LoadError::UnknownImportedName {
+                            module: module_display(&import.module),
+                            name: name.clone(),
+                        });
+                    }
+                }
             }
+
+            vec![target_path]
         }
+
+        ImportResolution::Package(target_paths) => target_paths,
+    };
+
+    // Everything each target transitively needs still has to be spliced in
+    // for resolution to work. Non-pub declarations are mangled (see
+    // `collect_declarations`) so they're never nameable outside the module
+    // that declared them, regardless of how much gets spliced.
+    let mut out = Vec::new();
+
+    for target_path in &target_paths {
+        collect_declarations(target_path, cache, spliced, &mut out)?;
     }
 
-    // The names check above only gates what an importer is allowed to ask
-    // for by name; everything the target transitively needs still has to be
-    // spliced in for resolution to work. Non-pub declarations are mangled
-    // (see `collect_declarations`) so they're never nameable outside the
-    // module that declared them, regardless of how much gets spliced.
-    let mut out = Vec::new();
-    collect_declarations(&target_path, cache, spliced, &mut out)?;
     Ok(out)
 }
 
@@ -620,12 +670,12 @@ fn rename_construct_items(items: &mut [ConstructItem], renames: &HashMap<String,
     }
 }
 
-fn resolve_module_path(module: &ModulePath, importer: &Path) -> Result<PathBuf, LoadError> {
-    let base = if module.relative_level == 0 {
+fn module_base_dir(module: &ModulePath, importer: &Path) -> Result<PathBuf, LoadError> {
+    if module.relative_level == 0 {
         std::env::current_dir().map_err(|error| LoadError::Io {
             path: importer.to_path_buf(),
             message: error.to_string(),
-        })?
+        })
     } else {
         let mut dir = importer
             .parent()
@@ -636,8 +686,12 @@ fn resolve_module_path(module: &ModulePath, importer: &Path) -> Result<PathBuf, 
             dir = dir.parent().map(Path::to_path_buf).unwrap_or(dir);
         }
 
-        dir
-    };
+        Ok(dir)
+    }
+}
+
+fn resolve_module_path(module: &ModulePath, importer: &Path) -> Result<PathBuf, LoadError> {
+    let base = module_base_dir(module, importer)?;
 
     let mut candidate = base;
 
@@ -650,6 +704,34 @@ fn resolve_module_path(module: &ModulePath, importer: &Path) -> Result<PathBuf, 
     canonicalize(&candidate).map_err(|_| LoadError::ModuleNotFound {
         importer: importer.to_path_buf(),
         module: module_display(module),
+    })
+}
+
+// `from <package> import <name>` where `<package>` is a directory rather
+// than a file (`resolve_module_path` fails on it): treats `<name>` as a
+// submodule one level under `<package>`, i.e. `<package>/<name>.basm` —
+// `from std import u8string` reaching for `std/u8string.basm`, sugar for
+// `from std.u8string import *` (see `splice_import`). Only ever tried as a
+// fallback after the plain-file resolution already failed.
+fn resolve_submodule_path(
+    module: &ModulePath,
+    name: &str,
+    importer: &Path,
+) -> Result<PathBuf, LoadError> {
+    let base = module_base_dir(module, importer)?;
+
+    let mut candidate = base;
+
+    for segment in &module.segments {
+        candidate.push(segment);
+    }
+
+    candidate.push(name);
+    candidate.set_extension("basm");
+
+    canonicalize(&candidate).map_err(|_| LoadError::ModuleNotFound {
+        importer: importer.to_path_buf(),
+        module: format!("{}.{name}", module_display(module)),
     })
 }
 
@@ -761,6 +843,40 @@ mod tests {
         assert_eq!(a, b, "bits<8> and bits<4 + 4> should be the same type");
         assert_eq!(a, c, "bits<8> and bits<2 * 4> should be the same type");
         assert_ne!(a, d, "bits<8> and bits<9> should be different types");
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    // `from pkgdir import sub`, where `pkgdir` is a directory (not a file —
+    // `pkgdir.basm` doesn't exist) and `sub` is `pkgdir/sub.basm` — sugar
+    // for `from pkgdir.sub import *`, per `resolve_import_paths`'s
+    // `ImportResolution::Package` case.
+    #[test]
+    fn package_style_import_resolves_a_submodule_directory() {
+        let dir = scratch_dir("package_style_import");
+        fs::create_dir_all(dir.join("pkgdir")).unwrap();
+
+        fs::write(
+            dir.join("pkgdir").join("sub.basm"),
+            "pub struct TheStruct {\n    value: int\n}\n\npub const the_const: int = 42\n",
+        )
+        .unwrap();
+
+        fs::write(
+            dir.join("importer.basm"),
+            "from .pkgdir import sub\n\nconst v = the_const\n",
+        )
+        .unwrap();
+
+        let program = load_program(&dir.join("importer.basm")).expect("importer.basm should load");
+
+        assert!(program.statements.iter().any(
+            |statement| matches!(statement, Statement::Struct(decl) if decl.name == "TheStruct")
+        ));
+
+        assert!(program.statements.iter().any(
+            |statement| matches!(statement, Statement::Const(decl) if literal_name(&decl.name).as_deref() == Some("the_const"))
+        ));
 
         fs::remove_dir_all(&dir).ok();
     }

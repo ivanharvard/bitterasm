@@ -157,7 +157,11 @@ impl<'src> Lexer<'src> {
                 self.advance();
 
                 if self.consume_if('.') {
-                    self.push(TokenKind::DotDot, start);
+                    if self.consume_if('.') {
+                        self.push(TokenKind::Ellipsis, start);
+                    } else {
+                        self.push(TokenKind::DotDot, start);
+                    }
                 } else {
                     self.push(TokenKind::Dot, start);
                 }
