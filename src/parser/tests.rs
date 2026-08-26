@@ -918,3 +918,31 @@ fn custom_syntax_call_site_mismatch_is_a_parse_error() {
 
     assert!(parse(lex(source).unwrap()).is_err());
 }
+
+#[test]
+fn type_alias_accepts_facets_on_following_lines() {
+    let source = "type UByte = bits<8>\n    | invariant value >= 0\n    | invariant value < 256\nconst next = 1\n";
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    let Statement::TypeAlias(alias) = &program.statements[0] else {
+        panic!("expected a type alias");
+    };
+    assert_eq!(alias.facets.len(), 2);
+    assert!(matches!(program.statements[1], Statement::Const(_)));
+}
+
+#[test]
+fn pub_and_return_type_are_macro_signature_fields_not_facets() {
+    let source = "pub macro encode(value: int) -> bits<8>\n    | syntax \"encode $value$\"\n{\n}\n";
+    let program = parse(lex(source).unwrap()).unwrap();
+    let Statement::Macro(decl) = &program.statements[0] else {
+        panic!("expected a macro");
+    };
+    assert!(decl.is_pub);
+    assert!(decl.return_ty.is_some());
+    assert_eq!(decl.facets.len(), 1);
+    assert_eq!(decl.facets[0].name, "syntax");
+
+    assert!(parse(lex("macro encode()\n| pub\n{\n}\n").unwrap()).is_err());
+    assert!(parse(lex("macro encode()\n| -> int\n{\n}\n").unwrap()).is_err());
+}

@@ -1,4 +1,8 @@
-macro replace_at(n: int, target: int, value: int) {
+macro replace_at(
+    n: int,
+    target: int,
+    value: int
+) {
     @for i in 0..n {
         @if i == target {
             @emit value

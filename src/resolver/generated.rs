@@ -186,6 +186,20 @@ impl<'a> AliasResolver<'a> {
         source: &Expr,
         scope: &HashMap<String, Value>,
     ) -> Result<Vec<(String, Value)>, ResolveError> {
+        // A literal `start..end` source never needs `eval_range_value`'s
+        // materialized struct — nothing here treats the range as a value in
+        // its own right, only as something to iterate — so this fast path
+        // yields the same `(__elN, Int)` pairs directly. This is a resolver
+        // implementation detail, not a semantic rewrite: `0..N` captured as
+        // a value (stored, passed to a macro, etc.) still goes through
+        // `eval_value` → `eval_range_value` and gets the real struct: "abstraction
+        // does not imply optimization" governs what a macro's expansion
+        // emits, not how the resolver internally computes compiler-owned
+        // sugar like this one.
+        if let Expr::Range { start, end, span } = source {
+            return self.eval_range_for_source(start, end, *span, scope);
+        }
+
         let value = self.eval_value(source, scope)?;
 
         let Value::Struct { symbol, args, fields, .. } = value else {
@@ -200,6 +214,38 @@ impl<'a> AliasResolver<'a> {
             .filter(|(_, is_pub)| *is_pub)
             .map(|(field, _)| field)
             .collect())
+    }
+
+    /// `eval_range_value`'s loop, minus the struct materialization —
+    /// same bound (`MAX_FOR_ITERATIONS`) and field names (`__el{i}`), kept
+    /// in sync deliberately so the two are observably identical to a caller
+    /// that only ever iterates the result.
+    fn eval_range_for_source(
+        &mut self,
+        start: &Expr,
+        end: &Expr,
+        span: Span,
+        scope: &HashMap<String, Value>,
+    ) -> Result<Vec<(String, Value)>, ResolveError> {
+        let start_value = self.eval_int(start, scope)?;
+        let end_value = self.eval_int(end, scope)?;
+
+        let mut values = Vec::new();
+        let mut i = start_value;
+        let mut iterations: u64 = 0;
+
+        while i < end_value {
+            iterations += 1;
+
+            if iterations > MAX_FOR_ITERATIONS {
+                return Err(ResolveError::ForLoopTooLarge { span });
+            }
+
+            values.push((format!("__el{i}"), Value::Int(i.clone())));
+            i += Int::from(1);
+        }
+
+        Ok(values)
     }
 }
 

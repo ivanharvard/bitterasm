@@ -46,3 +46,37 @@ The tradeoff is symmetric: the fewer assumptions the language makes, the more an
 ## Status
 
 BitterASM is an early-stage project (lexer, parser, and resolver in Rust; a growing `std` library in BitterASM itself). Expect the language and standard library to change as the design settles.
+
+## Formatting
+
+Format one file, several files, or every `.basm` file below a directory:
+
+```sh
+bitterasm format program.basm
+bitterasm fmt std/
+bitterasm format --check .
+```
+
+Like `rustfmt`, the formatter searches the file's directory and then its parents for
+`bitterasm.toml` (or `.bitterasm.toml`). Pass `--config path/to/bitterasm.toml` to
+select one explicitly. All settings are optional:
+
+```toml
+indent_width = 4
+hard_tabs = false
+indent_facets = true
+facets_on_new_line = true
+pub_on_declaration = true
+return_type_on_declaration = true
+collapse_short_multiline_generics = true
+max_blank_lines = 1
+max_width = 100
+comment_width = 80
+newline_style = "Auto" # Auto, Unix, or Windows
+```
+
+Formatting preserves comments and source tokens while normalizing delimiter-aware
+indentation, trailing whitespace, blank lines, comment wrapping, and the final newline.
+Long code is wrapped at safe commas inside `()`, `[]`, and `{}`; lines with no safe
+split may exceed `max_width` because newlines terminate BitterASM statements. `--check`
+makes no changes and returns a non-zero exit status if any input would be reformatted.

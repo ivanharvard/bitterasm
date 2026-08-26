@@ -56,7 +56,7 @@ pub fn print_statement(statement: &Statement, indent: usize) -> String {
         Statement::TypeAlias(decl) => {
             let pub_kw = if decl.is_pub { "pub " } else { "" };
             let generics = print_generic_params(&decl.generic_params);
-            let facets = print_facet_list(&decl.facets, None);
+            let facets = print_facet_list(&decl.facets);
 
             format!(
                 "{pad}{pub_kw}type {name}{generics} = {ty}{facets}",
@@ -141,7 +141,7 @@ fn print_struct(decl: &StructDeclaration, indent: usize) -> String {
     let pad = INDENT.repeat(indent);
     let pub_kw = if decl.is_pub { "pub " } else { "" };
     let generics = print_generic_params(&decl.generic_params);
-    let facets = print_facet_list(&decl.facets, None);
+    let facets = print_facet_list(&decl.facets);
 
     let fields = print_struct_body_items(&decl.fields, indent + 1);
 
@@ -215,7 +215,7 @@ fn print_macro(decl: &MacroDeclaration, indent: usize) -> String {
         None => String::new(),
     };
 
-    let facets = print_facet_list(&decl.facets, decl.return_ty.as_ref());
+    let facets = print_facet_list(&decl.facets);
     let body = print_statements(&decl.body, indent + 1);
 
     format!(
@@ -248,15 +248,9 @@ fn print_generic_params(params: &[GenericParameter]) -> String {
     format!("<{rendered}>")
 }
 
-// `already_printed`, when given a return-type facet, is skipped here — it
-// was already rendered as `-> Type` right after the parameter list, its own
-// dedicated syntax, not `| return Type`. `pub` is skipped unconditionally
-// for the same reason: it's already reflected in the `pub ` keyword prefix.
-fn print_facet_list(facets: &[Facet], already_printed: Option<&TypeExpr>) -> String {
+fn print_facet_list(facets: &[Facet]) -> String {
     facets
         .iter()
-        .filter(|facet| facet.name != "pub")
-        .filter(|facet| !(facet.name == "return" && already_printed.is_some()))
         .map(|facet| format!(" | {}", print_facet(facet)))
         .collect()
 }

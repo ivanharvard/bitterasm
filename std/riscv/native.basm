@@ -168,72 +168,232 @@ pub struct JType {
 # R-type: register-register ops
 # =================
 
-pub macro add(rd: Reg, rs1: Reg, rs2: Reg) -> RType {
-    @emit RType(funct7 = Funct7(0b0000000), rs2 = rs2, rs1 = rs1, funct3 = Funct3(0b000), rd = rd, opcode = Opcode(0b0110011))
+pub macro add(
+    rd: Reg,
+    rs1: Reg,
+    rs2: Reg
+) -> RType {
+    @emit RType(
+        funct7 = Funct7(0b0000000),
+        rs2 = rs2,
+        rs1 = rs1,
+        funct3 = Funct3(0b000), rd = rd,
+        opcode = Opcode(0b0110011)
+    )
 }
 
-pub macro sub(rd: Reg, rs1: Reg, rs2: Reg) -> RType {
-    @emit RType(funct7 = Funct7(0b0100000), rs2 = rs2, rs1 = rs1, funct3 = Funct3(0b000), rd = rd, opcode = Opcode(0b0110011))
+pub macro sub(
+    rd: Reg,
+    rs1: Reg,
+    rs2: Reg
+) -> RType {
+    @emit RType(
+        funct7 = Funct7(0b0100000),
+        rs2 = rs2,
+        rs1 = rs1,
+        funct3 = Funct3(0b000), rd = rd,
+        opcode = Opcode(0b0110011)
+    )
 }
 
-pub macro sll(rd: Reg, rs1: Reg, rs2: Reg) -> RType {
-    @emit RType(funct7 = Funct7(0b0000000), rs2 = rs2, rs1 = rs1, funct3 = Funct3(0b001), rd = rd, opcode = Opcode(0b0110011))
+pub macro sll(
+    rd: Reg,
+    rs1: Reg,
+    rs2: Reg
+) -> RType {
+    @emit RType(
+        funct7 = Funct7(0b0000000),
+        rs2 = rs2,
+        rs1 = rs1,
+        funct3 = Funct3(0b001), rd = rd,
+        opcode = Opcode(0b0110011)
+    )
 }
 
-pub macro slt(rd: Reg, rs1: Reg, rs2: Reg) -> RType {
-    @emit RType(funct7 = Funct7(0b0000000), rs2 = rs2, rs1 = rs1, funct3 = Funct3(0b010), rd = rd, opcode = Opcode(0b0110011))
+pub macro slt(
+    rd: Reg,
+    rs1: Reg,
+    rs2: Reg
+) -> RType {
+    @emit RType(
+        funct7 = Funct7(0b0000000),
+        rs2 = rs2,
+        rs1 = rs1,
+        funct3 = Funct3(0b010), rd = rd,
+        opcode = Opcode(0b0110011)
+    )
 }
 
-pub macro sltu(rd: Reg, rs1: Reg, rs2: Reg) -> RType {
-    @emit RType(funct7 = Funct7(0b0000000), rs2 = rs2, rs1 = rs1, funct3 = Funct3(0b011), rd = rd, opcode = Opcode(0b0110011))
+pub macro sltu(
+    rd: Reg,
+    rs1: Reg,
+    rs2: Reg
+) -> RType {
+    @emit RType(
+        funct7 = Funct7(0b0000000),
+        rs2 = rs2,
+        rs1 = rs1,
+        funct3 = Funct3(0b011), rd = rd,
+        opcode = Opcode(0b0110011)
+    )
 }
 
-pub macro xor(rd: Reg, rs1: Reg, rs2: Reg) -> RType {
-    @emit RType(funct7 = Funct7(0b0000000), rs2 = rs2, rs1 = rs1, funct3 = Funct3(0b100), rd = rd, opcode = Opcode(0b0110011))
+pub macro xor(
+    rd: Reg,
+    rs1: Reg,
+    rs2: Reg
+) -> RType {
+    @emit RType(
+        funct7 = Funct7(0b0000000),
+        rs2 = rs2,
+        rs1 = rs1,
+        funct3 = Funct3(0b100), rd = rd,
+        opcode = Opcode(0b0110011)
+    )
 }
 
-pub macro srl(rd: Reg, rs1: Reg, rs2: Reg) -> RType {
-    @emit RType(funct7 = Funct7(0b0000000), rs2 = rs2, rs1 = rs1, funct3 = Funct3(0b101), rd = rd, opcode = Opcode(0b0110011))
+pub macro srl(
+    rd: Reg,
+    rs1: Reg,
+    rs2: Reg
+) -> RType {
+    @emit RType(
+        funct7 = Funct7(0b0000000),
+        rs2 = rs2,
+        rs1 = rs1,
+        funct3 = Funct3(0b101), rd = rd,
+        opcode = Opcode(0b0110011)
+    )
 }
 
-pub macro sra(rd: Reg, rs1: Reg, rs2: Reg) -> RType {
-    @emit RType(funct7 = Funct7(0b0100000), rs2 = rs2, rs1 = rs1, funct3 = Funct3(0b101), rd = rd, opcode = Opcode(0b0110011))
+pub macro sra(
+    rd: Reg,
+    rs1: Reg,
+    rs2: Reg
+) -> RType {
+    @emit RType(
+        funct7 = Funct7(0b0100000),
+        rs2 = rs2,
+        rs1 = rs1,
+        funct3 = Funct3(0b101), rd = rd,
+        opcode = Opcode(0b0110011)
+    )
 }
 
-pub macro or(rd: Reg, rs1: Reg, rs2: Reg) -> RType {
-    @emit RType(funct7 = Funct7(0b0000000), rs2 = rs2, rs1 = rs1, funct3 = Funct3(0b110), rd = rd, opcode = Opcode(0b0110011))
+pub macro or(
+    rd: Reg,
+    rs1: Reg,
+    rs2: Reg
+) -> RType {
+    @emit RType(
+        funct7 = Funct7(0b0000000),
+        rs2 = rs2,
+        rs1 = rs1,
+        funct3 = Funct3(0b110), rd = rd,
+        opcode = Opcode(0b0110011)
+    )
 }
 
-pub macro and(rd: Reg, rs1: Reg, rs2: Reg) -> RType {
-    @emit RType(funct7 = Funct7(0b0000000), rs2 = rs2, rs1 = rs1, funct3 = Funct3(0b111), rd = rd, opcode = Opcode(0b0110011))
+pub macro and(
+    rd: Reg,
+    rs1: Reg,
+    rs2: Reg
+) -> RType {
+    @emit RType(
+        funct7 = Funct7(0b0000000),
+        rs2 = rs2,
+        rs1 = rs1,
+        funct3 = Funct3(0b111), rd = rd,
+        opcode = Opcode(0b0110011)
+    )
 }
 
 # =================
 # I-type: register-immediate ops
 # =================
 
-pub macro addi(rd: Reg, rs1: Reg, imm: int) -> IType {
-    @emit IType(imm = Imm12(imm & 0xFFF), rs1 = rs1, funct3 = Funct3(0b000), rd = rd, opcode = Opcode(0b0010011))
+pub macro addi(
+    rd: Reg,
+    rs1: Reg,
+    imm: int
+) -> IType {
+    @emit IType(
+        imm = Imm12(imm & 0xFFF),
+        rs1 = rs1,
+        funct3 = Funct3(0b000),
+        rd = rd,
+        opcode = Opcode(0b0010011)
+    )
 }
 
-pub macro slti(rd: Reg, rs1: Reg, imm: int) -> IType {
-    @emit IType(imm = Imm12(imm & 0xFFF), rs1 = rs1, funct3 = Funct3(0b010), rd = rd, opcode = Opcode(0b0010011))
+pub macro slti(
+    rd: Reg,
+    rs1: Reg,
+    imm: int
+) -> IType {
+    @emit IType(
+        imm = Imm12(imm & 0xFFF),
+        rs1 = rs1,
+        funct3 = Funct3(0b010),
+        rd = rd,
+        opcode = Opcode(0b0010011)
+    )
 }
 
-pub macro sltiu(rd: Reg, rs1: Reg, imm: int) -> IType {
-    @emit IType(imm = Imm12(imm & 0xFFF), rs1 = rs1, funct3 = Funct3(0b011), rd = rd, opcode = Opcode(0b0010011))
+pub macro sltiu(
+    rd: Reg,
+    rs1: Reg,
+    imm: int
+) -> IType {
+    @emit IType(
+        imm = Imm12(imm & 0xFFF),
+        rs1 = rs1,
+        funct3 = Funct3(0b011),
+        rd = rd,
+        opcode = Opcode(0b0010011)
+    )
 }
 
-pub macro xori(rd: Reg, rs1: Reg, imm: int) -> IType {
-    @emit IType(imm = Imm12(imm & 0xFFF), rs1 = rs1, funct3 = Funct3(0b100), rd = rd, opcode = Opcode(0b0010011))
+pub macro xori(
+    rd: Reg,
+    rs1: Reg,
+    imm: int
+) -> IType {
+    @emit IType(
+        imm = Imm12(imm & 0xFFF),
+        rs1 = rs1,
+        funct3 = Funct3(0b100),
+        rd = rd,
+        opcode = Opcode(0b0010011)
+    )
 }
 
-pub macro ori(rd: Reg, rs1: Reg, imm: int) -> IType {
-    @emit IType(imm = Imm12(imm & 0xFFF), rs1 = rs1, funct3 = Funct3(0b110), rd = rd, opcode = Opcode(0b0010011))
+pub macro ori(
+    rd: Reg,
+    rs1: Reg,
+    imm: int
+) -> IType {
+    @emit IType(
+        imm = Imm12(imm & 0xFFF),
+        rs1 = rs1,
+        funct3 = Funct3(0b110),
+        rd = rd,
+        opcode = Opcode(0b0010011)
+    )
 }
 
-pub macro andi(rd: Reg, rs1: Reg, imm: int) -> IType {
-    @emit IType(imm = Imm12(imm & 0xFFF), rs1 = rs1, funct3 = Funct3(0b111), rd = rd, opcode = Opcode(0b0010011))
+pub macro andi(
+    rd: Reg,
+    rs1: Reg,
+    imm: int
+) -> IType {
+    @emit IType(
+        imm = Imm12(imm & 0xFFF),
+        rs1 = rs1,
+        funct3 = Funct3(0b111),
+        rd = rd,
+        opcode = Opcode(0b0010011)
+    )
 }
 
 # Shift-by-immediate is still I-type, but its 12-bit `imm` field is really
@@ -243,28 +403,79 @@ pub macro andi(rd: Reg, rs1: Reg, imm: int) -> IType {
 # fields, since RType/IType/etc. are meant to match RV32I's own format
 # names, not a shift-specific seventh shape the ISA spec doesn't have.
 
-pub macro slli(rd: Reg, rs1: Reg, shamt: int) -> IType {
-    @emit IType(imm = Imm12(shamt & 0b11111), rs1 = rs1, funct3 = Funct3(0b001), rd = rd, opcode = Opcode(0b0010011))
+pub macro slli(
+    rd: Reg,
+    rs1: Reg,
+    shamt: int
+) -> IType {
+    @emit IType(
+        imm = Imm12(shamt & 0b11111),
+        rs1 = rs1,
+        funct3 = Funct3(0b001),
+        rd = rd,
+        opcode = Opcode(0b0010011)
+    )
 }
 
-pub macro srli(rd: Reg, rs1: Reg, shamt: int) -> IType {
-    @emit IType(imm = Imm12(shamt & 0b11111), rs1 = rs1, funct3 = Funct3(0b101), rd = rd, opcode = Opcode(0b0010011))
+pub macro srli(
+    rd: Reg,
+    rs1: Reg,
+    shamt: int
+) -> IType {
+    @emit IType(
+        imm = Imm12(shamt & 0b11111),
+        rs1 = rs1,
+        funct3 = Funct3(0b101),
+        rd = rd,
+        opcode = Opcode(0b0010011)
+    )
 }
 
-pub macro srai(rd: Reg, rs1: Reg, shamt: int) -> IType {
-    @emit IType(imm = Imm12((0b0100000 << 5) | (shamt & 0b11111)), rs1 = rs1, funct3 = Funct3(0b101), rd = rd, opcode = Opcode(0b0010011))
+pub macro srai(
+    rd: Reg,
+    rs1: Reg,
+    shamt: int
+) -> IType {
+    @emit IType(
+        imm = Imm12((0b0100000 << 5) | (shamt & 0b11111)),
+        rs1 = rs1,
+        funct3 = Funct3(0b101), rd = rd,
+        opcode = Opcode(0b0010011)
+    )
 }
 
-pub macro jalr(rd: Reg, rs1: Reg, offset: int) -> IType {
-    @emit IType(imm = Imm12(offset & 0xFFF), rs1 = rs1, funct3 = Funct3(0b000), rd = rd, opcode = Opcode(0b1100111))
+pub macro jalr(
+    rd: Reg,
+    rs1: Reg,
+    offset: int
+) -> IType {
+    @emit IType(
+        imm = Imm12(offset & 0xFFF),
+        rs1 = rs1,
+        funct3 = Funct3(0b000),
+        rd = rd,
+        opcode = Opcode(0b1100111)
+    )
 }
 
 pub macro ecall() -> IType {
-    @emit IType(imm = Imm12(0), rs1 = x0, funct3 = Funct3(0b000), rd = x0, opcode = Opcode(0b1110011))
+    @emit IType(
+        imm = Imm12(0),
+        rs1 = x0,
+        funct3 = Funct3(0b000),
+        rd = x0,
+        opcode = Opcode(0b1110011)
+    )
 }
 
 pub macro ebreak() -> IType {
-    @emit IType(imm = Imm12(1), rs1 = x0, funct3 = Funct3(0b000), rd = x0, opcode = Opcode(0b1110011))
+    @emit IType(
+        imm = Imm12(1),
+        rs1 = x0,
+        funct3 = Funct3(0b000),
+        rd = x0,
+        opcode = Opcode(0b1110011)
+    )
 }
 
 # =================
@@ -276,31 +487,61 @@ pub macro ebreak() -> IType {
 pub macro lb(rd: Reg, offset: int, rs1: Reg) -> IType
     | syntax "lb $rd$, $offset$($rs1$)"
 {
-    @emit IType(imm = Imm12(offset & 0xFFF), rs1 = rs1, funct3 = Funct3(0b000), rd = rd, opcode = Opcode(0b0000011))
+    @emit IType(
+        imm = Imm12(offset & 0xFFF),
+        rs1 = rs1,
+        funct3 = Funct3(0b000),
+        rd = rd,
+        opcode = Opcode(0b0000011)
+    )
 }
 
 pub macro lh(rd: Reg, offset: int, rs1: Reg) -> IType
     | syntax "lh $rd$, $offset$($rs1$)"
 {
-    @emit IType(imm = Imm12(offset & 0xFFF), rs1 = rs1, funct3 = Funct3(0b001), rd = rd, opcode = Opcode(0b0000011))
+    @emit IType(
+        imm = Imm12(offset & 0xFFF),
+        rs1 = rs1,
+        funct3 = Funct3(0b001),
+        rd = rd,
+        opcode = Opcode(0b0000011)
+    )
 }
 
 pub macro lw(rd: Reg, offset: int, rs1: Reg) -> IType
     | syntax "lw $rd$, $offset$($rs1$)"
 {
-    @emit IType(imm = Imm12(offset & 0xFFF), rs1 = rs1, funct3 = Funct3(0b010), rd = rd, opcode = Opcode(0b0000011))
+    @emit IType(
+        imm = Imm12(offset & 0xFFF),
+        rs1 = rs1,
+        funct3 = Funct3(0b010),
+        rd = rd,
+        opcode = Opcode(0b0000011)
+    )
 }
 
 pub macro lbu(rd: Reg, offset: int, rs1: Reg) -> IType
     | syntax "lbu $rd$, $offset$($rs1$)"
 {
-    @emit IType(imm = Imm12(offset & 0xFFF), rs1 = rs1, funct3 = Funct3(0b100), rd = rd, opcode = Opcode(0b0000011))
+    @emit IType(
+        imm = Imm12(offset & 0xFFF),
+        rs1 = rs1,
+        funct3 = Funct3(0b100),
+        rd = rd,
+        opcode = Opcode(0b0000011)
+    )
 }
 
 pub macro lhu(rd: Reg, offset: int, rs1: Reg) -> IType
     | syntax "lhu $rd$, $offset$($rs1$)"
 {
-    @emit IType(imm = Imm12(offset & 0xFFF), rs1 = rs1, funct3 = Funct3(0b101), rd = rd, opcode = Opcode(0b0000011))
+    @emit IType(
+        imm = Imm12(offset & 0xFFF),
+        rs1 = rs1,
+        funct3 = Funct3(0b101),
+        rd = rd,
+        opcode = Opcode(0b0000011)
+    )
 }
 
 # =================
@@ -310,19 +551,37 @@ pub macro lhu(rd: Reg, offset: int, rs1: Reg) -> IType
 pub macro sb(rs2: Reg, offset: int, rs1: Reg) -> SType
     | syntax "sb $rs2$, $offset$($rs1$)"
 {
-    @emit SType(imm_hi = Imm7((offset >> 5) & 0b1111111), rs2 = rs2, rs1 = rs1, funct3 = Funct3(0b000), imm_lo = Imm5(offset & 0b11111), opcode = Opcode(0b0100011))
+    @emit SType(
+        imm_hi = Imm7((offset >> 5) & 0b1111111),
+        rs2 = rs2,
+        rs1 = rs1,
+        funct3 = Funct3(0b000), imm_lo = Imm5(offset & 0b11111),
+        opcode = Opcode(0b0100011)
+    )
 }
 
 pub macro sh(rs2: Reg, offset: int, rs1: Reg) -> SType
     | syntax "sh $rs2$, $offset$($rs1$)"
 {
-    @emit SType(imm_hi = Imm7((offset >> 5) & 0b1111111), rs2 = rs2, rs1 = rs1, funct3 = Funct3(0b001), imm_lo = Imm5(offset & 0b11111), opcode = Opcode(0b0100011))
+    @emit SType(
+        imm_hi = Imm7((offset >> 5) & 0b1111111),
+        rs2 = rs2,
+        rs1 = rs1,
+        funct3 = Funct3(0b001), imm_lo = Imm5(offset & 0b11111),
+        opcode = Opcode(0b0100011)
+    )
 }
 
 pub macro sw(rs2: Reg, offset: int, rs1: Reg) -> SType
     | syntax "sw $rs2$, $offset$($rs1$)"
 {
-    @emit SType(imm_hi = Imm7((offset >> 5) & 0b1111111), rs2 = rs2, rs1 = rs1, funct3 = Funct3(0b010), imm_lo = Imm5(offset & 0b11111), opcode = Opcode(0b0100011))
+    @emit SType(
+        imm_hi = Imm7((offset >> 5) & 0b1111111),
+        rs2 = rs2,
+        rs1 = rs1,
+        funct3 = Funct3(0b010), imm_lo = Imm5(offset & 0b11111),
+        opcode = Opcode(0b0100011)
+    )
 }
 
 # =================
@@ -340,53 +599,95 @@ pub macro beq(rs1: Reg, rs2: Reg, target: int) -> BType
     | syntax "beq $rs1$, $rs2$, $target$"
 {
     const offset = (target - @here) * 4
-    @emit BType(imm12 = Bit1((offset >> 12) & 1), imm10_5 = Imm6((offset >> 5) & 0b111111), rs2 = rs2, rs1 = rs1, funct3 = Funct3(0b000), imm4_1 = Imm4((offset >> 1) & 0b1111), imm11 = Bit1((offset >> 11) & 1), opcode = Opcode(0b1100011))
+    @emit BType(
+        imm12 = Bit1((offset >> 12) & 1),
+        imm10_5 = Imm6((offset >> 5) & 0b111111), rs2 = rs2, rs1 = rs1,
+        funct3 = Funct3(0b000), imm4_1 = Imm4((offset >> 1) & 0b1111),
+        imm11 = Bit1((offset >> 11) & 1),
+        opcode = Opcode(0b1100011)
+    )
 }
 
 pub macro bne(rs1: Reg, rs2: Reg, target: int) -> BType
     | syntax "bne $rs1$, $rs2$, $target$"
 {
     const offset = (target - @here) * 4
-    @emit BType(imm12 = Bit1((offset >> 12) & 1), imm10_5 = Imm6((offset >> 5) & 0b111111), rs2 = rs2, rs1 = rs1, funct3 = Funct3(0b001), imm4_1 = Imm4((offset >> 1) & 0b1111), imm11 = Bit1((offset >> 11) & 1), opcode = Opcode(0b1100011))
+    @emit BType(
+        imm12 = Bit1((offset >> 12) & 1),
+        imm10_5 = Imm6((offset >> 5) & 0b111111), rs2 = rs2, rs1 = rs1,
+        funct3 = Funct3(0b001), imm4_1 = Imm4((offset >> 1) & 0b1111),
+        imm11 = Bit1((offset >> 11) & 1),
+        opcode = Opcode(0b1100011)
+    )
 }
 
 pub macro blt(rs1: Reg, rs2: Reg, target: int) -> BType
     | syntax "blt $rs1$, $rs2$, $target$"
 {
     const offset = (target - @here) * 4
-    @emit BType(imm12 = Bit1((offset >> 12) & 1), imm10_5 = Imm6((offset >> 5) & 0b111111), rs2 = rs2, rs1 = rs1, funct3 = Funct3(0b100), imm4_1 = Imm4((offset >> 1) & 0b1111), imm11 = Bit1((offset >> 11) & 1), opcode = Opcode(0b1100011))
+    @emit BType(
+        imm12 = Bit1((offset >> 12) & 1),
+        imm10_5 = Imm6((offset >> 5) & 0b111111), rs2 = rs2, rs1 = rs1,
+        funct3 = Funct3(0b100), imm4_1 = Imm4((offset >> 1) & 0b1111),
+        imm11 = Bit1((offset >> 11) & 1),
+        opcode = Opcode(0b1100011)
+    )
 }
 
 pub macro bge(rs1: Reg, rs2: Reg, target: int) -> BType
     | syntax "bge $rs1$, $rs2$, $target$"
 {
     const offset = (target - @here) * 4
-    @emit BType(imm12 = Bit1((offset >> 12) & 1), imm10_5 = Imm6((offset >> 5) & 0b111111), rs2 = rs2, rs1 = rs1, funct3 = Funct3(0b101), imm4_1 = Imm4((offset >> 1) & 0b1111), imm11 = Bit1((offset >> 11) & 1), opcode = Opcode(0b1100011))
+    @emit BType(
+        imm12 = Bit1((offset >> 12) & 1),
+        imm10_5 = Imm6((offset >> 5) & 0b111111), rs2 = rs2, rs1 = rs1,
+        funct3 = Funct3(0b101), imm4_1 = Imm4((offset >> 1) & 0b1111),
+        imm11 = Bit1((offset >> 11) & 1),
+        opcode = Opcode(0b1100011)
+    )
 }
 
 pub macro bltu(rs1: Reg, rs2: Reg, target: int) -> BType
     | syntax "bltu $rs1$, $rs2$, $target$"
 {
     const offset = (target - @here) * 4
-    @emit BType(imm12 = Bit1((offset >> 12) & 1), imm10_5 = Imm6((offset >> 5) & 0b111111), rs2 = rs2, rs1 = rs1, funct3 = Funct3(0b110), imm4_1 = Imm4((offset >> 1) & 0b1111), imm11 = Bit1((offset >> 11) & 1), opcode = Opcode(0b1100011))
+    @emit BType(
+        imm12 = Bit1((offset >> 12) & 1),
+        imm10_5 = Imm6((offset >> 5) & 0b111111), rs2 = rs2, rs1 = rs1,
+        funct3 = Funct3(0b110), imm4_1 = Imm4((offset >> 1) & 0b1111),
+        imm11 = Bit1((offset >> 11) & 1),
+        opcode = Opcode(0b1100011)
+    )
 }
 
 pub macro bgeu(rs1: Reg, rs2: Reg, target: int) -> BType
     | syntax "bgeu $rs1$, $rs2$, $target$"
 {
     const offset = (target - @here) * 4
-    @emit BType(imm12 = Bit1((offset >> 12) & 1), imm10_5 = Imm6((offset >> 5) & 0b111111), rs2 = rs2, rs1 = rs1, funct3 = Funct3(0b111), imm4_1 = Imm4((offset >> 1) & 0b1111), imm11 = Bit1((offset >> 11) & 1), opcode = Opcode(0b1100011))
+    @emit BType(
+        imm12 = Bit1((offset >> 12) & 1),
+        imm10_5 = Imm6((offset >> 5) & 0b111111), rs2 = rs2, rs1 = rs1,
+        funct3 = Funct3(0b111), imm4_1 = Imm4((offset >> 1) & 0b1111),
+        imm11 = Bit1((offset >> 11) & 1),
+        opcode = Opcode(0b1100011)
+    )
 }
 
 # =================
 # U-type: upper immediate
 # =================
 
-pub macro lui(rd: Reg, imm: int) -> UType {
+pub macro lui(
+    rd: Reg,
+    imm: int
+) -> UType {
     @emit UType(imm = Imm20(imm & 0xFFFFF), rd = rd, opcode = Opcode(0b0110111))
 }
 
-pub macro auipc(rd: Reg, imm: int) -> UType {
+pub macro auipc(
+    rd: Reg,
+    imm: int
+) -> UType {
     @emit UType(imm = Imm20(imm & 0xFFFFF), rd = rd, opcode = Opcode(0b0010111))
 }
 
@@ -400,5 +701,11 @@ pub macro jal(rd: Reg, target: int) -> JType
     | syntax "jal $rd$, $target$"
 {
     const offset = (target - @here) * 4
-    @emit JType(imm20 = Bit1((offset >> 20) & 1), imm10_1 = Imm10((offset >> 1) & 0b1111111111), imm11 = Bit1((offset >> 11) & 1), imm19_12 = Imm8((offset >> 12) & 0b11111111), rd = rd, opcode = Opcode(0b1101111))
+    @emit JType(
+        imm20 = Bit1((offset >> 20) & 1),
+        imm10_1 = Imm10((offset >> 1) & 0b1111111111),
+        imm11 = Bit1((offset >> 11) & 1),
+        imm19_12 = Imm8((offset >> 12) & 0b11111111), rd = rd,
+        opcode = Opcode(0b1101111)
+    )
 }

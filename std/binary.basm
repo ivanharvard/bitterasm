@@ -10,7 +10,7 @@ pub type bool         = bits<1>
 pub const true: bool  = 1
 pub const false: bool = 0
 
-# Returns `true` if the given value fits inside `width` many bits 
+# Returns `true` if the given value fits inside `width` many bits
 pub macro fits_inside_width(width: int, value: int) -> bool
 {
     @return value >= 0 && value < (1 << width)
@@ -27,10 +27,10 @@ pub macro bit_width(n: int) {
 
 # Calculates the number of bytes required to represent this integer.
 pub macro byte_width(n: int) {
-    @return bit_width(n) / 8 
+    @return bit_width(n) / 8
 }
 
-# Useful for functions that change behaviors based on Endianness  
+# Useful for functions that change behaviors based on Endianness
 pub enum Endian {
     Little,
     Big

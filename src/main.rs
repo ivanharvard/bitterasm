@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 use bitterasm::ast::Statement;
 use bitterasm::expander::MacroTable;
 use bitterasm::resolver::{SymbolTable, Value};
-use bitterasm::{emit, eval, expander, lexer, loader, parser, resolver};
+use bitterasm::{emit, eval, expander, formatter, lexer, loader, parser, resolver};
 
 #[derive(Parser)]
 #[command(name = "bitterasm", version, about = "Compiler for BitterASM")]
@@ -54,6 +54,21 @@ enum Command {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+
+    /// Format .basm files in place according to bitterasm.toml.
+    #[command(alias = "fmt")]
+    Format {
+        /// Files or directories to format; defaults to the current directory.
+        paths: Vec<PathBuf>,
+
+        /// Check formatting without changing files.
+        #[arg(long)]
+        check: bool,
+
+        /// Use this configuration instead of searching parent directories.
+        #[arg(long, value_name = "PATH")]
+        config: Option<PathBuf>,
+    },
 }
 
 fn main() {
@@ -65,7 +80,99 @@ fn main() {
         Command::Expand { path, depth, lines, chars, output } => {
             expand(&path, depth, lines, chars, output)
         }
+
+        Command::Format { paths, check, config } => format_files(paths, check, config),
     }
+}
+
+fn format_files(mut paths: Vec<PathBuf>, check: bool, config_path: Option<PathBuf>) {
+    if paths.is_empty() {
+        paths.push(PathBuf::from("."));
+    }
+
+    let mut files = Vec::new();
+    for path in paths {
+        if let Err(error) = collect_basm_files(&path, &mut files) {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    }
+    files.sort();
+    files.dedup();
+
+    let mut unformatted = Vec::new();
+    for path in files {
+        let selected_config = config_path.clone().or_else(|| formatter::discover_config(&path));
+        let config = match selected_config {
+            Some(ref config_path) => match formatter::load_config(config_path) {
+                Ok(config) => config,
+                Err(error) => {
+                    eprintln!("{error}");
+                    std::process::exit(1);
+                }
+            },
+            None => formatter::FormatConfig::default(),
+        };
+        let source = match std::fs::read_to_string(&path) {
+            Ok(source) => source,
+            Err(error) => {
+                eprintln!("failed to read {}: {error}", path.display());
+                std::process::exit(1);
+            }
+        };
+        let formatted = match formatter::format_source(&source, &config) {
+            Ok(formatted) => formatted,
+            Err(error) => {
+                eprintln!("{}: {error}", path.display());
+                std::process::exit(1);
+            }
+        };
+
+        if formatted != source {
+            if check {
+                unformatted.push(path);
+            } else if let Err(error) = std::fs::write(&path, formatted) {
+                eprintln!("failed to write {}: {error}", path.display());
+                std::process::exit(1);
+            }
+        }
+    }
+
+    if !unformatted.is_empty() {
+        for path in &unformatted {
+            eprintln!("would reformat {}", path.display());
+        }
+        std::process::exit(1);
+    }
+}
+
+fn collect_basm_files(path: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    if path.is_file() {
+        if path.extension().is_some_and(|extension| extension == "basm") {
+            files.push(path.to_path_buf());
+            return Ok(());
+        }
+        return Err(format!("{} is not a .basm file", path.display()));
+    }
+    if !path.is_dir() {
+        return Err(format!("{} does not exist", path.display()));
+    }
+
+    let entries = std::fs::read_dir(path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+        let child = entry.path();
+        if child.is_dir() {
+            let name = entry.file_name();
+            if name != ".git" && name != "target" {
+                collect_basm_files(&child, files)?;
+            }
+        } else if child.extension().is_some_and(|extension| extension == "basm") {
+            files.push(child);
+        }
+    }
+    Ok(())
 }
 
 /// The shared front half of both `compile` and `expand`: load, validate,

@@ -2,4 +2,6 @@ struct Bits<const width: int> {
     value: int
 }
 
-type Bad = Bits<8> | invariant a > 0 | invariant b < 10
+type Bad = Bits<8>
+    | invariant a > 0
+    | invariant b < 10

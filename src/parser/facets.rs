@@ -5,14 +5,8 @@
 //! names are valid and what shape each takes is metadata from
 //! [`crate::facets`], not decided here.
 //!
-//! `pub` and `-> Type` are spelled with dedicated tokens rather than a
-//! plain identifier, so they're recognized directly here rather than
-//! falling through to the general `name (payload)` grammar every other
-//! facet uses — but they still end up as ordinary [`Facet`] entries in the
-//! returned list, validated the same way as any other facet. `-> Type` may
-//! also appear bare (no leading `|`) directly after the parameter list,
-//! which is the original, simpler form; both spellings produce the same
-//! facet.
+//! `pub` and `-> Type` are declaration syntax, not facets, and therefore do
+//! not pass through this module.
 
 use crate::ast::{Facet, FacetPayload};
 use crate::facets::{self, PayloadShape};
@@ -21,27 +15,23 @@ use super::*;
 
 impl Parser {
     // `allow_multiline`: whether a facet list may continue onto a later
-    // line looking for another `|` — safe for a struct/macro declaration,
-    // since whatever follows the facet list is always its own `{ ... }`
-    // body, which tolerates (and itself skips) leading newlines regardless.
-    // A `type` alias has no such body — it's a single-line statement ending
-    // in a plain newline — so eagerly skipping newlines here would consume
-    // that terminator whenever the alias has zero or a single-line facet
-    // list, mistaking the next statement's first token for a continuation.
+    // line looking for another `|`. Newlines are consumed only when a pipe
+    // actually follows; otherwise the declaration's statement terminator is
+    // left for its caller. That makes multiline facets safe for type aliases
+    // as well as declarations with brace-delimited bodies.
     pub(super) fn parse_facet_list(
         &mut self,
-        allow_return_type: bool,
         allow_multiline: bool,
     ) -> Result<Vec<Facet>, ParseError> {
         let mut facets = Vec::new();
 
-        if self.check(&TokenKind::Arrow) {
-            facets.push(self.parse_return_type_facet(allow_return_type)?);
-        }
-
         loop {
             if allow_multiline {
+                let before_newlines = self.pos;
                 self.skip_newlines();
+                if !self.check(&TokenKind::Pipe) {
+                    self.pos = before_newlines;
+                }
             }
 
             if !self.check(&TokenKind::Pipe) {
@@ -50,29 +40,13 @@ impl Parser {
 
             self.advance();
 
-            facets.push(self.parse_facet(allow_return_type)?);
+            facets.push(self.parse_facet()?);
         }
 
         Ok(facets)
     }
 
-    fn parse_facet(&mut self, allow_return_type: bool) -> Result<Facet, ParseError> {
-        if self.check(&TokenKind::Arrow) {
-            return self.parse_return_type_facet(allow_return_type);
-        }
-
-        if self.check(&TokenKind::Pub) {
-            let start = self.current().span.start;
-            self.advance();
-            let end = self.previous().span.end;
-
-            return Ok(Facet {
-                name: "pub".to_string(),
-                payload: FacetPayload::Bare,
-                span: Span::new(start, end),
-            });
-        }
-
+    fn parse_facet(&mut self) -> Result<Facet, ParseError> {
         let start = self.current().span.start;
 
         let name = self.expect_identifier()?;
@@ -139,25 +113,4 @@ impl Parser {
         })
     }
 
-    fn parse_return_type_facet(&mut self, allow_return_type: bool) -> Result<Facet, ParseError> {
-        let start = self.current().span.start;
-
-        if !allow_return_type {
-            return Err(ParseError::new(
-                "`->` is not valid here",
-                self.current().span,
-            ));
-        }
-
-        self.expect_simple(TokenKind::Arrow)?;
-
-        let ty = self.parse_type_expr()?;
-        let end = self.previous().span.end;
-
-        Ok(Facet {
-            name: "return".to_string(),
-            payload: FacetPayload::Type(ty),
-            span: Span::new(start, end),
-        })
-    }
 }

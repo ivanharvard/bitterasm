@@ -1,5 +1,5 @@
 //! Facet-specific logic and metadata live in each facet's own file
-//! ([`invariant`], [`before`], [`after`], [`visibility`], [`return_type`])
+//! ([`invariant`], [`before`], [`after`], [`syntax`])
 //! — adding a new facet means adding a new file and one line in each match
 //! below, not editing an existing facet's file. A facet's own
 //! applicability/cardinality rules are logic that file expresses directly
@@ -7,13 +7,8 @@
 //! interprets — so a facet with unusual rules doesn't need the shared
 //! algorithm to grow a special case for it.
 //!
-//! `pub` and `-> Type` are ordinary facets here too, even though they're
-//! spelled with dedicated tokens rather than a plain identifier
-//! ([`crate::parser`] recognizes those tokens directly, but still produces
-//! the same [`crate::ast::Facet`] shape as any other facet) — their actual
-//! effect on `is_pub`/`return_ty` is computed by [`is_pub`] and
-//! [`extract_return_type`], which just call into [`visibility`] and
-//! [`return_type`] respectively. Every other facet's resolution-time
+//! `pub` and `-> Type` belong directly to declaration signatures and are
+//! deliberately not facets. Every facet's resolution-time
 //! behavior (checking `invariant` at construction time, firing
 //! `before`/`after` hooks) is expected to be added the same way: as
 //! functions in that facet's own file, called from [`crate::resolver`].
@@ -27,17 +22,14 @@
 //! after it, so `crate::parser` (matching call sites) and `crate::loader`
 //! (threading patterns across file imports) both reach into it directly.
 //! That's why it's `pub(crate)` rather than a bare private `mod` like the
-//! other five.
+//! other facet modules.
 
 mod after;
 mod before;
 mod invariant;
-mod return_type;
 pub(crate) mod syntax;
-mod visibility;
 
 use crate::ast::{Expr, Facet};
-use crate::types::TypeExpr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeclKind {
@@ -47,7 +39,7 @@ pub enum DeclKind {
 }
 
 /// What a facet's payload looks like after its name, e.g. `before qux()`
-/// (an expression) vs. `invariant { ... }` (a block) vs. bare `pub`. Needed
+/// (an expression) vs. `invariant { ... }` (a block). Needed
 /// by the parser, before resolution — grammar shape, not resolution
 /// behavior, so it stays plain data rather than a function.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,8 +67,6 @@ pub fn payload_shape(name: &str) -> Option<PayloadShape> {
         "invariant" => Some(invariant::PAYLOAD),
         "before" => Some(before::PAYLOAD),
         "after" => Some(after::PAYLOAD),
-        "pub" => Some(visibility::PAYLOAD),
-        "return" => Some(return_type::PAYLOAD),
         "syntax" => Some(syntax::PAYLOAD),
         _ => None,
     }
@@ -92,21 +82,9 @@ pub fn check(name: &str, decl_kind: DeclKind, count: usize) -> Option<Result<(),
         "invariant" => Some(invariant::check(decl_kind, count)),
         "before" => Some(before::check(decl_kind, count)),
         "after" => Some(after::check(decl_kind, count)),
-        "pub" => Some(visibility::check(decl_kind, count)),
-        "return" => Some(return_type::check(decl_kind, count)),
         "syntax" => Some(syntax::check(decl_kind, count)),
         _ => None,
     }
-}
-
-/// Whether `facets` contains a `pub` entry.
-pub fn is_pub(facets: &[Facet]) -> bool {
-    visibility::applies(facets)
-}
-
-/// The type from a `return` (`-> Type`) entry in `facets`, if any.
-pub fn extract_return_type(facets: &[Facet]) -> Option<TypeExpr> {
-    return_type::extract(facets)
 }
 
 /// Every `invariant` entry's condition in `facets`, in declaration order —

@@ -37,10 +37,8 @@ pub fn check(decl_kind: DeclKind, _count: usize) -> Result<(), Violation> {
     Ok(())
 }
 
-// Every `invariant` occurrence's condition, in declaration order — unlike
-// `return_type::extract`'s `find_map` (at most one `-> Type` makes sense),
-// `invariant` is explicitly allowed to appear more than once, with every
-// occurrence required to hold (see this file's module doc).
+// Every `invariant` occurrence's condition, in declaration order. An
+// invariant may appear more than once, and every occurrence must hold.
 pub fn extract(facets: &[Facet]) -> Vec<Expr> {
     facets
         .iter()

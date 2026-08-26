@@ -378,11 +378,9 @@ pub struct MacroParameter {
 // facets
 // ===============
 //
-// `| name ...` modifiers on struct/macro declarations. `pub` and `-> Type`
-// are spelled with dedicated tokens rather than a plain identifier, but
-// they still parse into ordinary `Facet` entries here, same as any other
-// facet — see `crate::facets` for what each name means and how its actual
-// effect (e.g. `pub`'s on `is_pub`) gets applied. What names are valid,
+// `| name ...` modifiers on declarations. `pub` and `-> Type` are dedicated
+// declaration fields and do not appear here. See `crate::facets` for what
+// each facet means. What names are valid,
 // what they attach to, and how many times they may appear is metadata
 // owned by `crate::facets`, not this type; this is just the parsed shape.
 

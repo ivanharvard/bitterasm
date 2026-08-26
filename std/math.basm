@@ -4,9 +4,10 @@ pub macro ceil(x: int) -> int {
     @return x
 }
 
-# There's no `**` operator in the language core -- exponentiation is
-# ordinary recursive macro code, same as `gcd`/`bit_width` below.
-pub macro pow(base: int, exp: int) -> int {
+pub macro pow(
+    base: int,
+    exp: int
+) -> int {
     @if exp == 0 {
         @return 1
     }
@@ -25,8 +26,8 @@ pub macro ceil(x: Fraction) -> int {
 pub macro abs(x: int) -> int {
     @if x < 0 {
         @return -x
-    } 
-    
+    }
+
     @return x
 }
 
@@ -38,7 +39,10 @@ pub macro abs(x: Fraction) -> Fraction {
     @return Fraction(abs(x.n), abs(x.d))
 }
 
-pub macro gcd(a: int, b: int) -> int {
+pub macro gcd(
+    a: int,
+    b: int
+) -> int {
     @if b == 0 {
         @return abs(a)
     }
@@ -50,4 +54,3 @@ pub macro simplify(x: Fraction) -> Fraction {
     const g = gcd(x.n, x.d)
     @return Fraction(x.n / g, x.d / g)
 }
-

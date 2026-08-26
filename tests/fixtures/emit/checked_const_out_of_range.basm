@@ -4,6 +4,7 @@ struct Bits<const width: int>
     value: int
 }
 
-type UByte = Bits<8> | invariant value < 100
+type UByte = Bits<8>
+    | invariant value < 100
 
 const TOO_BIG: UByte = 300

@@ -10,39 +10,50 @@ pub struct Array<T, const N: int>
     pub len: int = N,
 }
 
-# `get`/`updated`/`reversed` need a macro parameter type generic over `T`
-# (`Array<T, ...>` matching any element type / any length) -- macros don't
-# have their own declared generic type parameters yet (only structs do;
-# `MacroDeclaration` has no `generic_params` at all), so these don't parse
-# as written. Nothing else in std currently calls them. Commented out
-# rather than half-implemented; needs macro-level generics, a bigger,
-# separate feature.
-#
-# pub macro get(arr: Array<T, ...>, index: int) -> T
-#     | syntax { $arr$[$index$] }
-# {
-#     @assert index >= 0 && index < arr.len, "Index out of bounds"
-#     @return arr.__el`index`
-# }
-#
-# # Since all basm objects are immutable, we need to return a new array with the updated value
-# pub macro updated(arr: Array<T, ...>, index: int, value: T) -> Array<T, ...>{
-#     @assert index >= 0 && index < arr.len, "Index out of bounds"
-#     @return Array<T, arr.len> {
-#         @for i in 0..arr.len {
-#             @if i == index {
-#                 __el`i`: value,
-#             } @else {
-#                 __el`i`: arr.__el`i`,
-#             }
-#         }
-#     }
-# }
-#
-# pub macro reversed(arr: Array<T, ...>, index: int, value: T) -> Array<T, ...> {
-#     @return Array<T, arr.len> {
-#         @for i in range(arr.len, 0, -1) {
-#             __el`i - arr.len`: arr.__el`i`
-#         }
-#     }
-# }
+macro oob_check(
+    arr: Array<T, ...>,
+    index: int
+) -> int {
+    @assert index >= 0, "Arrays do not support negative indices"
+    @assert index < arr.len, "Index is greater than Array length"
+}
+
+pub macro get(arr: Array<T, ...>, index: int) -> T
+    | syntax { $arr$[$index$] }
+    | before oob_check(arr, index)
+{
+    @return arr.__el`index`
+}
+
+# Since all basm objects are immutable, we need to return a new array with the
+# updated value
+pub macro updated(
+    arr: Array<T, ...>,
+    index: int,
+    value: T
+) -> Array<T, ...>
+    | before oob_check(arr, index)
+{
+    @return Array<T, arr.len> {
+        @for i in 0..arr.len {
+            @if i == index {
+                __el`i`: value,
+            } @else {
+                __el`i`: arr.__el`i`,
+            }
+        }
+    }
+}
+
+pub macro reversed(arr: Array<T, ...>, index: int, value: T) -> Array<T, ...>
+{
+    @return Array<T, arr.len> {
+        @for i in range(
+            arr.len,
+            0,
+            -1
+        ) {
+            __el`i - arr.len`: arr.__el`i`
+        }
+    }
+}

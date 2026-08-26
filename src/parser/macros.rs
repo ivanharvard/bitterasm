@@ -186,9 +186,13 @@ impl Parser {
 
         self.expect_simple(TokenKind::RParen)?;
 
-        let facets = self.parse_facet_list(true, true)?;
-        let return_ty = crate::facets::extract_return_type(&facets);
-        let is_pub = is_pub || crate::facets::is_pub(&facets);
+        let return_ty = if self.check(&TokenKind::Arrow) {
+            self.advance();
+            Some(self.parse_type_expr()?)
+        } else {
+            None
+        };
+        let facets = self.parse_facet_list(true)?;
 
         if let Some(facet) = facets.iter().find(|facet| facet.name == "syntax") {
             let FacetPayload::Expr(Expr::String { value, .. }) = &facet.payload else {

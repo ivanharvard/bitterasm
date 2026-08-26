@@ -1,10 +1,6 @@
 from std.math import abs
 
-pub struct Range<
-    const start: int, 
-    const stop: int, 
-    const step: int
->
+pub struct Range< const start: int, const stop: int, const step: int >
     | invariant step != 0
     | invariant (step > 0 && stop > start) || (step < 0 && stop < start)
 {
@@ -17,7 +13,11 @@ pub struct Range<
     }
 }
 
-pub macro range(start: int, stop: int, step: int) {
+pub macro range(
+    start: int,
+    stop: int,
+    step: int = 1
+) {
     @return Range<start, stop, step>{
         @for i in 0..abs(stop - start) {
             @if i % abs(step) == 0 {

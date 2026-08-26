@@ -72,8 +72,7 @@ impl Parser {
 
         self.register_generic_signature(&name, &generic_params);
 
-        let facets = self.parse_facet_list(false, true)?;
-        let is_pub = is_pub || crate::facets::is_pub(&facets);
+        let facets = self.parse_facet_list(true)?;
 
         self.skip_newlines();
 
@@ -293,8 +292,7 @@ impl Parser {
 
         let target = self.parse_type_expr()?;
 
-        let facets = self.parse_facet_list(false, false)?;
-        let is_pub = is_pub || crate::facets::is_pub(&facets);
+        let facets = self.parse_facet_list(true)?;
 
         if !self.at_statement_end() {
             return Err(ParseError::new(

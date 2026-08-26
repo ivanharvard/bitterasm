@@ -4,7 +4,8 @@ struct Bits<const width: int>
     value: int
 }
 
-type UByte = Bits<8> | invariant value < 100
+type UByte = Bits<8>
+    | invariant value < 100
 
 macro make(v: int) {
     @emit v @as UByte

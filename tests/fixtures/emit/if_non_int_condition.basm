@@ -4,7 +4,10 @@ struct Reg {
 }
 
 macro bad(v: int) {
-    @if Reg(v, v) {
+    @if Reg(
+        v,
+        v
+    ) {
         @emit 1
     }
 }

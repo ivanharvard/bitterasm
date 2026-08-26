@@ -36,3 +36,4 @@ pub mod resolver;
 pub mod loader;
 pub mod facets;
 pub mod eval;
+pub mod formatter;

@@ -4,7 +4,10 @@ struct Array<T, const n: int> {
     }
 }
 
-macro make_array(index: int, value: int) {
+macro make_array(
+    index: int,
+    value: int
+) {
     @emit Array<int, 3> {
         @for i in 0..3 {
             @if i == index {

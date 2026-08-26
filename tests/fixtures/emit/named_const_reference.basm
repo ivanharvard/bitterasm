@@ -11,4 +11,3 @@ macro read(r: Reg) {
 
 read r0
 read zero
-

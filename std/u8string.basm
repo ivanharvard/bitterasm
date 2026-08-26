@@ -26,11 +26,15 @@ macro byte_at(
     }
 }
 
-macro validate_asciistring(value: int, len: int, endian: Endian) -> int {
+macro validate_asciistring(
+    value: int,
+    len: int,
+    endian: Endian
+) -> int {
     @assert len >= 0
     @assert value >= 0
     @assert value < (1 << (BITS_PER_BYTE * len))
-    
+
     @for i in 0..len {
         @assert byte_at(value, len, i, endian) < 0x80
     }
@@ -58,15 +62,15 @@ pub macro to_array(s: AsciiString) -> Array {
 # wired to anything yet. Commented out rather than half-implemented.
 #
 # pub macro ascii_from_array(arr: Array, endian: Endian) {
-#     as
+# as
 # }
 #
 # macro validate_Utf8String(value: int, len: int, endian: Endian) {
-#     @assert len >= 0
-#     @assert value >= 0
-#     @assert value < (1 << (BITS_PER_BYTE * len))
+# @assert len >= 0
+# @assert value >= 0
+# @assert value < (1 << (BITS_PER_BYTE * len))
 #
-#     @assert
+# @assert
 # }
 
 # =========================
@@ -77,7 +81,10 @@ pub macro to_array(s: AsciiString) -> Array {
 # everything else unchanged -- operates on `String`'s packed
 # `value`/`len` representation (there's no `.chars` array; see `byte_at`
 # above), the same way `to_array` does.
-macro titlecase_byte(byte: uint8_t, index: int) -> uint8_t {
+macro titlecase_byte(
+    byte: uint8_t,
+    index: int
+) -> uint8_t {
     @if index == 0 && byte >= 'a' && byte <= 'z' {
         @return byte - ('a' - 'A')
     }
@@ -85,7 +92,11 @@ macro titlecase_byte(byte: uint8_t, index: int) -> uint8_t {
     @return byte
 }
 
-macro shift_for_byte(index: int, len: int, endian: Endian) -> int {
+macro shift_for_byte(
+    index: int,
+    len: int,
+    endian: Endian
+) -> int {
     @if endian == Endian.Little {
         @return index * 8
     }
@@ -93,7 +104,12 @@ macro shift_for_byte(index: int, len: int, endian: Endian) -> int {
     @return (len - index - 1) * 8
 }
 
-macro titlecase_value(value: int, len: int, index: int, endian: Endian) -> int {
+macro titlecase_value(
+    value: int,
+    len: int,
+    index: int,
+    endian: Endian
+) -> int {
     @if index == len {
         @return 0
     }
@@ -105,6 +121,12 @@ macro titlecase_value(value: int, len: int, index: int, endian: Endian) -> int {
     @return (cased << shift) | titlecase_value(value, len, index + 1, endian)
 }
 
-pub macro title(s: String, endian: Endian) -> String {
-    @return String(value = titlecase_value(s.value, s.len, 0, endian), len = s.len)
+pub macro title(
+    s: String,
+    endian: Endian
+) -> String {
+    @return String(
+        value = titlecase_value(s.value, s.len, 0, endian),
+        len = s.len
+    )
 }

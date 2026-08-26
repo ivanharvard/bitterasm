@@ -1,0 +1,11 @@
+indent_width = 4
+hard_tabs = false
+indent_facets = true
+facets_on_new_line = true
+pub_on_declaration = true
+return_type_on_declaration = true
+collapse_short_multiline_generics = true
+max_blank_lines = 1
+max_width = 80
+comment_width = 80
+newline_style = "Auto"

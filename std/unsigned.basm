@@ -1,1 +1,2 @@
-pub type uint = int | invariant x >= 0
+pub type uint = int
+    | invariant x >= 0

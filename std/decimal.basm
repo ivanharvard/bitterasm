@@ -9,7 +9,7 @@ pub enum Infinity {
 pub struct Decimal {
     value: int,
     scale: uint
-}   
+}
 
 pub macro to_int(x: Decimal) -> int {
     @assert x.scale == 0
