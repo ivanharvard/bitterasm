@@ -843,7 +843,7 @@ mod tests {
     #[test]
     fn loads_fields_fixture_and_resolves_bits_via_import() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/tinycpu/fields.basm");
+            .join("tests/fixtures/riscv/fields.basm");
 
         let program = load_program(&path).expect("fields.basm should load");
 
@@ -964,12 +964,12 @@ mod tests {
 
     #[test]
     fn diamond_import_does_not_duplicate_declarations() {
-        // Both fields.basm and its (transitive, via std.tinycpu.native)
-        // sibling would each pull in std.binary.native independently if the
+        // Both fields.basm and std.riscv.native pull in std.binary
+        // independently. If the
         // loader didn't dedupe by canonical path; collect_symbols would then
         // fail on a duplicate `bits`.
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/tinycpu/mini.basm");
+            .join("tests/fixtures/riscv/mini.basm");
 
         let program = load_program(&path).expect("mini.basm should load");
 

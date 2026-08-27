@@ -1,0 +1,5 @@
+from std.riscv.native import *
+
+start:
+addi x1, x0, 7
+add x1, x1, x2

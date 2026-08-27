@@ -59,6 +59,14 @@ impl ResolvedType {
         if self == actual {
             return true;
         }
+
+        // An invariant-bearing alias is nominal when it appears in a
+        // signature. Its underlying representation is not enough: the value
+        // must have been checked and tagged by `as` (or a typed const).
+        if matches!(self, ResolvedType::Alias { .. }) {
+            return false;
+        }
+
         match (self.strip_alias(), actual.strip_alias()) {
             (
                 ResolvedType::Struct { symbol: expected, args: expected_args },

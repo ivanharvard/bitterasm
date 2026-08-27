@@ -1,6 +1,0 @@
-from std.tinycpu.native import *
-
-start:
-mov r1, 7
-add r1, r2
-nop

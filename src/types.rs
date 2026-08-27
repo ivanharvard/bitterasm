@@ -116,7 +116,7 @@ pub struct StructField {
 
     /// `const name: Type` — parsed, not yet enforced (no additional
     /// resolver checking beyond ordinary type-checking). See
-    /// `std/tinycpu/native.basm`'s `pub const id: bits<2>`.
+    /// An architecture package's `pub const id: bits<2>`.
     pub is_const: bool,
 
     /// `= expr` — evaluated (against the struct's own bound generic const
