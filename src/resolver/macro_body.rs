@@ -175,10 +175,77 @@ impl<'a> AliasResolver<'a> {
         }
 
         stack.push(symbol);
-        let result = self.walk_macro_body(&declaration.body, &scope, stack);
-        stack.pop();
 
+        let result = (|| {
+            let mut expansion = MacroExpansion {
+                emitted: Vec::new(),
+                generated: Vec::new(),
+                returned: None,
+            };
+
+            for hook in crate::facets::extract_exprs(&declaration.facets, "before") {
+                let hook_result = self.run_hook_template(&hook, &scope, stack)?;
+                expansion.emitted.extend(hook_result.emitted);
+                expansion.generated.extend(hook_result.generated);
+            }
+
+            let body_result = self.walk_macro_body(&declaration.body, &scope, stack)?;
+            expansion.emitted.extend(body_result.emitted);
+            expansion.generated.extend(body_result.generated);
+            expansion.returned = body_result.returned;
+
+            let after_hooks = crate::facets::extract_exprs(&declaration.facets, "after");
+            if !after_hooks.is_empty() {
+                let returned = expansion.returned.clone().ok_or_else(|| {
+                    ResolveError::ExpectedValueExpression { span: declaration.span }
+                })?;
+                let mut after_scope = scope.clone();
+                after_scope.insert(
+                    "self".to_string(),
+                    Value::Struct {
+                        symbol,
+                        args: Vec::new(),
+                        fields: vec![("returned".to_string(), returned)],
+                        nominal: None,
+                    },
+                );
+
+                for hook in after_hooks {
+                    let hook_result = self.run_hook_template(&hook, &after_scope, stack)?;
+                    expansion.emitted.extend(hook_result.emitted);
+                    expansion.generated.extend(hook_result.generated);
+                }
+            }
+
+            Ok(expansion)
+        })();
+
+        stack.pop();
         result
+    }
+
+    fn run_hook_template(
+        &mut self,
+        template: &Expr,
+        scope: &HashMap<String, Value>,
+        stack: &mut Vec<SymbolId>,
+    ) -> Result<MacroExpansion, ResolveError> {
+        let Expr::Call { callee, arguments, span } = template else {
+            return Err(ResolveError::ExpectedValueExpression { span: template.span() });
+        };
+        let Expr::Identifier { name, .. } = callee.as_ref() else {
+            return Err(ResolveError::ExpectedValueExpression { span: *span });
+        };
+        if arguments.iter().any(|argument| argument.name.is_some()) {
+            return Err(ResolveError::ExpectedValueExpression { span: *span });
+        }
+        let hook_symbol = self.find_macro_symbol(name, *span)?;
+        let hook = self.find_macro_declaration(hook_symbol)?.clone();
+        let values = arguments
+            .iter()
+            .map(|argument| self.eval_value(&argument.value, scope))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.run_macro_body(hook_symbol, &hook, values, stack)
     }
 
     fn walk_macro_body(
@@ -844,6 +911,36 @@ mod tests {
             .unwrap();
         assert!(matches!(result, Value::Struct { ref fields, .. }
             if fields[0].1 == Value::Int(Int::from(7))));
+    }
+
+    #[test]
+    fn before_and_after_hooks_see_parameters_and_returned_value() {
+        let program = parse_fixture("macro_hooks.basm");
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+        let declaration = find_macro(&program, "increment");
+        let symbol = symbols.lookup("increment").unwrap();
+
+        let result = resolver
+            .run_macro_body(
+                symbol,
+                declaration,
+                vec![Value::Int(Int::from(4))],
+                &mut Vec::new(),
+            )
+            .unwrap();
+        assert_eq!(result.returned, Some(Value::Int(Int::from(5))));
+
+        let error = resolver
+            .run_macro_body(
+                symbol,
+                declaration,
+                vec![Value::Int(Int::from(0))],
+                &mut Vec::new(),
+            )
+            .unwrap_err();
+        assert!(matches!(error, ResolveError::AssertionFailed { .. }));
     }
 
     #[test]

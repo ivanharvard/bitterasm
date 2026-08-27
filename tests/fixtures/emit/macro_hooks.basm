@@ -1,0 +1,18 @@
+macro require_positive(value: int) {
+    @assert value > 0
+}
+
+macro require_expected(value: int, original: int) {
+    @assert value == original + 1
+}
+
+macro increment(value: int) -> int
+    | before require_positive(value)
+    | after require_expected(self.returned, value)
+{
+    @if value > 0 {
+        @return value + 1
+    }
+
+    @return 0
+}
