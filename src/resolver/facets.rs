@@ -2,10 +2,8 @@
 //! `check` function ([`crate::facets`]) — this file doesn't decide what's
 //! valid for a given facet itself, it just counts occurrences per name and
 //! translates the [`crate::facets::Violation`] each `check` call returns
-//! into a [`ResolveError`]. Actually *enforcing* a facet's own behavior
-//! (running `invariant`'s check, firing `before`/`after` hooks) is
-//! separate, later work that needs infrastructure (const evaluation,
-//! invocation binding) this crate doesn't have yet.
+//! into a [`ResolveError`]. Runtime enforcement lives at the relevant
+//! construction, conversion, or macro-invocation boundary.
 
 use std::collections::{HashMap, HashSet};
 

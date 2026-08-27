@@ -1,8 +1,7 @@
 //! `after` — macro-only. May appear multiple times; each one fires once,
 //! in declaration order, after the macro's own body (the reverse-ordered
-//! counterpart to [`super::before`]). Not yet enforced — needs
-//! invocation-to-macro binding, which doesn't exist yet (see
-//! [`crate::resolver`]).
+//! counterpart to [`super::before`]). Macro parameters remain directly
+//! available; `self.returned` exposes the completed return value.
 
 use super::{DeclKind, PayloadShape, Violation};
 

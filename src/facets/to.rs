@@ -1,4 +1,5 @@
 //! `to` — an outbound conversion template on a struct or type alias.
+//! `self` is the completed source value and may be passed whole or by field.
 
 use super::{DeclKind, PayloadShape, Violation};
 

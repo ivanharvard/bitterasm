@@ -1,4 +1,5 @@
 //! `from` — an inbound conversion template on a struct or type alias.
+//! `source` is the incoming typed value and may itself be a struct.
 
 use super::{DeclKind, PayloadShape, Violation};
 

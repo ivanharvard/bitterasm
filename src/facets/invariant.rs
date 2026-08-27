@@ -3,23 +3,16 @@
 //! across separate conditions) rather than composing in sequence the way
 //! `before`/`after` do.
 //!
-//! On a **struct**, each expression (often a call to a separately-declared
-//! bool-returning macro, e.g. `invariant fits_inside_width(width, value)`,
+//! On a **struct**, `self` is the completed value, so fields are reached as
+//! `self.field`; generic const parameters remain directly available. Each
+//! expression (often a call to a separately-declared bool-returning macro),
 //! so a check can be shared across declarations instead of duplicated
 //! inline) is checked against the struct's own fields and generic const
 //! params — enforced at every construction site
 //! (`resolver::structs::AliasResolver::check_struct_invariants`, called from
 //! both `resolver::values::eval_call_value` and `eval_construct_value`).
 //!
-//! On a **type alias**, there are no fields/params of its own to check
-//! against — the expression instead names its own binder for "the value
-//! being converted into this type," the author's choice
-//! (`type Age = int | invariant years >= 0`, `years` here), not a fixed
-//! reserved word. Since an alias invariant's scope is otherwise completely
-//! empty, that binder is just whichever free identifier (one that doesn't
-//! already resolve to a real symbol) appears in the expression — validated
-//! to be exactly one consistent name across all of an alias's `invariant`
-//! occurrences by `resolver::facets::validate_alias_invariant_binder`.
+//! On a **type alias**, `self` is the value being converted into the alias.
 //! Compilation fails if a checked expression doesn't fold to a truthy
 //! result.
 
