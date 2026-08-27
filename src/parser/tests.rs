@@ -645,7 +645,7 @@ struct Reg<const width: uint> {
         panic!("expected struct");
     };
 
-    assert_eq!(declaration.name, "Reg");
+    assert_eq!(literal_name(&declaration.name), Some("Reg".to_string()));
     assert_eq!(declaration.generic_params.len(), 1);
     assert_eq!(declaration.fields.len(), 1);
 
@@ -657,10 +657,10 @@ struct Reg<const width: uint> {
 }
 
 #[test]
-fn parses_struct_field_pub_const_and_default_modifiers() {
+fn parses_struct_field_pub_and_default_modifiers() {
     let source = r#"
 struct Reg<const width: int> {
-    pub const id: bits<2>,
+    pub id: bits<2>,
     pub len: int = width
 }
 "#;
@@ -679,7 +679,6 @@ struct Reg<const width: int> {
 
     assert_eq!(literal_name(&id_field.name), Some("id".to_string()));
     assert!(id_field.is_pub);
-    assert!(id_field.is_const);
     assert!(id_field.default.is_none());
 
     let StructBodyItem::Field(len_field) = &declaration.fields[1] else {
@@ -688,11 +687,59 @@ struct Reg<const width: int> {
 
     assert_eq!(literal_name(&len_field.name), Some("len".to_string()));
     assert!(len_field.is_pub);
-    assert!(!len_field.is_const);
     assert!(matches!(
         len_field.default,
         Some(Expr::Identifier { ref name, .. }) if name == "width"
     ));
+}
+
+#[test]
+fn rejects_const_as_a_struct_field_modifier() {
+    let source = r#"
+struct Reg {
+    const id: bits<2>
+}
+"#;
+
+    assert!(parse(lex(source).unwrap()).is_err());
+}
+
+#[test]
+fn parses_spliced_names_on_nested_declarations() {
+    let source = r#"
+macro make_reg_type(i: int) {
+    struct Reg`i` {
+        x: int
+    }
+
+    macro helper`i`(y: int) {
+        @emit y
+    }
+
+    type Alias`i` = int
+}
+"#;
+
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    let Statement::Macro(outer) = &program.statements[0] else {
+        panic!("expected macro");
+    };
+
+    let Statement::Struct(struct_decl) = &outer.body[0] else {
+        panic!("expected nested struct");
+    };
+    assert!(matches!(struct_decl.name.as_slice(), [NamePart::Literal(prefix), NamePart::Splice(_)] if prefix == "Reg"));
+
+    let Statement::Macro(macro_decl) = &outer.body[1] else {
+        panic!("expected nested macro");
+    };
+    assert!(matches!(macro_decl.name.as_slice(), [NamePart::Literal(prefix), NamePart::Splice(_)] if prefix == "helper"));
+
+    let Statement::TypeAlias(alias_decl) = &outer.body[2] else {
+        panic!("expected nested type alias");
+    };
+    assert!(matches!(alias_decl.name.as_slice(), [NamePart::Literal(prefix), NamePart::Splice(_)] if prefix == "Alias"));
 }
 
 #[test]
@@ -703,7 +750,7 @@ fn parses_pub_enum() {
         panic!("expected enum declaration");
     };
 
-    assert_eq!(decl.name, "Endian");
+    assert_eq!(literal_name(&decl.name), Some("Endian".to_string()));
     assert!(decl.is_pub);
     assert_eq!(decl.variants.iter().map(|variant| variant.name.as_str()).collect::<Vec<_>>(), vec!["Little", "Big"]);
     assert!(decl.variants.iter().all(|variant| variant.payload.is_none()));
@@ -732,7 +779,7 @@ fn parses_type_alias() {
         panic!("expected type alias");
     };
 
-    assert_eq!(alias.name, "Reg64");
+    assert_eq!(literal_name(&alias.name), Some("Reg64".to_string()));
 }
 
 #[test]

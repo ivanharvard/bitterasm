@@ -349,7 +349,7 @@ pub struct ConstDeclaration {
 /// typed value (`Some: T`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumDeclaration {
-    pub name: String,
+    pub name: SplicedName,
     pub is_pub: bool,
     pub generic_params: Vec<GenericParameter>,
     pub variants: Vec<EnumVariantDeclaration>,
@@ -365,7 +365,7 @@ pub struct EnumVariantDeclaration {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructDeclaration {
-    pub name: String,
+    pub name: SplicedName,
     pub is_pub: bool,
     pub generic_params: Vec<GenericParameter>,
     pub facets: Vec<Facet>,
@@ -375,7 +375,7 @@ pub struct StructDeclaration {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeAliasDeclaration {
-    pub name: String,
+    pub name: SplicedName,
     pub is_pub: bool,
     pub generic_params: Vec<GenericParameter>,
     pub facets: Vec<Facet>,
@@ -385,8 +385,9 @@ pub struct TypeAliasDeclaration {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MacroDeclaration {
-    pub name: String,
+    pub name: SplicedName,
     pub is_pub: bool,
+    pub generic_params: Vec<GenericParameter>,
     pub params: Vec<MacroParameter>,
     pub return_ty: Option<TypeExpr>,
     pub facets: Vec<Facet>,

@@ -32,15 +32,19 @@ use crate::types::{GenericParameter, StructBodyItem, StructField, TypeArgument, 
 /// *top-level* macro declarations: a macro nested inside another macro's
 /// body is a declaration to be spliced in, not something invocations
 /// elsewhere can already be calling.
-pub struct MacroTable<'a>(HashMap<&'a str, &'a MacroDeclaration>);
+pub struct MacroTable<'a>(HashMap<String, &'a MacroDeclaration>);
 
 impl<'a> MacroTable<'a> {
     pub fn from_program(program: &'a Program) -> Self {
         let mut table = HashMap::new();
 
         for statement in &program.statements {
+            // Top-level, so always a literal name by the same invariant
+            // `collect_symbols` enforces for real compilation.
             if let Statement::Macro(decl) = statement {
-                table.insert(decl.name.as_str(), decl);
+                if let Some(name) = crate::ast::literal_name(&decl.name) {
+                    table.insert(name, decl);
+                }
             }
         }
 
@@ -250,7 +254,7 @@ fn substitute_struct(decl: &StructDeclaration, substitutions: &HashMap<String, E
     let inner = without_shadowed(substitutions, decl.generic_params.iter().map(generic_param_name));
 
     StructDeclaration {
-        name: decl.name.clone(),
+        name: substitute_spliced_name(&decl.name, substitutions),
         is_pub: decl.is_pub,
         generic_params: decl.generic_params.clone(),
         facets: substitute_facets(&decl.facets, &inner),
@@ -270,7 +274,6 @@ fn substitute_struct_body_items(
                 name: substitute_spliced_name(&field.name, substitutions),
                 ty: substitute_type_expr(&field.ty, substitutions),
                 is_pub: field.is_pub,
-                is_const: field.is_const,
                 default: field.default.as_ref().map(|d| substitute_expr(d, substitutions)),
                 span: field.span,
             }),
@@ -318,7 +321,7 @@ fn substitute_type_alias(
     let inner = without_shadowed(substitutions, decl.generic_params.iter().map(generic_param_name));
 
     TypeAliasDeclaration {
-        name: decl.name.clone(),
+        name: substitute_spliced_name(&decl.name, substitutions),
         is_pub: decl.is_pub,
         generic_params: decl.generic_params.clone(),
         facets: substitute_facets(&decl.facets, &inner),
@@ -328,27 +331,32 @@ fn substitute_type_alias(
 }
 
 fn substitute_macro(decl: &MacroDeclaration, substitutions: &HashMap<String, Expr>) -> MacroDeclaration {
-    // Param *types* and facets/return-type are evaluated in the outer
-    // scope this macro is declared in, same as a real declaration — only
-    // its own body is where the shadowing kicks in.
-    let inner = without_shadowed(substitutions, decl.params.iter().map(|param| param.name.as_str()));
+    // The macro's own generic params shadow the outer scope everywhere in
+    // its signature and body, the same way a struct's generic params do
+    // (`substitute_struct`) — its call-bound params additionally shadow
+    // just the body on top of that.
+    let generics_shadowed =
+        without_shadowed(substitutions, decl.generic_params.iter().map(generic_param_name));
+    let body_scope =
+        without_shadowed(&generics_shadowed, decl.params.iter().map(|param| param.name.as_str()));
 
     MacroDeclaration {
-        name: decl.name.clone(),
+        name: substitute_spliced_name(&decl.name, substitutions),
         is_pub: decl.is_pub,
+        generic_params: decl.generic_params.clone(),
         params: decl
             .params
             .iter()
             .map(|param| MacroParameter {
                 name: param.name.clone(),
-                ty: substitute_type_expr(&param.ty, substitutions),
-                default: param.default.as_ref().map(|value| substitute_expr(value, substitutions)),
+                ty: substitute_type_expr(&param.ty, &generics_shadowed),
+                default: param.default.as_ref().map(|value| substitute_expr(value, &generics_shadowed)),
                 span: param.span,
             })
             .collect(),
-        return_ty: decl.return_ty.as_ref().map(|ty| substitute_type_expr(ty, substitutions)),
-        facets: substitute_facets(&decl.facets, substitutions),
-        body: substitute_statements(&decl.body, &inner),
+        return_ty: decl.return_ty.as_ref().map(|ty| substitute_type_expr(ty, &generics_shadowed)),
+        facets: substitute_facets(&decl.facets, &generics_shadowed),
+        body: substitute_statements(&decl.body, &body_scope),
         span: decl.span,
     }
 }

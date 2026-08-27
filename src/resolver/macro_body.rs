@@ -42,12 +42,12 @@
 //! this expansion's scope, and rewritten in place into the literal `Expr`
 //! they produced ([`AliasResolver::splice_expr`]) — everything *outside* a
 //! splice is left exactly as written, to be resolved later, in whatever
-//! scope the generated declaration ends up in. A struct/macro/type alias's
-//! own *name* can't yet contain a splice (`` `name` `` as a declaration name
-//! doesn't parse — declaration names are still a plain `String` in the AST,
-//! not an `Expr`), so those three kinds are captured verbatim with no
-//! rewriting at all; only `Const`'s single `value: Expr` gets this
-//! treatment today.
+//! scope the generated declaration ends up in. Every declaration kind's own
+//! *name* gets this same treatment (`self.resolve_spliced_name`, rewritten
+//! back to a single-part literal `SplicedName`); only `Const`'s body also
+//! carries a spliceable `value: Expr` (via `splice_const`) — a
+//! struct/enum/type-alias/macro's body isn't spliced at all, only its name,
+//! so those four kinds are otherwise captured verbatim.
 //!
 //! `Statement::Import` is a hard, permanent error rather than an
 //! unimplemented one: imports are resolved by `crate::loader` before the
@@ -55,19 +55,20 @@
 //! has no file of its own for a relative import to resolve against, and by
 //! the time macro expansion happens the whole program is already flattened.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
-    CallArgument, ConstDeclaration, ConstructItem, Expr, Invocation, MacroDeclaration, NamePart,
-    Statement,
+    literal_name, CallArgument, ConstDeclaration, ConstructItem, Expr, Invocation,
+    MacroDeclaration, NamePart, Statement,
 };
 use crate::eval::Int;
 use crate::token::Span;
-use crate::types::TypeArgument;
+use crate::types::{TypeArgument, TypeExpr};
 
-use super::aliases::AliasResolver;
-use super::structs::describe_type;
+use super::aliases::{AliasResolver, GenericBinding};
+use super::structs::{describe_type, param_name};
 use super::symbols::SymbolId;
+use super::types::{ResolvedGenericArg, ResolvedType};
 use super::values::Value;
 use super::ResolveError;
 
@@ -77,6 +78,14 @@ use super::ResolveError;
 /// every `@for` unroller (a struct body's, in `structs.rs`; a top-level
 /// one, in `toplevel.rs`), not just this one.
 pub(super) const MAX_FOR_ITERATIONS: u64 = 1_000_000;
+
+/// Best-effort name for an error message: a macro reaching real expansion
+/// always has a literal name by now (`collect_symbols`/`register_generated`
+/// already reject anything else), so this is really just an infallible
+/// unwrap with a defensive fallback instead of a `panic!`.
+fn macro_display_name(name: &[NamePart]) -> String {
+    literal_name(name).unwrap_or_else(|| "<generated>".to_string())
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MacroExpansion {
@@ -161,11 +170,33 @@ impl<'a> AliasResolver<'a> {
             if actual_types.len() < required || actual_types.len() > declaration.params.len() {
                 continue;
             }
-            let mut expected_types = Vec::with_capacity(declaration.params.len());
-            for param in declaration.params.iter().take(actual_types.len()) {
-                expected_types.push(self.resolve_type_expr(&param.ty)?);
-            }
-            if expected_types.iter().zip(&actual_types).all(|(expected, actual)| expected.accepts(actual)) {
+
+            let accepted = if declaration.generic_params.is_empty() {
+                let mut expected_types = Vec::with_capacity(declaration.params.len());
+                for param in declaration.params.iter().take(actual_types.len()) {
+                    expected_types.push(self.resolve_type_expr(&param.ty)?);
+                }
+                expected_types.iter().zip(&actual_types).all(|(expected, actual)| expected.accepts(actual))
+            } else {
+                // A candidate's own generic params don't need to fully
+                // resolve for it to be ruled *in* or *out* here — only
+                // `bind_macro_arguments` (run once the overload is chosen)
+                // needs every one actually bound.
+                let generic_names: HashSet<&str> =
+                    declaration.generic_params.iter().map(|param| param_name(param)).collect();
+                let mut generic_scope = HashMap::new();
+                declaration
+                    .params
+                    .iter()
+                    .take(actual_types.len())
+                    .zip(&actual_types)
+                    .all(|(param, actual)| {
+                        self.unify_type_expr(&param.ty, actual, &generic_names, &mut generic_scope, param.span)
+                            .is_ok()
+                    })
+            };
+
+            if accepted {
                 matches.push((id, declaration));
             }
         }
@@ -220,6 +251,14 @@ impl<'a> AliasResolver<'a> {
             return Err(self.make_macro_depth_error(symbol, MAX_MACRO_CALL_DEPTH));
         }
 
+        // Installed fresh from each iteration's `bind_macro_arguments` below
+        // (a generic macro's own `T`/`const N`, inferred from this call's
+        // arguments) and restored to whatever it was before this call once
+        // the closure returns, the same push/pop-around-a-closure idiom
+        // `macro_call_stack` already uses — correctly nests across a
+        // recursive/nested macro call, generic or not.
+        let previous_generic_scope = std::mem::take(&mut self.generic_scope);
+
         self.macro_call_stack.push(symbol);
         let result = (|| {
             let mut arguments = arguments;
@@ -227,7 +266,8 @@ impl<'a> AliasResolver<'a> {
             let mut tail_calls = 0usize;
 
             loop {
-                let scope = self.bind_macro_arguments(declaration, arguments)?;
+                let (scope, generic_bindings) = self.bind_macro_arguments(declaration, arguments)?;
+                self.generic_scope = generic_bindings;
 
                 for hook in crate::facets::extract_exprs(&declaration.facets, "before") {
                     let hook_result = self.run_hook_template(&hook, &scope)?;
@@ -243,7 +283,7 @@ impl<'a> AliasResolver<'a> {
                     tail_calls += 1;
                     if tail_calls > MAX_TAIL_CALLS {
                         return Err(ResolveError::MacroTailCallLimitExceeded {
-                            name: declaration.name.clone(),
+                            name: macro_display_name(&declaration.name),
                             max_iterations: MAX_TAIL_CALLS,
                             span: declaration.span,
                         });
@@ -277,23 +317,35 @@ impl<'a> AliasResolver<'a> {
         })();
 
         self.macro_call_stack.pop();
+        self.generic_scope = previous_generic_scope;
         result
     }
 
+    /// Binds `declaration`'s params against already-evaluated `arguments`,
+    /// returning both the resulting value scope and — for a generic macro
+    /// — the bindings its own `T`/`const N` params picked up along the way,
+    /// inferred from each argument's actual type (see `unify_type_expr`).
+    /// Empty for a non-generic macro, which type-checks exactly as before.
     fn bind_macro_arguments(
         &mut self,
         declaration: &MacroDeclaration,
         arguments: Vec<Value>,
-    ) -> Result<HashMap<String, Value>, ResolveError> {
+    ) -> Result<(HashMap<String, Value>, HashMap<String, GenericBinding>), ResolveError> {
         let required = declaration.params.iter().filter(|param| param.default.is_none()).count();
         if arguments.len() < required || arguments.len() > declaration.params.len() {
             return Err(ResolveError::InvalidArgumentCount {
-                name: declaration.name.clone(), expected: declaration.params.len(),
+                name: macro_display_name(&declaration.name), expected: declaration.params.len(),
                 actual: arguments.len(), span: declaration.span,
             });
         }
+
+        let generic_names: HashSet<&str> =
+            declaration.generic_params.iter().map(|param| param_name(param)).collect();
+
         let mut scope = HashMap::new();
+        let mut generic_scope: HashMap<String, GenericBinding> = HashMap::new();
         let mut arguments = arguments.into_iter();
+
         for param in &declaration.params {
             let value = match arguments.next() {
                 Some(value) => value,
@@ -301,17 +353,156 @@ impl<'a> AliasResolver<'a> {
                     param.default.as_ref().expect("arity check guarantees a default"), &scope,
                 )?,
             };
-            let expected = self.resolve_type_expr(&param.ty)?;
             let actual = self.value_type(&value)?;
-            if !expected.accepts(&actual) {
-                return Err(ResolveError::TypeMismatch {
-                    name: param.name.clone(), expected: describe_type(&expected, self.symbols),
-                    actual: describe_type(&actual, self.symbols), span: param.span,
-                });
+
+            if generic_names.is_empty() {
+                let expected = self.resolve_type_expr(&param.ty)?;
+                if !expected.accepts(&actual) {
+                    return Err(ResolveError::TypeMismatch {
+                        name: param.name.clone(), expected: describe_type(&expected, self.symbols),
+                        actual: describe_type(&actual, self.symbols), span: param.span,
+                    });
+                }
+            } else {
+                self.unify_type_expr(&param.ty, &actual, &generic_names, &mut generic_scope, param.span)?;
             }
+
             scope.insert(param.name.clone(), value);
         }
-        Ok(scope)
+
+        for param in &declaration.generic_params {
+            let name = param_name(param);
+            if !generic_scope.contains_key(name) {
+                return Err(ResolveError::UnresolvedMacroGenericParam {
+                    name: name.to_string(),
+                    macro_name: macro_display_name(&declaration.name),
+                    span: declaration.span,
+                });
+            }
+        }
+
+        // A bound `const` generic param is also an ordinary value inside
+        // the body — mirrors `eval_call_value`'s `default_scope` doing the
+        // same for a struct's own bound const generic args.
+        for (name, binding) in &generic_scope {
+            if let GenericBinding::Const(Some(value)) = binding {
+                scope.insert(name.clone(), Value::Int(value.clone()));
+            }
+        }
+
+        Ok((scope, generic_scope))
+    }
+
+    /// Binds `expected`'s free occurrences of one of `declaration`'s own
+    /// generic params (`generic_names`) against the concrete `actual` type
+    /// a call-site argument actually has — inference, the same way Rust
+    /// infers a generic function's type params from its arguments, since a
+    /// macro call has no `<...>` slot to supply them explicitly. A second,
+    /// conflicting binding for an already-bound name, or any structural
+    /// mismatch (wrong struct/enum, wrong arity, a non-generic leaf that
+    /// doesn't match), is a `TypeMismatch`.
+    fn unify_type_expr(
+        &mut self,
+        expected: &TypeExpr,
+        actual: &ResolvedType,
+        generic_names: &HashSet<&str>,
+        scope: &mut HashMap<String, GenericBinding>,
+        span: Span,
+    ) -> Result<(), ResolveError> {
+        if let TypeExpr::Named { path, .. } = expected {
+            if path.len() == 1 && generic_names.contains(path[0].as_str()) {
+                let name = &path[0];
+                return match scope.get(name) {
+                    Some(GenericBinding::Type(bound)) if bound == actual => Ok(()),
+                    Some(bound_wrong_kind @ GenericBinding::Const(_)) => Err(ResolveError::TypeMismatch {
+                        name: name.clone(),
+                        expected: format!("{bound_wrong_kind:?}"),
+                        actual: describe_type(actual, self.symbols),
+                        span,
+                    }),
+                    Some(GenericBinding::Type(bound)) => Err(ResolveError::TypeMismatch {
+                        name: name.clone(),
+                        expected: describe_type(bound, self.symbols),
+                        actual: describe_type(actual, self.symbols),
+                        span,
+                    }),
+                    None => {
+                        scope.insert(name.clone(), GenericBinding::Type(actual.clone()));
+                        Ok(())
+                    }
+                };
+            }
+        }
+
+        if let TypeExpr::Apply { base, args, .. } = expected {
+            let mismatch = || ResolveError::TypeMismatch {
+                name: expected.name().unwrap_or("<generic argument>").to_string(),
+                expected: format!("{base:?}<...>"),
+                actual: describe_type(actual, self.symbols),
+                span,
+            };
+
+            let base_resolved = self.resolve_type_expr(base)?;
+            let actual_args: &[ResolvedGenericArg] = match (&base_resolved, actual) {
+                (ResolvedType::Struct { symbol, .. }, ResolvedType::Struct { symbol: actual_symbol, args })
+                    if symbol == actual_symbol => args,
+                (ResolvedType::Enum { symbol, .. }, ResolvedType::Enum { symbol: actual_symbol, args })
+                    if symbol == actual_symbol => args,
+                _ => return Err(mismatch()),
+            };
+
+            if args.len() != actual_args.len() {
+                return Err(mismatch());
+            }
+
+            for (arg, actual_arg) in args.iter().zip(actual_args) {
+                match (arg, actual_arg) {
+                    (TypeArgument::Type(inner), ResolvedGenericArg::Type(actual_inner)) => {
+                        self.unify_type_expr(inner, actual_inner, generic_names, scope, span)?;
+                    }
+
+                    (TypeArgument::Const(expr), ResolvedGenericArg::Const(value)) => {
+                        if let Expr::Identifier { name, .. } = expr {
+                            if generic_names.contains(name.as_str()) {
+                                match scope.get(name) {
+                                    Some(GenericBinding::Const(Some(bound))) if bound == value => {}
+                                    Some(_) => return Err(mismatch()),
+                                    None => {
+                                        scope.insert(name.clone(), GenericBinding::Const(Some(value.clone())));
+                                    }
+                                }
+                                continue;
+                            }
+                        }
+
+                        if self.eval_const_expr(expr)? != *value {
+                            return Err(mismatch());
+                        }
+                    }
+
+                    (TypeArgument::Wildcard(_), _) => {}
+
+                    _ => return Err(mismatch()),
+                }
+            }
+
+            return Ok(());
+        }
+
+        // An ordinary, non-generic leaf type (`int`, a concrete struct with
+        // no generics referenced, etc.) — checked exactly like a
+        // non-generic macro's parameter always has been.
+        let resolved = self.resolve_type_expr(expected)?;
+        if resolved.accepts(actual) {
+            Ok(())
+        } else {
+            Err(ResolveError::TypeMismatch {
+                name: expected.name().unwrap_or("<type>").to_string(),
+                expected: describe_type(&resolved, self.symbols),
+                actual: describe_type(actual, self.symbols),
+                span,
+            })
+        }
     }
 
     fn run_hook_template(
@@ -567,15 +758,46 @@ impl<'a> AliasResolver<'a> {
                     scope.insert(name, value);
                 }
 
-                Statement::Struct(_)
-                | Statement::Enum(_)
-                | Statement::TypeAlias(_)
-                | Statement::Macro(_)
-                | Statement::Label(_) => {
-                    // Their own name/body can't contain a splice yet (see
-                    // the module doc), so there's nothing to rewrite —
-                    // captured verbatim, to be spliced into the program
-                    // wherever this expansion's call site was.
+                // Only the declaration's own name is spliced (see the
+                // module doc) — everything else about it is captured
+                // verbatim, to be resolved later wherever this expansion's
+                // call site spliced it back into the program.
+                Statement::Struct(decl) => {
+                    let mut decl = decl.clone();
+                    decl.name = self.splice_decl_name(&decl.name, &scope)?;
+                    let spliced = Statement::Struct(decl);
+                    self.register_generated(&spliced)?;
+                    generated.push(spliced);
+                }
+
+                Statement::Enum(decl) => {
+                    let mut decl = decl.clone();
+                    decl.name = self.splice_decl_name(&decl.name, &scope)?;
+                    let spliced = Statement::Enum(decl);
+                    self.register_generated(&spliced)?;
+                    generated.push(spliced);
+                }
+
+                Statement::TypeAlias(decl) => {
+                    let mut decl = decl.clone();
+                    decl.name = self.splice_decl_name(&decl.name, &scope)?;
+                    let spliced = Statement::TypeAlias(decl);
+                    self.register_generated(&spliced)?;
+                    generated.push(spliced);
+                }
+
+                Statement::Macro(decl) => {
+                    let mut decl = decl.clone();
+                    decl.name = self.splice_decl_name(&decl.name, &scope)?;
+                    let spliced = Statement::Macro(decl);
+                    self.register_generated(&spliced)?;
+                    generated.push(spliced);
+                }
+
+                Statement::Label(_) => {
+                    // Label names aren't spliceable name positions at all
+                    // (a plain `String`, not a `SplicedName`) — captured
+                    // verbatim.
                     self.register_generated(statement)?;
                     generated.push(statement.clone());
                 }
@@ -666,6 +888,19 @@ impl<'a> AliasResolver<'a> {
         }
 
         Ok((self.eval_value(pattern, scope)? == *value).then(HashMap::new))
+    }
+
+    /// Resolves a nested struct/enum/type-alias/macro declaration's own
+    /// name against this expansion's scope, the `SplicedName` sibling of
+    /// `splice_const`'s name handling — the rest of the declaration isn't
+    /// spliced (see the module doc), only this.
+    fn splice_decl_name(
+        &mut self,
+        name: &[NamePart],
+        scope: &HashMap<String, Value>,
+    ) -> Result<crate::ast::SplicedName, ResolveError> {
+        let literal = self.resolve_spliced_name(name, scope)?;
+        Ok(vec![NamePart::Literal(literal)])
     }
 
     fn splice_const(
@@ -884,7 +1119,7 @@ mod tests {
             .statements
             .iter()
             .find_map(|statement| match statement {
-                Statement::Macro(decl) if decl.name == name => Some(decl),
+                Statement::Macro(decl) if literal_name(&decl.name).as_deref() == Some(name) => Some(decl),
                 _ => None,
             })
             .unwrap_or_else(|| panic!("expected a macro named `{name}`"))
@@ -1458,9 +1693,9 @@ mod tests {
         assert_eq!(result.emitted, vec![Value::Int(Int::from(1))]);
         assert_eq!(result.generated.len(), 4);
 
-        assert!(matches!(&result.generated[0], Statement::Struct(decl) if decl.name == "Foo"));
-        assert!(matches!(&result.generated[1], Statement::TypeAlias(decl) if decl.name == "Bar"));
-        assert!(matches!(&result.generated[2], Statement::Macro(decl) if decl.name == "helper"));
+        assert!(matches!(&result.generated[0], Statement::Struct(decl) if literal_name(&decl.name).as_deref() == Some("Foo")));
+        assert!(matches!(&result.generated[1], Statement::TypeAlias(decl) if literal_name(&decl.name).as_deref() == Some("Bar")));
+        assert!(matches!(&result.generated[2], Statement::Macro(decl) if literal_name(&decl.name).as_deref() == Some("helper")));
         assert!(matches!(&result.generated[3], Statement::Label(label) if label.name == "start"));
 
         // Top-level-only scoping: `collect_symbols` never descends into a
@@ -1469,6 +1704,56 @@ mod tests {
         // `SymbolKind::Label` and stays completely uninvolved in label
         // resolution.
         assert_eq!(symbols.lookup("start"), None);
+    }
+
+    #[test]
+    fn nested_declaration_name_is_spliced_per_invocation() {
+        let program = parse_fixture("generated_declaration_spliced_name.basm");
+
+        let declaration = find_macro(&program, "make_reg_type");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("make_reg_type").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let result = resolver
+            .run_macro_body(symbol, declaration, vec![Value::Int(Int::from(3))], &mut stack)
+            .unwrap();
+
+        assert_eq!(result.generated.len(), 1);
+        assert!(matches!(
+            &result.generated[0],
+            Statement::Struct(decl) if literal_name(&decl.name).as_deref() == Some("Reg3")
+        ));
+    }
+
+    #[test]
+    fn generic_macro_infers_type_param_from_a_real_array_argument() {
+        let program = parse_fixture("generic_macro_array_updated.basm");
+
+        let invocation = find_invocation(&program, "updated");
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let result = resolver.expand_invocation(invocation, &HashMap::new()).unwrap();
+
+        let Some(Value::Struct { fields, .. }) = result.returned else {
+            panic!("expected `updated` to return a struct value");
+        };
+
+        let field = |name: &str| {
+            fields
+                .iter()
+                .find(|(field_name, _)| field_name == name)
+                .map(|(_, value)| value.clone())
+                .unwrap_or_else(|| panic!("expected a `{name}` field"))
+        };
+
+        assert_eq!(field("__el0"), Value::Int(Int::from(10)));
+        assert_eq!(field("__el1"), Value::Int(Int::from(99)));
+        assert_eq!(field("__el2"), Value::Int(Int::from(30)));
     }
 
     #[test]

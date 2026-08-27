@@ -54,7 +54,7 @@ pub fn print_statement(statement: &Statement, indent: usize) -> String {
                 None => variant.name.clone(),
             }).collect::<Vec<_>>().join(", ");
 
-            format!("{pad}{pub_kw}enum {name}{generics} {{ {variants} }}", name = decl.name)
+            format!("{pad}{pub_kw}enum {name}{generics} {{ {variants} }}", name = print_spliced_name(&decl.name))
         }
 
         Statement::TypeAlias(decl) => {
@@ -64,7 +64,7 @@ pub fn print_statement(statement: &Statement, indent: usize) -> String {
 
             format!(
                 "{pad}{pub_kw}type {name}{generics} = {ty}{facets}",
-                name = decl.name,
+                name = print_spliced_name(&decl.name),
                 ty = print_type_expr(&decl.ty),
             )
         }
@@ -160,7 +160,7 @@ fn print_struct(decl: &StructDeclaration, indent: usize) -> String {
 
     format!(
         "{pad}{pub_kw}struct {name}{generics}{facets}\n{pad}{{\n{fields}\n{pad}}}",
-        name = decl.name,
+        name = print_spliced_name(&decl.name),
     )
 }
 
@@ -215,6 +215,7 @@ fn print_struct_field(field: &StructField, indent: usize) -> String {
 fn print_macro(decl: &MacroDeclaration, indent: usize) -> String {
     let pad = INDENT.repeat(indent);
     let pub_kw = if decl.is_pub { "pub " } else { "" };
+    let generics = print_generic_params(&decl.generic_params);
 
     let params = decl
         .params
@@ -232,8 +233,8 @@ fn print_macro(decl: &MacroDeclaration, indent: usize) -> String {
     let body = print_statements(&decl.body, indent + 1);
 
     format!(
-        "{pad}{pub_kw}macro {name}({params}){return_ty}{facets}\n{pad}{{\n{body}\n{pad}}}",
-        name = decl.name,
+        "{pad}{pub_kw}macro {name}{generics}({params}){return_ty}{facets}\n{pad}{{\n{body}\n{pad}}}",
+        name = print_spliced_name(&decl.name),
     )
 }
 

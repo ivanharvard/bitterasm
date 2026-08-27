@@ -1,0 +1,5 @@
+macro make_reg_type(i: int) {
+    struct Reg`i` {
+        x: int
+    }
+}

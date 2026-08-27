@@ -1282,7 +1282,7 @@ mod tests {
 
     use std::path::Path;
 
-    use crate::ast::{Expr, Invocation, MacroDeclaration, Program, Statement};
+    use crate::ast::{literal_name, Expr, Invocation, MacroDeclaration, Program, Statement};
     use crate::eval::Int;
     use crate::lexer;
     use crate::parser;
@@ -1307,7 +1307,7 @@ mod tests {
             .statements
             .iter()
             .find_map(|statement| match statement {
-                Statement::Macro(decl) if decl.name == name => Some(decl),
+                Statement::Macro(decl) if literal_name(&decl.name).as_deref() == Some(name) => Some(decl),
                 _ => None,
             })
             .unwrap_or_else(|| panic!("expected a macro named `{name}`"))

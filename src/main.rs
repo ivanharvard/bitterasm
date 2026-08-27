@@ -3,7 +3,7 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::io::IsTerminal;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use bitterasm::ast::Statement;
 use bitterasm::expander::MacroTable;
@@ -38,27 +38,16 @@ enum Command {
         #[arg(short, long)]
         output: Option<PathBuf>,
 
-        #[arg(long, value_enum, default_value = "terminal")]
-        diagnostic_format: CliDiagnosticFormat,
+        #[command(flatten)]
+        diagnostics: DiagnosticCliOptions,
+    },
 
-        #[arg(long, value_enum, default_value = "auto")]
-        color: ColorChoice,
+    /// Run all diagnostics and semantic checks without writing output.
+    Check {
+        path: PathBuf,
 
-        #[arg(short = 'A', long = "allow", value_name = "LINT")]
-        /// Suppress a lint or lint group.
-        allow: Vec<String>,
-
-        #[arg(short = 'W', long = "warn", value_name = "LINT")]
-        /// Emit a lint or lint group as warnings.
-        warn: Vec<String>,
-
-        #[arg(short = 'D', long = "deny", value_name = "LINT")]
-        /// Promote a lint or lint group to errors.
-        deny: Vec<String>,
-
-        #[arg(short = 'F', long = "forbid", value_name = "LINT")]
-        /// Promote a lint to errors and prevent source-level lowering.
-        forbid: Vec<String>,
+        #[command(flatten)]
+        diagnostics: DiagnosticCliOptions,
     },
 
     /// Paste every macro invocation's body in place of its call, leaving
@@ -108,19 +97,34 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Compile {
-            path, output, diagnostic_format, color, allow, warn, deny, forbid,
-        } => compile(
-            &path,
-            output,
-            DiagnosticCliOptions { diagnostic_format, color, allow, warn, deny, forbid },
-        ),
+        Command::Compile { path, output, diagnostics } => compile(&path, output, diagnostics),
+
+        Command::Check { path, diagnostics } => check(&path, diagnostics),
 
         Command::Expand { path, depth, lines, chars, output } => {
             expand(&path, depth, lines, chars, output)
         }
 
         Command::Format { paths, check, config } => format_files(paths, check, config),
+    }
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    #[test]
+    fn check_accepts_compile_diagnostic_options() {
+        let cli = Cli::try_parse_from([
+            "bitterasm", "check", "program.basm", "--diagnostic-format", "json",
+            "--color", "never", "-D", "unused",
+        ]).unwrap();
+        let Command::Check { path, diagnostics } = cli.command else {
+            panic!("expected check command");
+        };
+        assert_eq!(path, PathBuf::from("program.basm"));
+        assert!(matches!(diagnostics.diagnostic_format, CliDiagnosticFormat::Json));
+        assert_eq!(diagnostics.deny, ["unused"]);
     }
 }
 
@@ -369,12 +373,28 @@ fn walk_top_level(
     Ok(())
 }
 
+#[derive(Debug, Args)]
 struct DiagnosticCliOptions {
+    #[arg(long, value_enum, default_value = "terminal")]
     diagnostic_format: CliDiagnosticFormat,
+
+    #[arg(long, value_enum, default_value = "auto")]
     color: ColorChoice,
+
+    /// Suppress a lint or lint group.
+    #[arg(short = 'A', long = "allow", value_name = "LINT")]
     allow: Vec<String>,
+
+    /// Emit a lint or lint group as warnings.
+    #[arg(short = 'W', long = "warn", value_name = "LINT")]
     warn: Vec<String>,
+
+    /// Promote a lint or lint group to errors.
+    #[arg(short = 'D', long = "deny", value_name = "LINT")]
     deny: Vec<String>,
+
+    /// Promote a lint to errors and prevent source-level lowering.
+    #[arg(short = 'F', long = "forbid", value_name = "LINT")]
     forbid: Vec<String>,
 }
 
@@ -423,7 +443,7 @@ fn emit_diagnostics(diagnostics: &[Diagnostic], run: &DiagnosticRun) -> bool {
     diagnostics.iter().any(|diagnostic| diagnostic.severity == Severity::Error)
 }
 
-fn compile(path: &Path, output: Option<PathBuf>, options: DiagnosticCliOptions) {
+fn analyze(path: &Path, options: DiagnosticCliOptions) -> (Expansion, DiagnosticRun) {
     let mut diagnostic_run = match prepare_diagnostics(path, &options) {
         Ok(run) => run,
         Err(error) => {
@@ -491,6 +511,17 @@ fn compile(path: &Path, output: Option<PathBuf>, options: DiagnosticCliOptions) 
             }
         }
     }
+
+    (expansion, diagnostic_run)
+}
+
+fn check(path: &Path, options: DiagnosticCliOptions) {
+    let _ = analyze(path, options);
+    println!("checked {}", path.display());
+}
+
+fn compile(path: &Path, output: Option<PathBuf>, options: DiagnosticCliOptions) {
+    let (expansion, _) = analyze(path, options);
 
     let emitted: Vec<emit::EmittedValue> = expansion
         .emitted

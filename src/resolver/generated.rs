@@ -56,19 +56,55 @@ impl<'a> AliasResolver<'a> {
     /// ordinary declarations still collide, while same-named generated
     /// macros join an overload set.
     pub(super) fn register_generated(&mut self, statement: &Statement) -> Result<(), ResolveError> {
+        // Every named case below is only ever reached with an
+        // already-literal name (the caller resolves any splice first — see
+        // `macro_body::walk_macro_body`'s per-kind splicing before it calls
+        // this).
         let (name, kind, span) = match statement {
-            Statement::Struct(decl) => (decl.name.clone(), SymbolKind::Struct, decl.span),
-            Statement::TypeAlias(decl) => (decl.name.clone(), SymbolKind::TypeAlias, decl.span),
-            Statement::Macro(decl) => (decl.name.clone(), SymbolKind::Macro, decl.span),
+            Statement::Struct(decl) => {
+                let name = crate::ast::literal_name(&decl.name).ok_or_else(|| ResolveError::Internal {
+                    message: "register_generated's Struct case requires an already-literal name"
+                        .to_string(),
+                    span: decl.span,
+                })?;
+
+                (name, SymbolKind::Struct, decl.span)
+            }
+
+            Statement::TypeAlias(decl) => {
+                let name = crate::ast::literal_name(&decl.name).ok_or_else(|| ResolveError::Internal {
+                    message: "register_generated's TypeAlias case requires an already-literal name"
+                        .to_string(),
+                    span: decl.span,
+                })?;
+
+                (name, SymbolKind::TypeAlias, decl.span)
+            }
+
+            Statement::Macro(decl) => {
+                let name = crate::ast::literal_name(&decl.name).ok_or_else(|| ResolveError::Internal {
+                    message: "register_generated's Macro case requires an already-literal name"
+                        .to_string(),
+                    span: decl.span,
+                })?;
+
+                (name, SymbolKind::Macro, decl.span)
+            }
+
             Statement::Label(label) => (label.name.clone(), SymbolKind::Label, label.span),
 
             // Generated enums use the same symbol-registration path as
             // source-level enums.
-            Statement::Enum(decl) => (decl.name.clone(), SymbolKind::Enum, decl.span),
+            Statement::Enum(decl) => {
+                let name = crate::ast::literal_name(&decl.name).ok_or_else(|| ResolveError::Internal {
+                    message: "register_generated's Enum case requires an already-literal name"
+                        .to_string(),
+                    span: decl.span,
+                })?;
 
-            // Only ever reached with an already-literal-named `pub const`
-            // (the caller resolves any splice in the name first via
-            // `splice_const` — see `macro_body::walk_macro_body`).
+                (name, SymbolKind::Enum, decl.span)
+            }
+
             Statement::Const(decl) => {
                 let name = crate::ast::literal_name(&decl.name).ok_or_else(|| ResolveError::Internal {
                     message: "register_generated's Const case requires an already-literal name"
@@ -143,7 +179,6 @@ impl<'a> AliasResolver<'a> {
                     span,
                 },
                 is_pub: true,
-                is_const: false,
                 default: None,
                 span,
             }));
@@ -156,7 +191,7 @@ impl<'a> AliasResolver<'a> {
         let name = format!("__range#{}", self.generated_symbols.len());
 
         let decl = Statement::Struct(StructDeclaration {
-            name: name.clone(),
+            name: vec![crate::ast::NamePart::Literal(name.clone())],
             is_pub: false,
             generic_params: Vec::new(),
             facets: Vec::new(),

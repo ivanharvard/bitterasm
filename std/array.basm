@@ -10,7 +10,7 @@ pub struct Array<T, const N: int>
     pub len: int = N,
 }
 
-macro oob_check(
+macro oob_check<T>(
     arr: Array<T, ...>,
     index: int
 ) -> int {
@@ -18,7 +18,7 @@ macro oob_check(
     @assert index < arr.len, "Index is greater than Array length"
 }
 
-pub macro get(arr: Array<T, ...>, index: int) -> T
+pub macro get<T>(arr: Array<T, ...>, index: int) -> T
     | syntax "get $arr$[$index$]"
     | before oob_check(arr, index)
 {
@@ -27,7 +27,7 @@ pub macro get(arr: Array<T, ...>, index: int) -> T
 
 # Since all basm objects are immutable, we need to return a new array with the
 # updated value
-pub macro updated(
+pub macro updated<T>(
     arr: Array<T, ...>,
     index: int,
     value: T
@@ -45,7 +45,7 @@ pub macro updated(
     }
 }
 
-pub macro reversed(arr: Array<T, ...>, index: int, value: T) -> Array<T, ...>
+pub macro reversed<T>(arr: Array<T, ...>) -> Array<T, ...>
 {
     @return Array<T, arr.len> {
         @for i in range(

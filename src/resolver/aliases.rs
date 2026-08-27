@@ -284,8 +284,17 @@ impl<'a> AliasResolver<'a> {
             return Ok(underlying);
         }
 
+        // Guaranteed literal by this point — `collect_symbols`/
+        // `register_generated` already reject a computed name before a
+        // declaration can reach real resolution.
+        let name = crate::ast::literal_name(&declaration.name).ok_or_else(|| ResolveError::Internal {
+            message: "wrap_if_invariant reached a type alias with an unresolved spliced name"
+                .to_string(),
+            span: declaration.span,
+        })?;
+
         let binder = super::facets::alias_invariant_binder(
-            &declaration.name,
+            &name,
             &declaration.generic_params,
             &declaration.facets,
             self.symbols,
@@ -596,7 +605,7 @@ impl<'a> AliasResolver<'a> {
 
         for statement in self.program.statements.iter().chain(&self.generated) {
             if let Statement::TypeAlias(declaration) = statement {
-                if declaration.name == symbol.name {
+                if crate::ast::literal_name(&declaration.name).as_deref() == Some(symbol.name.as_str()) {
                     return Ok(declaration);
                 }
             }
@@ -621,7 +630,7 @@ impl<'a> AliasResolver<'a> {
 
         for statement in self.program.statements.iter().chain(&self.generated) {
             if let Statement::Struct(declaration) = statement {
-                if declaration.name == symbol.name {
+                if crate::ast::literal_name(&declaration.name).as_deref() == Some(symbol.name.as_str()) {
                     return Ok(declaration);
                 }
             }
@@ -645,7 +654,7 @@ impl<'a> AliasResolver<'a> {
         let symbol = self.get_symbol(id);
         for statement in self.program.statements.iter().chain(&self.generated) {
             if let Statement::Enum(declaration) = statement {
-                if declaration.name == symbol.name {
+                if crate::ast::literal_name(&declaration.name).as_deref() == Some(symbol.name.as_str()) {
                     return Ok(declaration);
                 }
             }
@@ -680,7 +689,9 @@ impl<'a> AliasResolver<'a> {
         if let Some(declaration) = statements
             .iter()
             .filter_map(|statement| match statement {
-                Statement::Macro(declaration) if declaration.name == symbol.name => {
+                Statement::Macro(declaration)
+                    if crate::ast::literal_name(&declaration.name).as_deref() == Some(symbol.name.as_str()) =>
+                {
                     Some(declaration)
                 }
                 _ => None,

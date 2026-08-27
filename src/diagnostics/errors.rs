@@ -56,6 +56,7 @@ pub fn resolve_error(error: ResolveError, source: Option<SourceId>) -> Diagnosti
         AmbiguousMacroOverload { name, actual, span } => (format!("multiple overloads of `{name}` accept ({})", actual.join(", ")), span),
         MacroCallDepthExceeded { call_chain, max_depth, span } => (format!("macro call depth exceeded {max_depth}: {}", call_chain.join(" -> ")), span),
         MacroTailCallLimitExceeded { name, max_iterations, span } => (format!("tail call in `{name}` exceeded {max_iterations} iterations"), span),
+        UnresolvedMacroGenericParam { name, macro_name, span } => (format!("macro `{macro_name}`'s generic param `{name}` couldn't be inferred from any argument"), span),
         AssertionFailed { message, span } => (message.unwrap_or_else(|| "assertion failed".into()), span),
         InvalidAssertMessage { span } => ("assertion message must be a string literal".into(), span),
         TypeMismatch { name, expected, actual, span } => (format!("type mismatch for `{name}`: expected `{expected}`, found `{actual}`"), span),

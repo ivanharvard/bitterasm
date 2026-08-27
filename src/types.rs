@@ -114,11 +114,6 @@ pub struct StructField {
     /// iterated. See `resolver::generated::eval_for_source`.
     pub is_pub: bool,
 
-    /// `const name: Type` — parsed, not yet enforced (no additional
-    /// resolver checking beyond ordinary type-checking). See
-    /// An architecture package's `pub const id: bits<2>`.
-    pub is_const: bool,
-
     /// `= expr` — evaluated (against the struct's own bound generic const
     /// args, not sibling field values) and used only when this field is
     /// omitted from a paren-call or brace-literal construction.

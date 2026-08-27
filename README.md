@@ -148,7 +148,12 @@ Command-line settings override project settings:
 ```sh
 bitterasm compile program.basm -A unused_parameter
 bitterasm compile program.basm -D unreachable_code
+bitterasm check program.basm
 ```
+
+`bitterasm check` runs the same lints, loading, resolution, and expansion
+validation as `compile`, but does not serialize emitted values or create a
+`.em` file. It accepts the same diagnostic and lint-level options.
 
 Use `--diagnostic-format terminal`, `plain`, or `json`. Terminal color is
 controlled with `--color auto|always|never`; automatic color also respects

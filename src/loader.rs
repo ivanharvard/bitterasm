@@ -249,13 +249,13 @@ fn load_module(
 
     stack.pop();
 
-    let own_private_names: HashSet<&str> = program
+    let own_private_names: HashSet<String> = program
         .statements
         .iter()
         .filter_map(|statement| match statement {
-            Statement::Struct(decl) if !decl.is_pub => Some(decl.name.as_str()),
-            Statement::TypeAlias(decl) if !decl.is_pub => Some(decl.name.as_str()),
-            Statement::Macro(decl) if !decl.is_pub => Some(decl.name.as_str()),
+            Statement::Struct(decl) if !decl.is_pub => literal_name(&decl.name),
+            Statement::TypeAlias(decl) if !decl.is_pub => literal_name(&decl.name),
+            Statement::Macro(decl) if !decl.is_pub => literal_name(&decl.name),
             _ => None,
         })
         .collect();
@@ -410,19 +410,19 @@ fn collect_declarations(
 }
 
 // A name and whether it's reachable from outside the file that declared it.
-// `Const`'s name can in principle carry a splice, but only meaningfully so
-// once it's generated from inside a live macro body — a top-level const
+// Every one of these can in principle carry a splice, but only meaningfully
+// so once generated from inside a live macro body — a top-level declaration
 // (the only kind this function ever sees; `build_rename_map` doesn't
-// descend into macro bodies) is always fully literal, so a non-literal
-// name here just means there's nothing to add to the rename map for it —
+// descend into macro bodies) is always fully literal, so a non-literal name
+// here just means there's nothing to add to the rename map for it —
 // `resolver::collect_symbols` is what rejects that case with a real error.
 fn declaration_name(statement: &Statement) -> Option<(String, bool)> {
     match statement {
-        Statement::Struct(decl) => Some((decl.name.clone(), decl.is_pub)),
-        Statement::Enum(decl) => Some((decl.name.clone(), decl.is_pub)),
-        Statement::TypeAlias(decl) => Some((decl.name.clone(), decl.is_pub)),
+        Statement::Struct(decl) => literal_name(&decl.name).map(|name| (name, decl.is_pub)),
+        Statement::Enum(decl) => literal_name(&decl.name).map(|name| (name, decl.is_pub)),
+        Statement::TypeAlias(decl) => literal_name(&decl.name).map(|name| (name, decl.is_pub)),
         Statement::Const(decl) => literal_name(&decl.name).map(|name| (name, decl.is_pub)),
-        Statement::Macro(decl) => Some((decl.name.clone(), decl.is_pub)),
+        Statement::Macro(decl) => literal_name(&decl.name).map(|name| (name, decl.is_pub)),
         _ => None,
     }
 }
@@ -456,9 +456,13 @@ fn build_rename_map(statements: &[Statement], module_id: usize) -> HashMap<Strin
 fn rename_statement(statement: &mut Statement, renames: &HashMap<String, String>) {
     match statement {
         Statement::Struct(decl) => {
-            if let Some(mangled) = renames.get(&decl.name) {
-                decl.name = mangled.clone();
+            if let Some(literal) = literal_name(&decl.name) {
+                if let Some(mangled) = renames.get(&literal) {
+                    decl.name = vec![NamePart::Literal(mangled.clone())];
+                }
             }
+
+            rename_spliced_name(&mut decl.name, renames);
 
             for param in &mut decl.generic_params {
                 rename_generic_parameter(param, renames);
@@ -472,9 +476,13 @@ fn rename_statement(statement: &mut Statement, renames: &HashMap<String, String>
         }
 
         Statement::TypeAlias(decl) => {
-            if let Some(mangled) = renames.get(&decl.name) {
-                decl.name = mangled.clone();
+            if let Some(literal) = literal_name(&decl.name) {
+                if let Some(mangled) = renames.get(&literal) {
+                    decl.name = vec![NamePart::Literal(mangled.clone())];
+                }
             }
+
+            rename_spliced_name(&mut decl.name, renames);
 
             for param in &mut decl.generic_params {
                 rename_generic_parameter(param, renames);
@@ -504,8 +512,16 @@ fn rename_statement(statement: &mut Statement, renames: &HashMap<String, String>
         }
 
         Statement::Macro(decl) => {
-            if let Some(mangled) = renames.get(&decl.name) {
-                decl.name = mangled.clone();
+            if let Some(literal) = literal_name(&decl.name) {
+                if let Some(mangled) = renames.get(&literal) {
+                    decl.name = vec![NamePart::Literal(mangled.clone())];
+                }
+            }
+
+            rename_spliced_name(&mut decl.name, renames);
+
+            for param in &mut decl.generic_params {
+                rename_generic_parameter(param, renames);
             }
 
             for param in &mut decl.params {
@@ -528,9 +544,14 @@ fn rename_statement(statement: &mut Statement, renames: &HashMap<String, String>
         Statement::Meta(meta) => rename_meta_statement(meta, renames),
 
         Statement::Enum(decl) => {
-            if let Some(mangled) = renames.get(&decl.name) {
-                decl.name = mangled.clone();
+            if let Some(literal) = literal_name(&decl.name) {
+                if let Some(mangled) = renames.get(&literal) {
+                    decl.name = vec![NamePart::Literal(mangled.clone())];
+                }
             }
+
+            rename_spliced_name(&mut decl.name, renames);
+
             for param in &mut decl.generic_params {
                 rename_generic_parameter(param, renames);
             }
@@ -851,7 +872,7 @@ mod tests {
             .statements
             .iter()
             .find_map(|statement| match statement {
-                Statement::Struct(decl) if decl.name == "bits" => Some(decl),
+                Statement::Struct(decl) if literal_name(&decl.name).as_deref() == Some("bits") => Some(decl),
                 _ => None,
             })
             .expect("bits struct should be spliced in from std.binary.native");
@@ -952,7 +973,7 @@ mod tests {
         let program = load_program(&dir.join("importer.basm")).expect("importer.basm should load");
 
         assert!(program.statements.iter().any(
-            |statement| matches!(statement, Statement::Struct(decl) if decl.name == "TheStruct")
+            |statement| matches!(statement, Statement::Struct(decl) if literal_name(&decl.name).as_deref() == Some("TheStruct"))
         ));
 
         assert!(program.statements.iter().any(
@@ -976,7 +997,7 @@ mod tests {
         let bits_count = program
             .statements
             .iter()
-            .filter(|statement| matches!(statement, Statement::Struct(decl) if decl.name == "bits"))
+            .filter(|statement| matches!(statement, Statement::Struct(decl) if literal_name(&decl.name).as_deref() == Some("bits")))
             .count();
 
         assert_eq!(bits_count, 1);

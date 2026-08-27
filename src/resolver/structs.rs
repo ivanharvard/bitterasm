@@ -55,7 +55,7 @@ impl<'a> AliasResolver<'a> {
             .find(|variant| variant.name == variant_name)
             .cloned()
             .ok_or_else(|| ResolveError::UnknownField {
-                type_name: declaration.name.clone(),
+                type_name: self.get_symbol(id).name.clone(),
                 field: variant_name.to_string(),
                 span,
             })?;

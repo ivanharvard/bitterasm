@@ -1,4 +1,4 @@
-use crate::ast::FacetPayload;
+use crate::ast::{literal_name, FacetPayload};
 
 use super::*;
 
@@ -230,7 +230,9 @@ impl Parser {
 
         self.expect_simple(TokenKind::Macro)?;
 
-        let name = self.expect_identifier()?;
+        let (name, _) = self.parse_spliced_name()?;
+
+        let generic_params = self.parse_generic_params()?;
 
         self.expect_simple(TokenKind::LParen)?;
         self.skip_newlines();
@@ -278,12 +280,18 @@ impl Parser {
                 ));
             };
 
-            let param_names: Vec<String> = params.iter().map(|param| param.name.clone()).collect();
+            // A computed (spliced) macro name only ever occurs generated
+            // from inside another macro's body, where a static `syntax`
+            // pattern registration (a parser-only, pre-evaluation concern)
+            // doesn't apply — skip it rather than erroring.
+            if let Some(literal) = literal_name(&name) {
+                let param_names: Vec<String> = params.iter().map(|param| param.name.clone()).collect();
 
-            let pattern = crate::facets::syntax::parse_pattern(&name, value, &param_names)
-                .map_err(|message| ParseError::new(message, facet.span))?;
+                let pattern = crate::facets::syntax::parse_pattern(&literal, value, &param_names)
+                    .map_err(|message| ParseError::new(message, facet.span))?;
 
-            self.register_macro_syntax(&name, pattern);
+                self.register_macro_syntax(&literal, pattern);
+            }
         }
 
         self.skip_newlines();
@@ -295,6 +303,7 @@ impl Parser {
         Ok(MacroDeclaration {
             name,
             is_pub,
+            generic_params,
             params,
             return_ty,
             facets,

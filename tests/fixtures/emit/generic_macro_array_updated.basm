@@ -1,0 +1,20 @@
+struct Array<T, const N: int> {
+    pub __el0: T,
+    pub __el1: T,
+    pub __el2: T,
+    pub len: int = N,
+}
+
+pub macro updated<T>(arr: Array<T, ...>, index: int, value: T) -> Array<T, ...> {
+    @if index == 0 {
+        @return Array<T, arr.len> { __el0: value, __el1: arr.__el1, __el2: arr.__el2 }
+    }
+    @if index == 1 {
+        @return Array<T, arr.len> { __el0: arr.__el0, __el1: value, __el2: arr.__el2 }
+    }
+    @return Array<T, arr.len> { __el0: arr.__el0, __el1: arr.__el1, __el2: value }
+}
+
+const arr = Array<int, 3> { __el0: 10, __el1: 20, __el2: 30 }
+
+updated arr, 1, 99

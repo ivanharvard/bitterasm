@@ -1,4 +1,4 @@
-use crate::ast::{EnumDeclaration, EnumVariantDeclaration, StructDeclaration};
+use crate::ast::{literal_name, EnumDeclaration, EnumVariantDeclaration, StructDeclaration};
 
 use super::*;
 
@@ -15,10 +15,12 @@ impl Parser {
 
         self.expect_simple(TokenKind::Enum)?;
 
-        let name = self.expect_identifier()?;
+        let (name, _) = self.parse_spliced_name()?;
 
         let generic_params = self.parse_generic_params()?;
-        self.register_generic_signature(&name, &generic_params);
+        if let Some(literal) = literal_name(&name) {
+            self.register_generic_signature(&literal, &generic_params);
+        }
 
         self.skip_newlines();
         self.expect_simple(TokenKind::LBrace)?;
@@ -87,11 +89,13 @@ impl Parser {
 
         self.expect_simple(TokenKind::Struct)?;
 
-        let name = self.expect_identifier()?;
+        let (name, _) = self.parse_spliced_name()?;
 
         let generic_params = self.parse_generic_params()?;
 
-        self.register_generic_signature(&name, &generic_params);
+        if let Some(literal) = literal_name(&name) {
+            self.register_generic_signature(&literal, &generic_params);
+        }
 
         let facets = self.parse_facet_list(true)?;
 
@@ -254,13 +258,6 @@ impl Parser {
             false
         };
 
-        let is_const = if self.check(&TokenKind::Const) {
-            self.advance();
-            true
-        } else {
-            false
-        };
-
         let (name, _) = self.parse_spliced_name()?;
 
         self.expect_simple(TokenKind::Colon)?;
@@ -284,7 +281,6 @@ impl Parser {
             name,
             ty,
             is_pub,
-            is_const,
             default,
             span: Span::new(start, end),
         })
@@ -302,12 +298,14 @@ impl Parser {
 
         self.expect_simple(TokenKind::Type)?;
 
-        let name = self.expect_identifier()?;
+        let (name, _) = self.parse_spliced_name()?;
 
         let generic_params =
             self.parse_generic_params()?;
 
-        self.register_generic_signature(&name, &generic_params);
+        if let Some(literal) = literal_name(&name) {
+            self.register_generic_signature(&literal, &generic_params);
+        }
 
         self.expect_simple(TokenKind::Equal)?;
 

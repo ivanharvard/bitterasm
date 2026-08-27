@@ -34,38 +34,39 @@ pub fn collect_symbols(program: &Program) -> Result<SymbolTable, ResolveError> {
 
     for statement in &program.statements {
         let result = match statement {
+            // A top-level struct/enum/type-alias/macro's name can't contain
+            // an unevaluated `` `expr` `` splice — evaluating one needs a
+            // live macro invocation's scope (see
+            // `resolver::values::AliasResolver::resolve_spliced_name`),
+            // which doesn't exist yet at this point (symbol collection runs
+            // before any evaluation at all). A splice-generated name only
+            // ever makes sense on a declaration produced from inside a
+            // macro body — see `resolver::macro_body`.
             Statement::Struct(decl) => {
-                table.insert(
-                    decl.name.clone(),
-                    SymbolKind::Struct,
-                    decl.span,
-                )
+                let Some(name) = crate::ast::literal_name(&decl.name) else {
+                    return Err(ResolveError::ComputedNameNotAllowed { span: decl.span });
+                };
+
+                table.insert(name, SymbolKind::Struct, decl.span)
             }
 
             Statement::Enum(decl) => {
-                table.insert(
-                    decl.name.clone(),
-                    SymbolKind::Enum,
-                    decl.span,
-                )
+                let Some(name) = crate::ast::literal_name(&decl.name) else {
+                    return Err(ResolveError::ComputedNameNotAllowed { span: decl.span });
+                };
+
+                table.insert(name, SymbolKind::Enum, decl.span)
             }
 
             Statement::TypeAlias(decl) => {
-                table.insert(
-                    decl.name.clone(),
-                    SymbolKind::TypeAlias,
-                    decl.span,
-                )
+                let Some(name) = crate::ast::literal_name(&decl.name) else {
+                    return Err(ResolveError::ComputedNameNotAllowed { span: decl.span });
+                };
+
+                table.insert(name, SymbolKind::TypeAlias, decl.span)
             }
 
             Statement::Const(decl) => {
-                // A top-level const's name can't contain an unevaluated
-                // `` `expr` `` splice — evaluating one needs a live macro
-                // invocation's scope (see `resolver::values::AliasResolver::resolve_spliced_name`),
-                // which doesn't exist yet at this point (symbol collection
-                // runs before any evaluation at all). A splice-generated
-                // name only ever makes sense on a `pub const` produced
-                // from inside a macro body — see `resolver::macro_body`.
                 let Some(name) = crate::ast::literal_name(&decl.name) else {
                     return Err(ResolveError::ComputedNameNotAllowed { span: decl.span });
                 };
@@ -74,11 +75,11 @@ pub fn collect_symbols(program: &Program) -> Result<SymbolTable, ResolveError> {
             }
 
             Statement::Macro(decl) => {
-                table.insert(
-                    decl.name.clone(),
-                    SymbolKind::Macro,
-                    decl.span,
-                )
+                let Some(name) = crate::ast::literal_name(&decl.name) else {
+                    return Err(ResolveError::ComputedNameNotAllowed { span: decl.span });
+                };
+
+                table.insert(name, SymbolKind::Macro, decl.span)
             }
 
             // Only top-level labels are registered — `collect_symbols`
@@ -284,6 +285,16 @@ pub enum ResolveError {
         span: Span,
     },
 
+    /// One of a generic macro's own declared params (`T`/`const N`) never
+    /// appeared anywhere in its *value* parameters' types, so nothing at
+    /// the call site could infer it — macro calls have no `<...>` slot to
+    /// supply it explicitly instead (unlike a generic struct/enum/type).
+    UnresolvedMacroGenericParam {
+        name: String,
+        macro_name: String,
+        span: Span,
+    },
+
     // `@assert`'s condition (see `metas::assert`) evaluated to `0` —
     // falsy, under the language's `0`/`1` `Int` convention for booleans
     // (`crate::eval`'s module doc). `message` is the assertion's own
@@ -395,7 +406,8 @@ impl ResolveError {
             | Self::UnsupportedCallExpression { span } | Self::UnknownMacro { span, .. }
             | Self::ExpectedMacro { span, .. } | Self::NoMatchingMacroOverload { span, .. }
             | Self::AmbiguousMacroOverload { span, .. } | Self::MacroCallDepthExceeded { span, .. }
-            | Self::MacroTailCallLimitExceeded { span, .. } | Self::AssertionFailed { span, .. }
+            | Self::MacroTailCallLimitExceeded { span, .. } | Self::UnresolvedMacroGenericParam { span, .. }
+            | Self::AssertionFailed { span, .. }
             | Self::InvalidAssertMessage { span } | Self::TypeMismatch { span, .. }
             | Self::InvariantViolated { span, .. } | Self::CannotCoerce { span, .. }
             | Self::AmbiguousConversion { span, .. } | Self::AmbiguousInvariantBinder { span, .. }
