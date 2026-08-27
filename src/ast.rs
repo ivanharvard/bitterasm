@@ -398,6 +398,7 @@ pub struct MacroDeclaration {
 pub struct MacroParameter {
     pub name: String,
     pub ty: TypeExpr,
+    pub default: Option<Expr>,
     pub span: Span,
 }
 

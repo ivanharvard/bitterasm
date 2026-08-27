@@ -253,10 +253,34 @@ pub enum ResolveError {
         span: Span,
     },
 
-    // Direct or mutual macro self-invocation (`A -> B -> A`), mirroring
-    // `CyclicTypeAlias`/`CyclicConstant`'s shape.
-    CyclicMacroExpansion {
-        cycle: Vec<String>,
+    /// An overloaded macro name exists, but none of its signatures accepts
+    /// the evaluated argument list.
+    NoMatchingMacroOverload {
+        name: String,
+        actual: Vec<String>,
+        span: Span,
+    },
+
+    /// More than one overload has the same parameter types for this call.
+    AmbiguousMacroOverload {
+        name: String,
+        actual: Vec<String>,
+        span: Span,
+    },
+
+    /// A chain of statement and/or expression macro calls exceeded the
+    /// resolver's finite host-stack safety limit.
+    MacroCallDepthExceeded {
+        call_chain: Vec<String>,
+        max_depth: usize,
+        span: Span,
+    },
+
+    /// A direct self-tail-call kept restarting the same macro frame without
+    /// reaching a value-returning base case.
+    MacroTailCallLimitExceeded {
+        name: String,
+        max_iterations: usize,
         span: Span,
     },
 

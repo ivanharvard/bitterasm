@@ -1,56 +1,1087 @@
 from std.decimal import Decimal, Fraction
 
-pub macro ceil(x: int) -> int {
-    @return x
-}
-
-pub macro pow(
-    base: int,
-    exp: int
-) -> int {
-    @if exp == 0 {
-        @return 1
-    }
-
-    @return base * pow(base, exp - 1)
-}
-
-pub macro ceil(x: Decimal) -> int {
-    @return -((-x.value) / pow(10, x.scale))
-}
-
-pub macro ceil(x: Fraction) -> int {
-    @return -((-x.n) / x.d)
-}
+# Fixed-point results are truncated to `precision` decimal places. Four
+# guard digits are used internally. Embedded constants support 0..60 places.
+pub const DEFAULT_PRECISION: int = 16
+pub const GUARD_DIGITS: int = 4
+pub const CONSTANT_DIGITS: int = 60
 
 pub macro abs(x: int) -> int {
     @if x < 0 {
         @return -x
-    }
 
+    }
     @return x
 }
 
+pub macro min(
+    a: int,
+    b: int
+) -> int {
+    @if a < b {
+        @return a
+
+    }
+    @return b
+}
+
+pub macro max(
+    a: int,
+    b: int
+) -> int {
+    @if a > b {
+        @return a
+
+    }
+    @return b
+}
+
+pub macro sign(x: int) -> int {
+    @if x > 0 {
+        @return 1
+
+    }
+    @if x < 0 {
+        @return -1
+
+    }
+    @return 0
+}
+
 pub macro abs(x: Decimal) -> Decimal {
-    @return Decimal(abs(x.value), x.scale)
+    @return Decimal(value = abs(x.value), scale = x.scale)
 }
 
 pub macro abs(x: Fraction) -> Fraction {
-    @return Fraction(abs(x.n), abs(x.d))
+    @return Fraction(n = abs(x.n), d = abs(x.d))
 }
 
+pub macro sign(x: Decimal) -> int {
+    @return sign(x.value)
+}
+
+pub macro sign(x: Fraction) -> int {
+    @return sign(x.n) * sign(x.d)
+}
+
+pub macro copysign(
+    x: int,
+    y: int
+) -> int {
+    @return abs(x) * sign(y)
+}
+
+pub macro clamp(
+    x: int,
+    lo: int,
+    hi: int
+) -> int {
+    @assert lo <= hi, "clamp requires lo <= hi"
+    @return min(max(x, lo), hi)
+}
+
+macro _pow_acc(
+    base: int,
+    exponent: int,
+    accumulator: int
+) -> int {
+    @if exponent == 0 {
+        @return accumulator
+
+    }
+    @if exponent % 2 == 0 {
+        @return _pow_acc(
+            base * base,
+            exponent / 2,
+            accumulator
+        )
+
+    }
+    @return _pow_acc(base, exponent - 1, accumulator * base)
+}
+
+pub macro pow(
+    base: int,
+    exponent: int
+) -> int {
+    @assert exponent >= 0, "integer pow requires a nonnegative exponent"
+    @return _pow_acc(base, exponent, 1)
+}
+
+macro _pow10(exponent: int) -> int {
+    @return pow(10, exponent)
+}
+
+# Exact integer operations. gcd(0,0)=0, lcm is nonnegative, and
+# next_pow_of_two(0)=1. pow_mod requires exponent>=0 and modulus>0.
 pub macro gcd(
     a: int,
     b: int
 ) -> int {
     @if b == 0 {
         @return abs(a)
-    }
 
+    }
     @return gcd(b, a % b)
 }
 
+pub macro lcm(
+    a: int,
+    b: int
+) -> int {
+    @if a == 0 || b == 0 {
+        @return 0
+
+    }
+    @return abs((a / gcd(a, b)) * b)
+}
+
+pub macro div_floor(
+    a: int,
+    b: int
+) -> int {
+    @assert b != 0, "division by zero"
+    const q = a / b
+    const r = a % b
+    @if r != 0 && ((r < 0) != (b < 0)) {
+        @return q - 1
+
+    }
+    @return q
+}
+
+pub macro div_ceil(
+    a: int,
+    b: int
+) -> int {
+    @return -div_floor(-a, b)
+}
+
+pub macro rem_euclid(
+    a: int,
+    b: int
+) -> int {
+    @assert b != 0, "division by zero"
+    const r = a % b
+    @if r < 0 {
+        @return r + abs(b)
+
+    }
+    @return r
+}
+
+pub macro div_euclid(
+    a: int,
+    b: int
+) -> int {
+    @return (a - rem_euclid(a, b)) / b
+}
+
+macro _pow_mod(
+    base: int,
+    exponent: int,
+    modulus: int,
+    accumulator: int
+) -> int {
+    @if exponent == 0 {
+        @return accumulator
+
+    }
+    @if exponent % 2 == 0 {
+        @return _pow_mod(
+            rem_euclid(base * base, modulus),
+            exponent / 2,
+            modulus,
+            accumulator
+        )
+
+    }
+    @return _pow_mod(
+        base,
+        exponent - 1,
+        modulus,
+        rem_euclid(accumulator * base, modulus)
+    )
+}
+
+pub macro pow_mod(
+    base: int,
+    exponent: int,
+    modulus: int
+) -> int {
+    @assert exponent >= 0, "pow_mod requires a nonnegative exponent"
+    @assert modulus > 0, "pow_mod requires a positive modulus"
+    @return _pow_mod(
+        rem_euclid(base, modulus),
+        exponent,
+        modulus,
+        rem_euclid(1, modulus)
+    )
+}
+
+macro _iroot(
+    n: int,
+    degree: int,
+    guess: int
+) -> int {
+    @if n == 0 {
+        @return 0
+    }
+    const next = ((degree - 1) * guess + n / pow(guess, degree - 1)) / degree
+    @if next >= guess {
+        @return guess
+
+    }
+    @return _iroot(n, degree, next)
+}
+
+pub macro isqrt(x: int) -> int {
+    @assert x >= 0, "isqrt is undefined for negative integers"
+    @if x < 2 {
+        @return x
+
+    }
+    @return _iroot(x, 2, x)
+}
+
+# Bit operations use nonnegative arbitrary-precision ints. Width is explicit
+# where the operation is otherwise undefined. ctz(0)=0.
+macro _bit_length(
+    x: int,
+    count: int
+) -> int {
+    @if x == 0 {
+        @return count
+
+    }
+    @return _bit_length(x >> 1, count + 1)
+}
+
+macro _popcount(
+    x: int,
+    count: int
+) -> int {
+    @if x == 0 {
+        @return count
+
+    }
+    @return _popcount(x >> 1, count + (x & 1))
+}
+
+pub macro popcount(x: int) -> int {
+    @assert x >= 0
+    @return _popcount(x, 0)
+}
+
+macro _ctz(
+    x: int,
+    count: int
+) -> int {
+    @if x == 0 || (x & 1) == 1 {
+        @return count
+
+    }
+    @return _ctz(x >> 1, count + 1)
+}
+
+pub macro ctz(x: int) -> int {
+    @assert x >= 0
+    @return _ctz(x, 0)
+}
+
+pub macro clz(
+    x: int,
+    width: int
+) -> int {
+    @assert width >= 0 && x >= 0 && x < (1 << width), "value must fit width"
+    @return width - _bit_length(x, 0)
+}
+
+pub macro rotate_left(
+    x: int,
+    amount: int,
+    width: int
+) -> int {
+    @assert width > 0 && x >= 0 && x < (1 << width), "value must fit width"
+    const shift = rem_euclid(amount, width)
+    @return ((x << shift) | (x >> (width - shift))) & ((1 << width) - 1)
+}
+
+pub macro rotate_right(
+    x: int,
+    amount: int,
+    width: int
+) -> int {
+    @return rotate_left(x, -amount, width)
+}
+
+pub macro is_pow_of_two(x: int) -> int {
+    @return x > 0 && (x & (x - 1)) == 0
+}
+
+pub macro next_pow_of_two(x: int) -> int {
+    @assert x >= 0
+    @if x <= 1 {
+        @return 1
+
+    }
+    @return 1 << _bit_length(x - 1, 0)
+}
+
+# Fixed-point helpers
+macro _scaled(
+    x: Decimal,
+    scale: int
+) -> int {
+    @if x.scale == scale {
+        @return x.value
+
+    }
+    @if x.scale < scale {
+        @return x.value * _pow10(scale - x.scale)
+
+    }
+    @return x.value / _pow10(x.scale - scale)
+}
+
+macro _result(
+    value: int,
+    work: int,
+    precision: int
+) -> Decimal {
+    @assert precision >= 0
+    @return Decimal(value = value / _pow10(work - precision), scale = precision)
+}
+
+pub macro floor(x: int) -> int {
+    @return x
+}
+
+pub macro floor(x: Decimal) -> int {
+    @return div_floor(x.value, _pow10(x.scale))
+}
+
+pub macro floor(x: Fraction) -> int {
+    @return div_floor(x.n, x.d)
+}
+
+pub macro ceil(x: int) -> int {
+    @return x
+}
+
+pub macro ceil(x: Decimal) -> int {
+    @return div_ceil(x.value, _pow10(x.scale))
+}
+
+pub macro ceil(x: Fraction) -> int {
+    @return div_ceil(x.n, x.d)
+}
+
+pub macro trunc(x: int) -> int {
+    @return x
+}
+
+pub macro trunc(x: Decimal) -> int {
+    @return x.value / _pow10(x.scale)
+}
+
+pub macro trunc(x: Fraction) -> int {
+    @return x.n / x.d
+}
+
+pub macro round(x: int) -> int {
+    @return x
+}
+
+pub macro round(x: Decimal) -> int {
+    const divisor = _pow10(x.scale)
+    const quotient = x.value / divisor
+    const remainder = x.value % divisor
+    @if 2 * abs(remainder) >= divisor {
+        @return quotient + sign(x.value)
+    }
+    @return quotient
+}
+
+pub macro round(x: Fraction) -> int {
+    const quotient = x.n / x.d
+    const remainder = x.n % x.d
+    @if 2 * abs(remainder) >= abs(x.d) {
+        @return quotient + sign(x.n) * sign(x.d)
+    }
+    @return quotient
+}
+
+pub macro fract(x: Decimal) -> Decimal {
+    @return Decimal(
+        value = rem_euclid(x.value, _pow10(x.scale)),
+        scale = x.scale
+    )
+}
+
+pub macro fract(x: Fraction) -> Fraction {
+    @return Fraction(n = rem_euclid(x.n, x.d), d = abs(x.d))
+}
+
+macro _constant(
+    value: int,
+    precision: int
+) -> Decimal {
+    @assert precision >= 0 && precision <= CONSTANT_DIGITS, "constant precision must be 0..60"
+    @return Decimal(
+        value = value / _pow10(CONSTANT_DIGITS - precision),
+        scale = precision
+    )
+}
+
+pub macro PI(precision: int = DEFAULT_PRECISION) -> Decimal {
+    @return _constant(
+        3141592653589793238462643383279502884197169399375105820974940,
+        precision
+    )
+}
+
+pub macro TAU(precision: int = DEFAULT_PRECISION) -> Decimal {
+    @return _constant(
+        6283185307179586476925286766559005768394338798750211641949880,
+        precision
+    )
+}
+
+pub macro E(precision: int = DEFAULT_PRECISION) -> Decimal {
+    @return _constant(
+        2718281828459045235360287471352662497757247093699959574966967,
+        precision
+    )
+}
+
+pub macro SQRT2(precision: int = DEFAULT_PRECISION) -> Decimal {
+    @return _constant(
+        1414213562373095048801688724209698078569671875376948073176679,
+        precision
+    )
+}
+
+pub macro LN2(precision: int = DEFAULT_PRECISION) -> Decimal {
+    @return _constant(
+        693147180559945309417232121458176568075500134360255254120680,
+        precision
+    )
+}
+
+pub macro LN10(precision: int = DEFAULT_PRECISION) -> Decimal {
+    @return _constant(
+        2302585092994045684017991454684364207601101488628772976033328,
+        precision
+    )
+}
+
+# Roots: degree>0; negative radicands require an odd degree.
+pub macro root(
+    x: Decimal,
+    degree: int,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    @assert degree > 0
+    @assert x.value >= 0 || degree % 2 == 1, "even root of a negative value"
+    const work = precision + GUARD_DIGITS
+    const magnitude = _root_magnitude(abs(x.value), degree * work - x.scale)
+    const value = _iroot(magnitude, degree, max(magnitude, 1))
+    @if x.value < 0 {
+        @return _result(-value, work, precision)
+
+    }
+    @return _result(value, work, precision)
+}
+
+macro _root_magnitude(
+    value: int,
+    shift: int
+) -> int {
+    @if shift >= 0 {
+        @return value * _pow10(shift)
+
+    }
+    @return value / _pow10(-shift)
+}
+
+pub macro root(
+    x: int,
+    degree: int,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    @return root(Decimal(value = x, scale = 0), degree, precision)
+}
+
+pub macro root(
+    x: Fraction,
+    degree: int,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    const work = precision + GUARD_DIGITS
+    @return root(
+        Decimal(value = x.n * _pow10(work) / x.d, scale = work),
+        degree,
+        precision
+    )
+}
+
+pub macro sqrt(
+    x: Decimal,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    @return root(x, 2, precision)
+}
+
+pub macro sqrt(
+    x: int,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    @return root(x, 2, precision)
+}
+
+pub macro hypot(
+    x: Decimal,
+    y: Decimal,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    const work = precision + GUARD_DIGITS
+    const a = _scaled(x, work)
+    const b = _scaled(y, work)
+    @return _result(isqrt(a * a + b * b), work, precision)
+}
+
+pub macro hypot(
+    x: int,
+    y: int,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    @return hypot(
+        Decimal(value = x, scale = 0),
+        Decimal(value = y, scale = 0),
+        precision
+    )
+}
+
+# exp uses ln(2) range reduction; ln uses an atanh series after reducing
+# its argument to [1,2). Series terminate when fixed-point terms reach zero.
+macro _exp_series(
+    x: int,
+    scale: int,
+    k: int,
+    term: int,
+    sum: int
+) -> int {
+    const next = term * x / (scale * k)
+    @if next == 0 {
+        @return sum
+
+    }
+    @return _exp_series(x, scale, k + 1, next, sum + next)
+}
+
+pub macro exp(
+    x: Decimal,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    const work = precision + GUARD_DIGITS
+    const scale = _pow10(work)
+    const xv = _scaled(x, work)
+    const ln2 = _scaled(LN2(work), work)
+    const power = div_floor(xv, ln2)
+    const series = _exp_series(xv - power * ln2, scale, 1, scale, scale)
+    @if power >= 0 {
+        @return _result(series * (1 << power), work, precision)
+
+    }
+    @return _result(series / (1 << -power), work, precision)
+}
+
+pub macro exp2(
+    x: Decimal,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    const work = precision + GUARD_DIGITS
+    @return exp(
+        Decimal(value = _scaled(x, work) * _scaled(LN2(work), work) / _pow10(work), scale = work),
+        precision
+    )
+}
+
+pub macro expm1(
+    x: Decimal,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    const work = precision + GUARD_DIGITS
+    @return _result(_scaled(exp(x, work), work) - _pow10(work), work, precision)
+}
+
+macro _ln_shift(
+    value: int,
+    scale: int,
+    shift: int
+) -> int {
+    @if value >= 2 * scale {
+        @return _ln_shift(value / 2, scale, shift + 1)
+
+    }
+    @if value < scale {
+        @return _ln_shift(value * 2, scale, shift - 1)
+
+    }
+    @return shift
+}
+
+macro _ln_normalized(
+    value: int,
+    shift: int
+) -> int {
+    @if shift >= 0 {
+        @return value / (1 << shift)
+
+    }
+    @return value * (1 << -shift)
+}
+
+macro _ln_series(
+    z: int,
+    scale: int,
+    denominator: int,
+    power: int,
+    sum: int
+) -> int {
+    const next = power * z * z / (scale * scale)
+    @if next == 0 {
+        @return 2 * sum
+
+    }
+    @return _ln_series(
+        z,
+        scale,
+        denominator + 2,
+        next,
+        sum + next / (denominator + 2)
+    )
+}
+
+pub macro ln(
+    x: Decimal,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    @assert x.value > 0, "ln requires a positive value"
+    const work = precision + GUARD_DIGITS
+    const scale = _pow10(work)
+    const xv = _scaled(x, work)
+    const shift = _ln_shift(xv, scale, 0)
+    const normalized = _ln_normalized(xv, shift)
+    const z = (normalized - scale) * scale / (normalized + scale)
+    @return _result(
+        _ln_series(z, scale, 1, z, z) + shift * _scaled(LN2(work), work),
+        work,
+        precision
+    )
+}
+
+pub macro log2(
+    x: Decimal,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    const work = precision + GUARD_DIGITS
+    @return _result(
+        _scaled(ln(x, work), work) * _pow10(work) / _scaled(LN2(work), work),
+        work,
+        precision
+    )
+}
+
+pub macro log10(
+    x: Decimal,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    const work = precision + GUARD_DIGITS
+    @return _result(
+        _scaled(ln(x, work), work) * _pow10(work) / _scaled(LN10(work), work),
+        work,
+        precision
+    )
+}
+
+pub macro log1p(
+    x: Decimal,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    const work = precision + GUARD_DIGITS
+    @return ln(
+        Decimal(value = _pow10(work) + _scaled(x, work), scale = work),
+        precision
+    )
+}
+
+pub macro pow(
+    base: Decimal,
+    exponent: Decimal,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    @assert base.value > 0, "Decimal pow requires a positive base"
+    const work = precision + GUARD_DIGITS
+    @return exp(
+        Decimal(value = _scaled(exponent, work) * _scaled(ln(base, work), work) / _pow10(work), scale = work),
+        precision
+    )
+}
+
+macro _fixed_pow(
+    base: int,
+    exponent: int,
+    scale: int,
+    accumulator: int
+) -> int {
+    @if exponent == 0 {
+        @return accumulator
+
+    }
+    @if exponent % 2 == 0 {
+        @return _fixed_pow(
+            base * base / scale,
+            exponent / 2,
+            scale,
+            accumulator
+        )
+
+    }
+    @return _fixed_pow(base, exponent - 1, scale, accumulator * base / scale)
+}
+
+pub macro pow(
+    base: Decimal,
+    exponent: int,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    const work = precision + GUARD_DIGITS
+    const scale = _pow10(work)
+    const value = _fixed_pow(_scaled(base, work), abs(exponent), scale, scale)
+    @if exponent < 0 {
+        @assert value != 0, "zero cannot have a negative exponent"
+        @return _result(scale * scale / value, work, precision)
+
+    }
+    @return _result(value, work, precision)
+}
+
+# Trigonometry uses range reduction to [-PI,PI] and Taylor series.
+macro _angle(
+    x: Decimal,
+    work: int
+) -> int {
+    const pi = _scaled(PI(work), work)
+    @return rem_euclid(_scaled(x, work) + pi, _scaled(TAU(work), work)) - pi
+}
+
+macro _sin_series(
+    x: int,
+    scale: int,
+    k: int,
+    term: int,
+    sum: int
+) -> int {
+    const next = -(term * x * x) / (scale * scale * (2 * k) * (2 * k + 1))
+    @if next == 0 {
+        @return sum
+
+    }
+    @return _sin_series(x, scale, k + 1, next, sum + next)
+}
+
+macro _cos_series(
+    x: int,
+    scale: int,
+    k: int,
+    term: int,
+    sum: int
+) -> int {
+    const next = -(term * x * x) / (scale * scale * (2 * k - 1) * (2 * k))
+    @if next == 0 {
+        @return sum
+
+    }
+    @return _cos_series(x, scale, k + 1, next, sum + next)
+}
+
+pub macro sin(
+    x: Decimal,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    const work = precision + GUARD_DIGITS
+    const value = _angle(x, work)
+    @return _result(
+        _sin_series(value, _pow10(work), 1, value, value),
+        work,
+        precision
+    )
+}
+
+pub macro cos(
+    x: Decimal,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    const work = precision + GUARD_DIGITS
+    const scale = _pow10(work)
+    @return _result(
+        _cos_series(_angle(x, work), scale, 1, scale, scale),
+        work,
+        precision
+    )
+}
+
+pub macro tan(
+    x: Decimal,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    const work = precision + GUARD_DIGITS
+    const c = _scaled(cos(x, work), work)
+    @assert c != 0, "tan is undefined where cos is zero"
+    @return _result(
+        _scaled(sin(x, work), work) * _pow10(work) / c,
+        work,
+        precision
+    )
+}
+
+macro _atan_series(
+    z: int,
+    scale: int,
+    denominator: int,
+    power: int,
+    sum: int
+) -> int {
+    const next = -(power * z * z) / (scale * scale)
+    @if next == 0 {
+        @return sum
+
+    }
+    @return _atan_series(
+        z,
+        scale,
+        denominator + 2,
+        next,
+        sum + next / (denominator + 2)
+    )
+}
+
+pub macro atan(
+    x: Decimal,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    const work = precision + GUARD_DIGITS
+    const scale = _pow10(work)
+    const value = _scaled(x, work)
+    const half_pi = _scaled(PI(work), work) / 2
+    const quarter_pi = half_pi / 2
+    @if value > scale {
+        @return _result(
+            half_pi - _scaled(atan(Decimal(value = scale * scale / value, scale = work), work), work),
+            work,
+            precision
+        )
+
+    }
+    @if value < -scale {
+        @return _result(
+            -half_pi - _scaled(atan(Decimal(value = scale * scale / value, scale = work), work), work),
+            work,
+            precision
+        )
+
+    }
+    @if value > scale / 2 {
+        const z = (value - scale) * scale / (value + scale)
+        @return _result(
+            quarter_pi + _atan_series(z, scale, 1, z, z),
+            work,
+            precision
+        )
+
+    }
+    @if value < -(scale / 2) {
+        const z = (value + scale) * scale / (scale - value)
+        @return _result(
+            -quarter_pi + _atan_series(z, scale, 1, z, z),
+            work,
+            precision
+        )
+
+    }
+    @return _result(
+        _atan_series(value, scale, 1, value, value),
+        work,
+        precision
+    )
+}
+
+pub macro atan2(
+    y: Decimal,
+    x: Decimal,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    @assert x.value != 0 || y.value != 0, "atan2(0,0) is undefined"
+    const work = precision + GUARD_DIGITS
+    @if x.value > 0 {
+        @return atan(
+            Decimal(value = _scaled(y, work) * _pow10(work) / _scaled(x, work), scale = work),
+            precision
+        )
+
+    }
+    @if x.value < 0 && y.value >= 0 {
+        @return _result(
+            _scaled(atan(Decimal(value = _scaled(y, work) * _pow10(work) / _scaled(x, work), scale = work), work), work) + _scaled(PI(work), work),
+            work,
+            precision
+        )
+
+    }
+    @if x.value < 0 {
+        @return _result(
+            _scaled(atan(Decimal(value = _scaled(y, work) * _pow10(work) / _scaled(x, work), scale = work), work), work) - _scaled(PI(work), work),
+            work,
+            precision
+        )
+
+    }
+    @if y.value > 0 {
+        @return _result(
+            _scaled(PI(work), work) / 2,
+            work,
+            precision
+        )
+
+    }
+    @return _result(-_scaled(PI(work), work) / 2, work, precision)
+}
+
+pub macro asin(
+    x: Decimal,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    const work = precision + GUARD_DIGITS
+    const scale = _pow10(work)
+    const value = _scaled(x, work)
+    @assert abs(value) <= scale, "asin domain is [-1,1]"
+    @if abs(value) == scale {
+        @return _result(
+            sign(value) * _scaled(PI(work), work) / 2,
+            work,
+            precision
+        )
+
+    }
+    @return atan2(
+        Decimal(value = value, scale = work),
+        Decimal(value = isqrt(scale * scale - value * value), scale = work),
+        precision
+    )
+}
+
+pub macro acos(
+    x: Decimal,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    const work = precision + GUARD_DIGITS
+    @return _result(
+        _scaled(PI(work), work) / 2 - _scaled(asin(x, work), work),
+        work,
+        precision
+    )
+}
+
+# Hyperbolic functions and real inverse domains.
+pub macro sinh(
+    x: Decimal,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    const work = precision + GUARD_DIGITS
+    @return _result(
+        (_scaled(exp(x, work), work) - _scaled(exp(Decimal(value = -x.value, scale = x.scale), work), work)) / 2,
+        work,
+        precision
+    )
+}
+
+pub macro cosh(
+    x: Decimal,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    const work = precision + GUARD_DIGITS
+    @return _result(
+        (_scaled(exp(x, work), work) + _scaled(exp(Decimal(value = -x.value, scale = x.scale), work), work)) / 2,
+        work,
+        precision
+    )
+}
+
+pub macro tanh(
+    x: Decimal,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    const work = precision + GUARD_DIGITS
+    @return _result(
+        _scaled(sinh(x, work), work) * _pow10(work) / _scaled(cosh(x, work), work),
+        work,
+        precision
+    )
+}
+
+pub macro asinh(
+    x: Decimal,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    const work = precision + GUARD_DIGITS
+    const scale = _pow10(work)
+    const value = _scaled(x, work)
+    @return ln(
+        Decimal(value = value + isqrt(value * value + scale * scale), scale = work),
+        precision
+    )
+}
+
+pub macro acosh(
+    x: Decimal,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    const work = precision + GUARD_DIGITS
+    const scale = _pow10(work)
+    const value = _scaled(x, work)
+    @assert value >= scale, "acosh domain is [1,infinity)"
+    @return ln(
+        Decimal(value = value + isqrt((value - scale) * (value + scale)), scale = work),
+        precision
+    )
+}
+
+pub macro atanh(
+    x: Decimal,
+    precision: int = DEFAULT_PRECISION
+) -> Decimal {
+    const work = precision + GUARD_DIGITS
+    const scale = _pow10(work)
+    const value = _scaled(x, work)
+    @assert abs(value) < scale, "atanh domain is (-1,1)"
+    @return _result(
+        _scaled(ln(Decimal(value = (scale + value) * scale / (scale - value), scale = work), work), work) / 2,
+        work,
+        precision
+    )
+}
+
 pub macro simplify(x: Fraction) -> Fraction {
-    const g = gcd(x.n, x.d)
-    @return Fraction(x.n / g, x.d / g)
+    const divisor = gcd(x.n, x.d)
+    const denominator = x.d / divisor
+    @if denominator < 0 {
+        @return Fraction(
+            n = -(x.n / divisor),
+            d = -denominator
+        )
+
+    }
+    @return Fraction(n = x.n / divisor, d = denominator)
 }

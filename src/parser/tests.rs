@@ -276,6 +276,26 @@ fn parses_macro_parameters_spanning_multiple_lines() {
 }
 
 #[test]
+fn parses_macro_parameter_defaults() {
+    let program = parse(lex("macro digits(value: int, precision: int = 10) {\n    @emit precision\n}\n").unwrap()).unwrap();
+    let Statement::Macro(decl) = &program.statements[0] else {
+        panic!("expected macro declaration");
+    };
+    assert!(decl.params[0].default.is_none());
+    assert!(matches!(decl.params[1].default, Some(Expr::Integer { ref raw, .. }) if raw == "10"));
+    assert_eq!(
+        crate::printer::print_statement(&program.statements[0], 0),
+        "macro digits(value: int, precision: int = 10)\n{\n    @emit precision\n}"
+    );
+}
+
+#[test]
+fn rejects_required_macro_parameter_after_default() {
+    let error = parse(lex("macro bad(a: int = 1, b: int) {\n}\n").unwrap()).unwrap_err();
+    assert!(error.message.contains("required macro parameters"));
+}
+
+#[test]
 fn parses_generic_arguments_spanning_multiple_lines() {
     let program = parse(
         lex("const x: Reg<\n    64\n> = 1\n").unwrap(),
@@ -469,6 +489,18 @@ fn parses_if_without_else() {
     assert_eq!(meta.args.len(), 1);
     assert!(meta.body.is_some());
     assert!(meta.else_body.is_none());
+}
+
+#[test]
+fn closing_brace_terminates_an_inline_block_statement() {
+    parse(lex("macro choose(x: int) -> int { @if x > 0 { @return 1 }\n@return 0 }\n").unwrap())
+        .expect("closing braces should terminate their final statement");
+}
+
+#[test]
+fn parses_else_on_the_line_after_the_then_block() {
+    parse(lex("macro choose(x: int) -> int {\n@if x > 0 {\n@return 1\n}\n@else {\n@return 0\n}\n}\n").unwrap())
+        .expect("a newline before @else should be accepted");
 }
 
 #[test]

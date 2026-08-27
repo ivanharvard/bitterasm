@@ -95,9 +95,8 @@ impl<'a> AliasResolver<'a> {
     /// Resolves `invocation` to a [`MacroDeclaration`] by name, evaluates
     /// its operands against `scope`, and expands it. This is the entry
     /// point for a genuinely new top-level expansion — each call gets its
-    /// own fresh recursion-guard stack; nested invocations found while
-    /// walking a macro body go through [`Self::expand_invocation_inner`]
-    /// instead, sharing the enclosing expansion's stack.
+    /// own fresh recursion stack. Nested statement and expression calls
+    /// share the resolver-owned stack while that expansion is running.
     pub fn expand_invocation(
         &mut self,
         invocation: &Invocation,
@@ -113,29 +112,82 @@ impl<'a> AliasResolver<'a> {
         scope: &HashMap<String, Value>,
         stack: &mut Vec<SymbolId>,
     ) -> Result<MacroExpansion, ResolveError> {
-        let symbol = self.find_macro_symbol(&invocation.name, invocation.span)?;
-
-        // find_macro_declaration borrows from self; clone immediately so
-        // the borrow ends before the &mut self calls below (operand eval,
-        // nested expansion) — same idiom as resolve_struct_fields in
-        // structs.rs cloning declaration.generic_params before recursing.
-        let declaration = self.find_macro_declaration(symbol)?.clone();
-
         let arguments = invocation
             .operands
             .iter()
             .map(|operand| self.eval_value(operand, scope))
             .collect::<Result<Vec<_>, _>>()?;
 
+        let (symbol, declaration) =
+            self.resolve_macro_overload(&invocation.name, &arguments, invocation.span)?;
+
         self.run_macro_body(symbol, &declaration, arguments, stack)
     }
 
-    /// Runs `declaration`'s body given already-bound `arguments`. `symbol`
-    /// is `declaration`'s own id and `stack` is the shared recursion guard —
-    /// every expansion, top-level or nested, funnels through here, so the
-    /// cycle check lives in exactly one place. Self-recursion is caught at
-    /// depth 1 (pushed before the body runs); mutual recursion (`A` calls
-    /// `B` calls `A`) at depth 2 — both bounded, no stack-overflow risk.
+    /// Selects the unique overload whose arity and fully resolved parameter
+    /// types exactly match the already-evaluated arguments.
+    pub(super) fn resolve_macro_overload(
+        &mut self,
+        name: &str,
+        arguments: &[Value],
+        span: Span,
+    ) -> Result<(SymbolId, MacroDeclaration), ResolveError> {
+        let ids = self.lookup_symbols(name);
+        if ids.is_empty() {
+            return Err(ResolveError::UnknownMacro { name: name.to_string(), span });
+        }
+        if ids.iter().any(|id| self.get_symbol(*id).kind != super::symbols::SymbolKind::Macro) {
+            return Err(ResolveError::ExpectedMacro { name: name.to_string(), span });
+        }
+
+        let mut declarations = Vec::with_capacity(ids.len());
+        for id in ids {
+            declarations.push((id, self.find_macro_declaration(id)?.clone()));
+        }
+
+        // Keep the established, specific arity/type diagnostics for a
+        // non-overloaded macro. `run_macro_body` performs those checks.
+        if declarations.len() == 1 {
+            return Ok(declarations.remove(0));
+        }
+
+        let actual_types = arguments
+            .iter()
+            .map(|value| self.value_type(value))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut matches = Vec::new();
+        for (id, declaration) in declarations {
+            let required = declaration.params.iter().filter(|param| param.default.is_none()).count();
+            if actual_types.len() < required || actual_types.len() > declaration.params.len() {
+                continue;
+            }
+            let mut expected_types = Vec::with_capacity(declaration.params.len());
+            for param in declaration.params.iter().take(actual_types.len()) {
+                expected_types.push(self.resolve_type_expr(&param.ty)?);
+            }
+            if expected_types == actual_types {
+                matches.push((id, declaration));
+            }
+        }
+
+        let actual = actual_types
+            .iter()
+            .map(|ty| describe_type(ty, self.symbols))
+            .collect();
+        match matches.len() {
+            1 => Ok(matches.remove(0)),
+            0 => Err(ResolveError::NoMatchingMacroOverload {
+                name: name.to_string(), actual, span,
+            }),
+            _ => Err(ResolveError::AmbiguousMacroOverload {
+                name: name.to_string(), actual, span,
+            }),
+        }
+    }
+
+    /// Runs `declaration` with a caller-visible stack for compatibility with
+    /// direct resolver users. All nested calls use `macro_call_stack`, so
+    /// expression-position calls cannot accidentally reset the guard.
     pub fn run_macro_body(
         &mut self,
         symbol: SymbolId,
@@ -143,94 +195,129 @@ impl<'a> AliasResolver<'a> {
         arguments: Vec<Value>,
         stack: &mut Vec<SymbolId>,
     ) -> Result<MacroExpansion, ResolveError> {
-        if stack.contains(&symbol) {
-            return Err(self.make_macro_cycle_error(stack, symbol));
+        let was_top_level = self.macro_call_stack.is_empty();
+        if was_top_level {
+            self.macro_call_stack.clone_from(stack);
+        }
+        let result = self.run_macro_body_inner(symbol, declaration, arguments);
+        if was_top_level {
+            stack.clone_from(&self.macro_call_stack);
+            self.macro_call_stack.clear();
+        }
+        result
+    }
+
+    pub(super) fn run_macro_body_inner(
+        &mut self,
+        symbol: SymbolId,
+        declaration: &MacroDeclaration,
+        arguments: Vec<Value>,
+    ) -> Result<MacroExpansion, ResolveError> {
+        // Macro frames are deliberately rich (scopes, emitted/generated
+        // values, hooks), so keep this below the host thread's stack limit.
+        const MAX_MACRO_CALL_DEPTH: usize = 32;
+        if self.macro_call_stack.len() >= MAX_MACRO_CALL_DEPTH {
+            return Err(self.make_macro_depth_error(symbol, MAX_MACRO_CALL_DEPTH));
         }
 
-        if arguments.len() != declaration.params.len() {
-            return Err(ResolveError::InvalidArgumentCount {
-                name: declaration.name.clone(),
-                expected: declaration.params.len(),
-                actual: arguments.len(),
-                span: declaration.span,
-            });
-        }
-
-        let mut scope: HashMap<String, Value> = HashMap::new();
-
-        for (param, value) in declaration.params.iter().zip(arguments) {
-            let expected = self.resolve_type_expr(&param.ty)?;
-            let actual = self.value_type(&value)?;
-
-            if actual != expected {
-                return Err(ResolveError::TypeMismatch {
-                    name: param.name.clone(),
-                    expected: describe_type(&expected, self.symbols),
-                    actual: describe_type(&actual, self.symbols),
-                    span: param.span,
-                });
-            }
-
-            scope.insert(param.name.clone(), value);
-        }
-
-        stack.push(symbol);
-
+        self.macro_call_stack.push(symbol);
         let result = (|| {
-            let mut expansion = MacroExpansion {
-                emitted: Vec::new(),
-                generated: Vec::new(),
-                returned: None,
-            };
+            let mut arguments = arguments;
+            let mut expansion = MacroExpansion { emitted: Vec::new(), generated: Vec::new(), returned: None };
+            let mut tail_calls = 0usize;
 
-            for hook in crate::facets::extract_exprs(&declaration.facets, "before") {
-                let hook_result = self.run_hook_template(&hook, &scope, stack)?;
-                expansion.emitted.extend(hook_result.emitted);
-                expansion.generated.extend(hook_result.generated);
-            }
+            loop {
+                let scope = self.bind_macro_arguments(declaration, arguments)?;
 
-            let body_result = self.walk_macro_body(&declaration.body, &scope, stack)?;
-            expansion.emitted.extend(body_result.emitted);
-            expansion.generated.extend(body_result.generated);
-            expansion.returned = body_result.returned;
-
-            let after_hooks = crate::facets::extract_exprs(&declaration.facets, "after");
-            if !after_hooks.is_empty() {
-                let mut after_scope = scope.clone();
-                let fields = expansion
-                    .returned
-                    .clone()
-                    .map(|value| vec![("returned".to_string(), value)])
-                    .unwrap_or_default();
-                after_scope.insert(
-                    "self".to_string(),
-                    Value::Struct {
-                        symbol,
-                        args: Vec::new(),
-                        fields,
-                        nominal: None,
-                    },
-                );
-
-                for hook in after_hooks {
-                    let hook_result = self.run_hook_template(&hook, &after_scope, stack)?;
+                for hook in crate::facets::extract_exprs(&declaration.facets, "before") {
+                    let hook_result = self.run_hook_template(&hook, &scope)?;
                     expansion.emitted.extend(hook_result.emitted);
                     expansion.generated.extend(hook_result.generated);
                 }
-            }
 
-            Ok(expansion)
+                let body_result = self.walk_macro_body(&declaration.body, &scope)?;
+                expansion.emitted.extend(body_result.emitted);
+                expansion.generated.extend(body_result.generated);
+                if let Some(next_arguments) = self.pending_tail_call.take() {
+                    const MAX_TAIL_CALLS: usize = 4096;
+                    tail_calls += 1;
+                    if tail_calls > MAX_TAIL_CALLS {
+                        return Err(ResolveError::MacroTailCallLimitExceeded {
+                            name: declaration.name.clone(),
+                            max_iterations: MAX_TAIL_CALLS,
+                            span: declaration.span,
+                        });
+                    }
+                    arguments = next_arguments;
+                    continue;
+                }
+                expansion.returned = body_result.returned;
+
+                let after_hooks = crate::facets::extract_exprs(&declaration.facets, "after");
+                if !after_hooks.is_empty() {
+                    let mut after_scope = scope.clone();
+                    let fields = expansion
+                        .returned
+                        .clone()
+                        .map(|value| vec![("returned".to_string(), value)])
+                        .unwrap_or_default();
+                    after_scope.insert(
+                        "self".to_string(),
+                        Value::Struct { symbol, args: Vec::new(), fields, nominal: None },
+                    );
+
+                    for hook in after_hooks {
+                        let hook_result = self.run_hook_template(&hook, &after_scope)?;
+                        expansion.emitted.extend(hook_result.emitted);
+                        expansion.generated.extend(hook_result.generated);
+                    }
+                }
+                return Ok(expansion);
+            }
         })();
 
-        stack.pop();
+        self.macro_call_stack.pop();
         result
+    }
+
+    fn bind_macro_arguments(
+        &mut self,
+        declaration: &MacroDeclaration,
+        arguments: Vec<Value>,
+    ) -> Result<HashMap<String, Value>, ResolveError> {
+        let required = declaration.params.iter().filter(|param| param.default.is_none()).count();
+        if arguments.len() < required || arguments.len() > declaration.params.len() {
+            return Err(ResolveError::InvalidArgumentCount {
+                name: declaration.name.clone(), expected: declaration.params.len(),
+                actual: arguments.len(), span: declaration.span,
+            });
+        }
+        let mut scope = HashMap::new();
+        let mut arguments = arguments.into_iter();
+        for param in &declaration.params {
+            let value = match arguments.next() {
+                Some(value) => value,
+                None => self.eval_value(
+                    param.default.as_ref().expect("arity check guarantees a default"), &scope,
+                )?,
+            };
+            let expected = self.resolve_type_expr(&param.ty)?;
+            let actual = self.value_type(&value)?;
+            if actual != expected {
+                return Err(ResolveError::TypeMismatch {
+                    name: param.name.clone(), expected: describe_type(&expected, self.symbols),
+                    actual: describe_type(&actual, self.symbols), span: param.span,
+                });
+            }
+            scope.insert(param.name.clone(), value);
+        }
+        Ok(scope)
     }
 
     fn run_hook_template(
         &mut self,
         template: &Expr,
         scope: &HashMap<String, Value>,
-        stack: &mut Vec<SymbolId>,
     ) -> Result<MacroExpansion, ResolveError> {
         let Expr::Call { callee, arguments, span } = template else {
             return Err(ResolveError::ExpectedValueExpression { span: template.span() });
@@ -241,20 +328,18 @@ impl<'a> AliasResolver<'a> {
         if arguments.iter().any(|argument| argument.name.is_some()) {
             return Err(ResolveError::ExpectedValueExpression { span: *span });
         }
-        let hook_symbol = self.find_macro_symbol(name, *span)?;
-        let hook = self.find_macro_declaration(hook_symbol)?.clone();
         let values = arguments
             .iter()
             .map(|argument| self.eval_value(&argument.value, scope))
             .collect::<Result<Vec<_>, _>>()?;
-        self.run_macro_body(hook_symbol, &hook, values, stack)
+        let (hook_symbol, hook) = self.resolve_macro_overload(name, &values, *span)?;
+        self.run_macro_body_inner(hook_symbol, &hook, values)
     }
 
     fn walk_macro_body(
         &mut self,
         body: &[Statement],
         initial_scope: &HashMap<String, Value>,
-        stack: &mut Vec<SymbolId>,
     ) -> Result<MacroExpansion, ResolveError> {
         // Owned and mutable, unlike `initial_scope` — a bare (non-`pub`)
         // `const` extends this for the rest of the body, the same way a
@@ -291,6 +376,12 @@ impl<'a> AliasResolver<'a> {
                     },
 
                     "return" => {
+                        if let [expr] = meta.args.as_slice() {
+                            if let Some(arguments) = self.eval_direct_self_tail_call(expr, &scope)? {
+                                self.pending_tail_call = Some(arguments);
+                                return Ok(MacroExpansion { emitted, generated, returned: None });
+                            }
+                        }
                         let value = match meta.args.as_slice() {
                             [] => None,
                             [expr] => Some(self.eval_value(expr, &scope)?),
@@ -327,11 +418,11 @@ impl<'a> AliasResolver<'a> {
                         };
 
                         if let Some(chosen_body) = chosen {
-                            let nested = self.walk_macro_body(chosen_body, &scope, stack)?;
+                            let nested = self.walk_macro_body(chosen_body, &scope)?;
                             emitted.extend(nested.emitted);
                             generated.extend(nested.generated);
 
-                            if nested.returned.is_some() {
+                            if nested.returned.is_some() || self.pending_tail_call.is_some() {
                                 return Ok(MacroExpansion {
                                     emitted,
                                     generated,
@@ -367,10 +458,10 @@ impl<'a> AliasResolver<'a> {
                         if let Some((chosen_body, bindings)) = chosen {
                             let mut arm_scope = scope.clone();
                             arm_scope.extend(bindings);
-                            let nested = self.walk_macro_body(chosen_body, &arm_scope, stack)?;
+                            let nested = self.walk_macro_body(chosen_body, &arm_scope)?;
                             emitted.extend(nested.emitted);
                             generated.extend(nested.generated);
-                            if nested.returned.is_some() {
+                            if nested.returned.is_some() || self.pending_tail_call.is_some() {
                                 return Ok(MacroExpansion {
                                     emitted,
                                     generated,
@@ -412,11 +503,11 @@ impl<'a> AliasResolver<'a> {
                             let mut iter_scope = scope.clone();
                             iter_scope.insert(var_name.clone(), value);
 
-                            let nested = self.walk_macro_body(for_body, &iter_scope, stack)?;
+                            let nested = self.walk_macro_body(for_body, &iter_scope)?;
                             emitted.extend(nested.emitted);
                             generated.extend(nested.generated);
 
-                            if nested.returned.is_some() {
+                            if nested.returned.is_some() || self.pending_tail_call.is_some() {
                                 return Ok(MacroExpansion {
                                     emitted,
                                     generated,
@@ -440,7 +531,17 @@ impl<'a> AliasResolver<'a> {
                     // a usable result elsewhere — so only its emitted (and
                     // generated) output is spliced into ours, in order;
                     // `returned` is discarded.
-                    let nested = self.expand_invocation_inner(invocation, &scope, stack)?;
+                    let arguments = invocation
+                        .operands
+                        .iter()
+                        .map(|operand| self.eval_value(operand, &scope))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let (symbol, declaration) = self.resolve_macro_overload(
+                        &invocation.name,
+                        &arguments,
+                        invocation.span,
+                    )?;
+                    let nested = self.run_macro_body_inner(symbol, &declaration, arguments)?;
                     emitted.extend(nested.emitted);
                     generated.extend(nested.generated);
                 }
@@ -489,6 +590,41 @@ impl<'a> AliasResolver<'a> {
         }
 
         Ok(MacroExpansion { emitted, generated, returned: None })
+    }
+
+    /// Recognizes only an exact `@return current_macro(...)`. Calls wrapped
+    /// in arithmetic or conversion remain ordinary, depth-counted calls.
+    /// Macros with `after` hooks are excluded because eliminating their
+    /// frames would change the hooks' unwind-time behavior.
+    fn eval_direct_self_tail_call(
+        &mut self,
+        expr: &Expr,
+        scope: &HashMap<String, Value>,
+    ) -> Result<Option<Vec<Value>>, ResolveError> {
+        let Some(current) = self.macro_call_stack.last().copied() else {
+            return Ok(None);
+        };
+        let Expr::Call { callee, arguments, span } = expr else {
+            return Ok(None);
+        };
+        let Expr::Identifier { name, .. } = callee.as_ref() else {
+            return Ok(None);
+        };
+        if name != &self.get_symbol(current).name
+            || arguments.iter().any(|argument| argument.name.is_some())
+        {
+            return Ok(None);
+        }
+        let current_declaration = self.find_macro_declaration(current)?.clone();
+        if !crate::facets::extract_exprs(&current_declaration.facets, "after").is_empty() {
+            return Ok(None);
+        }
+        let values = arguments
+            .iter()
+            .map(|argument| self.eval_value(&argument.value, scope))
+            .collect::<Result<Vec<_>, _>>()?;
+        let (selected, _) = self.resolve_macro_overload(name, &values, *span)?;
+        Ok((selected == current).then_some(values))
     }
 
     fn match_pattern(
@@ -689,25 +825,17 @@ impl<'a> AliasResolver<'a> {
             .collect()
     }
 
-    // Mirrors AliasResolver::make_cycle_error / ConstEvaluator::make_cycle_error's
-    // stack-slicing shape, but takes `stack` as a parameter rather than
-    // reading a `self` field — macro recursion tracking is scoped to one
-    // top-level expansion, not memoized on the resolver like alias/const
-    // cycle state (the same macro is legitimately invoked many times with
-    // different arguments in one program, so nothing here is cached).
-    fn make_macro_cycle_error(&self, stack: &[SymbolId], repeated: SymbolId) -> ResolveError {
-        let start = stack.iter().position(|id| *id == repeated).unwrap_or(0);
-
-        let mut cycle: Vec<String> = stack[start..]
+    fn make_macro_depth_error(&self, next: SymbolId, max_depth: usize) -> ResolveError {
+        let mut call_chain: Vec<String> = self
+            .macro_call_stack
             .iter()
             .map(|id| self.get_symbol(*id).name.clone())
             .collect();
-
-        cycle.push(self.get_symbol(repeated).name.clone());
-
-        ResolveError::CyclicMacroExpansion {
-            cycle,
-            span: self.get_symbol(repeated).span,
+        call_chain.push(self.get_symbol(next).name.clone());
+        ResolveError::MacroCallDepthExceeded {
+            call_chain,
+            max_depth,
+            span: self.get_symbol(next).span,
         }
     }
 }
@@ -1072,7 +1200,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_direct_self_recursion() {
+    fn bounds_runaway_direct_recursion() {
         let program = parse_fixture("self_recursive.basm");
 
         let declaration = find_macro(&program, "loopy");
@@ -1085,15 +1213,17 @@ mod tests {
         let result = resolver.run_macro_body(symbol, declaration, vec![Value::Int(Int::from(1))], &mut stack);
 
         match result {
-            Err(ResolveError::CyclicMacroExpansion { cycle, .. }) => {
-                assert_eq!(cycle, vec!["loopy".to_string(), "loopy".to_string()]);
+            Err(ResolveError::MacroCallDepthExceeded { call_chain, max_depth, .. }) => {
+                assert_eq!(max_depth, 32);
+                assert_eq!(call_chain.len(), 33);
+                assert!(call_chain.iter().all(|name| name == "loopy"));
             }
             other => panic!("expected a cyclic macro expansion error, got {other:?}"),
         }
     }
 
     #[test]
-    fn rejects_mutual_recursion() {
+    fn bounds_runaway_mutual_recursion() {
         let program = parse_fixture("mutual_recursion.basm");
 
         let declaration = find_macro(&program, "ping");
@@ -1106,14 +1236,72 @@ mod tests {
         let result = resolver.run_macro_body(symbol, declaration, vec![Value::Int(Int::from(1))], &mut stack);
 
         match result {
-            Err(ResolveError::CyclicMacroExpansion { cycle, .. }) => {
-                assert_eq!(
-                    cycle,
-                    vec!["ping".to_string(), "pong".to_string(), "ping".to_string()]
-                );
+            Err(ResolveError::MacroCallDepthExceeded { call_chain, max_depth, .. }) => {
+                assert_eq!(max_depth, 32);
+                assert_eq!(call_chain.len(), 33);
+                assert_eq!(call_chain.first().map(String::as_str), Some("ping"));
+                assert_eq!(call_chain.last().map(String::as_str), Some("ping"));
+                assert!(call_chain.windows(2).all(|pair| pair[0] != pair[1]));
             }
             other => panic!("expected a cyclic macro expansion error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn terminating_expression_recursion_returns_a_value() {
+        let source = "macro factorial(n: int) -> int {\n\
+                          @if n <= 1 {\n\
+                              @return 1\n\
+                          }\n\
+                          @return n * factorial(n - 1)\n\
+                      }\n\
+                      macro calculate() { @emit factorial(6)\n }\n\
+                      calculate\n";
+        let program = parser::parse(lexer::lex(source).unwrap()).unwrap();
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+        let invocation = find_invocation(&program, "calculate");
+        assert_eq!(
+            resolver.expand_invocation(invocation, &HashMap::new()).unwrap().emitted,
+            vec![Value::Int(Int::from(720))]
+        );
+    }
+
+    #[test]
+    fn direct_self_tail_calls_reuse_the_current_frame() {
+        let source = "macro sum_to(n: int, acc: int = 0) -> int {\n\
+                          @if n == 0 { @return acc\n }\n\
+                          @return sum_to(n - 1, acc + n)\n\
+                      }\n\
+                      macro calculate() { @emit sum_to(100)\n }\n\
+                      calculate\n";
+        let program = parser::parse(lexer::lex(source).unwrap()).unwrap();
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+        let invocation = find_invocation(&program, "calculate");
+        assert_eq!(
+            resolver.expand_invocation(invocation, &HashMap::new()).unwrap().emitted,
+            vec![Value::Int(Int::from(5050))]
+        );
+    }
+
+    #[test]
+    fn runaway_tail_calls_have_an_iteration_limit() {
+        let source = "macro forever(n: int) -> int { @return forever(n)\n }\n\
+                      macro calculate() { @emit forever(0)\n }\n\
+                      calculate\n";
+        let program = parser::parse(lexer::lex(source).unwrap()).unwrap();
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+        let invocation = find_invocation(&program, "calculate");
+        assert!(matches!(
+            resolver.expand_invocation(invocation, &HashMap::new()),
+            Err(ResolveError::MacroTailCallLimitExceeded { name, max_iterations: 4096, .. })
+                if name == "forever"
+        ));
     }
 
     #[test]
@@ -1885,6 +2073,155 @@ mod tests {
                 returned: None,
             }
         );
+    }
+
+    #[test]
+    fn macro_overloads_dispatch_by_resolved_argument_type() {
+        let source = "struct Reg { pub id: int }\n\
+                      macro encode(value: int) { @emit 11\n }\n\
+                      macro encode(value: Reg) { @emit 22\n }\n\
+                      encode 7\nencode Reg(3)\n";
+        let program = parser::parse(lexer::lex(source).unwrap()).unwrap();
+        let symbols = collect_symbols(&program).unwrap();
+        assert_eq!(symbols.lookup_all("encode").len(), 2);
+
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+        let invocations: Vec<_> = program
+            .statements
+            .iter()
+            .filter_map(|statement| match statement {
+                Statement::Invocation(invocation) => Some(invocation),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            resolver.expand_invocation(invocations[0], &HashMap::new()).unwrap().emitted,
+            vec![Value::Int(Int::from(11))]
+        );
+        assert_eq!(
+            resolver.expand_invocation(invocations[1], &HashMap::new()).unwrap().emitted,
+            vec![Value::Int(Int::from(22))]
+        );
+    }
+
+    #[test]
+    fn macro_overloads_dispatch_by_arity() {
+        let source = "macro pick(value: int) { @emit 1\n }\n\
+                      macro pick(left: int, right: int) { @emit 2\n }\n\
+                      pick 3\npick 3, 4\n";
+        let program = parser::parse(lexer::lex(source).unwrap()).unwrap();
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let emitted: Vec<_> = program
+            .statements
+            .iter()
+            .filter_map(|statement| match statement {
+                Statement::Invocation(invocation) => Some(invocation),
+                _ => None,
+            })
+            .map(|invocation| {
+                resolver.expand_invocation(invocation, &HashMap::new()).unwrap().emitted[0].clone()
+            })
+            .collect();
+        assert_eq!(emitted, vec![Value::Int(Int::from(1)), Value::Int(Int::from(2))]);
+    }
+
+    #[test]
+    fn macro_defaults_are_evaluated_left_to_right() {
+        let source = "macro scale(value: int, places: int = 2, factor: int = 10 * places) { @emit value * factor\n }\n\
+                      scale 3\nscale 3, 4\nscale 3, 4, 5\n";
+        let program = parser::parse(lexer::lex(source).unwrap()).unwrap();
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+        let emitted: Vec<_> = program
+            .statements
+            .iter()
+            .filter_map(|statement| match statement {
+                Statement::Invocation(invocation) => Some(invocation),
+                _ => None,
+            })
+            .map(|invocation| resolver.expand_invocation(invocation, &HashMap::new()).unwrap().emitted[0].clone())
+            .collect();
+        assert_eq!(emitted, vec![Value::Int(Int::from(60)), Value::Int(Int::from(120)), Value::Int(Int::from(15))]);
+    }
+
+    #[test]
+    fn expression_macro_calls_apply_defaults() {
+        let source = "macro precision(value: int = 10) -> int { @return value\n }\n\
+                      macro use_default() { @emit precision()\n }\n\
+                      use_default\n";
+        let program = parser::parse(lexer::lex(source).unwrap()).unwrap();
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+        let invocation = find_invocation(&program, "use_default");
+        assert_eq!(
+            resolver.expand_invocation(invocation, &HashMap::new()).unwrap().emitted,
+            vec![Value::Int(Int::from(10))]
+        );
+    }
+
+    #[test]
+    fn overload_matching_accepts_omitted_default_arguments() {
+        let source = "struct Reg { pub id: int }\n\
+                      macro choose(value: int, precision: int = 10) { @emit 1\n }\n\
+                      macro choose(value: Reg, precision: int = 10) { @emit 2\n }\n\
+                      choose 3\nchoose Reg(4)\n";
+        let program = parser::parse(lexer::lex(source).unwrap()).unwrap();
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+        let emitted: Vec<_> = program
+            .statements
+            .iter()
+            .filter_map(|statement| match statement {
+                Statement::Invocation(invocation) => Some(invocation),
+                _ => None,
+            })
+            .map(|invocation| resolver.expand_invocation(invocation, &HashMap::new()).unwrap().emitted[0].clone())
+            .collect();
+        assert_eq!(emitted, vec![Value::Int(Int::from(1)), Value::Int(Int::from(2))]);
+    }
+
+    #[test]
+    fn identical_macro_overloads_are_ambiguous_at_the_call_site() {
+        let source = "macro choose(value: int) { @emit 1\n }\n\
+                      macro choose(other: int) { @emit 2\n }\n\
+                      choose 3\n";
+        let program = parser::parse(lexer::lex(source).unwrap()).unwrap();
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+        let invocation = find_invocation(&program, "choose");
+
+        assert!(matches!(
+            resolver.expand_invocation(invocation, &HashMap::new()),
+            Err(ResolveError::AmbiguousMacroOverload { name, .. }) if name == "choose"
+        ));
+    }
+
+    #[test]
+    fn overloaded_macro_without_a_matching_signature_is_rejected() {
+        let source = "struct Reg { pub id: int }\n\
+                      macro choose(value: int) { @emit 1\n }\n\
+                      macro choose(value: Reg) { @emit 2\n }\n\
+                      choose 1, 2\n";
+        let program = parser::parse(lexer::lex(source).unwrap()).unwrap();
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+        let invocation = find_invocation(&program, "choose");
+
+        assert!(matches!(
+            resolver.expand_invocation(invocation, &HashMap::new()),
+            Err(ResolveError::NoMatchingMacroOverload { name, actual, .. })
+                if name == "choose" && actual == ["int", "int"]
+        ));
     }
 
     #[test]

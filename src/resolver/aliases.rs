@@ -73,6 +73,12 @@ pub struct AliasResolver<'a> {
     pub(super) const_value_states: HashMap<SymbolId, ConstValueState>,
     pub(super) const_value_stack: Vec<SymbolId>,
 
+    // Shared by statement invocations and expression-position macro calls.
+    // Repeated symbols are allowed because terminating recursion is useful
+    // for compile-time algorithms; `macro_body` enforces a finite depth.
+    pub(super) macro_call_stack: Vec<SymbolId>,
+    pub(super) pending_tail_call: Option<Vec<super::Value>>,
+
     pub(super) generic_scope: HashMap<String, GenericBinding>,
 
     // How many values have been `@emit`'d so far, in whole-program
@@ -137,6 +143,8 @@ impl<'a> AliasResolver<'a> {
             stack: Vec::new(),
             const_value_states,
             const_value_stack: Vec::new(),
+            macro_call_stack: Vec::new(),
+            pending_tail_call: None,
             generic_scope: HashMap::new(),
             values_emitted: Int::from(0),
             label_positions: known_label_positions,
@@ -619,40 +627,35 @@ impl<'a> AliasResolver<'a> {
         })
     }
 
-    pub(super) fn find_macro_symbol(
-        &self,
-        name: &str,
-        span: Span,
-    ) -> Result<SymbolId, ResolveError> {
-        let Some(id) = self.lookup_symbol(name) else {
-            return Err(ResolveError::UnknownMacro {
-                name: name.to_string(),
-                span,
-            });
-        };
-
-        if self.get_symbol(id).kind != SymbolKind::Macro {
-            return Err(ResolveError::ExpectedMacro {
-                name: name.to_string(),
-                span,
-            });
-        }
-
-        Ok(id)
-    }
-
     pub(super) fn find_macro_declaration(
         &self,
         id: SymbolId,
     ) -> Result<&crate::ast::MacroDeclaration, ResolveError> {
         let symbol = self.get_symbol(id);
-
-        for statement in self.program.statements.iter().chain(&self.generated) {
-            if let Statement::Macro(declaration) = statement {
-                if declaration.name == symbol.name {
-                    return Ok(declaration);
+        let (table, statements): (&SymbolTable, &[Statement]) = if id.0 < self.symbols.len() {
+            (self.symbols, &self.program.statements)
+        } else {
+            (&self.generated_symbols, &self.generated)
+        };
+        // Spans are local to their original source file and can coincide
+        // after imports are flattened. Match the overload's ordinal in its
+        // symbol table to the same ordinal in the AST instead.
+        let ordinal = table
+            .lookup_all(&symbol.name)
+            .iter()
+            .position(|candidate| *candidate == id)
+            .expect("a macro symbol must occur in its table's name index");
+        if let Some(declaration) = statements
+            .iter()
+            .filter_map(|statement| match statement {
+                Statement::Macro(declaration) if declaration.name == symbol.name => {
+                    Some(declaration)
                 }
-            }
+                _ => None,
+            })
+            .nth(ordinal)
+        {
+            return Ok(declaration);
         }
 
         // there is some internal compiler inconsistency rather than bad

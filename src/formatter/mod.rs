@@ -54,6 +54,16 @@ pub fn format_source(source: &str, config: &FormatConfig) -> Result<String, Stri
             blank_lines += 1;
         } else {
             blank_lines = 0;
+
+            // Separate adjacent top-level block declarations. Comments stay
+            // attached to the declaration they immediately precede because
+            // insertion only happens directly after a closing brace.
+            if delimiters.is_empty()
+                && result.last().is_some_and(|line| line.trim() == "}")
+                && is_top_level_declaration(content)
+            {
+                result.push(String::new());
+            }
             let leading_closers = leading_closers(&line_tokens);
             let leading_generic_closers = leading_generic_closers(&line_tokens);
             let is_facet = is_facet(&line_tokens);
@@ -107,6 +117,13 @@ pub fn format_source(source: &str, config: &FormatConfig) -> Result<String, Stri
     Ok(result.join(newline) + newline)
 }
 
+fn is_top_level_declaration(content: &str) -> bool {
+    let content = content.strip_prefix("pub ").unwrap_or(content);
+    ["macro ", "struct ", "enum ", "type "]
+        .iter()
+        .any(|prefix| content.starts_with(prefix))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,6 +135,33 @@ mod tests {
             format_source(source, &FormatConfig::default()).unwrap(),
             "macro x()\n{\n    # keep me\n    @emit 1\n}\n"
         );
+    }
+
+    #[test]
+    fn does_not_wrap_meta_arguments_at_a_statement_level_comma() {
+        let config = FormatConfig { max_width: 60, ..Default::default() };
+        let source = "macro checked(precision: int) -> int {\n@assert precision >= 0 && precision <= 60, \"precision must be between zero and sixty\"\n@return precision\n}\n";
+        let formatted = format_source(source, &config).unwrap();
+        assert!(formatted.contains("@assert precision >= 0 && precision <= 60, \"precision"));
+        let tokens = crate::lexer::lex(&formatted).unwrap();
+        crate::parser::parse(tokens).expect("formatted output should remain parseable");
+    }
+
+    #[test]
+    fn inserts_one_blank_line_between_top_level_block_declarations() {
+        let source = "macro first() {\n@emit 1\n}\nmacro second() {\n@emit 2\n}\n";
+        assert_eq!(
+            format_source(source, &FormatConfig::default()).unwrap(),
+            "macro first() {\n    @emit 1\n}\n\nmacro second() {\n    @emit 2\n}\n"
+        );
+    }
+
+    #[test]
+    fn formatted_inline_if_remains_parseable() {
+        let source = "macro choose(x: int) -> int { @if x > 0 { @return 1 }\n@return 0 }\n";
+        let formatted = format_source(source, &FormatConfig::default()).unwrap();
+        let tokens = crate::lexer::lex(&formatted).unwrap();
+        crate::parser::parse(tokens).expect("formatted inline blocks should remain parseable");
     }
 
     #[test]

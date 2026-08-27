@@ -100,7 +100,12 @@ pub(super) fn wrap_code(
                 closings.push((token.span.start.saturating_sub(source_start), local.len()));
                 local.pop();
             }
-            TokenKind::Comma if !local.is_empty() && generic_depth == 0 => {
+            TokenKind::Comma
+                if generic_depth == 0
+                    && (matches!(local.last(), Some(TokenKind::LParen | TokenKind::LBracket))
+                        || matches!(local.last(), Some(TokenKind::LBrace))
+                            && local.len() > outer.len()) =>
+            {
                 breaks.push((token.span.end.saturating_sub(source_start), local.len()));
             }
             _ => {}

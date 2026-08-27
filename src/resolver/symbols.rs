@@ -1,5 +1,6 @@
 //! A flat, whole-program table of top-level declarations (structs, type
-//! aliases, consts), keyed by name. By the time [`SymbolTable`] is built
+//! aliases, consts, macros), keyed by name. Macro names may map to an
+//! overload set; all other declaration names remain unique. By the time [`SymbolTable`] is built
 //! the [`crate::loader`] has already flattened every imported module into
 //! one [`crate::ast::Program`], so a single flat table — rather than one
 //! scoped per module — is enough.
@@ -45,7 +46,7 @@ pub struct Symbol {
 #[derive(Debug, Default)]
 pub struct SymbolTable {
     symbols: Vec<Symbol>,
-    by_name: HashMap<String, SymbolId>,
+    by_name: HashMap<String, Vec<SymbolId>>,
 
     /// `SymbolId`s handed out by this table start at `base` rather than 0
     /// — lets a second table (e.g. `AliasResolver::generated_symbols`)
@@ -79,12 +80,18 @@ impl SymbolTable {
     pub fn insert(
         &mut self, name: String, kind: SymbolKind, span: Span
     ) -> Result<SymbolId, DuplicateSymbol> {
-        if let Some(&existing) = self.by_name.get(&name) {
-            return Err(DuplicateSymbol {
-                name,
-                existing,
-                span
-            });
+        if let Some(existing) = self.by_name.get(&name) {
+            // Macros form overload sets. Every other declaration remains
+            // unique by name, and a macro may not overload a non-macro.
+            if kind != SymbolKind::Macro
+                || existing.iter().any(|id| self.get(*id).kind != SymbolKind::Macro)
+            {
+                return Err(DuplicateSymbol {
+                    name,
+                    existing: existing[0],
+                    span
+                });
+            }
         }
 
         let id = SymbolId(self.base + self.symbols.len());
@@ -96,13 +103,19 @@ impl SymbolTable {
             span,
         });
 
-        self.by_name.insert(name, id);
+        self.by_name.entry(name).or_default().push(id);
 
         Ok(id)
     }
 
     pub fn lookup(&self, name: &str) -> Option<SymbolId> {
-        self.by_name.get(name).copied()
+        self.by_name.get(name).and_then(|ids| ids.first()).copied()
+    }
+
+    /// All declarations registered under `name`. More than one result is
+    /// possible only for macro overload sets.
+    pub fn lookup_all(&self, name: &str) -> &[SymbolId] {
+        self.by_name.get(name).map(Vec::as_slice).unwrap_or(&[])
     }
 
     pub fn get(&self, id: SymbolId) -> &Symbol {

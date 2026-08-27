@@ -287,13 +287,12 @@ impl<'a> AliasResolver<'a> {
         if arguments.iter().any(|argument| argument.name.is_some()) {
             return Err(ResolveError::ExpectedValueExpression { span });
         }
-        let symbol = self.find_macro_symbol(name, span)?;
-        let declaration = self.find_macro_declaration(symbol)?.clone();
         let values = arguments
             .iter()
             .map(|argument| self.eval_value(&argument.value, scope))
             .collect::<Result<Vec<_>, _>>()?;
-        self.run_macro_body(symbol, &declaration, values, &mut Vec::new())?
+        let (symbol, declaration) = self.resolve_macro_overload(name, &values, span)?;
+        self.run_macro_body_inner(symbol, &declaration, values)?
             .returned
             .ok_or(ResolveError::ExpectedValueExpression { span })
     }
@@ -830,7 +829,12 @@ impl<'a> AliasResolver<'a> {
         let Expr::Identifier { name, span } = callee.as_ref() else {
             return Err(ResolveError::ExpectedValueExpression { span: template.span() });
         };
-        let symbol = self.find_macro_symbol(name, *span)?;
+        let Some(symbol) = self.lookup_symbol(name) else {
+            return Err(ResolveError::UnknownMacro { name: name.clone(), span: *span });
+        };
+        if self.get_symbol(symbol).kind != SymbolKind::Macro {
+            return Err(ResolveError::ExpectedMacro { name: name.clone(), span: *span });
+        }
         self.find_macro_declaration(symbol)
     }
 
@@ -845,7 +849,8 @@ impl<'a> AliasResolver<'a> {
     fn template_accepts(&mut self, template: &Expr, scope: &HashMap<String, Value>) -> bool {
         let Expr::Call { arguments, .. } = template else { return false };
         let Ok(declaration) = self.template_macro(template).cloned() else { return false };
-        if declaration.params.len() != arguments.len() {
+        let required = declaration.params.iter().filter(|param| param.default.is_none()).count();
+        if arguments.len() < required || arguments.len() > declaration.params.len() {
             return false;
         }
         arguments.iter().zip(&declaration.params).all(|(argument, param)| {

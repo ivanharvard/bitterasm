@@ -47,6 +47,33 @@ The tradeoff is symmetric: the fewer assumptions the language makes, the more an
 
 BitterASM is an early-stage project (lexer, parser, and resolver in Rust; a growing `std` library in BitterASM itself). Expect the language and standard library to change as the design settles.
 
+## Macro defaults
+
+Trailing macro parameters may provide default value expressions:
+
+```text
+macro encode(value: int, width: int = 8, mask: int = (1 << width) - 1) {
+    @emit value & mask
+}
+```
+
+Calls may omit any trailing defaulted parameters. Defaults are evaluated from left to
+right at the call site, so a default may refer to an earlier parameter. A required
+parameter may not follow a defaulted parameter. Overload selection considers every
+arity between a macro's required parameter count and its total parameter count; a call
+is ambiguous if more than one overload accepts the supplied argument types and arity.
+
+Macros may call themselves, directly or mutually, including from value expressions.
+Statement and expression calls share one call stack. To keep malformed compile-time
+programs from overflowing the compiler's host stack, expansion fails with
+`MacroCallDepthExceeded` when a call chain would exceed 32 nested macro calls.
+An exact direct self-tail-call such as `@return gcd(b, a % b)` reuses the current
+frame, rebinding and rechecking its arguments instead of consuming call depth. Calls
+wrapped in another expression are not tail calls. Macros with `after` hooks are also
+excluded because eliminating their frames would change unwind-time hook behavior.
+Tail-call loops are capped at 4,096 restarts and fail with
+`MacroTailCallLimitExceeded` if they do not reach a base case.
+
 ## Formatting
 
 Format one file, several files, or every `.basm` file below a directory:

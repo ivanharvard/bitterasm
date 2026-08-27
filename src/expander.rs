@@ -122,12 +122,17 @@ pub fn expand_invocation(table: &MacroTable, invocation: &Invocation, depth: usi
         return vec![Statement::Invocation(invocation.clone())];
     };
 
-    let substitutions: HashMap<String, Expr> = decl
-        .params
-        .iter()
-        .map(|param| param.name.clone())
-        .zip(invocation.operands.iter().cloned())
-        .collect();
+    let mut substitutions = HashMap::new();
+    for (index, param) in decl.params.iter().enumerate() {
+        let value = invocation.operands.get(index).cloned().or_else(|| {
+            param.default
+                .as_ref()
+                .map(|default| substitute_expr(default, &substitutions))
+        });
+        if let Some(value) = value {
+            substitutions.insert(param.name.clone(), value);
+        }
+    }
 
     let substituted = substitute_statements(&decl.body, &substitutions);
 
@@ -337,6 +342,7 @@ fn substitute_macro(decl: &MacroDeclaration, substitutions: &HashMap<String, Exp
             .map(|param| MacroParameter {
                 name: param.name.clone(),
                 ty: substitute_type_expr(&param.ty, substitutions),
+                default: param.default.as_ref().map(|value| substitute_expr(value, substitutions)),
                 span: param.span,
             })
             .collect(),

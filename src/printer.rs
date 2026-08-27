@@ -238,7 +238,12 @@ fn print_macro(decl: &MacroDeclaration, indent: usize) -> String {
 }
 
 fn print_macro_param(param: &MacroParameter) -> String {
-    format!("{name}: {ty}", name = param.name, ty = print_type_expr(&param.ty))
+    let default = param
+        .default
+        .as_ref()
+        .map(|value| format!(" = {}", print_expr(value)))
+        .unwrap_or_default();
+    format!("{name}: {ty}{default}", name = param.name, ty = print_type_expr(&param.ty))
 }
 
 fn print_generic_params(params: &[GenericParameter]) -> String {

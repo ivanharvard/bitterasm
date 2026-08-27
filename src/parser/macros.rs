@@ -102,6 +102,9 @@ impl Parser {
 
         let (body, mut end) = self.parse_statement_block("unterminated `@if` body")?;
 
+        // Both `} @else {` and a newline-separated `}\n@else {` are valid.
+        self.skip_newlines();
+
         let else_body = if self.at_else_meta() {
             self.advance(); // `@`
             self.advance(); // `else`
@@ -248,6 +251,17 @@ impl Parser {
 
         self.expect_simple(TokenKind::RParen)?;
 
+        if let Some(param) = params
+            .windows(2)
+            .find(|pair| pair[0].default.is_some() && pair[1].default.is_none())
+            .map(|pair| &pair[1])
+        {
+            return Err(ParseError::new(
+                "required macro parameters cannot follow parameters with defaults",
+                param.span,
+            ));
+        }
+
         let return_ty = if self.check(&TokenKind::Arrow) {
             self.advance();
             Some(self.parse_type_expr()?)
@@ -300,11 +314,19 @@ impl Parser {
 
         let ty = self.parse_type_expr()?;
 
-        let end = ty.span().end;
+        let default = if self.check(&TokenKind::Equal) {
+            self.advance();
+            Some(self.parse_expr()?)
+        } else {
+            None
+        };
+
+        let end = default.as_ref().map_or_else(|| ty.span().end, |value| value.span().end);
 
         Ok(MacroParameter {
             name,
             ty,
+            default,
             span: Span::new(start, end),
         })
     }

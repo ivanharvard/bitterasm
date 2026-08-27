@@ -39,14 +39,22 @@ impl<'a> AliasResolver<'a> {
         self.symbols.lookup(name).or_else(|| self.generated_symbols.lookup(name))
     }
 
+    pub(super) fn lookup_symbols(&self, name: &str) -> Vec<SymbolId> {
+        self.symbols
+            .lookup_all(name)
+            .iter()
+            .chain(self.generated_symbols.lookup_all(name))
+            .copied()
+            .collect()
+    }
+
     /// Registers a freshly-discovered declaration (a macro's generated
     /// output, or a synthesized range struct) so later lookups
     /// (`get_symbol`/`lookup_symbol`, and `find_struct_declaration`'s/
     /// `find_macro_declaration`'s/etc. fallback scan over `self.generated`)
-    /// can find it. Reuses `SymbolTable::insert`'s existing duplicate-name
-    /// detection — two macro invocations that generate the identically-named
-    /// declaration now correctly collide as a `DuplicateSymbol`, a check
-    /// that didn't exist before this mechanism did.
+    /// can find it. Reuses `SymbolTable::insert`'s duplicate-name rules:
+    /// ordinary declarations still collide, while same-named generated
+    /// macros join an overload set.
     pub(super) fn register_generated(&mut self, statement: &Statement) -> Result<(), ResolveError> {
         let (name, kind, span) = match statement {
             Statement::Struct(decl) => (decl.name.clone(), SymbolKind::Struct, decl.span),

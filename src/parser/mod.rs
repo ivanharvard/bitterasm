@@ -258,7 +258,7 @@ impl Parser {
     fn at_statement_end(&self) -> bool {
         matches!(
             self.current().kind,
-            TokenKind::Newline | TokenKind::Eof
+            TokenKind::Newline | TokenKind::RBrace | TokenKind::Eof
         )
     }
 
@@ -273,6 +273,10 @@ impl Parser {
             }
 
             TokenKind::Eof => Ok(self.current().span.end),
+
+            // A block closer terminates its final statement without being
+            // consumed; `parse_statement_block` owns the brace itself.
+            TokenKind::RBrace => Ok(self.current().span.start),
 
             _ => Err(ParseError::new(
                 "expected end of line",
