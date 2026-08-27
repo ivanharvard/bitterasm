@@ -1,29 +1,76 @@
-from std.unsigned import uint
-
 pub enum Infinity {
     Positive,
     Negative
 }
 
 # Interpreted as `value` / (10 ** `scale`)
-pub struct Decimal {
+pub struct Decimal
+    | invariant self.scale >= 0
+    | to decimal_to_int(self)
+    | to decimal_to_fraction(self)
+    | from decimal_from_int(source)
+{
     value: int,
-    scale: uint
+    scale: int
 }
 
-pub macro to_int(x: Decimal) -> int {
+pub macro decimal_to_int(x: Decimal) -> int {
     @assert x.scale == 0
     @return x.value
 }
 
+pub macro decimal_from_int(x: int) -> Decimal {
+    @return Decimal(
+        value=x,
+        scale=0
+    )
+}
+
+const PRECISION = 10
 pub struct Fraction
-    | invariant d != 0
+    | invariant self.d != 0
+    | to fraction_to_int(self)
+    | to fraction_to_decimal(self, PRECISION)
+    | from fraction_from_int(source)
 {
     n: int,
     d: int
 }
 
-pub macro to_int(x: Fraction) -> int {
+pub macro fraction_to_int(x: Fraction) -> int {
     @assert x.d == 1
     @return x.n
+}
+
+pub macro fraction_from_int(x: int) -> Fraction {
+    @return Fraction(n=x,d=1)
+}
+
+macro pow(
+    base: int,
+    exp: int
+) -> int {
+    @assert exp >= 0, "negative integer exponents are not supported"
+    @assert base != 0 || exp != 0, "0^0 is undefined"
+
+    @if exp == 0 {
+        @return 1
+    }
+
+    @return base * pow(base, exp - 1)
+}
+
+pub macro decimal_to_fraction(x: Decimal) -> Fraction {
+    @return Fraction(n=x.value, d=pow(10, x.scale))
+}
+
+pub macro fraction_to_decimal(
+    x: Fraction,
+    precision: int
+) -> Decimal {
+    @assert precision >= 0
+    @return Decimal(
+        value=x.n * pow(10, precision) / x.d,
+        scale=precision
+    )
 }
