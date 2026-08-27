@@ -1,0 +1,8 @@
+from std.riscv.c_like import *
+
+# c_like translation of system.s. `ecall`/`ebreak` take no operands, so
+# there's nothing to translate — this exists so every native case has a
+# matching c_like one, and to prove importing c_like.basm doesn't disturb
+# instructions it leaves on default syntax.
+ecall
+ebreak

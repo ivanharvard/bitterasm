@@ -1,0 +1,132 @@
+from .impl import *
+
+# A second, C-flavored surface syntax for the same `impl.basm` instructions
+# `native.basm` already covers — no instruction mnemonic required anywhere
+# here, on purpose: every pattern below is unanchored (see
+# `facets::syntax::is_anchored`'s doc), so the parser tries all of them
+# against every statement instead of dispatching by a leading name. Import
+# this instead of (never alongside — see the loader's
+# `ConflictingSyntaxOverride`) `native.basm` to write RISC-V as ordinary
+# expressions instead of memorizing mnemonics.
+#
+# Two real ambiguities this has to design around, both from the same root
+# cause: a capture matches *any* expression, so nothing about the tokens
+# alone tells two same-shaped patterns apart the way a type check could —
+#   - reg-reg vs reg-immediate forms sharing an operator (`add`/`addi`) are
+#     disambiguated with `<-` instead of `=` for every immediate form, so
+#     the two shapes diverge at the very first token after `$rd$` — before
+#     either side's own capture has even started, rather than relying on
+#     a marker *inside* one of them. That distinction matters: an earlier
+#     draft put a literal `imm` keyword right before the immediate capture
+#     instead, which reads fine for `$rd$ = $rs1$ + imm 5` but silently
+#     breaks on a *negative* immediate — `$rd$ = $rs1$ + imm -1` is also a
+#     complete, valid parse of `add`'s own pattern (its unbounded trailing
+#     capture happily reads `imm - 1` as one subtraction expression, since
+#     nothing stops an identifier from being followed by a binary `-`) —
+#     a genuine ambiguity between `add`/`addi`/`sub` that only an actual
+#     compile of a negative-immediate case ever surfaced. Wrapping the
+#     value in parens instead of a keyword has the identical problem for
+#     the identical reason: `(x)` is itself a valid expression an unbounded
+#     reg-reg capture swallows just as well. `<-` sidesteps this
+#     completely — nothing needs to look inside a capture to tell the two
+#     shapes apart, so what the captured *value* looks like can't matter.
+#     (`:=` was the first choice, and *also* wrong, for an unrelated reason:
+#     an identifier immediately followed by `:` is already how this
+#     language spells a label, and that check runs before custom syntax is
+#     even tried — `$rd$` followed by `:=`'s leading `:` was read as a
+#     label declaration named `$rd$`, not the start of a pattern match at
+#     all. `<-` (`Less` then `Minus` — this language has no dedicated
+#     arrow token) doesn't collide with anything already reserved.)
+#   - lb/lh/lw/lbu/lhu (and sb/sh/sw) share the same `mem[rs1 + offset]`
+#     shape at every width, so each gets its own literal type tag right
+#     before `mem` (`i8`/`u8`/`i16`/`u16`, or none for the word-sized/
+#     default case) instead of leaving width ambiguous — same principle:
+#     the disambiguator sits in a fixed literal position, never inside a
+#     capture's own value.
+#
+# Not every instruction has a natural collision-free spelling this way —
+# `sltu`/`sltiu`/`bltu`/`bgeu`'s *unsigned* comparison has no C operator of
+# its own (C doesn't distinguish signed/unsigned by syntax either), so
+# those, plus `lui`/`auipc`/`ecall`/`ebreak`, are left on `impl.basm`'s
+# plain default syntax rather than force an unnatural one.
+
+# =================
+# R-type: register-register ops
+# =================
+
+syntax add(rd, rs1, rs2) = { $rd$ = $rs1$ + $rs2$ }
+syntax sub(rd, rs1, rs2) = { $rd$ = $rs1$ - $rs2$ }
+syntax and(rd, rs1, rs2) = { $rd$ = $rs1$ & $rs2$ }
+syntax or(rd, rs1, rs2) = { $rd$ = $rs1$ | $rs2$ }
+syntax xor(rd, rs1, rs2) = { $rd$ = $rs1$ ^ $rs2$ }
+syntax sll(rd, rs1, rs2) = { $rd$ = $rs1$ << $rs2$ }
+# `>>>` (logical, zero-filling) vs `>>` (arithmetic, sign-extending) — the
+# same distinction (and spelling) Java uses for the same reason: C's `>>`
+# alone doesn't have room for both meanings.
+syntax srl(rd, rs1, rs2) = { $rd$ = $rs1$ >>> $rs2$ }
+syntax sra(rd, rs1, rs2) = { $rd$ = $rs1$ >> $rs2$ }
+syntax slt(rd, rs1, rs2) = { $rd$ = $rs1$ < $rs2$ }
+
+# =================
+# I-type: register-immediate ops
+# =================
+# Same operators as above, `<-` instead of `=` marking the immediate form
+# — see the module doc for why that, and not a keyword, parens, or `:=`,
+# is what actually disambiguates these from their reg-reg counterparts.
+
+syntax addi(rd, rs1, imm) = { $rd$ <- $rs1$ + $imm$ }
+syntax andi(rd, rs1, imm) = { $rd$ <- $rs1$ & $imm$ }
+syntax ori(rd, rs1, imm) = { $rd$ <- $rs1$ | $imm$ }
+syntax xori(rd, rs1, imm) = { $rd$ <- $rs1$ ^ $imm$ }
+syntax slli(rd, rs1, shamt) = { $rd$ <- $rs1$ << $shamt$ }
+syntax srli(rd, rs1, shamt) = { $rd$ <- $rs1$ >>> $shamt$ }
+syntax srai(rd, rs1, shamt) = { $rd$ <- $rs1$ >> $shamt$ }
+syntax slti(rd, rs1, imm) = { $rd$ <- $rs1$ < $imm$ }
+
+# =================
+# I-type: loads
+# =================
+# `mem[rs1 + offset]` reads as C array-style memory access; the type tag
+# before `mem` (absent for word-sized `lw`, the "plain int" case) picks the
+# width/sign the same way a cast would. Not `*(rs1 + offset)` — a leading
+# `*` is punctuation, not an identifier, and only an identifier-led
+# statement is ever offered to custom-syntax matching at all (see
+# `crate::parser::statements::parse_invocation_statement`'s doc); `sb`/
+# `sh`/`sw` below need this same fix even more, since a store's address is
+# its pattern's very first segment, with no `$rd$ =` ahead of it to make
+# the statement identifier-led regardless.
+
+syntax lb(rd, offset, rs1) = { $rd$ = i8 mem[$rs1$ + $offset$] }
+syntax lbu(rd, offset, rs1) = { $rd$ = u8 mem[$rs1$ + $offset$] }
+syntax lh(rd, offset, rs1) = { $rd$ = i16 mem[$rs1$ + $offset$] }
+syntax lhu(rd, offset, rs1) = { $rd$ = u16 mem[$rs1$ + $offset$] }
+syntax lw(rd, offset, rs1) = { $rd$ = mem[$rs1$ + $offset$] }
+
+# =================
+# S-type: stores
+# =================
+
+syntax sb(rs2, offset, rs1) = { i8 mem[$rs1$ + $offset$] = $rs2$ }
+syntax sh(rs2, offset, rs1) = { i16 mem[$rs1$ + $offset$] = $rs2$ }
+syntax sw(rs2, offset, rs1) = { mem[$rs1$ + $offset$] = $rs2$ }
+
+# =================
+# B-type: branches
+# =================
+
+syntax beq(rs1, rs2, target) = { if ($rs1$ == $rs2$) goto $target$ }
+syntax bne(rs1, rs2, target) = { if ($rs1$ != $rs2$) goto $target$ }
+syntax blt(rs1, rs2, target) = { if ($rs1$ < $rs2$) goto $target$ }
+syntax bge(rs1, rs2, target) = { if ($rs1$ >= $rs2$) goto $target$ }
+
+# =================
+# J-type: jump — `rd = call(...)`, since jal/jalr's `rd` really is "where
+# the return address goes," making this read like an actual call
+# expression rather than a bare goto. `jalr`'s indirect target (through a
+# register + offset) uses `[...]` instead of `(...)` — a distinct literal
+# token from `jal`'s, not just a different capture count, so the two can't
+# be confused the same way the reg-reg/reg-imm forms couldn't be either.
+# =================
+
+syntax jal(rd, target) = { $rd$ = call($target$) }
+syntax jalr(rd, rs1, offset) = { $rd$ = call[$rs1$ + $offset$] }

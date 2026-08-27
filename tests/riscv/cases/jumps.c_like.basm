@@ -1,0 +1,11 @@
+from std.riscv.c_like import *
+
+# c_like translation of jumps.s.
+loop_start:
+t0 = t0 + t1
+ra = call(loop_start)
+t0 = call(forward_target)
+t0 = t0 + t1
+forward_target:
+ra = call[t1 + 1685]
+zero = call[ra + -1370]

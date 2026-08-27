@@ -1,10 +1,17 @@
-//! `syntax` — macro-only, at most one. Lets a macro declare its own
-//! call-site shape instead of the default bare `name arg, arg, ...` form,
-//! e.g. `syntax "mov $dst$, $value$"`. A `$...$` pair is a *plain* capture:
-//! parse an expression there, bind it to the parameter of that name — not a
-//! richer "evaluate and splice the result" mechanism.
+//! `syntax` — macro-only, at most one *as a facet*. Lets a macro declare
+//! its own call-site shape instead of the default bare `name arg, arg, ...`
+//! form, e.g. `syntax { mov $dst$, $value$ }`. A `$...$` pair is a *plain*
+//! capture: parse an expression there, bind it to the parameter of that
+//! name — not a richer "evaluate and splice the result" mechanism.
 //!
-//! This file only owns the pattern *data* and string-level parsing/validation
+//! The standalone form (`syntax name(a, b) = { ... }`, parsed in
+//! `crate::parser::mod::parse_syntax_override`, not here) reuses this same
+//! pattern grammar and [`parse_pattern`], but *overrides* an existing
+//! macro's call-site shape from outside its own declaration, instead of
+//! declaring one alongside it — see that function's doc for the
+//! one-pattern-per-name/conflict rules that only apply to it.
+//!
+//! This file only owns the pattern *data* and token-level parsing/validation
 //! (no token-stream matching against a live parse — that needs `&mut
 //! Parser`, and lives in `crate::parser::invocation_syntax` instead, the
 //! same split `crate::facets` already keeps from `crate::parser::facets` for
@@ -30,7 +37,7 @@ use crate::token::TokenKind;
 
 use super::{DeclKind, PayloadShape, Violation};
 
-pub const PAYLOAD: PayloadShape = PayloadShape::Expr;
+pub const PAYLOAD: PayloadShape = PayloadShape::Pattern;
 
 pub fn check(decl_kind: DeclKind, count: usize) -> Result<(), Violation> {
     if decl_kind != DeclKind::Macro {
@@ -58,29 +65,30 @@ pub struct SyntaxPattern {
     pub param_order: Vec<String>,
 }
 
-/// Parses a `syntax` facet's string payload into a `SyntaxPattern`, and
-/// validates it against `macro_name`/`params` (both already fully known by
-/// the time a macro's facets are parsed). Errors are plain messages — like
-/// `Violation`, a small facet-owned type the caller (the parser) turns into
-/// a real `ParseError` with the facet's own span, not a computed offset
-/// into the pattern string (`value` is already escape-collapsed by the
-/// lexer, so a byte offset into it wouldn't line up with the original
-/// source once any escape precedes the error point).
+/// Parses a `syntax` facet/override's raw `{ ... }` tokens into a
+/// `SyntaxPattern`, and validates it against `params` (already known by the
+/// time either form is parsed). `tokens` is already lexed by the
+/// surrounding parse (a brace-delimited block of ordinary source tokens,
+/// not a re-lexed string) — the caller is responsible for stripping the
+/// delimiting braces and any `Newline`/`Eof` before calling this. Errors
+/// are plain messages — like `Violation`, a small facet-owned type the
+/// caller (the parser) turns into a real `ParseError` with the pattern's
+/// own span.
+///
+/// Deliberately doesn't require the pattern to start with (or contain
+/// anywhere) the macro's own name — `$rd$ = $rs1$ + $rs2$` is exactly as
+/// valid as `add $rd$, $rs1$, $rs2$`, so a caller never has to know or
+/// spell an instruction's name to use it. `crate::parser::is_anchored`
+/// classifies a parsed pattern after the fact, for the one thing that
+/// distinction still matters for: whether the parser can dispatch on it by
+/// a call site's leading token alone, or has to try it unconditionally
+/// alongside every other unanchored pattern (see that function's doc).
 pub fn parse_pattern(
-    macro_name: &str,
-    value: &str,
+    tokens: Vec<TokenKind>,
     params: &[String],
 ) -> Result<SyntaxPattern, String> {
-    let tokens: Vec<TokenKind> = crate::lexer::lex(value)
-        .map_err(|error| format!("invalid syntax pattern: {error}"))?
-        .into_iter()
-        .map(|token| token.kind)
-        .filter(|kind| !matches!(kind, TokenKind::Eof | TokenKind::Newline))
-        .collect();
-
     let segments = split_into_segments(tokens)?;
 
-    validate_starts_with_macro_name(&segments, macro_name)?;
     validate_captures(&segments, params)?;
     validate_no_empty_gaps(&segments)?;
 
@@ -88,6 +96,24 @@ pub fn parse_pattern(
         segments,
         param_order: params.to_vec(),
     })
+}
+
+/// Whether `pattern`'s first segment is a literal starting with `name` —
+/// the parser's cheap, O(1) dispatch path (`crate::parser::statements`):
+/// an anchored pattern is only ever tried when the current statement's
+/// leading identifier already equals `name`, the same way looking a plain
+/// invocation's callee up by name already works. An unanchored pattern
+/// (starts with a capture, or a literal spelling something other than its
+/// own macro's name) can't be found that way — nothing about the call
+/// site's first token says which macro it's for — so it's tried against
+/// *every* identifier-led statement instead, regardless of what that
+/// statement's leading token is.
+pub fn is_anchored(pattern: &SyntaxPattern, name: &str) -> bool {
+    matches!(
+        pattern.segments.first(),
+        Some(PatternSegment::Literal(tokens))
+            if matches!(tokens.first(), Some(TokenKind::Identifier(first)) if first == name)
+    )
 }
 
 fn split_into_segments(tokens: Vec<TokenKind>) -> Result<Vec<PatternSegment>, String> {
@@ -135,25 +161,6 @@ fn split_into_segments(tokens: Vec<TokenKind>) -> Result<Vec<PatternSegment>, St
     }
 
     Ok(segments)
-}
-
-fn validate_starts_with_macro_name(
-    segments: &[PatternSegment],
-    macro_name: &str,
-) -> Result<(), String> {
-    let starts_with_name = matches!(
-        segments.first(),
-        Some(PatternSegment::Literal(tokens))
-            if matches!(tokens.first(), Some(TokenKind::Identifier(name)) if name == macro_name)
-    );
-
-    if starts_with_name {
-        Ok(())
-    } else {
-        Err(format!(
-            "a syntax pattern must begin with the macro's own name, e.g. `{macro_name} ...`"
-        ))
-    }
 }
 
 fn validate_captures(segments: &[PatternSegment], params: &[String]) -> Result<(), String> {

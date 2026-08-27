@@ -16,6 +16,7 @@ use crate::ast::{
     BinaryOp, CallArgument, ConstructItem, Expr, Facet, FacetPayload, ImportItems,
     MacroDeclaration, MacroParameter, NamePart, Statement, StructDeclaration, UnaryOp,
 };
+use crate::token::TokenKind;
 use crate::types::{GenericParameter, StructBodyItem, StructField, TypeArgument, TypeExpr};
 
 const INDENT: &str = "    ";
@@ -102,6 +103,13 @@ pub fn print_statement(statement: &Statement, indent: usize) -> String {
         }
 
         Statement::Macro(decl) => print_macro(decl, indent),
+
+        Statement::SyntaxOverride(override_statement) => format!(
+            "{pad}syntax {name}({params}) = {{ {pattern} }}",
+            name = override_statement.name,
+            params = override_statement.pattern.param_order.join(", "),
+            pattern = print_pattern_segments(&override_statement.pattern.segments),
+        ),
 
         Statement::Meta(meta) => {
             let args = meta.args.iter().map(print_expr).collect::<Vec<_>>().join(", ");
@@ -285,6 +293,110 @@ fn print_facet(facet: &Facet) -> String {
             name = facet.name,
             body = print_statements(statements, 1),
         ),
+
+        FacetPayload::Pattern(tokens) => {
+            format!("{} {{ {} }}", facet.name, print_pattern_tokens(tokens))
+        }
+    }
+}
+
+fn print_pattern_segments(segments: &[crate::facets::syntax::PatternSegment]) -> String {
+    use crate::facets::syntax::PatternSegment;
+
+    segments
+        .iter()
+        .map(|segment| match segment {
+            PatternSegment::Literal(tokens) => print_pattern_tokens(tokens),
+            PatternSegment::Capture(name) => format!("${name}$"),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn print_pattern_tokens(tokens: &[TokenKind]) -> String {
+    let mut out = String::new();
+
+    for (index, token) in tokens.iter().enumerate() {
+        let is_dollar = matches!(token, TokenKind::Dollar);
+        let prev_is_dollar = index > 0 && matches!(tokens[index - 1], TokenKind::Dollar);
+
+        if index > 0 && !is_dollar && !prev_is_dollar {
+            out.push(' ');
+        }
+
+        out.push_str(&token_text(token));
+    }
+
+    out
+}
+
+fn token_text(kind: &TokenKind) -> String {
+    match kind {
+        TokenKind::Identifier(name) => name.clone(),
+        TokenKind::Integer(raw) => raw.clone(),
+        TokenKind::String(value) => format!("{value:?}"),
+        TokenKind::Escaped(ch) => format!("\\{ch}"),
+
+        TokenKind::From => "from".to_string(),
+        TokenKind::Import => "import".to_string(),
+        TokenKind::As => "as".to_string(),
+        TokenKind::Pub => "pub".to_string(),
+        TokenKind::Macro => "macro".to_string(),
+        TokenKind::Type => "type".to_string(),
+        TokenKind::Struct => "struct".to_string(),
+        TokenKind::Enum => "enum".to_string(),
+        TokenKind::Const => "const".to_string(),
+
+        TokenKind::Dot => ".".to_string(),
+        TokenKind::DotDot => "..".to_string(),
+        TokenKind::Ellipsis => "...".to_string(),
+        TokenKind::Comma => ",".to_string(),
+        TokenKind::Colon => ":".to_string(),
+        TokenKind::Semicolon => ";".to_string(),
+
+        TokenKind::LParen => "(".to_string(),
+        TokenKind::RParen => ")".to_string(),
+        TokenKind::LBracket => "[".to_string(),
+        TokenKind::RBracket => "]".to_string(),
+        TokenKind::LBrace => "{".to_string(),
+        TokenKind::RBrace => "}".to_string(),
+
+        TokenKind::Star => "*".to_string(),
+        TokenKind::Plus => "+".to_string(),
+        TokenKind::Minus => "-".to_string(),
+        TokenKind::Slash => "/".to_string(),
+        TokenKind::Percent => "%".to_string(),
+
+        TokenKind::Equal => "=".to_string(),
+        TokenKind::EqualEqual => "==".to_string(),
+        TokenKind::Bang => "!".to_string(),
+        TokenKind::BangEqual => "!=".to_string(),
+
+        TokenKind::Less => "<".to_string(),
+        TokenKind::LessEqual => "<=".to_string(),
+        TokenKind::Greater => ">".to_string(),
+        TokenKind::GreaterEqual => ">=".to_string(),
+
+        TokenKind::Ampersand => "&".to_string(),
+        TokenKind::AndAnd => "&&".to_string(),
+        TokenKind::Pipe => "|".to_string(),
+        TokenKind::OrOr => "||".to_string(),
+        TokenKind::Caret => "^".to_string(),
+        TokenKind::Tilde => "~".to_string(),
+
+        TokenKind::ShiftLeft => "<<".to_string(),
+        TokenKind::ShiftRight => ">>".to_string(),
+
+        TokenKind::Arrow => "->".to_string(),
+        TokenKind::FatArrow => "=>".to_string(),
+
+        TokenKind::Dollar => "$".to_string(),
+        TokenKind::Backtick => "`".to_string(),
+
+        TokenKind::At => "@".to_string(),
+
+        TokenKind::Newline => "\n".to_string(),
+        TokenKind::Eof => String::new(),
     }
 }
 

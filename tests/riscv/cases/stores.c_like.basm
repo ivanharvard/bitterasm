@@ -1,0 +1,6 @@
+from std.riscv.c_like import *
+
+# c_like translation of stores.s.
+i8 mem[sp + 987] = t0
+i16 mem[sp + -654] = t1
+mem[sp + 1685] = t2

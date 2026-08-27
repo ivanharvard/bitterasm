@@ -1,0 +1,11 @@
+from std.riscv.c_like import *
+
+# c_like translation of itype_arith.s. `sltiu` has no natural c_like
+# spelling (no unsigned comparison operator) and stays on default syntax.
+t0 <- zero + 42
+t1 <- t0 + -1
+a0 <- a1 < 100
+sltiu a2, a3, 200
+s0 <- s1 ^ 0x0F
+s2 <- s3 | 0x70
+s4 <- s5 & 0x3FF

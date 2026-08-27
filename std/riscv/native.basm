@@ -1,711 +1,89 @@
-from std.binary import *
+from .impl import *
 
-# =================
-# registers
-# =================
-# 32 general-purpose registers, 5 bits each. x0 is wired to zero by the ISA
-# spec, not by anything here — nothing stops constructing Reg(0) again.
-
-pub type Reg = bits<5>
-
-pub const x0 = Reg(0)
-pub const x1 = Reg(1)
-pub const x2 = Reg(2)
-pub const x3 = Reg(3)
-pub const x4 = Reg(4)
-pub const x5 = Reg(5)
-pub const x6 = Reg(6)
-pub const x7 = Reg(7)
-pub const x8 = Reg(8)
-pub const x9 = Reg(9)
-pub const x10 = Reg(10)
-pub const x11 = Reg(11)
-pub const x12 = Reg(12)
-pub const x13 = Reg(13)
-pub const x14 = Reg(14)
-pub const x15 = Reg(15)
-pub const x16 = Reg(16)
-pub const x17 = Reg(17)
-pub const x18 = Reg(18)
-pub const x19 = Reg(19)
-pub const x20 = Reg(20)
-pub const x21 = Reg(21)
-pub const x22 = Reg(22)
-pub const x23 = Reg(23)
-pub const x24 = Reg(24)
-pub const x25 = Reg(25)
-pub const x26 = Reg(26)
-pub const x27 = Reg(27)
-pub const x28 = Reg(28)
-pub const x29 = Reg(29)
-pub const x30 = Reg(30)
-pub const x31 = Reg(31)
-
-# Standard ABI names, aliased to the `xN` registers they name.
-pub const zero = x0
-pub const ra = x1
-pub const sp = x2
-pub const gp = x3
-pub const tp = x4
-pub const t0 = x5
-pub const t1 = x6
-pub const t2 = x7
-pub const s0 = x8
-pub const fp = x8
-pub const s1 = x9
-pub const a0 = x10
-pub const a1 = x11
-pub const a2 = x12
-pub const a3 = x13
-pub const a4 = x14
-pub const a5 = x15
-pub const a6 = x16
-pub const a7 = x17
-pub const s2 = x18
-pub const s3 = x19
-pub const s4 = x20
-pub const s5 = x21
-pub const s6 = x22
-pub const s7 = x23
-pub const s8 = x24
-pub const s9 = x25
-pub const s10 = x26
-pub const s11 = x27
-pub const t3 = x28
-pub const t4 = x29
-pub const t5 = x30
-pub const t6 = x31
-
-# =================
-# field widths
-# =================
-# One alias per distinct bit-field width RV32I's six instruction formats
-# use. `bitter`'s packer only needs to know a value's width — it's
-# expected to walk an instruction struct's fields in declaration order and
-# concatenate each one's bits, with no opinion of its own about opcodes or
-# formats. Every field below is deliberately its own alias, even where two
-# happen to share a width (`Funct7`/`Imm7` are both `bits<7>`), so a
-# format struct's field types stay self-documenting.
-
-pub type Opcode = bits<7>
-pub type Funct3 = bits<3>
-pub type Funct7 = bits<7>
-
-pub type Bit1 = bits<1>
-pub type Imm4 = bits<4>
-pub type Imm5 = bits<5>
-pub type Imm6 = bits<6>
-pub type Imm7 = bits<7>
-pub type Imm8 = bits<8>
-pub type Imm10 = bits<10>
-pub type Imm12 = bits<12>
-pub type Imm20 = bits<20>
-
-# =================
-# instruction formats
-# =================
-# Field order is bit order, most-significant field first — bit 31 down to
-# bit 0 — matching how `bitter`'s packer is meant to concatenate them.
-
-pub struct RType {
-    funct7: Funct7,
-    rs2: Reg,
-    rs1: Reg,
-    funct3: Funct3,
-    rd: Reg,
-    opcode: Opcode,
-}
-
-pub struct IType {
-    imm: Imm12,
-    rs1: Reg,
-    funct3: Funct3,
-    rd: Reg,
-    opcode: Opcode,
-}
-
-pub struct SType {
-    imm_hi: Imm7,
-    rs2: Reg,
-    rs1: Reg,
-    funct3: Funct3,
-    imm_lo: Imm5,
-    opcode: Opcode,
-}
-
-# The immediate's bits are scrambled across the word by the ISA spec, not
-# by anything here — `imm[12]`/`imm[10:5]`/`imm[4:1]`/`imm[11]` are just
-# this format's real field names, in the order RV32I actually lays them
-# out, so a branch macro's own arithmetic (see `beq` etc. below) is the
-# only place that "scrambling" is expressed at all.
-pub struct BType {
-    imm12: Bit1,
-    imm10_5: Imm6,
-    rs2: Reg,
-    rs1: Reg,
-    funct3: Funct3,
-    imm4_1: Imm4,
-    imm11: Bit1,
-    opcode: Opcode,
-}
-
-pub struct UType {
-    imm: Imm20,
-    rd: Reg,
-    opcode: Opcode,
-}
-
-pub struct JType {
-    imm20: Bit1,
-    imm10_1: Imm10,
-    imm11: Bit1,
-    imm19_12: Imm8,
-    rd: Reg,
-    opcode: Opcode,
-}
+# Real, conventional RISC-V assembly syntax for every `impl.basm` macro —
+# assigned here, explicitly, rather than left to whichever ones happen to
+# already read right under default positional `name arg, arg, ...` syntax,
+# so this file is a complete, standalone spec of "native" syntax on its
+# own, not just the handful of special cases that actually needed it. An
+# alternate dialect can sit alongside this one, importing the same `.impl`,
+# without touching or duplicating any instruction's real implementation.
 
 # =================
 # R-type: register-register ops
 # =================
 
-pub macro add(
-    rd: Reg,
-    rs1: Reg,
-    rs2: Reg
-) -> RType {
-    @emit RType(
-        funct7 = Funct7(0b0000000),
-        rs2 = rs2,
-        rs1 = rs1,
-        funct3 = Funct3(0b000), rd = rd,
-        opcode = Opcode(0b0110011)
-    )
-}
-
-pub macro sub(
-    rd: Reg,
-    rs1: Reg,
-    rs2: Reg
-) -> RType {
-    @emit RType(
-        funct7 = Funct7(0b0100000),
-        rs2 = rs2,
-        rs1 = rs1,
-        funct3 = Funct3(0b000), rd = rd,
-        opcode = Opcode(0b0110011)
-    )
-}
-
-pub macro sll(
-    rd: Reg,
-    rs1: Reg,
-    rs2: Reg
-) -> RType {
-    @emit RType(
-        funct7 = Funct7(0b0000000),
-        rs2 = rs2,
-        rs1 = rs1,
-        funct3 = Funct3(0b001), rd = rd,
-        opcode = Opcode(0b0110011)
-    )
-}
-
-pub macro slt(
-    rd: Reg,
-    rs1: Reg,
-    rs2: Reg
-) -> RType {
-    @emit RType(
-        funct7 = Funct7(0b0000000),
-        rs2 = rs2,
-        rs1 = rs1,
-        funct3 = Funct3(0b010), rd = rd,
-        opcode = Opcode(0b0110011)
-    )
-}
-
-pub macro sltu(
-    rd: Reg,
-    rs1: Reg,
-    rs2: Reg
-) -> RType {
-    @emit RType(
-        funct7 = Funct7(0b0000000),
-        rs2 = rs2,
-        rs1 = rs1,
-        funct3 = Funct3(0b011), rd = rd,
-        opcode = Opcode(0b0110011)
-    )
-}
-
-pub macro xor(
-    rd: Reg,
-    rs1: Reg,
-    rs2: Reg
-) -> RType {
-    @emit RType(
-        funct7 = Funct7(0b0000000),
-        rs2 = rs2,
-        rs1 = rs1,
-        funct3 = Funct3(0b100), rd = rd,
-        opcode = Opcode(0b0110011)
-    )
-}
-
-pub macro srl(
-    rd: Reg,
-    rs1: Reg,
-    rs2: Reg
-) -> RType {
-    @emit RType(
-        funct7 = Funct7(0b0000000),
-        rs2 = rs2,
-        rs1 = rs1,
-        funct3 = Funct3(0b101), rd = rd,
-        opcode = Opcode(0b0110011)
-    )
-}
-
-pub macro sra(
-    rd: Reg,
-    rs1: Reg,
-    rs2: Reg
-) -> RType {
-    @emit RType(
-        funct7 = Funct7(0b0100000),
-        rs2 = rs2,
-        rs1 = rs1,
-        funct3 = Funct3(0b101), rd = rd,
-        opcode = Opcode(0b0110011)
-    )
-}
-
-pub macro or(
-    rd: Reg,
-    rs1: Reg,
-    rs2: Reg
-) -> RType {
-    @emit RType(
-        funct7 = Funct7(0b0000000),
-        rs2 = rs2,
-        rs1 = rs1,
-        funct3 = Funct3(0b110), rd = rd,
-        opcode = Opcode(0b0110011)
-    )
-}
-
-pub macro and(
-    rd: Reg,
-    rs1: Reg,
-    rs2: Reg
-) -> RType {
-    @emit RType(
-        funct7 = Funct7(0b0000000),
-        rs2 = rs2,
-        rs1 = rs1,
-        funct3 = Funct3(0b111), rd = rd,
-        opcode = Opcode(0b0110011)
-    )
-}
+syntax add(rd, rs1, rs2) = { add $rd$, $rs1$, $rs2$ }
+syntax sub(rd, rs1, rs2) = { sub $rd$, $rs1$, $rs2$ }
+syntax sll(rd, rs1, rs2) = { sll $rd$, $rs1$, $rs2$ }
+syntax slt(rd, rs1, rs2) = { slt $rd$, $rs1$, $rs2$ }
+syntax sltu(rd, rs1, rs2) = { sltu $rd$, $rs1$, $rs2$ }
+syntax xor(rd, rs1, rs2) = { xor $rd$, $rs1$, $rs2$ }
+syntax srl(rd, rs1, rs2) = { srl $rd$, $rs1$, $rs2$ }
+syntax sra(rd, rs1, rs2) = { sra $rd$, $rs1$, $rs2$ }
+syntax or(rd, rs1, rs2) = { or $rd$, $rs1$, $rs2$ }
+syntax and(rd, rs1, rs2) = { and $rd$, $rs1$, $rs2$ }
 
 # =================
 # I-type: register-immediate ops
 # =================
 
-pub macro addi(
-    rd: Reg,
-    rs1: Reg,
-    imm: int
-) -> IType {
-    @emit IType(
-        imm = Imm12(imm & 0xFFF),
-        rs1 = rs1,
-        funct3 = Funct3(0b000),
-        rd = rd,
-        opcode = Opcode(0b0010011)
-    )
-}
+syntax addi(rd, rs1, imm) = { addi $rd$, $rs1$, $imm$ }
+syntax slti(rd, rs1, imm) = { slti $rd$, $rs1$, $imm$ }
+syntax sltiu(rd, rs1, imm) = { sltiu $rd$, $rs1$, $imm$ }
+syntax xori(rd, rs1, imm) = { xori $rd$, $rs1$, $imm$ }
+syntax ori(rd, rs1, imm) = { ori $rd$, $rs1$, $imm$ }
+syntax andi(rd, rs1, imm) = { andi $rd$, $rs1$, $imm$ }
 
-pub macro slti(
-    rd: Reg,
-    rs1: Reg,
-    imm: int
-) -> IType {
-    @emit IType(
-        imm = Imm12(imm & 0xFFF),
-        rs1 = rs1,
-        funct3 = Funct3(0b010),
-        rd = rd,
-        opcode = Opcode(0b0010011)
-    )
-}
+syntax slli(rd, rs1, shamt) = { slli $rd$, $rs1$, $shamt$ }
+syntax srli(rd, rs1, shamt) = { srli $rd$, $rs1$, $shamt$ }
+syntax srai(rd, rs1, shamt) = { srai $rd$, $rs1$, $shamt$ }
 
-pub macro sltiu(
-    rd: Reg,
-    rs1: Reg,
-    imm: int
-) -> IType {
-    @emit IType(
-        imm = Imm12(imm & 0xFFF),
-        rs1 = rs1,
-        funct3 = Funct3(0b011),
-        rd = rd,
-        opcode = Opcode(0b0010011)
-    )
-}
+syntax jalr(rd, rs1, offset) = { jalr $rd$, $rs1$, $offset$ }
 
-pub macro xori(
-    rd: Reg,
-    rs1: Reg,
-    imm: int
-) -> IType {
-    @emit IType(
-        imm = Imm12(imm & 0xFFF),
-        rs1 = rs1,
-        funct3 = Funct3(0b100),
-        rd = rd,
-        opcode = Opcode(0b0010011)
-    )
-}
-
-pub macro ori(
-    rd: Reg,
-    rs1: Reg,
-    imm: int
-) -> IType {
-    @emit IType(
-        imm = Imm12(imm & 0xFFF),
-        rs1 = rs1,
-        funct3 = Funct3(0b110),
-        rd = rd,
-        opcode = Opcode(0b0010011)
-    )
-}
-
-pub macro andi(
-    rd: Reg,
-    rs1: Reg,
-    imm: int
-) -> IType {
-    @emit IType(
-        imm = Imm12(imm & 0xFFF),
-        rs1 = rs1,
-        funct3 = Funct3(0b111),
-        rd = rd,
-        opcode = Opcode(0b0010011)
-    )
-}
-
-# Shift-by-immediate is still I-type, but its 12-bit `imm` field is really
-# two sub-fields BitterASM has no separate names for here: a 7-bit constant
-# (0000000, or 0100000 for the arithmetic-shift variant) over a 5-bit shift
-# amount — computed directly rather than split into their own struct
-# fields, since RType/IType/etc. are meant to match RV32I's own format
-# names, not a shift-specific seventh shape the ISA spec doesn't have.
-
-pub macro slli(
-    rd: Reg,
-    rs1: Reg,
-    shamt: int
-) -> IType {
-    @emit IType(
-        imm = Imm12(shamt & 0b11111),
-        rs1 = rs1,
-        funct3 = Funct3(0b001),
-        rd = rd,
-        opcode = Opcode(0b0010011)
-    )
-}
-
-pub macro srli(
-    rd: Reg,
-    rs1: Reg,
-    shamt: int
-) -> IType {
-    @emit IType(
-        imm = Imm12(shamt & 0b11111),
-        rs1 = rs1,
-        funct3 = Funct3(0b101),
-        rd = rd,
-        opcode = Opcode(0b0010011)
-    )
-}
-
-pub macro srai(
-    rd: Reg,
-    rs1: Reg,
-    shamt: int
-) -> IType {
-    @emit IType(
-        imm = Imm12((0b0100000 << 5) | (shamt & 0b11111)),
-        rs1 = rs1,
-        funct3 = Funct3(0b101), rd = rd,
-        opcode = Opcode(0b0010011)
-    )
-}
-
-pub macro jalr(
-    rd: Reg,
-    rs1: Reg,
-    offset: int
-) -> IType {
-    @emit IType(
-        imm = Imm12(offset & 0xFFF),
-        rs1 = rs1,
-        funct3 = Funct3(0b000),
-        rd = rd,
-        opcode = Opcode(0b1100111)
-    )
-}
-
-pub macro ecall() -> IType {
-    @emit IType(
-        imm = Imm12(0),
-        rs1 = x0,
-        funct3 = Funct3(0b000),
-        rd = x0,
-        opcode = Opcode(0b1110011)
-    )
-}
-
-pub macro ebreak() -> IType {
-    @emit IType(
-        imm = Imm12(1),
-        rs1 = x0,
-        funct3 = Funct3(0b000),
-        rd = x0,
-        opcode = Opcode(0b1110011)
-    )
-}
+syntax ecall() = { ecall }
+syntax ebreak() = { ebreak }
 
 # =================
 # I-type: loads
 # =================
-# Given their own `syntax` facet so a call site reads the conventional
-# `lw rd, offset(rs1)` way rather than the default `lw rd, offset, rs1`.
+# `offset(rs1)` addressing genuinely isn't expressible as default
+# positional syntax — the one shape here that isn't just a restatement of
+# it.
 
-pub macro lb(rd: Reg, offset: int, rs1: Reg) -> IType
-    | syntax "lb $rd$, $offset$($rs1$)"
-{
-    @emit IType(
-        imm = Imm12(offset & 0xFFF),
-        rs1 = rs1,
-        funct3 = Funct3(0b000),
-        rd = rd,
-        opcode = Opcode(0b0000011)
-    )
-}
-
-pub macro lh(rd: Reg, offset: int, rs1: Reg) -> IType
-    | syntax "lh $rd$, $offset$($rs1$)"
-{
-    @emit IType(
-        imm = Imm12(offset & 0xFFF),
-        rs1 = rs1,
-        funct3 = Funct3(0b001),
-        rd = rd,
-        opcode = Opcode(0b0000011)
-    )
-}
-
-pub macro lw(rd: Reg, offset: int, rs1: Reg) -> IType
-    | syntax "lw $rd$, $offset$($rs1$)"
-{
-    @emit IType(
-        imm = Imm12(offset & 0xFFF),
-        rs1 = rs1,
-        funct3 = Funct3(0b010),
-        rd = rd,
-        opcode = Opcode(0b0000011)
-    )
-}
-
-pub macro lbu(rd: Reg, offset: int, rs1: Reg) -> IType
-    | syntax "lbu $rd$, $offset$($rs1$)"
-{
-    @emit IType(
-        imm = Imm12(offset & 0xFFF),
-        rs1 = rs1,
-        funct3 = Funct3(0b100),
-        rd = rd,
-        opcode = Opcode(0b0000011)
-    )
-}
-
-pub macro lhu(rd: Reg, offset: int, rs1: Reg) -> IType
-    | syntax "lhu $rd$, $offset$($rs1$)"
-{
-    @emit IType(
-        imm = Imm12(offset & 0xFFF),
-        rs1 = rs1,
-        funct3 = Funct3(0b101),
-        rd = rd,
-        opcode = Opcode(0b0000011)
-    )
-}
+syntax lb(rd, offset, rs1) = { lb $rd$, $offset$($rs1$) }
+syntax lh(rd, offset, rs1) = { lh $rd$, $offset$($rs1$) }
+syntax lw(rd, offset, rs1) = { lw $rd$, $offset$($rs1$) }
+syntax lbu(rd, offset, rs1) = { lbu $rd$, $offset$($rs1$) }
+syntax lhu(rd, offset, rs1) = { lhu $rd$, $offset$($rs1$) }
 
 # =================
 # S-type: stores
 # =================
 
-pub macro sb(rs2: Reg, offset: int, rs1: Reg) -> SType
-    | syntax "sb $rs2$, $offset$($rs1$)"
-{
-    @emit SType(
-        imm_hi = Imm7((offset >> 5) & 0b1111111),
-        rs2 = rs2,
-        rs1 = rs1,
-        funct3 = Funct3(0b000), imm_lo = Imm5(offset & 0b11111),
-        opcode = Opcode(0b0100011)
-    )
-}
-
-pub macro sh(rs2: Reg, offset: int, rs1: Reg) -> SType
-    | syntax "sh $rs2$, $offset$($rs1$)"
-{
-    @emit SType(
-        imm_hi = Imm7((offset >> 5) & 0b1111111),
-        rs2 = rs2,
-        rs1 = rs1,
-        funct3 = Funct3(0b001), imm_lo = Imm5(offset & 0b11111),
-        opcode = Opcode(0b0100011)
-    )
-}
-
-pub macro sw(rs2: Reg, offset: int, rs1: Reg) -> SType
-    | syntax "sw $rs2$, $offset$($rs1$)"
-{
-    @emit SType(
-        imm_hi = Imm7((offset >> 5) & 0b1111111),
-        rs2 = rs2,
-        rs1 = rs1,
-        funct3 = Funct3(0b010), imm_lo = Imm5(offset & 0b11111),
-        opcode = Opcode(0b0100011)
-    )
-}
+syntax sb(rs2, offset, rs1) = { sb $rs2$, $offset$($rs1$) }
+syntax sh(rs2, offset, rs1) = { sh $rs2$, $offset$($rs1$) }
+syntax sw(rs2, offset, rs1) = { sw $rs2$, $offset$($rs1$) }
 
 # =================
 # B-type: branches
 # =================
-# `target` is the instruction `@here` would return at the branch target —
-# not a byte address, not a delta a caller computes by hand; see
-# std/riscv/native.basm's own design discussion. Every RV32I instruction is
-# exactly 4 bytes, so `(target - @here) * 4` is the real byte distance the
-# BType format actually encodes (bit 0 is always 0 and isn't stored). The
-# scrambled field order below is RV32I's, not a choice made here — see the
-# BType declaration's own doc comment.
 
-pub macro beq(rs1: Reg, rs2: Reg, target: int) -> BType
-    | syntax "beq $rs1$, $rs2$, $target$"
-{
-    const offset = (target - @here) * 4
-    @emit BType(
-        imm12 = Bit1((offset >> 12) & 1),
-        imm10_5 = Imm6((offset >> 5) & 0b111111), rs2 = rs2, rs1 = rs1,
-        funct3 = Funct3(0b000), imm4_1 = Imm4((offset >> 1) & 0b1111),
-        imm11 = Bit1((offset >> 11) & 1),
-        opcode = Opcode(0b1100011)
-    )
-}
-
-pub macro bne(rs1: Reg, rs2: Reg, target: int) -> BType
-    | syntax "bne $rs1$, $rs2$, $target$"
-{
-    const offset = (target - @here) * 4
-    @emit BType(
-        imm12 = Bit1((offset >> 12) & 1),
-        imm10_5 = Imm6((offset >> 5) & 0b111111), rs2 = rs2, rs1 = rs1,
-        funct3 = Funct3(0b001), imm4_1 = Imm4((offset >> 1) & 0b1111),
-        imm11 = Bit1((offset >> 11) & 1),
-        opcode = Opcode(0b1100011)
-    )
-}
-
-pub macro blt(rs1: Reg, rs2: Reg, target: int) -> BType
-    | syntax "blt $rs1$, $rs2$, $target$"
-{
-    const offset = (target - @here) * 4
-    @emit BType(
-        imm12 = Bit1((offset >> 12) & 1),
-        imm10_5 = Imm6((offset >> 5) & 0b111111), rs2 = rs2, rs1 = rs1,
-        funct3 = Funct3(0b100), imm4_1 = Imm4((offset >> 1) & 0b1111),
-        imm11 = Bit1((offset >> 11) & 1),
-        opcode = Opcode(0b1100011)
-    )
-}
-
-pub macro bge(rs1: Reg, rs2: Reg, target: int) -> BType
-    | syntax "bge $rs1$, $rs2$, $target$"
-{
-    const offset = (target - @here) * 4
-    @emit BType(
-        imm12 = Bit1((offset >> 12) & 1),
-        imm10_5 = Imm6((offset >> 5) & 0b111111), rs2 = rs2, rs1 = rs1,
-        funct3 = Funct3(0b101), imm4_1 = Imm4((offset >> 1) & 0b1111),
-        imm11 = Bit1((offset >> 11) & 1),
-        opcode = Opcode(0b1100011)
-    )
-}
-
-pub macro bltu(rs1: Reg, rs2: Reg, target: int) -> BType
-    | syntax "bltu $rs1$, $rs2$, $target$"
-{
-    const offset = (target - @here) * 4
-    @emit BType(
-        imm12 = Bit1((offset >> 12) & 1),
-        imm10_5 = Imm6((offset >> 5) & 0b111111), rs2 = rs2, rs1 = rs1,
-        funct3 = Funct3(0b110), imm4_1 = Imm4((offset >> 1) & 0b1111),
-        imm11 = Bit1((offset >> 11) & 1),
-        opcode = Opcode(0b1100011)
-    )
-}
-
-pub macro bgeu(rs1: Reg, rs2: Reg, target: int) -> BType
-    | syntax "bgeu $rs1$, $rs2$, $target$"
-{
-    const offset = (target - @here) * 4
-    @emit BType(
-        imm12 = Bit1((offset >> 12) & 1),
-        imm10_5 = Imm6((offset >> 5) & 0b111111), rs2 = rs2, rs1 = rs1,
-        funct3 = Funct3(0b111), imm4_1 = Imm4((offset >> 1) & 0b1111),
-        imm11 = Bit1((offset >> 11) & 1),
-        opcode = Opcode(0b1100011)
-    )
-}
+syntax beq(rs1, rs2, target) = { beq $rs1$, $rs2$, $target$ }
+syntax bne(rs1, rs2, target) = { bne $rs1$, $rs2$, $target$ }
+syntax blt(rs1, rs2, target) = { blt $rs1$, $rs2$, $target$ }
+syntax bge(rs1, rs2, target) = { bge $rs1$, $rs2$, $target$ }
+syntax bltu(rs1, rs2, target) = { bltu $rs1$, $rs2$, $target$ }
+syntax bgeu(rs1, rs2, target) = { bgeu $rs1$, $rs2$, $target$ }
 
 # =================
 # U-type: upper immediate
 # =================
 
-pub macro lui(
-    rd: Reg,
-    imm: int
-) -> UType {
-    @emit UType(imm = Imm20(imm & 0xFFFFF), rd = rd, opcode = Opcode(0b0110111))
-}
-
-pub macro auipc(
-    rd: Reg,
-    imm: int
-) -> UType {
-    @emit UType(imm = Imm20(imm & 0xFFFFF), rd = rd, opcode = Opcode(0b0010111))
-}
+syntax lui(rd, imm) = { lui $rd$, $imm$ }
+syntax auipc(rd, imm) = { auipc $rd$, $imm$ }
 
 # =================
 # J-type: jump
 # =================
-# Same `target`/`@here` story as BType above, and same scrambling story as
-# BType — see JType's own doc comment.
 
-pub macro jal(rd: Reg, target: int) -> JType
-    | syntax "jal $rd$, $target$"
-{
-    const offset = (target - @here) * 4
-    @emit JType(
-        imm20 = Bit1((offset >> 20) & 1),
-        imm10_1 = Imm10((offset >> 1) & 0b1111111111),
-        imm11 = Bit1((offset >> 11) & 1),
-        imm19_12 = Imm8((offset >> 12) & 0b11111111), rd = rd,
-        opcode = Opcode(0b1101111)
-    )
-}
+syntax jal(rd, target) = { jal $rd$, $target$ }

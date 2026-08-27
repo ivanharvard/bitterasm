@@ -1,0 +1,8 @@
+from std.riscv.c_like import *
+
+# c_like translation of loads.s.
+t0 = i8 mem[sp + 987]
+t1 = i16 mem[sp + -654]
+t2 = mem[sp + 1685]
+t3 = u8 mem[gp + -1370]
+t4 = u16 mem[gp + 2047]

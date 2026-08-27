@@ -1,0 +1,20 @@
+from std.riscv.c_like import *
+
+# c_like translation of branches.s — same instructions, same order, same
+# label positions, so its encoded output must match that file's own
+# oracle-verified bytes. `bltu`/`bgeu` have no natural c_like spelling
+# (see std/riscv/c_like.basm's own doc) and stay on default syntax, which
+# c_like.basm leaves untouched for exactly this reason.
+loop_start:
+t0 = t0 + t1
+t0 = t0 + t1
+if (t0 == t1) goto loop_start
+if (t2 != t3) goto loop_start
+if (a0 < a1) goto forward_target
+t0 = t0 + t1
+if (a2 >= a3) goto forward_target
+t0 = t0 + t1
+t0 = t0 + t1
+bltu s0, s1, loop_start
+bgeu s2, s3, forward_target
+forward_target:

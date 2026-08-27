@@ -808,6 +808,18 @@ impl<'a> AliasResolver<'a> {
                         span: import.span,
                     });
                 }
+
+                // Unreachable in practice — the parser only ever
+                // recognizes `syntax name(...) = { ... }` at true top
+                // level (`Parser::block_depth`), never inside a macro
+                // body — but matched for exhaustiveness with the same
+                // treatment `import` gets.
+                Statement::SyntaxOverride(override_statement) => {
+                    return Err(ResolveError::UnsupportedMacroStatement {
+                        kind: "syntax override".to_string(),
+                        span: override_statement.span,
+                    });
+                }
             }
         }
 

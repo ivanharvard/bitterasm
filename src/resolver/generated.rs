@@ -115,7 +115,8 @@ impl<'a> AliasResolver<'a> {
                 (name, SymbolKind::Const, decl.span)
             }
 
-            Statement::Import(_) | Statement::Invocation(_) | Statement::Meta(_) => {
+            Statement::Import(_) | Statement::Invocation(_) | Statement::Meta(_)
+            | Statement::SyntaxOverride(_) => {
                 return Err(ResolveError::Internal {
                     message: "register_generated only accepts Struct/TypeAlias/Const/Macro/Label"
                         .to_string(),
@@ -302,5 +303,6 @@ fn statement_span(statement: &Statement) -> Span {
         Statement::Invocation(s) => s.span,
         Statement::Macro(s) => s.span,
         Statement::Meta(s) => s.span,
+        Statement::SyntaxOverride(s) => s.span,
     }
 }

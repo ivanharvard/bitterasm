@@ -55,6 +55,12 @@ pub enum PayloadShape {
     Expr,
     Block,
     Type,
+
+    /// `{ ... }` consumed as a raw token sequence (balanced braces,
+    /// otherwise unparsed) rather than as statements — `syntax`'s own
+    /// shape, shared with the standalone `syntax name(...) = { ... }`
+    /// override statement.
+    Pattern,
 }
 
 /// Why a facet's occurrence on a declaration is invalid. Kept small and

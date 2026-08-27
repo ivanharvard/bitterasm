@@ -50,6 +50,14 @@ pub enum LoadError {
         module: String,
         name: String,
     },
+    /// Two of `importer`'s own imports each assign `name` a different
+    /// `syntax` override, and `importer` doesn't locally declare its own
+    /// override for `name` to say which one it means — see
+    /// `parser::ParserSeed::syntax_overrides`'s doc.
+    ConflictingSyntaxOverride {
+        importer: PathBuf,
+        name: String,
+    },
 }
 
 impl fmt::Display for LoadError {
@@ -86,6 +94,15 @@ impl fmt::Display for LoadError {
 
             LoadError::UnknownImportedName { module, name } => {
                 write!(f, "module `{module}` has no `{name}`")
+            }
+
+            LoadError::ConflictingSyntaxOverride { importer, name } => {
+                write!(
+                    f,
+                    "{}: multiple imports assign different syntax to `{name}` — \
+                     add your own `syntax {name}(...) = {{ ... }}` here to pick one",
+                    importer.display(),
+                )
             }
         }
     }
@@ -218,6 +235,16 @@ fn load_module(
 
     let mut seed = ParserSeed::default();
 
+    // A name with more than one *distinct* syntax override arriving from
+    // this file's own imports — not yet an error, since a local
+    // declaration for that name (checked against `local_syntax_overrides`
+    // once parsing finishes, below) is exactly how a developer resolves
+    // exactly this ambiguity. `seed.syntax_overrides` itself just ends up
+    // holding whichever import's pattern happened to merge in first for a
+    // conflicted name; that value is discarded (or replaced by a local
+    // declaration) before it's ever used, so which one doesn't matter.
+    let mut conflicted_overrides: HashSet<String> = HashSet::new();
+
     for import in &imports {
         let child_paths = match resolve_import_paths(import, path)? {
             ImportResolution::Plain(child_path) => vec![child_path],
@@ -236,6 +263,22 @@ fn load_module(
                     }
                 }
             }
+            for entry in &child_seed.unanchored_syntaxes {
+                if !seed.unanchored_syntaxes.contains(entry) {
+                    seed.unanchored_syntaxes.push(entry.clone());
+                }
+            }
+            for (name, pattern) in &child_seed.syntax_overrides {
+                match seed.syntax_overrides.get(name) {
+                    Some(existing) if existing != pattern => {
+                        conflicted_overrides.insert(name.clone());
+                    }
+                    Some(_) => {}
+                    None => {
+                        seed.syntax_overrides.insert(name.clone(), pattern.clone());
+                    }
+                }
+            }
         }
     }
 
@@ -246,6 +289,15 @@ fn load_module(
             span: error.span,
         }
     })?;
+
+    for name in &conflicted_overrides {
+        if !seed.local_syntax_overrides.contains(name) {
+            return Err(LoadError::ConflictingSyntaxOverride {
+                importer: path.to_path_buf(),
+                name: name.clone(),
+            });
+        }
+    }
 
     stack.pop();
 
@@ -262,6 +314,8 @@ fn load_module(
 
     seed.generic_signatures.retain(|name, _| !own_private_names.contains(name.as_str()));
     seed.macro_syntaxes.retain(|name, _| !own_private_names.contains(name.as_str()));
+    seed.syntax_overrides.retain(|name, _| !own_private_names.contains(name.as_str()));
+    seed.unanchored_syntaxes.retain(|(name, _)| !own_private_names.contains(name.as_str()));
 
     let module_id = cache.len();
 
@@ -401,8 +455,12 @@ fn collect_declarations(
             }
 
             // Labels, invocations, and meta statements are program bodies,
-            // not declarations; nothing else imports them.
-            Statement::Label(_) | Statement::Invocation(_) | Statement::Meta(_) => {}
+            // not declarations; nothing else imports them. A syntax
+            // override isn't a declaration either — its effect already
+            // happened at parse time, propagated via `ParserSeed`, not by
+            // being spliced into an importer's statement list.
+            Statement::Label(_) | Statement::Invocation(_) | Statement::Meta(_)
+            | Statement::SyntaxOverride(_) => {}
         }
     }
 
@@ -562,7 +620,11 @@ fn rename_statement(statement: &mut Statement, renames: &HashMap<String, String>
             }
         }
 
-        Statement::Import(_) | Statement::Label(_) | Statement::Invocation(_) => {}
+        // Never actually reached — `collect_declarations` never splices a
+        // `SyntaxOverride` into a statement list for this to run on — but
+        // matched here too for exhaustiveness.
+        Statement::Import(_) | Statement::Label(_) | Statement::Invocation(_)
+        | Statement::SyntaxOverride(_) => {}
     }
 }
 
@@ -643,6 +705,12 @@ fn rename_facet(facet: &mut Facet, renames: &HashMap<String, String>) {
         }
 
         FacetPayload::Type(ty) => rename_type_expr(ty, renames),
+
+        // A pattern's tokens are either `$capture$` names (the declaring
+        // macro's own params, not a reference to anything renameable) or
+        // literal call-site text the parser matches verbatim — nothing in
+        // it is ever a symbol reference.
+        FacetPayload::Pattern(_) => {}
     }
 }
 
@@ -1159,7 +1227,7 @@ mod tests {
 
         fs::write(
             dir.join("producer.basm"),
-            "pub macro mov(dst: int, value: int) | syntax \"mov $dst$, $value$\" {\n}\n",
+            "pub macro mov(dst: int, value: int) | syntax { mov $dst$, $value$ } {\n}\n",
         )
         .unwrap();
 
@@ -1202,12 +1270,12 @@ mod tests {
 
         fs::write(
             dir.join("bracketed.basm"),
-            "pub macro load(address: int) | syntax \"load [$address$]\" {\n}\n",
+            "pub macro load(address: int) | syntax { load [$address$] } {\n}\n",
         )
         .unwrap();
         fs::write(
             dir.join("displaced.basm"),
-            "pub macro load(base: int, offset: int) | syntax \"load $offset$($base$)\" {\n}\n",
+            "pub macro load(base: int, offset: int) | syntax { load $offset$($base$) } {\n}\n",
         )
         .unwrap();
         fs::write(
@@ -1248,7 +1316,7 @@ mod tests {
         // this test specifically needs one that isn't).
         fs::write(
             dir.join("after.basm"),
-            "macro mov(dst: int, value: int) | syntax \"mov $dst$: $value$\" {\n}\n\nmov r1: 7\n",
+            "macro mov(dst: int, value: int) | syntax { mov $dst$: $value$ } {\n}\n\nmov r1: 7\n",
         )
         .unwrap();
 
@@ -1257,7 +1325,7 @@ mod tests {
 
         fs::write(
             dir.join("before.basm"),
-            "mov r1: 7\n\nmacro mov(dst: int, value: int) | syntax \"mov $dst$: $value$\" {\n}\n",
+            "mov r1: 7\n\nmacro mov(dst: int, value: int) | syntax { mov $dst$: $value$ } {\n}\n",
         )
         .unwrap();
 

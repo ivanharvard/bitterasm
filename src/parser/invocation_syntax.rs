@@ -1,26 +1,45 @@
-//! Matches a real call site's token stream against one macro's
-//! [`SyntaxPattern`] (parsed and validated in `crate::facets::syntax`),
-//! producing the same [`Invocation`] shape [`Parser::parse_invocation`]'s
-//! default `name arg, arg, ...` grammar would. Everything downstream
-//! (`crate::resolver`) consumes `Invocation` generically, so this is the
-//! only place custom syntax matters at all.
+//! Matches a real call site's token stream against a pool of candidate
+//! `(macro name, SyntaxPattern)` pairs (parsed and validated in
+//! `crate::facets::syntax`), producing the same [`Invocation`] shape
+//! [`Parser::parse_invocation`]'s default `name arg, arg, ...` grammar
+//! would. Everything downstream (`crate::resolver`) consumes `Invocation`
+//! generically, so this is the only place custom syntax matters at all.
+//!
+//! A candidate pool mixes two different kinds of pattern (see
+//! `facets::syntax::is_anchored`'s doc): patterns anchored to the current
+//! statement's own leading identifier (`crate::parser::statements`'s
+//! `macro_syntaxes[name]` lookup already filters to just those) and every
+//! unanchored pattern in the program, regardless of which macro they're
+//! for or what their own leading token is — an unanchored pattern's whole
+//! point is that nothing about a call site's first token says which macro
+//! it's for, so it has to be tried against *every* identifier-led
+//! statement, not looked up by name.
 
 use crate::facets::syntax::{PatternSegment, SyntaxPattern};
 
 use super::*;
 
+pub(super) enum SyntaxMatch {
+    Matched(Invocation),
+
+    /// No candidate matched — `best_error` is the deepest partial match
+    /// found along the way (if any candidate got anywhere at all), for a
+    /// caller that wants a real diagnostic instead of just falling back to
+    /// default syntax silently.
+    NoMatch { best_error: Option<ParseError> },
+}
+
 impl Parser {
-    pub(super) fn parse_invocation_via_syntax_overloads(
+    pub(super) fn parse_invocation_via_syntax_candidates(
         &mut self,
-        name: &str,
-        patterns: &[SyntaxPattern],
-    ) -> Result<Invocation, ParseError> {
+        candidates: &[(String, SyntaxPattern)],
+    ) -> Result<SyntaxMatch, ParseError> {
         let start_pos = self.pos;
         let start_span = self.current().span;
         let mut matches: Vec<(Invocation, usize)> = Vec::new();
         let mut best_error: Option<(usize, ParseError)> = None;
 
-        for pattern in patterns {
+        for (name, pattern) in candidates {
             self.pos = start_pos;
             match self.parse_invocation_via_syntax(name, pattern) {
                 Ok(invocation) => {
@@ -43,22 +62,26 @@ impl Parser {
             1 => {
                 let (invocation, end_pos) = matches.pop().unwrap();
                 self.pos = end_pos;
-                Ok(invocation)
+                Ok(SyntaxMatch::Matched(invocation))
             }
-            0 => Err(best_error
-                .map(|(_, error)| error)
-                .unwrap_or_else(|| ParseError::new(
-                    format!("no syntax pattern registered for `{name}`"),
+            0 => Ok(SyntaxMatch::NoMatch { best_error: best_error.map(|(_, error)| error) }),
+            _ => {
+                let mut names: Vec<&str> = matches.iter().map(|(invocation, _)| invocation.name.as_str()).collect();
+                names.sort_unstable();
+                names.dedup();
+
+                Err(ParseError::new(
+                    format!(
+                        "ambiguous syntax for `{}`: multiple patterns match this invocation",
+                        names.join("`/`"),
+                    ),
                     start_span,
-                ))),
-            _ => Err(ParseError::new(
-                format!("ambiguous syntax for `{name}`: multiple patterns match this invocation"),
-                start_span,
-            )),
+                ))
+            }
         }
     }
 
-    pub(super) fn parse_invocation_via_syntax(
+    fn parse_invocation_via_syntax(
         &mut self,
         name: &str,
         pattern: &SyntaxPattern,

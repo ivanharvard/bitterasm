@@ -17,13 +17,13 @@
 //! alongside `generic_signatures` through the same prepass and the same
 //! cross-file threading in [`crate::loader`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::ast::{
     BinaryOp, CallArgument, ConstDeclaration, Expr, ImportItems, ImportStatement,
     Invocation, Label, MacroDeclaration, MacroParameter, MetaStatement, ModulePath,
-    NamePart, Program, Statement, UnaryOp, TypeAliasDeclaration,
+    NamePart, Program, Statement, SyntaxOverrideStatement, UnaryOp, TypeAliasDeclaration,
 };
 
 use crate::facets::syntax::SyntaxPattern;
@@ -73,6 +73,30 @@ pub fn parse(tokens: Vec<Token>) -> Result<Program, ParseError> {
 pub(crate) struct ParserSeed {
     pub generic_signatures: HashMap<String, Vec<GenericParamKind>>,
     pub macro_syntaxes: HashMap<String, Vec<SyntaxPattern>>,
+
+    /// The effective `syntax name(...) = { ... }` override active for each
+    /// name by the end of this file — inherited overrides plus whatever
+    /// this file declared itself, with a local declaration always taking
+    /// priority. `crate::loader` merges this across a file's several
+    /// imports and is where a genuine cross-import conflict (two *different*
+    /// inherited patterns for the same name, neither locally resolved) is
+    /// caught — see its `syntax_override_conflict` handling.
+    pub syntax_overrides: HashMap<String, SyntaxPattern>,
+
+    /// Unanchored patterns (`facets::syntax::is_anchored` is false) — see
+    /// `Parser::add_syntax_pattern`'s doc. `(target macro name, pattern)`,
+    /// order-insensitive (matching is tried against every one of them
+    /// regardless of order) and deduplicated by equality so a diamond
+    /// import doesn't turn into a false "ambiguous" match.
+    pub unanchored_syntaxes: Vec<(String, SyntaxPattern)>,
+
+    /// Just the names *this* file itself declared an override for (not
+    /// inherited) — `crate::loader` checks this, and only this, to decide
+    /// whether a conflict among this file's own imports was actually
+    /// resolved before propagating `syntax_overrides` onward. Never
+    /// consumed more than one import hop away, so — unlike every other
+    /// field here — it's never accumulated from a file's own imports.
+    pub local_syntax_overrides: HashSet<String>,
 }
 
 /// Parses `tokens`, treating `seed` as generic signatures and macro syntax
@@ -89,11 +113,15 @@ pub(crate) fn parse_seeded(
     let mut prepass = Parser::new(tokens.clone());
     prepass.generic_signatures.extend(seed.generic_signatures.clone());
     prepass.macro_syntaxes.extend(seed.macro_syntaxes.clone());
+    prepass.syntax_overrides.extend(seed.syntax_overrides.clone());
+    prepass.unanchored_syntaxes.extend(seed.unanchored_syntaxes.iter().cloned());
     let _ = prepass.parse_program();
 
     let mut parser = Parser::new(tokens);
     parser.generic_signatures = prepass.generic_signatures;
     parser.macro_syntaxes = prepass.macro_syntaxes;
+    parser.syntax_overrides = prepass.syntax_overrides;
+    parser.unanchored_syntaxes = prepass.unanchored_syntaxes;
 
     let program = parser.parse_program()?;
 
@@ -102,6 +130,9 @@ pub(crate) fn parse_seeded(
         ParserSeed {
             generic_signatures: parser.generic_signatures,
             macro_syntaxes: parser.macro_syntaxes,
+            syntax_overrides: parser.syntax_overrides,
+            local_syntax_overrides: parser.local_syntax_overrides,
+            unanchored_syntaxes: parser.unanchored_syntaxes,
         },
     ))
 }
@@ -172,7 +203,14 @@ struct Parser {
 
     generic_signatures: HashMap<String, Vec<GenericParamKind>>,
     macro_syntaxes: HashMap<String, Vec<SyntaxPattern>>,
+    syntax_overrides: HashMap<String, SyntaxPattern>,
+    local_syntax_overrides: HashSet<String>,
+    unanchored_syntaxes: Vec<(String, SyntaxPattern)>,
     imports: Vec<ImportStatement>,
+
+    // See `parse_statement_block`'s doc — a standalone `syntax` override
+    // is only recognized at true top level (depth 0).
+    pub(super) block_depth: usize,
 
     // While parsing a generic argument expression (e.g. the `width` in
     // `bits<width>`), `>`-shaped tokens (`Greater`, `GreaterEqual`,
@@ -202,7 +240,11 @@ impl Parser {
             pos: 0,
             generic_signatures: HashMap::new(),
             macro_syntaxes: HashMap::new(),
+            syntax_overrides: HashMap::new(),
+            local_syntax_overrides: HashSet::new(),
+            unanchored_syntaxes: Vec::new(),
             imports: Vec::new(),
+            block_depth: 0,
             restrict_closing_ops: false,
             restrict_brace_construction: false,
         }
@@ -224,9 +266,63 @@ impl Parser {
     }
 
     fn register_macro_syntax(&mut self, name: &str, pattern: SyntaxPattern) {
-        let patterns = self.macro_syntaxes.entry(name.to_string()).or_default();
-        if !patterns.contains(&pattern) {
-            patterns.push(pattern);
+        self.add_syntax_pattern(name, pattern);
+    }
+
+    // A standalone `syntax name(...) = { ... }` override, unlike a
+    // declaration's own `syntax` facet, *takes over* `name`'s call-site
+    // shape rather than adding one more accepted overload — so it clears
+    // out whatever was already registered for `name` (anchored or not,
+    // inherited or from an earlier facet declaration) before adding the
+    // new one, instead of appending to it. Two such overrides for the same
+    // name *in this file* is an unambiguous mistake (there's no
+    // import-order excuse for it), so that's a hard parse error; a
+    // cross-import conflict this file doesn't locally override at all is
+    // instead caught later, by `crate::loader`, once it can see whether
+    // this file's own declarations (tracked in `local_syntax_overrides`)
+    // resolved it.
+    fn register_syntax_override(
+        &mut self,
+        name: &str,
+        pattern: SyntaxPattern,
+        span: Span,
+    ) -> Result<(), ParseError> {
+        if !self.local_syntax_overrides.insert(name.to_string()) {
+            return Err(ParseError::new(
+                format!("`{name}`'s syntax is already overridden in this file"),
+                span,
+            ));
+        }
+
+        self.macro_syntaxes.remove(name);
+        self.unanchored_syntaxes.retain(|(existing, _)| existing != name);
+
+        self.syntax_overrides.insert(name.to_string(), pattern.clone());
+        self.add_syntax_pattern(name, pattern);
+
+        Ok(())
+    }
+
+    // Anchored (starts with `name` itself, e.g. `add $rd$, $rs1$, $rs2$`):
+    // stored under `macro_syntaxes[name]`, the parser's O(1) dispatch-by-
+    // leading-token path. Unanchored (e.g. `$rd$ = $rs1$ + $rs2$`, no
+    // instruction name required at all — the whole point of supporting
+    // it): nothing about a call site's first token says which macro it's
+    // for, so it's kept in one flat pool every identifier-led statement
+    // tries against, regardless of its own leading token. See
+    // `facets::syntax::is_anchored`'s doc and
+    // `parse_invocation_via_syntax_candidates`.
+    fn add_syntax_pattern(&mut self, name: &str, pattern: SyntaxPattern) {
+        if crate::facets::syntax::is_anchored(&pattern, name) {
+            let patterns = self.macro_syntaxes.entry(name.to_string()).or_default();
+            if !patterns.contains(&pattern) {
+                patterns.push(pattern);
+            }
+        } else {
+            let entry = (name.to_string(), pattern);
+            if !self.unanchored_syntaxes.contains(&entry) {
+                self.unanchored_syntaxes.push(entry);
+            }
         }
     }
 
@@ -380,6 +476,60 @@ impl Parser {
         }
 
         Ok((parts, Span::new(first_token.span.start, end)))
+    }
+
+    // A `syntax` pattern's `{ ... }` body — shared by the `syntax` facet
+    // (`parser::facets`) and the standalone `syntax name(...) = { ... }`
+    // override statement (`parse_syntax_override`, below). Consumes
+    // already-lexed tokens directly (no re-lexing a string), tracking
+    // brace depth so a pattern could in principle nest braces of its own;
+    // newlines inside are skipped rather than treated as significant,
+    // since a pattern is conceptually one line regardless of how the
+    // source wraps it. The opening `{` must already be current.
+    fn parse_pattern_block(&mut self, context: &str) -> Result<Vec<TokenKind>, ParseError> {
+        self.expect_simple(TokenKind::LBrace)?;
+
+        let mut tokens = Vec::new();
+        let mut depth: usize = 1;
+
+        loop {
+            if self.at_eof() {
+                return Err(ParseError::new(
+                    format!("unterminated {context}"),
+                    self.current().span,
+                ));
+            }
+
+            let kind = self.current().kind.clone();
+
+            match kind {
+                TokenKind::LBrace => {
+                    depth += 1;
+                    tokens.push(kind);
+                    self.advance();
+                }
+
+                TokenKind::RBrace => {
+                    depth -= 1;
+                    self.advance();
+                    if depth == 0 {
+                        break;
+                    }
+                    tokens.push(kind);
+                }
+
+                TokenKind::Newline => {
+                    self.advance();
+                }
+
+                other => {
+                    tokens.push(other);
+                    self.advance();
+                }
+            }
+        }
+
+        Ok(tokens)
     }
 
     // =============

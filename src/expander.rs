@@ -184,7 +184,8 @@ pub(crate) fn substitute_statements(
 
 fn substitute_statement(statement: &Statement, substitutions: &HashMap<String, Expr>) -> Statement {
     match statement {
-        Statement::Import(_) | Statement::Label(_) | Statement::Enum(_) => statement.clone(),
+        Statement::Import(_) | Statement::Label(_) | Statement::Enum(_)
+        | Statement::SyntaxOverride(_) => statement.clone(),
 
         Statement::Invocation(invocation) => Statement::Invocation(Invocation {
             name: invocation.name.clone(),
@@ -373,6 +374,12 @@ fn substitute_facets(facets: &[Facet], substitutions: &HashMap<String, Expr>) ->
                 FacetPayload::Block(statements) => {
                     FacetPayload::Block(substitute_statements(statements, substitutions))
                 }
+
+                // A pattern's `$capture$` names are the *declaring* macro's
+                // own params, an entirely different namespace from
+                // `substitutions` (the call site being expanded) — nothing
+                // in it is ever substitutable.
+                FacetPayload::Pattern(tokens) => FacetPayload::Pattern(tokens.clone()),
             },
             span: facet.span,
         })

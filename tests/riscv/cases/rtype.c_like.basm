@@ -1,0 +1,14 @@
+from std.riscv.c_like import *
+
+# c_like translation of rtype.s. `sltu` has no natural c_like spelling (no
+# unsigned comparison operator) and stays on default syntax.
+a0 = a1 + a2
+t0 = t1 - t2
+s0 = s1 << s2
+x5 = x6 < x7
+sltu x8, x9, x10
+a3 = a4 ^ a5
+t3 = t4 >>> t5
+s3 = s4 >> s5
+x11 = x12 | x13
+x0 = x1 & x2

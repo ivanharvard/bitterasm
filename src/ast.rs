@@ -9,7 +9,7 @@
 //! definition later. [`Statement::Meta`] is reserved for the `@`-prefixed
 //! directives (e.g. a macro body's `@return`) that make up macro bodies.
 
-use crate::token::Span;
+use crate::token::{Span, TokenKind};
 use crate::types::{
     GenericParameter,
     StructBodyItem,
@@ -36,8 +36,26 @@ pub enum Statement {
     Invocation(Invocation),
 
     Macro(MacroDeclaration),
-    
+
+    /// `syntax name(a, b) = { pattern }` — assigns/overrides how `name`
+    /// (an existing macro, not declared here) is recognized at call sites
+    /// for the rest of this file. Declares nothing: no new symbol, no
+    /// change to `name`'s own declaration. Fully consumed by parsing and
+    /// loader-level import propagation (`crate::parser::ParserSeed`,
+    /// `crate::loader`) — the resolver never needs to look at it (an
+    /// override naming a macro that doesn't actually exist just surfaces
+    /// as an ordinary `UnknownMacro` wherever its call-site shape gets
+    /// used, the same as any other undefined reference).
+    SyntaxOverride(SyntaxOverrideStatement),
+
     Meta(MetaStatement),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SyntaxOverrideStatement {
+    pub name: String,
+    pub pattern: crate::facets::syntax::SyntaxPattern,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -426,4 +444,8 @@ pub enum FacetPayload {
     Expr(Expr),
     Block(Vec<Statement>),
     Type(TypeExpr),
+
+    /// `{ ... }`'s raw tokens (balanced braces, not otherwise parsed) —
+    /// `syntax`'s payload shape (`PayloadShape::Pattern`).
+    Pattern(Vec<TokenKind>),
 }

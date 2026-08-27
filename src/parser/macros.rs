@@ -201,16 +201,34 @@ impl Parser {
         self.expect_simple(TokenKind::LBrace)?;
         self.skip_newlines();
 
+        // A standalone `syntax name(...) = { ... }` override fires
+        // unconditionally at parse time (see `parse_syntax_override`'s
+        // doc) — it has no sound meaning nested inside any block that
+        // might not even run (a macro body, a hook, `@for`/`@if`), so
+        // `block_depth` makes `at_syntax_override_start` refuse to
+        // recognize it there at all, falling back to an ordinary
+        // (and almost certainly invalid) invocation parse instead.
+        self.block_depth += 1;
+
         let mut body = Vec::new();
 
         while !self.check(&TokenKind::RBrace) {
             if self.at_eof() {
+                self.block_depth -= 1;
                 return Err(ParseError::new(unterminated_message, self.current().span));
             }
 
-            body.push(self.parse_statement()?);
+            body.push(match self.parse_statement() {
+                Ok(statement) => statement,
+                Err(error) => {
+                    self.block_depth -= 1;
+                    return Err(error);
+                }
+            });
             self.skip_newlines();
         }
+
+        self.block_depth -= 1;
 
         let closing = self.current().clone();
         self.expect_simple(TokenKind::RBrace)?;
@@ -273,11 +291,8 @@ impl Parser {
         let facets = self.parse_facet_list(true)?;
 
         if let Some(facet) = facets.iter().find(|facet| facet.name == "syntax") {
-            let FacetPayload::Expr(Expr::String { value, .. }) = &facet.payload else {
-                return Err(ParseError::new(
-                    "the `syntax` facet requires a string literal pattern",
-                    facet.span,
-                ));
+            let FacetPayload::Pattern(tokens) = &facet.payload else {
+                unreachable!("`syntax`'s payload shape is `Pattern`, enforced by `parse_facet`")
             };
 
             // A computed (spliced) macro name only ever occurs generated
@@ -287,7 +302,7 @@ impl Parser {
             if let Some(literal) = literal_name(&name) {
                 let param_names: Vec<String> = params.iter().map(|param| param.name.clone()).collect();
 
-                let pattern = crate::facets::syntax::parse_pattern(&literal, value, &param_names)
+                let pattern = crate::facets::syntax::parse_pattern(tokens.clone(), &param_names)
                     .map_err(|message| ParseError::new(message, facet.span))?;
 
                 self.register_macro_syntax(&literal, pattern);

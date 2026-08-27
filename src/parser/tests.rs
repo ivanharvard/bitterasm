@@ -933,7 +933,7 @@ const w: uint = 4
 
 #[test]
 fn custom_syntax_invocation_matches_default_shape() {
-    let source = "macro mov(dst: int, value: int) | syntax \"mov $dst$, $value$\" {\n}\n\nmov r1, 7\n";
+    let source = "macro mov(dst: int, value: int) | syntax { mov $dst$, $value$ } {\n}\n\nmov r1, 7\n";
 
     let program = parse(lex(source).unwrap()).unwrap();
 
@@ -959,7 +959,7 @@ fn custom_syntax_invocation_matches_default_shape() {
 fn macro_without_syntax_facet_is_unaffected() {
     // A sibling macro with custom syntax must not leak its pattern onto a
     // different identifier.
-    let source = "macro mov(dst: int, value: int) | syntax \"mov $dst$, $value$\" {\n}\n\n\
+    let source = "macro mov(dst: int, value: int) | syntax { mov $dst$, $value$ } {\n}\n\n\
                   macro add(a: int, b: int) {\n}\n\nadd r1, r2\n";
 
     let program = parse(lex(source).unwrap()).unwrap();
@@ -977,7 +977,7 @@ fn custom_syntax_with_operator_shaped_literal_separator() {
     // `<-` lexes as `Less` then `Minus` (there's no dedicated `<-` token) —
     // capturing `$dst$` without a stop boundary would swallow `r1 <- 7` as
     // `r1 < (-7)` in one shot, leaving nothing for `$value$`.
-    let source = "macro mov(dst: int, value: int) | syntax \"mov $dst$ <- $value$\" {\n}\n\nmov r1 <- 7\n";
+    let source = "macro mov(dst: int, value: int) | syntax { mov $dst$ <- $value$ } {\n}\n\nmov r1 <- 7\n";
 
     let program = parse(lex(source).unwrap()).unwrap();
 
@@ -1000,59 +1000,59 @@ fn custom_syntax_with_operator_shaped_literal_separator() {
 
 #[test]
 fn syntax_facet_rejects_unbalanced_dollar() {
-    let source = "macro mov(dst: int, value: int) | syntax \"mov $dst, $value$\" {\n}\n";
+    let source = "macro mov(dst: int, value: int) | syntax { mov $dst, $value$ } {\n}\n";
 
     assert!(parse(lex(source).unwrap()).is_err());
 }
 
 #[test]
 fn syntax_facet_rejects_unknown_capture_name() {
-    let source = "macro mov(dst: int, value: int) | syntax \"mov $dst$, $bogus$\" {\n}\n";
+    let source = "macro mov(dst: int, value: int) | syntax { mov $dst$, $bogus$ } {\n}\n";
 
     assert!(parse(lex(source).unwrap()).is_err());
 }
 
 #[test]
 fn syntax_facet_rejects_uncaptured_param() {
-    let source = "macro mov(dst: int, value: int) | syntax \"mov $dst$\" {\n}\n";
+    let source = "macro mov(dst: int, value: int) | syntax { mov $dst$ } {\n}\n";
 
     assert!(parse(lex(source).unwrap()).is_err());
 }
 
 #[test]
 fn syntax_facet_rejects_duplicate_capture() {
-    let source = "macro mov(dst: int, value: int) | syntax \"mov $dst$, $dst$\" {\n}\n";
+    let source = "macro mov(dst: int, value: int) | syntax { mov $dst$, $dst$ } {\n}\n";
 
     assert!(parse(lex(source).unwrap()).is_err());
 }
 
 #[test]
 fn syntax_facet_rejects_captures_with_no_literal_between_them() {
-    let adjacent = "macro mov(dst: int, value: int) | syntax \"mov $dst$$value$\" {\n}\n";
+    let adjacent = "macro mov(dst: int, value: int) | syntax { mov $dst$$value$ } {\n}\n";
     assert!(parse(lex(adjacent).unwrap()).is_err());
 
-    let space_only = "macro mov(dst: int, value: int) | syntax \"mov $dst$ $value$\" {\n}\n";
+    let space_only = "macro mov(dst: int, value: int) | syntax { mov $dst$ $value$ } {\n}\n";
     assert!(parse(lex(space_only).unwrap()).is_err());
 }
 
 #[test]
 fn syntax_facet_rejects_pattern_not_starting_with_macro_name() {
-    let source = "macro mov(dst: int, value: int) | syntax \"$dst$, mov\" {\n}\n";
+    let source = "macro mov(dst: int, value: int) | syntax { $dst$, mov } {\n}\n";
 
     assert!(parse(lex(source).unwrap()).is_err());
 }
 
 #[test]
 fn custom_syntax_call_site_mismatch_is_a_parse_error() {
-    let source = "macro mov(dst: int, value: int) | syntax \"mov $dst$, $value$\" {\n}\n\nmov r1 - 7\n";
+    let source = "macro mov(dst: int, value: int) | syntax { mov $dst$, $value$ } {\n}\n\nmov r1 - 7\n";
 
     assert!(parse(lex(source).unwrap()).is_err());
 }
 
 #[test]
 fn syntax_overloads_select_distinct_surface_patterns() {
-    let source = "macro load(address: int) | syntax \"load [$address$]\" {\n}\n\
-                  macro load(base: int, offset: int) | syntax \"load $offset$($base$)\" {\n}\n\n\
+    let source = "macro load(address: int) | syntax { load [$address$] } {\n}\n\
+                  macro load(base: int, offset: int) | syntax { load $offset$($base$) } {\n}\n\n\
                   load [123]\nload 8(sp)\n";
 
     let program = parse(lex(source).unwrap()).unwrap();
@@ -1072,9 +1072,9 @@ fn syntax_overloads_select_distinct_surface_patterns() {
 
 #[test]
 fn identical_syntax_overloads_defer_to_type_resolution() {
-    let source = "macro print(value: int) | syntax \"print $value$\" {\n}\n\
+    let source = "macro print(value: int) | syntax { print $value$ } {\n}\n\
                   struct Text { value: int }\n\
-                  macro print(value: Text) | syntax \"print $value$\" {\n}\n\n\
+                  macro print(value: Text) | syntax { print $value$ } {\n}\n\n\
                   print 7\n";
 
     let program = parse(lex(source).unwrap()).unwrap();
@@ -1087,12 +1087,77 @@ fn identical_syntax_overloads_defer_to_type_resolution() {
 
 #[test]
 fn syntax_overloads_reject_multiple_distinct_matches() {
-    let source = "macro mix(a: int, b: int) | syntax \"mix $a$ + $b$\" {\n}\n\
-                  macro mix(a: int, b: int) | syntax \"mix $b$ + $a$\" {\n}\n\n\
+    let source = "macro mix(a: int, b: int) | syntax { mix $a$ + $b$ } {\n}\n\
+                  macro mix(a: int, b: int) | syntax { mix $b$ + $a$ } {\n}\n\n\
                   mix 1 + 2\n";
 
     let error = parse(lex(source).unwrap()).unwrap_err();
     assert!(error.message.contains("ambiguous syntax for `mix`"));
+}
+
+#[test]
+fn unanchored_syntax_matches_without_the_macros_own_name() {
+    let source = "macro add(rd: int, rs1: int, rs2: int) | syntax { $rd$ = $rs1$ + $rs2$ } {\n}\n\n\
+                  x1 = x2 + x3\n";
+
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    let Statement::Invocation(invocation) = &program.statements[1] else {
+        panic!("expected invocation");
+    };
+
+    assert_eq!(invocation.name, "add");
+    assert_eq!(invocation.operands.len(), 3);
+    assert!(matches!(&invocation.operands[0], Expr::Identifier { name, .. } if name == "x1"));
+    assert!(matches!(&invocation.operands[1], Expr::Identifier { name, .. } if name == "x2"));
+    assert!(matches!(&invocation.operands[2], Expr::Identifier { name, .. } if name == "x3"));
+}
+
+#[test]
+fn standalone_override_can_be_unanchored() {
+    let source = "macro add(rd: int, rs1: int, rs2: int) {\n}\n\n\
+                  syntax add(rd, rs1, rs2) = { $rd$ = $rs1$ + $rs2$ }\n\n\
+                  x1 = x2 + x3\n";
+
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    let Statement::Invocation(invocation) = &program.statements[2] else {
+        panic!("expected invocation");
+    };
+
+    assert_eq!(invocation.name, "add");
+    assert_eq!(invocation.operands.len(), 3);
+}
+
+#[test]
+fn unanchored_syntax_does_not_break_unrelated_default_invocations() {
+    // An active unanchored pattern (`add`'s C-like syntax) must not stop a
+    // totally unrelated macro's ordinary default-syntax invocation from
+    // parsing — an unclaimed name (`mov` has no syntax of its own) falls
+    // back to default syntax exactly as if no dialect were active at all.
+    let source = "macro add(rd: int, rs1: int, rs2: int) | syntax { $rd$ = $rs1$ + $rs2$ } {\n}\n\n\
+                  macro mov(dst: int, value: int) {\n}\n\nmov r1, 7\n";
+
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    let Statement::Invocation(invocation) = &program.statements[2] else {
+        panic!("expected invocation");
+    };
+
+    assert_eq!(invocation.name, "mov");
+    assert_eq!(invocation.operands.len(), 2);
+}
+
+#[test]
+fn unanchored_syntax_ambiguous_when_two_patterns_structurally_collide() {
+    let source = "macro add(rd: int, rs1: int, rs2: int) | syntax { $rd$ = $rs1$ + $rs2$ } {\n}\n\
+                  macro addw(rd: int, rs1: int, rs2: int) | syntax { $rd$ = $rs1$ + $rs2$ } {\n}\n\n\
+                  x1 = x2 + x3\n";
+
+    let error = parse(lex(source).unwrap()).unwrap_err();
+    assert!(error.message.contains("ambiguous syntax for"));
+    assert!(error.message.contains("add"));
+    assert!(error.message.contains("addw"));
 }
 
 #[test]
@@ -1126,7 +1191,7 @@ fn lint_facets_reject_unknown_lints() {
 
 #[test]
 fn pub_and_return_type_are_macro_signature_fields_not_facets() {
-    let source = "pub macro encode(value: int) -> bits<8>\n    | syntax \"encode $value$\"\n{\n}\n";
+    let source = "pub macro encode(value: int) -> bits<8>\n    | syntax { encode $value$ }\n{\n}\n";
     let program = parse(lex(source).unwrap()).unwrap();
     let Statement::Macro(decl) = &program.statements[0] else {
         panic!("expected a macro");

@@ -19,7 +19,7 @@ macro oob_check<T>(
 }
 
 pub macro get<T>(arr: Array<T, ...>, index: int) -> T
-    | syntax "get $arr$[$index$]"
+    | syntax { get $arr$[$index$] }
     | before oob_check(arr, index)
 {
     @return arr.__el`index`

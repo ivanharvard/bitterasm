@@ -180,6 +180,13 @@ fn collect_program_statement_references(statement: &Statement, names: &mut HashS
             names.insert(invocation.name.clone());
             invocation.operands.iter().for_each(|expr| collect_expr_identifiers(expr, names));
         }
+        // References the macro it's overriding the syntax of — counts as
+        // a use, the same as an ordinary invocation of it would, so a
+        // macro only ever called through its overridden spelling isn't
+        // flagged as unused.
+        Statement::SyntaxOverride(override_statement) => {
+            names.insert(override_statement.name.clone());
+        }
         Statement::Macro(declaration) => {
             for parameter in &declaration.params {
                 collect_type_references(&parameter.ty, names);
@@ -409,6 +416,7 @@ fn statement_span(statement: &Statement) -> Span {
         Statement::Invocation(value) => value.span,
         Statement::Macro(value) => value.span,
         Statement::Meta(value) => value.span,
+        Statement::SyntaxOverride(value) => value.span,
     }
 }
 
@@ -426,7 +434,8 @@ fn collect_statement_identifiers(statement: &Statement, names: &mut HashSet<Stri
             }
         }
         Statement::Struct(_) | Statement::Enum(_) | Statement::TypeAlias(_) |
-        Statement::Import(_) | Statement::Label(_) | Statement::Macro(_) => {}
+        Statement::Import(_) | Statement::Label(_) | Statement::Macro(_) |
+        Statement::SyntaxOverride(_) => {}
     }
 }
 

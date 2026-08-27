@@ -127,6 +127,11 @@ impl Parser {
                 FacetPayload::Block(statements)
             }
 
+            PayloadShape::Pattern => {
+                let tokens = self.parse_pattern_block(&format!("`{name}` facet body"))?;
+                FacetPayload::Pattern(tokens)
+            }
+
             // `pub` and `return` are intercepted above, before reaching
             // this identifier-based path, since they're spelled with
             // dedicated tokens rather than a plain identifier — their

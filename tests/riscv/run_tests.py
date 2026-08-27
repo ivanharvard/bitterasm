@@ -27,6 +27,17 @@ comments, one instruction per line, real `label:` lines allowed) this:
 Requires Docker; this builds the oracle image itself (cached by Docker
 after the first run) from tests/riscv/docker/.
 
+Alongside each cases/*.s file, cases/*.c_like.basm holds the same
+instructions, same order, same label positions, written in
+std/riscv/c_like.basm's mnemonic-free syntax instead (see that file's own
+doc — not every instruction has a natural c_like spelling, so a few lines
+in these files are still plain native syntax, which c_like.basm leaves
+alone for exactly that reason). GNU binutils has no idea what `x1 = x2 +
+x3` means, so these aren't assembled by the oracle directly — instead each
+one is checked against the *same* oracle-verified word stream its
+corresponding cases/*.s file already produces: if both dialects really
+mean the same instructions, both must encode to identical bytes.
+
 Usage: python3 tests/riscv/run_tests.py
 """
 
@@ -60,13 +71,16 @@ def build_oracle_image() -> None:
 
 def compile_case(source_path: pathlib.Path, workdir: pathlib.Path) -> pathlib.Path:
     basm_path = workdir / (source_path.stem + ".basm")
-    em_path = workdir / (source_path.stem + ".em")
-
     basm_path.write_text("from std.riscv.native import *\n\n" + source_path.read_text())
+    return compile_basm_case(basm_path, workdir, label=source_path.name)
 
-    # cwd=REPO_ROOT matters: `from std.riscv.native import *` is an
-    # absolute import, resolved against the current working directory,
-    # not against basm_path's own (temp-directory) location.
+
+def compile_basm_case(basm_path: pathlib.Path, workdir: pathlib.Path, label: str | None = None) -> pathlib.Path:
+    em_path = workdir / (basm_path.stem + ".em")
+
+    # cwd=REPO_ROOT matters: an absolute `from ... import *` is resolved
+    # against the current working directory, not against basm_path's own
+    # (temp-directory) location.
     result = subprocess.run(
         [str(BITTERASM_BIN), "compile", str(basm_path), "-o", str(em_path)],
         cwd=REPO_ROOT,
@@ -75,7 +89,7 @@ def compile_case(source_path: pathlib.Path, workdir: pathlib.Path) -> pathlib.Pa
     )
 
     if result.returncode != 0:
-        raise RuntimeError(f"bitterasm compile failed for {source_path.name}:\n{result.stderr}")
+        raise RuntimeError(f"bitterasm compile failed for {label or basm_path.name}:\n{result.stderr}")
 
     return em_path
 
@@ -120,13 +134,16 @@ _LABEL_LINE = re.compile(r"^\w+\s*:$")
 def _instruction_lines(text: str) -> list[str]:
     # A bare `label:` line is zero-width on both sides (no `@emit`, no
     # assembled bytes) — excluded here so the remaining lines stay in
-    # exact 1:1 correspondence with the word streams being compared.
+    # exact 1:1 correspondence with the word streams being compared. So is
+    # a leading `from ... import *` — only ever present in a *.c_like.basm
+    # file (a cases/*.s file never has one; the native path prepends its
+    # own separately, onto text this function never sees).
     lines = []
 
     for line in text.splitlines():
         content = line.split("#", 1)[0].strip()
 
-        if content and not _LABEL_LINE.match(content):
+        if content and not _LABEL_LINE.match(content) and not content.startswith("from "):
             lines.append(line)
 
     return lines
@@ -157,6 +174,34 @@ def run_case(source_path: pathlib.Path, workdir: pathlib.Path) -> list[str]:
     return failures
 
 
+def run_c_like_case(c_like_path: pathlib.Path, native_path: pathlib.Path, workdir: pathlib.Path) -> list[str]:
+    em_path = compile_basm_case(c_like_path, workdir, label=c_like_path.name)
+    actual_words = encode_case(em_path, workdir)
+    # The oracle-verified reference: the *native* cases/*.s file's own
+    # expected bytes, not a second binutils run over c_like syntax it
+    # can't parse — see this script's own module doc.
+    expected_words = official_encode(native_path)
+    lines = _instruction_lines(c_like_path.read_text())
+
+    failures = []
+
+    if len(actual_words) != len(expected_words):
+        failures.append(
+            f"{c_like_path.name}: bitter encoded {len(actual_words)} word(s), "
+            f"{native_path.name}'s official encoder output has {len(expected_words)}"
+        )
+        return failures
+
+    for line, actual, expected in zip(lines, actual_words, expected_words):
+        if actual != expected:
+            failures.append(
+                f"{c_like_path.name}: {line.strip()!r} -> "
+                f"bitter 0x{actual:08x}, {native_path.name}'s official encoder 0x{expected:08x}"
+            )
+
+    return failures
+
+
 def main() -> int:
     build_bitterasm()
     build_bitter()
@@ -166,6 +211,18 @@ def main() -> int:
     if not case_files:
         print("no test cases found", file=sys.stderr)
         return 1
+
+    # Every cases/*.c_like.basm is paired with the cases/*.s file sharing
+    # its stem (branches.c_like.basm <-> branches.s) — not run against any
+    # *.s of its own, since there isn't one.
+    c_like_files = sorted(CASES_DIR.glob("*.c_like.basm"))
+    c_like_pairs: list[tuple[pathlib.Path, pathlib.Path]] = []
+    for c_like_file in c_like_files:
+        native_file = CASES_DIR / (c_like_file.name.removesuffix(".c_like.basm") + ".s")
+        if not native_file.exists():
+            print(f"no matching cases/*.s file for {c_like_file.name}", file=sys.stderr)
+            return 1
+        c_like_pairs.append((c_like_file, native_file))
 
     all_failures: list[str] = []
     total_instructions = 0
@@ -186,6 +243,20 @@ def main() -> int:
 
             status = "ok" if not failures else f"{len(failures)} FAILED"
             print(f"{case_file.name}: {instruction_count} instruction(s) - {status}")
+
+        for c_like_file, native_file in c_like_pairs:
+            instruction_count = len(_instruction_lines(c_like_file.read_text()))
+            total_instructions += instruction_count
+
+            try:
+                failures = run_c_like_case(c_like_file, native_file, workdir)
+            except Exception as error:  # noqa: BLE001 - report and keep going
+                failures = [f"{c_like_file.name}: {error}"]
+
+            all_failures.extend(failures)
+
+            status = "ok" if not failures else f"{len(failures)} FAILED"
+            print(f"{c_like_file.name}: {instruction_count} instruction(s) - {status}")
 
     print()
 

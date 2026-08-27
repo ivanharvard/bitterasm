@@ -1,0 +1,9 @@
+from std.riscv.c_like import *
+
+# c_like translation of upper_imm.s. `lui`/`auipc` have no natural c_like
+# spelling here — the macro's own `imm` isn't pre-shifted (the encoding
+# format puts it in the word's upper bits, not this level), so an
+# `rd = imm << 12`-style reading would misdescribe what the value actually
+# is — and stay on default syntax, same as system.c_like.basm.
+lui a0, 0xABCDE
+auipc a1, 0x12345

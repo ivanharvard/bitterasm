@@ -8,3 +8,4 @@ compare:
 
 fmt:
 	bitterasm fmt .
+
