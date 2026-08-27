@@ -1,13 +1,24 @@
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::io::IsTerminal;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 use bitterasm::ast::Statement;
 use bitterasm::expander::MacroTable;
 use bitterasm::resolver::{SymbolTable, Value};
 use bitterasm::{emit, eval, expander, formatter, lexer, loader, parser, resolver};
+use bitterasm::diagnostics::{
+    self, Diagnostic, DiagnosticFormat, LintConfig, LintLevel, LintName,
+    RenderOptions, Severity, SourceId, SourceMap,
+};
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CliDiagnosticFormat { Terminal, Plain, Json }
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ColorChoice { Auto, Always, Never }
 
 #[derive(Parser)]
 #[command(name = "bitterasm", version, about = "Compiler for BitterASM")]
@@ -26,6 +37,28 @@ enum Command {
         /// Defaults to `path` with its extension swapped to `.em`.
         #[arg(short, long)]
         output: Option<PathBuf>,
+
+        #[arg(long, value_enum, default_value = "terminal")]
+        diagnostic_format: CliDiagnosticFormat,
+
+        #[arg(long, value_enum, default_value = "auto")]
+        color: ColorChoice,
+
+        #[arg(short = 'A', long = "allow", value_name = "LINT")]
+        /// Suppress a lint or lint group.
+        allow: Vec<String>,
+
+        #[arg(short = 'W', long = "warn", value_name = "LINT")]
+        /// Emit a lint or lint group as warnings.
+        warn: Vec<String>,
+
+        #[arg(short = 'D', long = "deny", value_name = "LINT")]
+        /// Promote a lint or lint group to errors.
+        deny: Vec<String>,
+
+        #[arg(short = 'F', long = "forbid", value_name = "LINT")]
+        /// Promote a lint to errors and prevent source-level lowering.
+        forbid: Vec<String>,
     },
 
     /// Paste every macro invocation's body in place of its call, leaving
@@ -75,7 +108,13 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Compile { path, output } => compile(&path, output),
+        Command::Compile {
+            path, output, diagnostic_format, color, allow, warn, deny, forbid,
+        } => compile(
+            &path,
+            output,
+            DiagnosticCliOptions { diagnostic_format, color, allow, warn, deny, forbid },
+        ),
 
         Command::Expand { path, depth, lines, chars, output } => {
             expand(&path, depth, lines, chars, output)
@@ -186,50 +225,29 @@ struct Expansion {
     generated: Vec<Statement>,
 }
 
-fn resolve_and_expand(path: &Path) -> Expansion {
-    let program = match loader::load_program(path) {
-        Ok(program) => program,
+enum CompileError {
+    Load(loader::LoadError),
+    Resolve(resolver::ResolveError),
+}
 
-        Err(error) => {
-            eprintln!("load error: {error}");
-            std::process::exit(1);
-        }
-    };
+impl From<loader::LoadError> for CompileError {
+    fn from(error: loader::LoadError) -> Self { Self::Load(error) }
+}
+
+impl From<resolver::ResolveError> for CompileError {
+    fn from(error: resolver::ResolveError) -> Self { Self::Resolve(error) }
+}
+
+fn resolve_and_expand(path: &Path) -> Result<Expansion, CompileError> {
+    let program = loader::load_program(path)?;
 
     // Unrolls every top-level `@for`/`@if` into concrete statements before
     // anything else (symbol collection included) ever sees them — see
     // `resolver::unroll_top_level`'s module doc.
-    let program = match resolver::unroll_top_level(program) {
-        Ok(program) => program,
-
-        Err(error) => {
-            eprintln!("resolver error: {error:?}");
-            std::process::exit(1);
-        }
-    };
-
-    if let Err(error) = resolver::validate_facets(&program) {
-        eprintln!("resolver error: {error:?}");
-        std::process::exit(1);
-    }
-
-    let symbols = match resolver::collect_symbols(&program) {
-        Ok(symbols) => symbols,
-
-        Err(error) => {
-            eprintln!("resolver error: {error:?}");
-            std::process::exit(1);
-        }
-    };
-
-    let consts = match resolver::ConstEvaluator::new(&program, &symbols).evaluate_all() {
-        Ok(consts) => consts,
-
-        Err(error) => {
-            eprintln!("resolver error: {error:?}");
-            std::process::exit(1);
-        }
-    };
+    let program = resolver::unroll_top_level(program)?;
+    resolver::validate_facets(&program)?;
+    let symbols = resolver::collect_symbols(&program)?;
+    let consts = resolver::ConstEvaluator::new(&program, &symbols).evaluate_all()?;
 
     let consts_by_name: HashMap<String, eval::Int> = consts
         .iter()
@@ -264,8 +282,8 @@ fn resolve_and_expand(path: &Path) -> Expansion {
         HashMap::new(),
     );
 
-    resolve_structs_and_aliases(&mut discovery);
-    walk_top_level(&program, &symbols, &mut discovery, None);
+    resolve_structs_and_aliases(&mut discovery)?;
+    walk_top_level(&program, &symbols, &mut discovery, None)?;
 
     let label_positions = discovery.into_label_positions();
 
@@ -281,7 +299,7 @@ fn resolve_and_expand(path: &Path) -> Expansion {
     // not any invocation actually reaches it — a broken declaration fails
     // the whole command, the same way a real compiler wouldn't skip type
     // checking an unreachable function.
-    resolve_structs_and_aliases(&mut alias_resolver);
+    resolve_structs_and_aliases(&mut alias_resolver)?;
 
     // Expand every top-level invocation (`mov r1, 7`, or a macro calling
     // another macro) in program order, against an empty scope — nothing at
@@ -289,9 +307,9 @@ fn resolve_and_expand(path: &Path) -> Expansion {
     let mut emitted = Vec::new();
     let mut generated = Vec::new();
 
-    walk_top_level(&program, &symbols, &mut alias_resolver, Some((&mut emitted, &mut generated)));
+    walk_top_level(&program, &symbols, &mut alias_resolver, Some((&mut emitted, &mut generated)))?;
 
-    Expansion { symbols, emitted, generated }
+    Ok(Expansion { symbols, emitted, generated })
 }
 
 /// Resolves every struct/alias in the program up front (independent of
@@ -299,20 +317,9 @@ fn resolve_and_expand(path: &Path) -> Expansion {
 /// Run identically on both pass resolvers rather than sharing state across
 /// them, mirroring how `stack` (the macro-recursion guard) is deliberately
 /// never shared across separate top-level expansions either.
-fn resolve_structs_and_aliases(alias_resolver: &mut resolver::AliasResolver) {
-    if let Err(error) = alias_resolver.resolve_all_structs() {
-        eprintln!("resolver error: {error:?}");
-        std::process::exit(1);
-    }
-
-    let aliases = match alias_resolver.resolve_all() {
-        Ok(aliases) => aliases,
-
-        Err(error) => {
-            eprintln!("resolver error: {error:?}");
-            std::process::exit(1);
-        }
-    };
+fn resolve_structs_and_aliases(alias_resolver: &mut resolver::AliasResolver) -> Result<(), resolver::ResolveError> {
+    alias_resolver.resolve_all_structs()?;
+    let aliases = alias_resolver.resolve_all()?;
 
     for ty in aliases.values() {
         // `strip_alias` here because this is field-resolvability
@@ -320,12 +327,10 @@ fn resolve_structs_and_aliases(alias_resolver: &mut resolver::AliasResolver) {
         // bearing) alias — that struct's fields still need checking either
         // way.
         if let resolver::ResolvedType::Struct { symbol, args } = ty.strip_alias() {
-            if let Err(error) = alias_resolver.instantiate_struct_fields(*symbol, args) {
-                eprintln!("resolver error: {error:?}");
-                std::process::exit(1);
-            }
+            alias_resolver.instantiate_struct_fields(*symbol, args)?;
         }
     }
+    Ok(())
 }
 
 /// One left-to-right walk over the program's top-level statements, shared
@@ -339,22 +344,14 @@ fn walk_top_level(
     symbols: &SymbolTable,
     alias_resolver: &mut resolver::AliasResolver,
     mut collect: Option<(&mut Vec<Value>, &mut Vec<Statement>)>,
-) {
+) -> Result<(), resolver::ResolveError> {
     for statement in &program.statements {
         match statement {
             Statement::Invocation(invocation) => {
-                match alias_resolver.expand_invocation(invocation, &HashMap::new()) {
-                    Ok(expansion) => {
-                        if let Some((emitted, generated)) = collect.as_mut() {
-                            emitted.extend(expansion.emitted);
-                            generated.extend(expansion.generated);
-                        }
-                    }
-
-                    Err(error) => {
-                        eprintln!("resolver error: {error:?}");
-                        std::process::exit(1);
-                    }
+                let expansion = alias_resolver.expand_invocation(invocation, &HashMap::new())?;
+                if let Some((emitted, generated)) = collect.as_mut() {
+                    emitted.extend(expansion.emitted);
+                    generated.extend(expansion.generated);
                 }
             }
 
@@ -369,19 +366,130 @@ fn walk_top_level(
             _ => {}
         }
     }
+    Ok(())
 }
 
-fn compile(path: &Path, output: Option<PathBuf>) {
-    let expansion = resolve_and_expand(path);
+struct DiagnosticCliOptions {
+    diagnostic_format: CliDiagnosticFormat,
+    color: ColorChoice,
+    allow: Vec<String>,
+    warn: Vec<String>,
+    deny: Vec<String>,
+    forbid: Vec<String>,
+}
+
+struct DiagnosticRun {
+    config: LintConfig,
+    sources: SourceMap,
+    source_id: SourceId,
+    render: RenderOptions,
+}
+
+fn prepare_diagnostics(path: &Path, options: &DiagnosticCliOptions) -> Result<DiagnosticRun, String> {
+    let source = std::fs::read_to_string(path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    let mut sources = SourceMap::default();
+    let source_id = sources.add(path, source);
+    let mut config = match formatter::discover_config(path) {
+        Some(config_path) => diagnostics::load_lint_config(&config_path)?,
+        None => LintConfig::default(),
+    };
+    for (selectors, level) in [
+        (&options.allow, LintLevel::Allow),
+        (&options.warn, LintLevel::Warn),
+        (&options.deny, LintLevel::Deny),
+        (&options.forbid, LintLevel::Forbid),
+    ] {
+        for selector in selectors {
+            config.set(selector, level)?;
+        }
+    }
+    let format = match options.diagnostic_format {
+        CliDiagnosticFormat::Terminal => DiagnosticFormat::Terminal,
+        CliDiagnosticFormat::Plain => DiagnosticFormat::Plain,
+        CliDiagnosticFormat::Json => DiagnosticFormat::Json,
+    };
+    let color = match options.color {
+        ColorChoice::Always => true,
+        ColorChoice::Never => false,
+        ColorChoice::Auto => std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none(),
+    };
+    Ok(DiagnosticRun { config, sources, source_id, render: RenderOptions { format, color } })
+}
+
+fn emit_diagnostics(diagnostics: &[Diagnostic], run: &DiagnosticRun) -> bool {
+    if diagnostics.is_empty() { return false; }
+    eprint!("{}", diagnostics::render(diagnostics, &run.sources, run.render));
+    diagnostics.iter().any(|diagnostic| diagnostic.severity == Severity::Error)
+}
+
+fn compile(path: &Path, output: Option<PathBuf>, options: DiagnosticCliOptions) {
+    let mut diagnostic_run = match prepare_diagnostics(path, &options) {
+        Ok(run) => run,
+        Err(error) => {
+            eprintln!("diagnostics configuration error: {error}");
+            std::process::exit(1);
+        }
+    };
+
+    // The loader supplies the entry module after seeding it with imported
+    // generic signatures and syntax patterns but before flattening imports,
+    // so every span here still belongs to the source file we render.
+    match loader::load_entry_program(path) {
+        Ok(program) => {
+            let warnings = diagnostics::lint_program(
+                &program,
+                diagnostic_run.source_id,
+                &diagnostic_run.config,
+            );
+            if emit_diagnostics(&warnings, &diagnostic_run) {
+                std::process::exit(1);
+            }
+        }
+        Err(error) => {
+            let diagnostic = diagnostics::load_error(error, &mut diagnostic_run.sources);
+            emit_diagnostics(&[diagnostic], &diagnostic_run);
+            std::process::exit(1);
+        }
+    }
+
+    if let Ok(sources) = loader::load_sources(path) {
+        for (source_path, source) in sources {
+            diagnostic_run.sources.add(source_path, source);
+        }
+    }
+
+    let expansion = match resolve_and_expand(path) {
+        Ok(expansion) => expansion,
+        Err(CompileError::Load(error)) => {
+            let diagnostic = diagnostics::load_error(error, &mut diagnostic_run.sources);
+            emit_diagnostics(&[diagnostic], &diagnostic_run);
+            std::process::exit(1);
+        }
+        Err(CompileError::Resolve(error)) => {
+            let source = diagnostic_run.sources.locate_span(error.span(), error.source_needle());
+            let diagnostic = diagnostics::resolve_error(error, source);
+            emit_diagnostics(&[diagnostic], &diagnostic_run);
+            std::process::exit(1);
+        }
+    };
 
     if !expansion.generated.is_empty() {
-        eprintln!(
-            "warning: {count} declaration(s) were generated but not included in {path} — \
-             there's no pass yet to splice them back into the program; run `bitterasm expand` \
-             to see them",
-            count = expansion.generated.len(),
-            path = path.display(),
-        );
+        let level = diagnostic_run.config.level(LintName::GENERATED_DECLARATIONS);
+        if !matches!(level, LintLevel::Allow | LintLevel::Expect) {
+            let mut diagnostic = Diagnostic::warning(
+                LintName::GENERATED_DECLARATIONS,
+                format!("{} declaration(s) were generated but not included in the output", expansion.generated.len()),
+            )
+            .primary(diagnostic_run.source_id, bitterasm::token::Span::new(0, 0), "generated from this compilation")
+            .help("run `bitterasm expand` to inspect generated declarations");
+            if matches!(level, LintLevel::Deny | LintLevel::Forbid) {
+                diagnostic.severity = Severity::Error;
+            }
+            if emit_diagnostics(&[diagnostic], &diagnostic_run) {
+                std::process::exit(1);
+            }
+        }
     }
 
     let emitted: Vec<emit::EmittedValue> = expansion
@@ -438,7 +546,13 @@ fn expand(
         Ok(tokens) => tokens,
 
         Err(error) => {
-            eprintln!("lex error: {error}");
+            let mut sources = SourceMap::default();
+            let source_id = sources.add(path, source.clone());
+            eprint!("{}", diagnostics::render(
+                &[diagnostics::lex_error(error, source_id)],
+                &sources,
+                RenderOptions { format: DiagnosticFormat::Terminal, color: std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none() },
+            ));
             std::process::exit(1);
         }
     };
@@ -447,7 +561,13 @@ fn expand(
         Ok(program) => program,
 
         Err(error) => {
-            eprintln!("parse error: {error:?}");
+            let mut sources = SourceMap::default();
+            let source_id = sources.add(path, source.clone());
+            eprint!("{}", diagnostics::render(
+                &[diagnostics::parse_error(error, source_id)],
+                &sources,
+                RenderOptions { format: DiagnosticFormat::Terminal, color: std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none() },
+            ));
             std::process::exit(1);
         }
     };
@@ -459,7 +579,14 @@ fn expand(
         Ok(flattened) => flattened,
 
         Err(error) => {
-            eprintln!("load error: {error}");
+            let mut sources = SourceMap::default();
+            sources.add(path, source.clone());
+            let diagnostic = diagnostics::load_error(error, &mut sources);
+            eprint!("{}", diagnostics::render(
+                &[diagnostic],
+                &sources,
+                RenderOptions { format: DiagnosticFormat::Terminal, color: std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none() },
+            ));
             std::process::exit(1);
         }
     };

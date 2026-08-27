@@ -186,6 +186,15 @@ mod tests {
     }
 
     #[test]
+    fn formatter_ignores_lint_configuration_section() {
+        let config = parse_config(
+            "indent_width = 2\n\n[lints]\nunused = \"deny\"\nunreachable_code = \"allow\"\n",
+        )
+        .unwrap();
+        assert_eq!(config.indent_width, 2);
+    }
+
+    #[test]
     fn indents_all_delimited_continuations() {
         let source = "const x = call(\nfirst,\nNested {\nvalue: [\n1,\n]\n}\n)\n";
         assert_eq!(

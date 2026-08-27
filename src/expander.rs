@@ -382,6 +382,7 @@ fn substitute_type_expr(ty: &TypeExpr, substitutions: &HashMap<String, Expr>) ->
                 .map(|arg| match arg {
                     TypeArgument::Type(ty) => TypeArgument::Type(substitute_type_expr(ty, substitutions)),
                     TypeArgument::Const(expr) => TypeArgument::Const(substitute_expr(expr, substitutions)),
+                    TypeArgument::Wildcard(span) => TypeArgument::Wildcard(*span),
                 })
                 .collect(),
             span: *span,
@@ -421,6 +422,7 @@ pub fn substitute_expr(expr: &Expr, substitutions: &HashMap<String, Expr>) -> Ex
                 .map(|arg| match arg {
                     TypeArgument::Type(ty) => TypeArgument::Type(substitute_type_expr(ty, substitutions)),
                     TypeArgument::Const(expr) => TypeArgument::Const(substitute_expr(expr, substitutions)),
+                    TypeArgument::Wildcard(span) => TypeArgument::Wildcard(*span),
                 })
                 .collect(),
             variant: variant.clone(),
@@ -453,6 +455,7 @@ pub fn substitute_expr(expr: &Expr, substitutions: &HashMap<String, Expr>) -> Ex
                 .map(|arg| match arg {
                     TypeArgument::Type(ty) => TypeArgument::Type(substitute_type_expr(ty, substitutions)),
                     TypeArgument::Const(expr) => TypeArgument::Const(substitute_expr(expr, substitutions)),
+                    TypeArgument::Wildcard(span) => TypeArgument::Wildcard(*span),
                 })
                 .collect(),
             fields: substitute_construct_items(fields, substitutions),

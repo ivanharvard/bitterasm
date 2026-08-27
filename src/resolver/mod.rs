@@ -378,3 +378,40 @@ pub enum ResolveError {
         span: Span,
     },
 }
+
+impl ResolveError {
+    pub fn span(&self) -> Span {
+        match self {
+            Self::UnknownType { span, .. } | Self::DuplicateSymbol { span, .. }
+            | Self::CyclicTypeAlias { span, .. } | Self::CyclicConstant { span, .. }
+            | Self::DivisionByZero { span } | Self::ExpectedType { span, .. }
+            | Self::InvalidGenericArity { span, .. } | Self::ExpectedConstant { span, .. }
+            | Self::ExpectedConstantExpression { span } | Self::UnknownConstant { span, .. }
+            | Self::UnknownField { span, .. } | Self::FacetNotApplicable { span, .. }
+            | Self::DuplicateFacet { span, .. } | Self::InvalidArgumentCount { span, .. }
+            | Self::ExpectedStructCallee { span, .. } | Self::ExpectedIntValue { span }
+            | Self::ExpectedStructValue { span } | Self::ExpectedValueExpression { span }
+            | Self::UnsupportedMacroStatement { span, .. } | Self::UnsupportedSpliceValue { span }
+            | Self::UnsupportedCallExpression { span } | Self::UnknownMacro { span, .. }
+            | Self::ExpectedMacro { span, .. } | Self::NoMatchingMacroOverload { span, .. }
+            | Self::AmbiguousMacroOverload { span, .. } | Self::MacroCallDepthExceeded { span, .. }
+            | Self::MacroTailCallLimitExceeded { span, .. } | Self::AssertionFailed { span, .. }
+            | Self::InvalidAssertMessage { span } | Self::TypeMismatch { span, .. }
+            | Self::InvariantViolated { span, .. } | Self::CannotCoerce { span, .. }
+            | Self::AmbiguousConversion { span, .. } | Self::AmbiguousInvariantBinder { span, .. }
+            | Self::Internal { span, .. } | Self::ForLoopTooLarge { span }
+            | Self::ComputedNameNotAllowed { span } | Self::TopLevelForRequiresRange { span } => *span,
+        }
+    }
+
+    pub fn source_needle(&self) -> Option<&str> {
+        match self {
+            Self::UnknownType { name, .. } | Self::DuplicateSymbol { name, .. }
+            | Self::ExpectedType { name, .. } | Self::ExpectedConstant { name, .. }
+            | Self::UnknownConstant { name, .. } | Self::UnknownMacro { name, .. }
+            | Self::ExpectedMacro { name, .. } => Some(name),
+            Self::UnknownField { field, .. } => Some(field),
+            _ => None,
+        }
+    }
+}

@@ -204,19 +204,20 @@ impl<'a> AliasResolver<'a> {
             Expr::Here { .. } => Ok(Value::Int(self.values_emitted.clone())),
 
             Expr::Member { object, member, span } => {
+                let member = self.resolve_spliced_name(member, scope)?;
                 if let Expr::Identifier { name, .. } = object.as_ref() {
                     if self.lookup_symbol(name).is_some_and(|id| self.get_symbol(id).kind == SymbolKind::Enum) {
-                        return self.eval_enum_variant(name, &[], member, &[], *span, scope);
+                        return self.eval_enum_variant(name, &[], &member, &[], *span, scope);
                     }
                 }
                 match self.eval_value(object, scope)? {
                 Value::Struct { symbol, fields, .. } => fields
                     .into_iter()
-                    .find(|(name, _)| name == member)
+                    .find(|(name, _)| name == &member)
                     .map(|(_, value)| value)
                     .ok_or_else(|| ResolveError::UnknownField {
                         type_name: self.get_symbol(symbol).name.clone(),
-                        field: member.clone(),
+                        field: member,
                         span: *span,
                     }),
 
@@ -229,7 +230,8 @@ impl<'a> AliasResolver<'a> {
             Expr::Call { callee, arguments, span } => {
                 if let Expr::Member { object, member, .. } = callee.as_ref() {
                     if let Expr::Identifier { name, .. } = object.as_ref() {
-                        return self.eval_enum_variant(name, &[], member, arguments, *span, scope);
+                        let member = self.resolve_spliced_name(member, scope)?;
+                        return self.eval_enum_variant(name, &[], &member, arguments, *span, scope);
                     }
                 }
                 if let Expr::Identifier { name, .. } = callee.as_ref() {
@@ -670,6 +672,9 @@ impl<'a> AliasResolver<'a> {
                         }
                     };
                     Ok(ResolvedGenericArg::Const(discriminant))
+                }
+                TypeArgument::Wildcard(span) => {
+                    Err(ResolveError::ExpectedValueExpression { span: *span })
                 }
             })
             .collect()

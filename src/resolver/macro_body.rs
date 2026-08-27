@@ -765,6 +765,7 @@ impl<'a> AliasResolver<'a> {
                     .map(|arg| match arg {
                         TypeArgument::Type(ty) => Ok(TypeArgument::Type(ty.clone())),
                         TypeArgument::Const(expr) => Ok(TypeArgument::Const(self.splice_expr(expr, scope)?)),
+                        TypeArgument::Wildcard(span) => Ok(TypeArgument::Wildcard(*span)),
                     })
                     .collect::<Result<_, ResolveError>>()?,
                 fields: self.splice_construct_items(fields, scope)?,

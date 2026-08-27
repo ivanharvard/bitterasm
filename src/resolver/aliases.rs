@@ -512,6 +512,7 @@ impl<'a> AliasResolver<'a> {
 
                 Ok(ResolvedGenericArg::Const(self.eval_const_expr(expr)?))
             }
+            TypeArgument::Wildcard(_) => Ok(ResolvedGenericArg::Wildcard),
         }
     }
 
@@ -521,6 +522,8 @@ impl<'a> AliasResolver<'a> {
         // generic parameter type reconstructs the typed enum value whenever
         // the argument enters an expression scope.
         if let Expr::Member { object, member, span } = expr {
+            let member = crate::ast::literal_name(member)
+                .ok_or(ResolveError::ExpectedConstantExpression { span: *span })?;
             if let Expr::Identifier { name, .. } = object.as_ref() {
                 if let Some(id) = self.lookup_symbol(name) {
                     if self.get_symbol(id).kind == SymbolKind::Enum {
@@ -529,7 +532,7 @@ impl<'a> AliasResolver<'a> {
                             .variants
                             .iter()
                             .enumerate()
-                            .find(|(_, variant)| variant.name == *member)
+                            .find(|(_, variant)| variant.name == member)
                         {
                             if variant.payload.is_none() {
                                 return Ok(Int::from(index));
@@ -537,7 +540,7 @@ impl<'a> AliasResolver<'a> {
                         }
                         return Err(ResolveError::UnknownField {
                             type_name: name.clone(),
-                            field: member.clone(),
+                            field: member,
                             span: *span,
                         });
                     }

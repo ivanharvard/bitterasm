@@ -209,11 +209,11 @@ fn parses_member_access() {
         panic!("expected member access");
     };
 
-    assert_eq!(member, "baz");
+    assert_eq!(literal_name(member).as_deref(), Some("baz"));
 
     assert!(matches!(
         object.as_ref(),
-        Expr::Member { member, .. } if member == "bar"
+        Expr::Member { member, .. } if literal_name(member).as_deref() == Some("bar")
     ));
 }
 
@@ -1058,6 +1058,23 @@ fn type_alias_accepts_facets_on_following_lines() {
     };
     assert_eq!(alias.facets.len(), 2);
     assert!(matches!(program.statements[1], Statement::Const(_)));
+}
+
+#[test]
+fn lint_facets_accept_single_names_and_lists() {
+    let source = "macro f(a: int, b: int)\n    | allow unused_parameter\n    | deny(unreachable_code, generated_declarations)\n{\n}\n";
+    let program = parse(lex(source).unwrap()).unwrap();
+    let Statement::Macro(declaration) = &program.statements[0] else {
+        panic!("expected macro declaration");
+    };
+    assert_eq!(declaration.facets.len(), 2);
+}
+
+#[test]
+fn lint_facets_reject_unknown_lints() {
+    let source = "macro f() | allow imaginary_warning {\n}\n";
+    let error = parse(lex(source).unwrap()).unwrap_err();
+    assert!(error.message.contains("unknown lint or lint group `imaginary_warning`"));
 }
 
 #[test]

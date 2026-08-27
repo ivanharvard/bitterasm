@@ -297,6 +297,7 @@ pub fn print_type_expr(ty: &TypeExpr) -> String {
                 .map(|arg| match arg {
                     TypeArgument::Type(ty) => print_type_expr(ty),
                     TypeArgument::Const(expr) => print_expr(expr),
+                    TypeArgument::Wildcard(_) => "...".to_string(),
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
@@ -312,7 +313,9 @@ pub fn print_expr(expr: &Expr) -> String {
         Expr::Integer { raw, .. } => raw.clone(),
         Expr::String { value, .. } => format!("{value:?}"),
 
-        Expr::Member { object, member, .. } => format!("{}.{member}", print_expr(object)),
+        Expr::Member { object, member, .. } => {
+            format!("{}.{}", print_expr(object), print_spliced_name(member))
+        }
 
         Expr::Call { callee, arguments, .. } => {
             let args = arguments.iter().map(print_call_argument).collect::<Vec<_>>().join(", ");
@@ -361,6 +364,7 @@ fn print_generic_arguments(args: &[TypeArgument]) -> String {
         .map(|arg| match arg {
             TypeArgument::Type(ty) => print_type_expr(ty),
             TypeArgument::Const(expr) => print_expr(expr),
+            TypeArgument::Wildcard(_) => "...".to_string(),
         })
         .collect::<Vec<_>>()
         .join(", ");

@@ -94,6 +94,9 @@ impl Parser {
         &mut self,
         expected_kind: Option<GenericParamKind>,
     ) -> Result<TypeArgument, ParseError> {
+        if self.check(&TokenKind::Ellipsis) {
+            return Ok(TypeArgument::Wildcard(self.advance().span));
+        }
         match expected_kind {
             Some(GenericParamKind::Const) => {
                 Ok(TypeArgument::Const(self.parse_const_arg_expr()?))

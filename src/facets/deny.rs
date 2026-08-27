@@ -1,0 +1,4 @@
+//! `deny` — promotes one lint (or lint group) to an error for this declaration.
+use super::{DeclKind, PayloadShape, Violation};
+pub const PAYLOAD: PayloadShape = PayloadShape::Expr;
+pub fn check(_decl_kind: DeclKind, _count: usize) -> Result<(), Violation> { Ok(()) }

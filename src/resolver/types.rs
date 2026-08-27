@@ -61,13 +61,13 @@ impl ResolvedType {
         }
         match (self.strip_alias(), actual.strip_alias()) {
             (
-                ResolvedType::Struct { symbol: expected, args },
-                ResolvedType::Struct { symbol: found, .. },
+                ResolvedType::Struct { symbol: expected, args: expected_args },
+                ResolvedType::Struct { symbol: found, args: actual_args },
             )
             | (
-                ResolvedType::Enum { symbol: expected, args },
-                ResolvedType::Enum { symbol: found, .. },
-            ) => expected == found && args.is_empty(),
+                ResolvedType::Enum { symbol: expected, args: expected_args },
+                ResolvedType::Enum { symbol: found, args: actual_args },
+            ) => expected == found && generic_args_accept(expected_args, actual_args),
             _ => false,
         }
     }
@@ -86,6 +86,14 @@ impl ResolvedType {
     }
 }
 
+fn generic_args_accept(expected: &[ResolvedGenericArg], actual: &[ResolvedGenericArg]) -> bool {
+    expected.is_empty()
+        || (expected.len() == actual.len()
+            && expected.iter().zip(actual).all(|(expected, actual)| {
+                matches!(expected, ResolvedGenericArg::Wildcard) || expected == actual
+            }))
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum BuiltinType {
     Int,
@@ -96,4 +104,5 @@ pub enum ResolvedGenericArg {
     Type(Box<ResolvedType>),
     Const(Int),
     ConstParam(String),
+    Wildcard,
 }

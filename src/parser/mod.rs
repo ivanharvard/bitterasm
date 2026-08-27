@@ -348,10 +348,22 @@ impl Parser {
         let mut parts = vec![NamePart::Literal(first)];
         let mut end = first_token.span.end;
 
-        while self.check(&TokenKind::Backtick) {
+        while self.check(&TokenKind::Backtick)
+            && self.tokens.get(self.pos + 1).is_some_and(|token| !matches!(
+                token.kind,
+                TokenKind::Colon
+                    | TokenKind::Comma
+                    | TokenKind::RBrace
+                    | TokenKind::RParen
+                    | TokenKind::RBracket
+                    | TokenKind::Newline
+                    | TokenKind::Eof
+                    | TokenKind::Backtick
+            ))
+        {
             self.advance();
 
-            let inner = self.parse_expr()?;
+            let inner = self.parse_expr_bp_until(0, Some(&TokenKind::Backtick))?;
 
             let closing = self.current().clone();
             self.expect_simple(TokenKind::Backtick)?;

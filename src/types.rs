@@ -76,6 +76,9 @@ impl TypeExpr {
 pub enum TypeArgument {
     Type(TypeExpr),
     Const(Expr),
+    /// `...` in a signature accepts any argument in this position without
+    /// binding it (for example `Array<T, ...>`).
+    Wildcard(Span),
 }
 
 // ===============

@@ -87,6 +87,7 @@ fn reify_generic_arg(symbols: &SymbolTable, arg: &ResolvedGenericArg) -> Emitted
             "a fully-evaluated value's generic args can't carry an unresolved \
              const param (`{name}`)"
         ),
+        ResolvedGenericArg::Wildcard => unreachable!("signature wildcard reached emitted value"),
     }
 }
 

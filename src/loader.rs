@@ -32,10 +32,12 @@ pub enum LoadError {
     Lex {
         path: PathBuf,
         message: String,
+        span: Span,
     },
     Parse {
         path: PathBuf,
         message: String,
+        span: Span,
     },
     ModuleNotFound {
         importer: PathBuf,
@@ -57,11 +59,11 @@ impl fmt::Display for LoadError {
                 write!(f, "failed to read {}: {message}", path.display())
             }
 
-            LoadError::Lex { path, message } => {
+            LoadError::Lex { path, message, .. } => {
                 write!(f, "{}: {message}", path.display())
             }
 
-            LoadError::Parse { path, message } => {
+            LoadError::Parse { path, message, .. } => {
                 write!(f, "{}: {message}", path.display())
             }
 
@@ -148,6 +150,41 @@ pub fn load_program(entry: &Path) -> Result<Program, LoadError> {
     Ok(Program { statements, span })
 }
 
+/// Loads and parses the entry module with all imported parser signatures and
+/// custom syntax available, but does not splice imported declarations into
+/// its statement list. This is the source-faithful view used by file-local
+/// diagnostics: every span belongs to `entry`, while ordinary compilation
+/// continues to use [`load_program`]'s flattened program.
+pub fn load_entry_program(entry: &Path) -> Result<Program, LoadError> {
+    let entry_path = canonicalize(entry)?;
+    let mut cache: HashMap<PathBuf, LoadedModule> = HashMap::new();
+    let mut stack: Vec<PathBuf> = Vec::new();
+    load_module(&entry_path, &mut cache, &mut stack)?;
+    let entry_module = &cache[&entry_path];
+    Ok(Program {
+        statements: entry_module.statements.clone(),
+        span: entry_module.span,
+    })
+}
+
+/// Returns every source file in an entry's import graph. The order is
+/// deterministic by canonical path and is intended for diagnostics, whose
+/// resolver spans must be matched back to the module they came from.
+pub fn load_sources(entry: &Path) -> Result<Vec<(PathBuf, String)>, LoadError> {
+    let entry_path = canonicalize(entry)?;
+    let mut cache: HashMap<PathBuf, LoadedModule> = HashMap::new();
+    let mut stack = Vec::new();
+    load_module(&entry_path, &mut cache, &mut stack)?;
+    let mut paths: Vec<_> = cache.into_keys().collect();
+    paths.sort();
+    paths.into_iter().map(|path| {
+        let source = fs::read_to_string(&path).map_err(|error| LoadError::Io {
+            path: path.clone(), message: error.to_string(),
+        })?;
+        Ok((path, source))
+    }).collect()
+}
+
 fn load_module(
     path: &Path,
     cache: &mut HashMap<PathBuf, LoadedModule>,
@@ -171,7 +208,8 @@ fn load_module(
 
     let tokens = lexer::lex(&source).map_err(|error| LoadError::Lex {
         path: path.to_path_buf(),
-        message: error.to_string(),
+        message: error.message,
+        span: error.span,
     })?;
 
     let imports = parser::discover_imports(tokens.clone());
@@ -204,7 +242,8 @@ fn load_module(
     let (program, mut seed) = parser::parse_seeded(tokens, &seed).map_err(|error| {
         LoadError::Parse {
             path: path.to_path_buf(),
-            message: error.to_string(),
+            message: error.message,
+            span: error.span,
         }
     })?;
 
@@ -609,6 +648,7 @@ fn rename_type_expr(ty: &mut TypeExpr, renames: &HashMap<String, String>) {
                 match arg {
                     TypeArgument::Type(ty) => rename_type_expr(ty, renames),
                     TypeArgument::Const(expr) => rename_expr(expr, renames),
+                    TypeArgument::Wildcard(_) => {}
                 }
             }
         }
@@ -643,6 +683,7 @@ fn rename_expr(expr: &mut Expr, renames: &HashMap<String, String>) {
                 match arg {
                     TypeArgument::Type(ty) => rename_type_expr(ty, renames),
                     TypeArgument::Const(expr) => rename_expr(expr, renames),
+                    TypeArgument::Wildcard(_) => {}
                 }
             }
             if let Some(payload) = payload {
@@ -666,6 +707,7 @@ fn rename_expr(expr: &mut Expr, renames: &HashMap<String, String>) {
                 match arg {
                     TypeArgument::Type(ty) => rename_type_expr(ty, renames),
                     TypeArgument::Const(expr) => rename_expr(expr, renames),
+                    TypeArgument::Wildcard(_) => {}
                 }
             }
 

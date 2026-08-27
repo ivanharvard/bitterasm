@@ -91,6 +91,13 @@ impl<'a> AliasResolver<'a> {
         let declaration = self.find_struct_declaration(id)?;
         let generic_params = declaration.generic_params.clone();
 
+        // A const-generic body can use its parameters to decide which
+        // fields exist. There is no sound abstract unrolling for that body;
+        // validate it when a concrete specialization is instantiated.
+        if generic_params.iter().any(|param| matches!(param, GenericParameter::Const { .. })) {
+            return Ok(Vec::new());
+        }
+
         let mut scope = HashMap::new();
 
         for param in &generic_params {
@@ -470,6 +477,7 @@ fn generic_arg_scope(
             // generic struct instantiating another with its own still-open
             // param) stays unbound in the new scope too.
             ResolvedGenericArg::ConstParam(_) => GenericBinding::Const(None),
+            ResolvedGenericArg::Wildcard => GenericBinding::Const(None),
         };
 
         scope.insert(param_name(param).to_string(), binding);

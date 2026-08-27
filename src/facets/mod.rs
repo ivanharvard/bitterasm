@@ -29,6 +29,11 @@ mod before;
 mod invariant;
 mod from;
 mod to;
+mod allow;
+mod expect;
+mod warn;
+mod deny;
+mod forbid;
 pub(crate) mod syntax;
 
 use crate::ast::{Expr, Facet, FacetPayload};
@@ -72,6 +77,11 @@ pub fn payload_shape(name: &str) -> Option<PayloadShape> {
         "before" => Some(before::PAYLOAD),
         "after" => Some(after::PAYLOAD),
         "syntax" => Some(syntax::PAYLOAD),
+        "allow" => Some(allow::PAYLOAD),
+        "expect" => Some(expect::PAYLOAD),
+        "warn" => Some(warn::PAYLOAD),
+        "deny" => Some(deny::PAYLOAD),
+        "forbid" => Some(forbid::PAYLOAD),
         _ => None,
     }
 }
@@ -89,6 +99,11 @@ pub fn check(name: &str, decl_kind: DeclKind, count: usize) -> Option<Result<(),
         "before" => Some(before::check(decl_kind, count)),
         "after" => Some(after::check(decl_kind, count)),
         "syntax" => Some(syntax::check(decl_kind, count)),
+        "allow" => Some(allow::check(decl_kind, count)),
+        "expect" => Some(expect::check(decl_kind, count)),
+        "warn" => Some(warn::check(decl_kind, count)),
+        "deny" => Some(deny::check(decl_kind, count)),
+        "forbid" => Some(forbid::check(decl_kind, count)),
         _ => None,
     }
 }

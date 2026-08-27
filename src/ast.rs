@@ -92,7 +92,7 @@ pub enum Expr {
 
     Member {
         object: Box<Expr>,
-        member: String,
+        member: SplicedName,
         span: Span,
     },
 

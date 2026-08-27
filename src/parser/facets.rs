@@ -63,7 +63,34 @@ impl Parser {
             ));
         };
 
-        let payload = match shape {
+        let is_lint_facet = matches!(name.as_str(), "allow" | "expect" | "warn" | "deny" | "forbid");
+        let payload = if is_lint_facet && self.check(&TokenKind::LParen) {
+            let open = self.current().span;
+            self.advance();
+            let mut arguments = Vec::new();
+            if !self.check(&TokenKind::RParen) {
+                loop {
+                    let value = self.parse_expr()?;
+                    arguments.push(CallArgument { name: None, span: value.span(), value });
+                    if !self.check(&TokenKind::Comma) { break; }
+                    self.advance();
+                }
+            }
+            let close = self.current().span;
+            self.expect_simple(TokenKind::RParen)?;
+            FacetPayload::Expr(Expr::Call {
+                callee: Box::new(Expr::Identifier {
+                    name: "lints".to_string(),
+                    span: open,
+                }),
+                arguments,
+                span: Span::new(open.start, close.end),
+            })
+        } else if is_lint_facet {
+            let token = self.current().clone();
+            let selector = self.expect_identifier()?;
+            FacetPayload::Expr(Expr::Identifier { name: selector, span: token.span })
+        } else { match shape {
             // Bounded the same way custom invocation-syntax capture
             // matching bounds a capture (`parse_expr_bp_until`'s own doc) —
             // `|` is also `BinaryOp::BitOr`, so an unbounded parse of
@@ -107,7 +134,37 @@ impl Parser {
             PayloadShape::Bare | PayloadShape::Type => unreachable!(
                 "facet `{name}` has a dedicated-token payload shape but was parsed via the identifier path"
             ),
-        };
+        }};
+
+        if is_lint_facet {
+            let selectors: Vec<&str> = match &payload {
+                FacetPayload::Expr(Expr::Identifier { name, .. }) => vec![name],
+                FacetPayload::Expr(Expr::Call { arguments, .. }) => arguments
+                    .iter()
+                    .filter_map(|argument| match &argument.value {
+                        Expr::Identifier { name, .. } => Some(name.as_str()),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
+            if selectors.is_empty() {
+                return Err(ParseError::new(
+                    format!("the `{name}` facet requires one or more lint names"),
+                    Span::new(start, self.previous().span.end),
+                ));
+            }
+            for selector in selectors {
+                if crate::diagnostics::LintName::named(selector).is_none()
+                    && crate::diagnostics::LintName::group(selector).is_none()
+                {
+                    return Err(ParseError::new(
+                        format!("unknown lint or lint group `{selector}`"),
+                        Span::new(start, self.previous().span.end),
+                    ));
+                }
+            }
+        }
 
         let end = self.previous().span.end;
 

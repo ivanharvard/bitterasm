@@ -96,7 +96,7 @@ pub enum TokenKind {
 /// assert!(!span.is_empty());
 /// assert!(Span::new(5, 5).is_empty());
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct Span {
     pub start: usize,
     pub end: usize,

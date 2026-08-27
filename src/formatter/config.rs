@@ -63,10 +63,18 @@ pub fn load_config(path: &Path) -> Result<FormatConfig, String> {
 
 pub(super) fn parse_config(source: &str) -> Result<FormatConfig, String> {
     let mut config = FormatConfig::default();
+    let mut section = String::new();
     for (index, line) in source.lines().enumerate() {
         let line_number = index + 1;
         let line = line.split('#').next().unwrap_or_default().trim();
         if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            section = line[1..line.len() - 1].to_string();
+            continue;
+        }
+        if !section.is_empty() {
             continue;
         }
         let (key, raw_value) = line

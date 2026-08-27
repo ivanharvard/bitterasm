@@ -49,12 +49,11 @@ impl Parser {
 
                 self.advance();
 
-                let member_token = self.current().clone();
-                let member = self.expect_identifier()?;
+                let (member, member_span) = self.parse_spliced_name()?;
 
                 let span = Span::new(
                     left.span().start,
-                    member_token.span.end,
+                    member_span.end,
                 );
 
                 left = Expr::Member {
