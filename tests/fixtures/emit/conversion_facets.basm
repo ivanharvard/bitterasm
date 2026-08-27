@@ -13,7 +13,10 @@ pub struct Polar
     pub angle: int,
 }
 
-macro cartesian_to_polar(x: int, y: int) -> Polar {
+macro cartesian_to_polar(
+    x: int,
+    y: int
+) -> Polar {
     @return Polar(radius = x + y, angle = 0)
 }
 
@@ -36,7 +39,10 @@ pub struct Sized<const len: int>
     pub requested_len: int,
 }
 
-macro sized_from_int(value: int, len: int) -> Sized<7> {
+macro sized_from_int(
+    value: int,
+    len: int
+) -> Sized<7> {
     @return Sized<7> {
         value: value,
         requested_len: len

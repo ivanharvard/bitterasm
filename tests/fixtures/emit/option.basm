@@ -3,7 +3,10 @@ pub enum Option<T> {
     None,
 }
 
-macro unwrap_or(option: Option<int>, fallback: int) -> int {
+macro unwrap_or(
+    option: Option<int>,
+    fallback: int
+) -> int {
     @match option {
         Some(value) => {
             @return value
