@@ -190,7 +190,14 @@ fn load_module(
             load_module(&child_path, cache, stack)?;
             let child_seed = &cache[&child_path].seed;
             seed.generic_signatures.extend(child_seed.generic_signatures.clone());
-            seed.macro_syntaxes.extend(child_seed.macro_syntaxes.clone());
+            for (name, patterns) in &child_seed.macro_syntaxes {
+                let known = seed.macro_syntaxes.entry(name.clone()).or_default();
+                for pattern in patterns {
+                    if !known.contains(pattern) {
+                        known.push(pattern.clone());
+                    }
+                }
+            }
         }
     }
 
@@ -1122,6 +1129,44 @@ mod tests {
             &invocation.operands[1],
             Expr::Integer { raw, .. } if raw == "7"
         ));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn overloaded_custom_syntaxes_merge_across_imports() {
+        let dir = scratch_dir("overloaded_custom_syntax_import");
+
+        fs::write(
+            dir.join("bracketed.basm"),
+            "pub macro load(address: int) | syntax \"load [$address$]\" {\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("displaced.basm"),
+            "pub macro load(base: int, offset: int) | syntax \"load $offset$($base$)\" {\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("importer.basm"),
+            "from .bracketed import *\nfrom .displaced import *\n\nload [123]\nload 8(sp)\n",
+        )
+        .unwrap();
+
+        let program = load_program(&dir.join("importer.basm"))
+            .expect("both imported load syntaxes should remain registered");
+        let invocations: Vec<_> = program
+            .statements
+            .iter()
+            .filter_map(|statement| match statement {
+                Statement::Invocation(invocation) if invocation.name == "load" => Some(invocation),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(invocations.len(), 2);
+        assert_eq!(invocations[0].operands.len(), 1);
+        assert_eq!(invocations[1].operands.len(), 2);
 
         fs::remove_dir_all(&dir).ok();
     }

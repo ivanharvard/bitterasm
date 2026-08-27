@@ -1003,6 +1003,52 @@ fn custom_syntax_call_site_mismatch_is_a_parse_error() {
 }
 
 #[test]
+fn syntax_overloads_select_distinct_surface_patterns() {
+    let source = "macro load(address: int) | syntax \"load [$address$]\" {\n}\n\
+                  macro load(base: int, offset: int) | syntax \"load $offset$($base$)\" {\n}\n\n\
+                  load [123]\nload 8(sp)\n";
+
+    let program = parse(lex(source).unwrap()).unwrap();
+    let Statement::Invocation(bracketed) = &program.statements[2] else {
+        panic!("expected bracketed invocation");
+    };
+    assert_eq!(bracketed.operands.len(), 1);
+    assert!(matches!(&bracketed.operands[0], Expr::Integer { raw, .. } if raw == "123"));
+
+    let Statement::Invocation(displaced) = &program.statements[3] else {
+        panic!("expected displaced invocation");
+    };
+    assert_eq!(displaced.operands.len(), 2);
+    assert!(matches!(&displaced.operands[0], Expr::Identifier { name, .. } if name == "sp"));
+    assert!(matches!(&displaced.operands[1], Expr::Integer { raw, .. } if raw == "8"));
+}
+
+#[test]
+fn identical_syntax_overloads_defer_to_type_resolution() {
+    let source = "macro print(value: int) | syntax \"print $value$\" {\n}\n\
+                  struct Text { value: int }\n\
+                  macro print(value: Text) | syntax \"print $value$\" {\n}\n\n\
+                  print 7\n";
+
+    let program = parse(lex(source).unwrap()).unwrap();
+    let Statement::Invocation(invocation) = &program.statements[3] else {
+        panic!("expected invocation");
+    };
+    assert_eq!(invocation.operands.len(), 1);
+    assert!(matches!(&invocation.operands[0], Expr::Integer { raw, .. } if raw == "7"));
+}
+
+#[test]
+fn syntax_overloads_reject_multiple_distinct_matches() {
+    let source = "macro mix(a: int, b: int) | syntax \"mix $a$ + $b$\" {\n}\n\
+                  macro mix(a: int, b: int) | syntax \"mix $b$ + $a$\" {\n}\n\n\
+                  mix 1 + 2\n";
+
+    let error = parse(lex(source).unwrap()).unwrap_err();
+    assert!(error.message.contains("ambiguous syntax for `mix`"));
+}
+
+#[test]
 fn type_alias_accepts_facets_on_following_lines() {
     let source = "type UByte = bits<8>\n    | invariant value >= 0\n    | invariant value < 256\nconst next = 1\n";
     let program = parse(lex(source).unwrap()).unwrap();

@@ -10,6 +10,54 @@ use crate::facets::syntax::{PatternSegment, SyntaxPattern};
 use super::*;
 
 impl Parser {
+    pub(super) fn parse_invocation_via_syntax_overloads(
+        &mut self,
+        name: &str,
+        patterns: &[SyntaxPattern],
+    ) -> Result<Invocation, ParseError> {
+        let start_pos = self.pos;
+        let start_span = self.current().span;
+        let mut matches: Vec<(Invocation, usize)> = Vec::new();
+        let mut best_error: Option<(usize, ParseError)> = None;
+
+        for pattern in patterns {
+            self.pos = start_pos;
+            match self.parse_invocation_via_syntax(name, pattern) {
+                Ok(invocation) => {
+                    let end_pos = self.pos;
+                    if !matches.iter().any(|(known, _)| known == &invocation) {
+                        matches.push((invocation, end_pos));
+                    }
+                }
+                Err(error) => {
+                    let error_pos = self.pos;
+                    if best_error.as_ref().is_none_or(|(known_pos, _)| error_pos > *known_pos) {
+                        best_error = Some((error_pos, error));
+                    }
+                }
+            }
+        }
+
+        self.pos = start_pos;
+        match matches.len() {
+            1 => {
+                let (invocation, end_pos) = matches.pop().unwrap();
+                self.pos = end_pos;
+                Ok(invocation)
+            }
+            0 => Err(best_error
+                .map(|(_, error)| error)
+                .unwrap_or_else(|| ParseError::new(
+                    format!("no syntax pattern registered for `{name}`"),
+                    start_span,
+                ))),
+            _ => Err(ParseError::new(
+                format!("ambiguous syntax for `{name}`: multiple patterns match this invocation"),
+                start_span,
+            )),
+        }
+    }
+
     pub(super) fn parse_invocation_via_syntax(
         &mut self,
         name: &str,

@@ -218,9 +218,7 @@ macro ascii_case_value(
         @return 0
     }
     const byte = ascii_case_byte(byte_at(value, len, index, endian), upper)
-    @return (
-        byte << byte_shift(index, len, endian)
-    ) | ascii_case_value(value, len, index + 1, endian, upper)
+    @return (byte << byte_shift(index, len, endian)) | ascii_case_value(value, len, index + 1, endian, upper)
 }
 
 pub macro ascii_upper(s: AsciiString) -> AsciiString {

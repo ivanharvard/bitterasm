@@ -72,7 +72,7 @@ pub fn parse(tokens: Vec<Token>) -> Result<Program, ParseError> {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ParserSeed {
     pub generic_signatures: HashMap<String, Vec<GenericParamKind>>,
-    pub macro_syntaxes: HashMap<String, SyntaxPattern>,
+    pub macro_syntaxes: HashMap<String, Vec<SyntaxPattern>>,
 }
 
 /// Parses `tokens`, treating `seed` as generic signatures and macro syntax
@@ -171,7 +171,7 @@ struct Parser {
     pos: usize,
 
     generic_signatures: HashMap<String, Vec<GenericParamKind>>,
-    macro_syntaxes: HashMap<String, SyntaxPattern>,
+    macro_syntaxes: HashMap<String, Vec<SyntaxPattern>>,
     imports: Vec<ImportStatement>,
 
     // While parsing a generic argument expression (e.g. the `width` in
@@ -224,7 +224,10 @@ impl Parser {
     }
 
     fn register_macro_syntax(&mut self, name: &str, pattern: SyntaxPattern) {
-        self.macro_syntaxes.insert(name.to_string(), pattern);
+        let patterns = self.macro_syntaxes.entry(name.to_string()).or_default();
+        if !patterns.contains(&pattern) {
+            patterns.push(pattern);
+        }
     }
 
     // ===============

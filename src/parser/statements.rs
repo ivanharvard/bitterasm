@@ -81,9 +81,9 @@ impl Parser {
                     Ok(Statement::Label(
                         self.parse_label()?
                     ))
-                } else if let Some(pattern) = self.macro_syntaxes.get(&name).cloned() {
+                } else if let Some(patterns) = self.macro_syntaxes.get(&name).cloned() {
                     Ok(Statement::Invocation(
-                        self.parse_invocation_via_syntax(&name, &pattern)?
+                        self.parse_invocation_via_syntax_overloads(&name, &patterns)?
                     ))
                 } else {
                     Ok(Statement::Invocation(
