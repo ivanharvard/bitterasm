@@ -801,6 +801,52 @@ mod tests {
     }
 
     #[test]
+    fn to_and_from_facets_convert_struct_fields_and_sources() {
+        let program = parse_fixture("conversion_facets.basm");
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let cartesian_symbol = symbols.lookup("Cartesian").unwrap();
+        let cartesian = Value::Struct {
+            symbol: cartesian_symbol,
+            args: vec![],
+            fields: vec![
+                ("x".to_string(), Value::Int(Int::from(2))),
+                ("y".to_string(), Value::Int(Int::from(3))),
+            ],
+            nominal: None,
+        };
+        let convert = find_macro(&program, "convert_cartesian");
+        let result = resolver
+            .run_macro_body(
+                symbols.lookup("convert_cartesian").unwrap(),
+                convert,
+                vec![cartesian],
+                &mut Vec::new(),
+            )
+            .unwrap()
+            .returned
+            .unwrap();
+        assert!(matches!(result, Value::Struct { ref fields, .. }
+            if fields[0].1 == Value::Int(Int::from(5))));
+
+        let convert = find_macro(&program, "convert_int");
+        let result = resolver
+            .run_macro_body(
+                symbols.lookup("convert_int").unwrap(),
+                convert,
+                vec![Value::Int(Int::from(7))],
+                &mut Vec::new(),
+            )
+            .unwrap()
+            .returned
+            .unwrap();
+        assert!(matches!(result, Value::Struct { ref fields, .. }
+            if fields[0].1 == Value::Int(Int::from(7))));
+    }
+
+    #[test]
     fn struct_via_generic_alias_carries_resolved_generic_args() {
         let program = parse_fixture("generic_alias.basm");
 

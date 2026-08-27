@@ -307,6 +307,12 @@ pub enum ResolveError {
         span: Span,
     },
 
+    AmbiguousConversion {
+        source: String,
+        target: String,
+        span: Span,
+    },
+
     // A `type` alias's `invariant` facet(s) reference more than one
     // distinct identifier that isn't otherwise a known symbol or one of the
     // alias's own generic params — there's no fixed name for "the value

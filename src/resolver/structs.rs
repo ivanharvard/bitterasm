@@ -215,6 +215,16 @@ impl<'a> AliasResolver<'a> {
             scope.insert(name.clone(), value.clone());
         }
 
+        scope.insert(
+            "self".to_string(),
+            Value::Struct {
+                symbol,
+                args: args.to_vec(),
+                fields: fields.to_vec(),
+                nominal: None,
+            },
+        );
+
         for invariant in &invariants {
             if !self.eval_truthy(invariant, &scope)? {
                 return Err(ResolveError::InvariantViolated {

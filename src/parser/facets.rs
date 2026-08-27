@@ -49,7 +49,12 @@ impl Parser {
     fn parse_facet(&mut self) -> Result<Facet, ParseError> {
         let start = self.current().span.start;
 
-        let name = self.expect_identifier()?;
+        let name = if self.check(&TokenKind::From) {
+            self.advance();
+            "from".to_string()
+        } else {
+            self.expect_identifier()?
+        };
 
         let Some(shape) = facets::payload_shape(&name) else {
             return Err(ParseError::new(

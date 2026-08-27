@@ -121,10 +121,8 @@ impl<'a> AliasResolver<'a> {
             // leaf with its current value as a literal first, so `target -
             // @here` still folds through the ordinary Int evaluator.
             Expr::Integer { .. } | Expr::Unary { .. } | Expr::Binary { .. } => {
-                let rewritten = substitute_here(expr, &self.values_emitted);
-                let int_scope = int_only_scope(scope);
-
-                eval::eval(&rewritten, &int_scope)
+                let rewritten = self.materialize_int_expr(expr, scope)?;
+                eval::eval(&rewritten, &HashMap::new())
                     .map(Value::Int)
                     .map_err(|error| into_value_error(error, scope))
             }
@@ -179,6 +177,11 @@ impl<'a> AliasResolver<'a> {
                 if let Expr::Member { object, member, .. } = callee.as_ref() {
                     if let Expr::Identifier { name, .. } = object.as_ref() {
                         return self.eval_enum_variant(name, &[], member, arguments, *span, scope);
+                    }
+                }
+                if let Expr::Identifier { name, .. } = callee.as_ref() {
+                    if self.lookup_symbol(name).is_some_and(|id| self.get_symbol(id).kind == SymbolKind::Macro) {
+                        return self.eval_macro_call(name, arguments, *span, scope);
                     }
                 }
                 self.eval_call_value(callee, arguments, *span, scope)
@@ -237,6 +240,62 @@ impl<'a> AliasResolver<'a> {
             // struct-valued `in`-expression.
             Expr::Range { start, end, span } => self.eval_range_value(start, end, *span, scope),
         }
+    }
+
+    fn materialize_int_expr(
+        &mut self,
+        expr: &Expr,
+        scope: &HashMap<String, Value>,
+    ) -> Result<Expr, ResolveError> {
+        match expr {
+            Expr::Integer { .. } => Ok(expr.clone()),
+            Expr::Unary { op, operand, span } => Ok(Expr::Unary {
+                op: *op,
+                operand: Box::new(self.materialize_int_expr(operand, scope)?),
+                span: *span,
+            }),
+            Expr::Binary { left, op, right, span } => Ok(Expr::Binary {
+                left: Box::new(self.materialize_int_expr(left, scope)?),
+                op: *op,
+                right: Box::new(self.materialize_int_expr(right, scope)?),
+                span: *span,
+            }),
+            Expr::Splice { inner, .. } => self.materialize_int_expr(inner, scope),
+            Expr::Here { span } => Ok(Expr::Integer {
+                raw: self.values_emitted.to_string(),
+                span: *span,
+            }),
+            other => match self.eval_value(other, scope)? {
+                Value::Int(value) => Ok(Expr::Integer {
+                    raw: value.to_string(),
+                    span: other.span(),
+                }),
+                Value::Struct { .. } | Value::Enum { .. } => {
+                    Err(ResolveError::ExpectedIntValue { span: other.span() })
+                }
+            },
+        }
+    }
+
+    fn eval_macro_call(
+        &mut self,
+        name: &str,
+        arguments: &[CallArgument],
+        span: Span,
+        scope: &HashMap<String, Value>,
+    ) -> Result<Value, ResolveError> {
+        if arguments.iter().any(|argument| argument.name.is_some()) {
+            return Err(ResolveError::ExpectedValueExpression { span });
+        }
+        let symbol = self.find_macro_symbol(name, span)?;
+        let declaration = self.find_macro_declaration(symbol)?.clone();
+        let values = arguments
+            .iter()
+            .map(|argument| self.eval_value(&argument.value, scope))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.run_macro_body(symbol, &declaration, values, &mut Vec::new())?
+            .returned
+            .ok_or(ResolveError::ExpectedValueExpression { span })
     }
 
     fn eval_call_value(
@@ -619,6 +678,13 @@ impl<'a> AliasResolver<'a> {
         target: &ResolvedType,
         span: Span,
     ) -> Result<Value, ResolveError> {
+        let source_ty = self.value_type(&value)?;
+        if source_ty != *target {
+            if let Some(converted) = self.try_explicit_conversion(&value, &source_ty, target, span)? {
+                return Ok(converted);
+            }
+        }
+
         match target {
             ResolvedType::Alias { symbol, binder, invariants, underlying } => {
                 let mut layer_scope: HashMap<String, Value> = HashMap::new();
@@ -688,6 +754,105 @@ impl<'a> AliasResolver<'a> {
                 Err(ResolveError::ExpectedType { name: name.clone(), span })
             }
         }
+    }
+
+    fn try_explicit_conversion(
+        &mut self,
+        value: &Value,
+        source_ty: &ResolvedType,
+        target: &ResolvedType,
+        span: Span,
+    ) -> Result<Option<Value>, ResolveError> {
+        let mut candidates = Vec::new();
+
+        let mut to_scope = HashMap::new();
+        to_scope.insert("self".to_string(), value.clone());
+        for template in self.type_facet_exprs(source_ty, "to")? {
+            if self.template_returns(&template, target)?
+                && self.template_accepts(&template, &to_scope)
+            {
+                candidates.push((template, to_scope.clone()));
+            }
+        }
+
+        let mut from_scope = HashMap::new();
+        from_scope.insert("source".to_string(), value.clone());
+        for template in self.type_facet_exprs(target, "from")? {
+            if self.template_returns(&template, target)?
+                && self.template_accepts(&template, &from_scope)
+            {
+                candidates.push((template, from_scope.clone()));
+            }
+        }
+
+        if candidates.len() > 1 {
+            return Err(ResolveError::AmbiguousConversion {
+                source: describe_type(source_ty, self.symbols),
+                target: describe_type(target, self.symbols),
+                span,
+            });
+        }
+
+        let Some((template, scope)) = candidates.pop() else {
+            return Ok(None);
+        };
+        let converted = self.eval_value(&template, &scope)?;
+        let actual = self.value_type(&converted)?;
+        if actual != *target {
+            return Err(ResolveError::TypeMismatch {
+                name: "conversion result".to_string(),
+                expected: describe_type(target, self.symbols),
+                actual: describe_type(&actual, self.symbols),
+                span,
+            });
+        }
+        Ok(Some(converted))
+    }
+
+    fn type_facet_exprs(
+        &self,
+        ty: &ResolvedType,
+        name: &str,
+    ) -> Result<Vec<Expr>, ResolveError> {
+        let facets = match ty {
+            ResolvedType::Struct { symbol, .. } => &self.find_struct_declaration(*symbol)?.facets,
+            ResolvedType::Alias { symbol, .. } => &self.find_alias_declaration(*symbol)?.facets,
+            _ => return Ok(Vec::new()),
+        };
+        Ok(crate::facets::extract_exprs(facets, name))
+    }
+
+    fn template_macro(&self, template: &Expr) -> Result<&crate::ast::MacroDeclaration, ResolveError> {
+        let Expr::Call { callee, .. } = template else {
+            return Err(ResolveError::ExpectedValueExpression { span: template.span() });
+        };
+        let Expr::Identifier { name, span } = callee.as_ref() else {
+            return Err(ResolveError::ExpectedValueExpression { span: template.span() });
+        };
+        let symbol = self.find_macro_symbol(name, *span)?;
+        self.find_macro_declaration(symbol)
+    }
+
+    fn template_returns(&mut self, template: &Expr, target: &ResolvedType) -> Result<bool, ResolveError> {
+        let return_ty = self.template_macro(template)?.return_ty.clone();
+        let Some(return_ty) = return_ty else {
+            return Ok(false);
+        };
+        Ok(self.resolve_type_expr(&return_ty)? == *target)
+    }
+
+    fn template_accepts(&mut self, template: &Expr, scope: &HashMap<String, Value>) -> bool {
+        let Expr::Call { arguments, .. } = template else { return false };
+        let Ok(declaration) = self.template_macro(template).cloned() else { return false };
+        if declaration.params.len() != arguments.len() {
+            return false;
+        }
+        arguments.iter().zip(&declaration.params).all(|(argument, param)| {
+            let Ok(value) = self.eval_value(&argument.value, scope) else { return false };
+            let Ok(actual) = self.value_type(&value) else { return false };
+            let Ok(expected) = self.resolve_type_expr(&param.ty) else { return false };
+            actual == expected
+        })
     }
 
     /// Resolves a bare name that isn't bound in the current scope against
@@ -927,46 +1092,10 @@ fn tag_nominal(value: Value, symbol: SymbolId) -> Value {
     }
 }
 
-// Rewrites every `@here` leaf in an arithmetic subtree into a literal
-// `Expr::Integer` holding `values_emitted`'s current value, so the
-// resulting tree can be folded by `eval::eval` — which has no notion of a
-// live expansion in progress — the same way any other literal would be.
-fn substitute_here(expr: &Expr, values_emitted: &Int) -> Expr {
-    match expr {
-        Expr::Here { span } => Expr::Integer { raw: values_emitted.to_string(), span: *span },
-
-        Expr::Unary { op, operand, span } => Expr::Unary {
-            op: *op,
-            operand: Box::new(substitute_here(operand, values_emitted)),
-            span: *span,
-        },
-
-        Expr::Binary { left, op, right, span } => Expr::Binary {
-            left: Box::new(substitute_here(left, values_emitted)),
-            op: *op,
-            right: Box::new(substitute_here(right, values_emitted)),
-            span: *span,
-        },
-
-        _ => expr.clone(),
-    }
-}
-
-fn int_only_scope(scope: &HashMap<String, Value>) -> HashMap<String, Int> {
-    scope
-        .iter()
-        .filter_map(|(name, value)| match value {
-            Value::Int(int) => Some((name.clone(), int.clone())),
-            Value::Struct { .. } | Value::Enum { .. } => None,
-        })
-        .collect()
-}
-
 fn into_value_error(error: EvalError, scope: &HashMap<String, Value>) -> ResolveError {
     match error {
-        // If the name is in scope at all, it's a struct value used where an
-        // Int was needed (it got filtered out of `int_only_scope`) rather
-        // than genuinely unknown.
+        // If the name is in scope at all, it was used where an Int was
+        // needed rather than being genuinely unknown.
         EvalError::UnknownConstant { name, span } => {
             if scope.contains_key(&name) {
                 ResolveError::ExpectedIntValue { span }

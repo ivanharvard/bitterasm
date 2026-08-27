@@ -1,0 +1,30 @@
+pub struct Cartesian
+    | to cartesian_to_polar(self.x, self.y)
+{
+    pub x: int,
+    pub y: int,
+}
+
+pub struct Polar
+    | invariant self.radius >= 0
+    | from polar_from_int(source)
+{
+    pub radius: int,
+    pub angle: int,
+}
+
+macro cartesian_to_polar(x: int, y: int) -> Polar {
+    @return Polar(radius = x + y, angle = 0)
+}
+
+macro polar_from_int(value: int) -> Polar {
+    @return Polar(radius = value, angle = 0)
+}
+
+macro convert_cartesian(value: Cartesian) -> Polar {
+    @return value as Polar
+}
+
+macro convert_int(value: int) -> Polar {
+    @return value as Polar
+}

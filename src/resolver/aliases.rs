@@ -267,7 +267,12 @@ impl<'a> AliasResolver<'a> {
     ) -> Result<ResolvedType, ResolveError> {
         let invariants = crate::facets::extract_invariants(&declaration.facets);
 
-        if invariants.is_empty() {
+        let has_conversions = declaration
+            .facets
+            .iter()
+            .any(|facet| matches!(facet.name.as_str(), "to" | "from"));
+
+        if invariants.is_empty() && !has_conversions {
             return Ok(underlying);
         }
 
@@ -543,7 +548,7 @@ impl<'a> AliasResolver<'a> {
     // ast lookup
     // ==============
 
-    fn find_alias_declaration(
+    pub(super) fn find_alias_declaration(
         &self,
         id: SymbolId,
     ) -> Result<&crate::ast::TypeAliasDeclaration, ResolveError> {
