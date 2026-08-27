@@ -1,0 +1,31 @@
+from std.string import String, AsciiString, Utf8String, ascii_upper, ascii_lower, ascii_title, utf8_codepoint_count, utf8_is_ascii
+from std.binary import Endian
+
+macro verify(_unused: int) {
+    const raw = String<3> {
+        value: "abc",
+        len: 3,
+    }
+    const ascii = raw as AsciiString<3, Endian.Big>
+    @assert ascii_upper(ascii).value == "ABC"
+    @assert ascii_lower(ascii_upper(ascii)).value == "abc"
+    @assert ascii_title(ascii).value == "Abc"
+
+    const utf8 = raw as Utf8String<3, Endian.Big>
+    @assert utf8_codepoint_count(utf8) == 3
+    @assert utf8_is_ascii(utf8)
+
+    const euro_raw = String<3> {
+        value: 0xE282AC,
+        len: 3,
+    }
+    const euro = euro_raw as Utf8String<3, Endian.Big>
+    @assert utf8_codepoint_count(euro) == 1
+    @assert !utf8_is_ascii(euro)
+
+    @emit ascii
+    @emit utf8
+    @emit euro
+}
+
+verify 0

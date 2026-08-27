@@ -165,7 +165,7 @@ impl<'a> AliasResolver<'a> {
             for param in declaration.params.iter().take(actual_types.len()) {
                 expected_types.push(self.resolve_type_expr(&param.ty)?);
             }
-            if expected_types == actual_types {
+            if expected_types.iter().zip(&actual_types).all(|(expected, actual)| expected.accepts(actual)) {
                 matches.push((id, declaration));
             }
         }
@@ -262,7 +262,7 @@ impl<'a> AliasResolver<'a> {
                         .map(|value| vec![("returned".to_string(), value)])
                         .unwrap_or_default();
                     after_scope.insert(
-                        "self".to_string(),
+                        "result".to_string(),
                         Value::Struct { symbol, args: Vec::new(), fields, nominal: None },
                     );
 
@@ -303,7 +303,7 @@ impl<'a> AliasResolver<'a> {
             };
             let expected = self.resolve_type_expr(&param.ty)?;
             let actual = self.value_type(&value)?;
-            if actual != expected {
+            if !expected.accepts(&actual) {
                 return Err(ResolveError::TypeMismatch {
                     name: param.name.clone(), expected: describe_type(&expected, self.symbols),
                     actual: describe_type(&actual, self.symbols), span: param.span,
@@ -1041,6 +1041,21 @@ mod tests {
             .unwrap();
         assert!(matches!(result, Value::Struct { ref fields, .. }
             if fields[0].1 == Value::Int(Int::from(7))));
+
+        let convert = find_macro(&program, "convert_int_to_sized");
+        let result = resolver
+            .run_macro_body(
+                symbols.lookup("convert_int_to_sized").unwrap(),
+                convert,
+                vec![Value::Int(Int::from(11))],
+                &mut Vec::new(),
+            )
+            .unwrap()
+            .returned
+            .unwrap();
+        assert!(matches!(result, Value::Struct { ref fields, .. }
+            if fields[0].1 == Value::Int(Int::from(11))
+                && fields[1].1 == Value::Int(Int::from(7))));
     }
 
     #[test]

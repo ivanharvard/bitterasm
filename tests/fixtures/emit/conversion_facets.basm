@@ -1,12 +1,12 @@
 pub struct Cartesian
-    | to cartesian_to_polar(self.x, self.y)
+    | to cartesian_to_polar(source.x, source.y)
 {
     pub x: int,
     pub y: int,
 }
 
 pub struct Polar
-    | invariant self.radius >= 0
+    | invariant source.radius >= 0
     | from polar_from_int(source)
 {
     pub radius: int,
@@ -27,4 +27,22 @@ macro convert_cartesian(value: Cartesian) -> Polar {
 
 macro convert_int(value: int) -> Polar {
     @return value as Polar
+}
+
+pub struct Sized<const len: int>
+    | from sized_from_int(source, target.len)
+{
+    pub value: int,
+    pub requested_len: int,
+}
+
+macro sized_from_int(value: int, len: int) -> Sized<7> {
+    @return Sized<7> {
+        value: value,
+        requested_len: len
+    }
+}
+
+macro convert_int_to_sized(value: int) -> Sized<7> {
+    @return value as Sized<7>
 }

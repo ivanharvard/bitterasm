@@ -3,8 +3,8 @@
 //! across separate conditions) rather than composing in sequence the way
 //! `before`/`after` do.
 //!
-//! On a **struct**, `self` is the completed value, so fields are reached as
-//! `self.field`; generic const parameters remain directly available. Each
+//! On a **struct**, `source` is the completed value, so fields are reached as
+//! `source.field`; generic const parameters remain directly available. Each
 //! expression (often a call to a separately-declared bool-returning macro),
 //! so a check can be shared across declarations instead of duplicated
 //! inline) is checked against the struct's own fields and generic const
@@ -12,7 +12,7 @@
 //! (`resolver::structs::AliasResolver::check_struct_invariants`, called from
 //! both `resolver::values::eval_call_value` and `eval_construct_value`).
 //!
-//! On a **type alias**, `self` is the value being converted into the alias.
+//! On a **type alias**, `source` is the value being converted into the alias.
 //! Compilation fails if a checked expression doesn't fold to a truthy
 //! result.
 

@@ -8,7 +8,7 @@ macro require_expected(value: int, original: int) {
 
 macro increment(value: int) -> int
     | before require_positive(value)
-    | after require_expected(self.returned, value)
+    | after require_expected(result.returned, value)
 {
     @if value > 0 {
         @return value + 1

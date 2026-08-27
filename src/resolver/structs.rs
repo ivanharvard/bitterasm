@@ -204,10 +204,10 @@ impl<'a> AliasResolver<'a> {
         let mut scope: HashMap<String, Value> = HashMap::new();
 
         for (param, arg) in generic_params.iter().zip(args) {
-            if let (GenericParameter::Const { name, .. }, ResolvedGenericArg::Const(value)) =
+            if let (param @ GenericParameter::Const { name, .. }, ResolvedGenericArg::Const(value)) =
                 (param, arg)
             {
-                scope.insert(name.clone(), Value::Int(value.clone()));
+                scope.insert(name.clone(), self.const_generic_value(param, value));
             }
         }
 
@@ -216,7 +216,7 @@ impl<'a> AliasResolver<'a> {
         }
 
         scope.insert(
-            "self".to_string(),
+            "source".to_string(),
             Value::Struct {
                 symbol,
                 args: args.to_vec(),

@@ -15,7 +15,7 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{literal_name, CallArgument, ConstructItem, Expr, NamePart, Statement};
+use crate::ast::{literal_name, BinaryOp, CallArgument, ConstructItem, Expr, NamePart, Statement};
 use crate::eval::{self, EvalError, Int};
 use crate::token::Span;
 use crate::types::{GenericParameter, StructBodyItem, TypeArgument, TypeExpr};
@@ -67,6 +67,40 @@ pub(super) enum ConstValueState {
 }
 
 impl<'a> AliasResolver<'a> {
+    pub(super) fn const_generic_value(
+        &self,
+        param: &GenericParameter,
+        value: &Int,
+    ) -> Value {
+        let GenericParameter::Const { ty, .. } = param else {
+            return Value::Int(value.clone());
+        };
+        let Some(type_name) = ty.name() else {
+            return Value::Int(value.clone());
+        };
+        let Some(symbol) = self.lookup_symbol(type_name) else {
+            return Value::Int(value.clone());
+        };
+        if self.get_symbol(symbol).kind != SymbolKind::Enum {
+            return Value::Int(value.clone());
+        }
+        let Ok(index) = usize::try_from(value) else {
+            return Value::Int(value.clone());
+        };
+        let Ok(declaration) = self.find_enum_declaration(symbol) else {
+            return Value::Int(value.clone());
+        };
+        let Some(variant) = declaration.variants.get(index) else {
+            return Value::Int(value.clone());
+        };
+        Value::Enum {
+            symbol,
+            args: Vec::new(),
+            variant: variant.name.clone(),
+            payload: None,
+        }
+    }
+
     fn eval_enum_variant(
         &mut self,
         enum_name: &str,
@@ -110,6 +144,25 @@ impl<'a> AliasResolver<'a> {
         scope: &HashMap<String, Value>,
     ) -> Result<Value, ResolveError> {
         match expr {
+            Expr::Binary { left, op: BinaryOp::Equal, right, .. } => {
+                Ok(Value::Int(Int::from(self.eval_value(left, scope)? == self.eval_value(right, scope)?)))
+            }
+            Expr::Binary { left, op: BinaryOp::NotEqual, right, .. } => {
+                Ok(Value::Int(Int::from(self.eval_value(left, scope)? != self.eval_value(right, scope)?)))
+            }
+            Expr::Binary { left, op: BinaryOp::And, right, .. } => {
+                if !self.eval_truthy(left, scope)? {
+                    return Ok(Value::Int(Int::from(0)));
+                }
+                Ok(Value::Int(Int::from(self.eval_truthy(right, scope)?)))
+            }
+            Expr::Binary { left, op: BinaryOp::Or, right, .. } => {
+                if self.eval_truthy(left, scope)? {
+                    return Ok(Value::Int(Int::from(1)));
+                }
+                Ok(Value::Int(Int::from(self.eval_truthy(right, scope)?)))
+            }
+
             // Arithmetic subtrees are handed to the existing Int evaluator
             // whole, against an Int-only projection of `scope` — this is
             // why an expression like `dst.id + 1` isn't supported yet (see
@@ -391,8 +444,8 @@ impl<'a> AliasResolver<'a> {
             .iter()
             .zip(&args)
             .filter_map(|(param, arg)| match (param, arg) {
-                (GenericParameter::Const { name, .. }, ResolvedGenericArg::Const(value)) => {
-                    Some((name.clone(), Value::Int(value.clone())))
+                (param @ GenericParameter::Const { name, .. }, ResolvedGenericArg::Const(value)) => {
+                    Some((name.clone(), self.const_generic_value(param, value)))
                 }
                 _ => None,
             })
@@ -515,8 +568,8 @@ impl<'a> AliasResolver<'a> {
             .iter()
             .zip(&args)
             .filter_map(|(param, arg)| match (param, arg) {
-                (GenericParameter::Const { name, .. }, ResolvedGenericArg::Const(value)) => {
-                    Some((name.clone(), Value::Int(value.clone())))
+                (param @ GenericParameter::Const { name, .. }, ResolvedGenericArg::Const(value)) => {
+                    Some((name.clone(), self.const_generic_value(param, value)))
                 }
                 _ => None,
             })
@@ -596,7 +649,28 @@ impl<'a> AliasResolver<'a> {
                     Ok(ResolvedGenericArg::Type(Box::new(self.resolve_type_expr(ty)?)))
                 }
 
-                TypeArgument::Const(expr) => Ok(ResolvedGenericArg::Const(self.eval_int(expr, scope)?)),
+                TypeArgument::Const(expr) => {
+                    let value = self.eval_value(expr, scope)?;
+                    let discriminant = match value {
+                        Value::Int(value) => value,
+                        Value::Enum { symbol, variant, payload: None, .. } => {
+                            let declaration = self.find_enum_declaration(symbol)?;
+                            let index = declaration
+                                .variants
+                                .iter()
+                                .position(|candidate| candidate.name == variant)
+                                .ok_or_else(|| ResolveError::Internal {
+                                    message: format!("enum value has unknown variant `{variant}`"),
+                                    span: expr.span(),
+                                })?;
+                            Int::from(index)
+                        }
+                        Value::Enum { .. } | Value::Struct { .. } => {
+                            return Err(ResolveError::ExpectedIntValue { span: expr.span() });
+                        }
+                    };
+                    Ok(ResolvedGenericArg::Const(discriminant))
+                }
             })
             .collect()
     }
@@ -775,7 +849,10 @@ impl<'a> AliasResolver<'a> {
         let mut candidates = Vec::new();
 
         let mut to_scope = HashMap::new();
-        to_scope.insert("self".to_string(), value.clone());
+        to_scope.insert("source".to_string(), value.clone());
+        if let Some(target_value) = self.type_argument_value(target)? {
+            to_scope.insert("target".to_string(), target_value);
+        }
         for template in self.type_facet_exprs(source_ty, "to")? {
             if self.template_returns(&template, target)?
                 && self.template_accepts(&template, &to_scope)
@@ -786,6 +863,9 @@ impl<'a> AliasResolver<'a> {
 
         let mut from_scope = HashMap::new();
         from_scope.insert("source".to_string(), value.clone());
+        if let Some(target_value) = self.type_argument_value(target)? {
+            from_scope.insert("target".to_string(), target_value);
+        }
         for template in self.type_facet_exprs(target, "from")? {
             if self.template_returns(&template, target)?
                 && self.template_accepts(&template, &from_scope)
@@ -806,7 +886,68 @@ impl<'a> AliasResolver<'a> {
             return Ok(None);
         };
         let converted = self.eval_value(&template, &scope)?;
+        let converted = self.specialize_conversion_result(converted, target, span)?;
         self.convert_to_inner(converted, target, span, false).map(Some)
+    }
+
+    fn specialize_conversion_result(
+        &mut self,
+        converted: Value,
+        target: &ResolvedType,
+        span: Span,
+    ) -> Result<Value, ResolveError> {
+        let target = target.strip_alias();
+        match (converted, target) {
+            (
+                Value::Struct { symbol, args, fields, nominal },
+                ResolvedType::Struct { symbol: target_symbol, args: target_args },
+            ) if symbol == *target_symbol && args.is_empty() => {
+                self.check_struct_invariants(symbol, target_args, &fields, span)?;
+                Ok(Value::Struct {
+                    symbol,
+                    args: target_args.clone(),
+                    fields,
+                    nominal,
+                })
+            }
+            (value, _) => Ok(value),
+        }
+    }
+
+    /// Presents a resolved destination type as a field-addressable value for
+    /// conversion facets. Const generic arguments use their declaration names,
+    /// so `AsciiString<4, Endian.Little>` exposes `target.len` and
+    /// `target.endian`. Type arguments have no runtime `Value` representation
+    /// and are deliberately omitted.
+    fn type_argument_value(&self, ty: &ResolvedType) -> Result<Option<Value>, ResolveError> {
+        let (symbol, args, params) = match ty {
+            ResolvedType::Struct { symbol, args } => {
+                (*symbol, args, &self.find_struct_declaration(*symbol)?.generic_params)
+            }
+            ResolvedType::Enum { symbol, args } => {
+                (*symbol, args, &self.find_enum_declaration(*symbol)?.generic_params)
+            }
+            ResolvedType::Alias { underlying, .. } => return self.type_argument_value(underlying),
+            ResolvedType::Builtin(_) | ResolvedType::TypeParameter { .. } => return Ok(None),
+        };
+
+        let fields = params
+            .iter()
+            .zip(args)
+            .filter_map(|(param, arg)| match (param, arg) {
+                (param @ GenericParameter::Const { name, .. }, ResolvedGenericArg::Const(value)) => {
+                    Some((name.clone(), self.const_generic_value(param, value)))
+                }
+                _ => None,
+            })
+            .collect();
+
+        Ok(Some(Value::Struct {
+            symbol,
+            args: args.clone(),
+            fields,
+            nominal: None,
+        }))
     }
 
     fn type_facet_exprs(
@@ -843,7 +984,22 @@ impl<'a> AliasResolver<'a> {
         let Some(return_ty) = return_ty else {
             return Ok(false);
         };
-        Ok(self.resolve_type_expr(&return_ty)? == *target)
+        let returned = self.resolve_type_expr(&return_ty)?;
+        if returned == *target {
+            return Ok(true);
+        }
+
+        // A conversion macro may name a generic destination without fixing
+        // its arguments; the facet's `target` binding supplies them. This is
+        // intentionally only a wildcard when the declaration omitted every
+        // argument, never when it returned a different specialization.
+        Ok(matches!(
+            (returned.strip_alias(), target.strip_alias()),
+            (
+                ResolvedType::Struct { symbol: returned_symbol, args: returned_args },
+                ResolvedType::Struct { symbol: target_symbol, .. },
+            ) if returned_symbol == target_symbol && returned_args.is_empty()
+        ))
     }
 
     fn template_accepts(&mut self, template: &Expr, scope: &HashMap<String, Value>) -> bool {
@@ -857,7 +1013,7 @@ impl<'a> AliasResolver<'a> {
             let Ok(value) = self.eval_value(&argument.value, scope) else { return false };
             let Ok(actual) = self.value_type(&value) else { return false };
             let Ok(expected) = self.resolve_type_expr(&param.ty) else { return false };
-            actual == expected
+            expected.accepts(&actual)
         })
     }
 

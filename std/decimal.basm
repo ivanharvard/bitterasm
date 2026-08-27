@@ -5,9 +5,9 @@ pub enum Infinity {
 
 # Interpreted as `value` / (10 ** `scale`)
 pub struct Decimal
-    | invariant self.scale >= 0
-    | to decimal_to_int(self)
-    | to decimal_to_fraction(self)
+    | invariant source.scale >= 0
+    | to decimal_to_int(source)
+    | to decimal_to_fraction(source)
     | from decimal_from_int(source)
 {
     value: int,
@@ -28,9 +28,9 @@ pub macro decimal_from_int(x: int) -> Decimal {
 
 const PRECISION = 10
 pub struct Fraction
-    | invariant self.d != 0
-    | to fraction_to_int(self)
-    | to fraction_to_decimal(self, PRECISION)
+    | invariant source.d != 0
+    | to fraction_to_int(source)
+    | to fraction_to_decimal(source, PRECISION)
     | from fraction_from_int(source)
 {
     n: int,

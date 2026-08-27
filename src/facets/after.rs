@@ -1,7 +1,7 @@
 //! `after` — macro-only. May appear multiple times; each one fires once,
 //! in declaration order, after the macro's own body (the reverse-ordered
 //! counterpart to [`super::before`]). Macro parameters remain directly
-//! available; `self.returned` exposes the completed return value.
+//! available; `result.returned` exposes the completed return value.
 
 use super::{DeclKind, PayloadShape, Violation};
 

@@ -1,5 +1,6 @@
 //! `from` — an inbound conversion template on a struct or type alias.
 //! `source` is the incoming typed value and may itself be a struct.
+//! `target` exposes the requested destination's named const-generic arguments.
 
 use super::{DeclKind, PayloadShape, Violation};
 

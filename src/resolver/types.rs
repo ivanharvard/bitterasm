@@ -52,6 +52,26 @@ pub enum ResolvedType {
 }
 
 impl ResolvedType {
+    /// Whether this type, when used as a macro signature, accepts `actual`.
+    /// Naming a generic struct/enum without arguments is a wildcard over its
+    /// specializations; explicit arguments continue to require exact equality.
+    pub fn accepts(&self, actual: &ResolvedType) -> bool {
+        if self == actual {
+            return true;
+        }
+        match (self.strip_alias(), actual.strip_alias()) {
+            (
+                ResolvedType::Struct { symbol: expected, args },
+                ResolvedType::Struct { symbol: found, .. },
+            )
+            | (
+                ResolvedType::Enum { symbol: expected, args },
+                ResolvedType::Enum { symbol: found, .. },
+            ) => expected == found && args.is_empty(),
+            _ => false,
+        }
+    }
+
     /// Unwraps through every `Alias` layer down to the underlying
     /// `Builtin`/`Struct`/`TypeParameter` — for the (common) call sites that
     /// only care about a type's *structure* (field lookup, diagnostics'

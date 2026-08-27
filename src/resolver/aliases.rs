@@ -516,6 +516,35 @@ impl<'a> AliasResolver<'a> {
     }
 
     pub(super) fn eval_const_expr(&self, expr: &Expr) -> Result<Int, ResolveError> {
+        // Payload-free enum variants are valid const-generic arguments. They
+        // are stored by stable declaration-order discriminant; the declared
+        // generic parameter type reconstructs the typed enum value whenever
+        // the argument enters an expression scope.
+        if let Expr::Member { object, member, span } = expr {
+            if let Expr::Identifier { name, .. } = object.as_ref() {
+                if let Some(id) = self.lookup_symbol(name) {
+                    if self.get_symbol(id).kind == SymbolKind::Enum {
+                        let declaration = self.find_enum_declaration(id)?;
+                        if let Some((index, variant)) = declaration
+                            .variants
+                            .iter()
+                            .enumerate()
+                            .find(|(_, variant)| variant.name == *member)
+                        {
+                            if variant.payload.is_none() {
+                                return Ok(Int::from(index));
+                            }
+                        }
+                        return Err(ResolveError::UnknownField {
+                            type_name: name.clone(),
+                            field: member.clone(),
+                            span: *span,
+                        });
+                    }
+                }
+            }
+        }
+
         let mut scope = self.consts.clone();
 
         for (name, binding) in &self.generic_scope {

@@ -1,0 +1,226 @@
+from std.binary import BITS_PER_BYTE, Endian
+
+# Packed strings store exactly `len` bytes in `value`. Endianness controls
+# which packed byte is logical byte zero; it does not change UTF-8 itself.
+pub struct String<const len: int>
+    | invariant validate_string(value, len)
+    | to string_to_ascii(source, target.len, target.endian)
+    | to string_to_utf8(source, target.len, target.endian)
+{
+    pub value: int,
+    pub len: int,
+}
+
+pub struct AsciiString<const len: int, const endian: Endian>
+    | invariant validate_ascii(value, len, endian)
+    | to ascii_to_utf8(source, target.len, target.endian)
+{
+    pub value: int,
+    pub len: int,
+    pub endian: Endian,
+}
+
+pub struct Utf8String<const len: int, const endian: Endian>
+    | invariant validate_utf8(value, len, endian)
+{
+    pub value: int,
+    pub len: int,
+    pub endian: Endian,
+}
+
+macro validate_string(value: int, len: int) -> int {
+    @assert len >= 0, "string length cannot be negative"
+    @assert value >= 0, "packed strings cannot be negative"
+    @if len == 0 {
+        @assert value == 0, "an empty string must have value zero"
+        @return 1
+    }
+    @assert value < (1 << (BITS_PER_BYTE * len)), "string value exceeds its declared length"
+    @return 1
+}
+
+pub macro byte_at(value: int, len: int, index: int, endian: Endian) -> int {
+    @assert index >= 0, "string indices cannot be negative"
+    @assert index < len, "string byte index is out of bounds"
+    @if endian == Endian.Little {
+        @return (value >> (index * BITS_PER_BYTE)) & 0xFF
+    }
+    @return (value >> ((len - index - 1) * BITS_PER_BYTE)) & 0xFF
+}
+
+macro validate_ascii_at(value: int, len: int, index: int, endian: Endian) -> int {
+    @if index == len {
+        @return 1
+    }
+    @assert byte_at(value, len, index, endian) < 0x80, "non-ASCII byte"
+    @return validate_ascii_at(value, len, index + 1, endian)
+}
+
+macro validate_ascii(value: int, len: int, endian: Endian) -> int {
+    @assert validate_string(value, len)
+    @return validate_ascii_at(value, len, 0, endian)
+}
+
+macro is_continuation(byte: int) -> int {
+    @return byte >= 0x80 && byte <= 0xBF
+}
+
+macro validate_utf8_at(value: int, len: int, index: int, endian: Endian) -> int {
+    @if index == len {
+        @return 1
+    }
+
+    const b0 = byte_at(value, len, index, endian)
+    @if b0 <= 0x7F {
+        @return validate_utf8_at(value, len, index + 1, endian)
+    }
+
+    @if b0 >= 0xC2 && b0 <= 0xDF {
+        @assert index + 1 < len, "truncated two-byte UTF-8 sequence"
+        @assert is_continuation(byte_at(value, len, index + 1, endian)), "invalid UTF-8 continuation byte"
+        @return validate_utf8_at(value, len, index + 2, endian)
+    }
+
+    @if b0 >= 0xE0 && b0 <= 0xEF {
+        @assert index + 2 < len, "truncated three-byte UTF-8 sequence"
+        const b1 = byte_at(value, len, index + 1, endian)
+        const b2 = byte_at(value, len, index + 2, endian)
+        @assert is_continuation(b1) && is_continuation(b2), "invalid UTF-8 continuation byte"
+        @assert b0 != 0xE0 || b1 >= 0xA0, "overlong UTF-8 sequence"
+        @assert b0 != 0xED || b1 <= 0x9F, "UTF-8 cannot encode a surrogate"
+        @return validate_utf8_at(value, len, index + 3, endian)
+    }
+
+    @if b0 >= 0xF0 && b0 <= 0xF4 {
+        @assert index + 3 < len, "truncated four-byte UTF-8 sequence"
+        const b1 = byte_at(value, len, index + 1, endian)
+        const b2 = byte_at(value, len, index + 2, endian)
+        const b3 = byte_at(value, len, index + 3, endian)
+        @assert is_continuation(b1) && is_continuation(b2) && is_continuation(b3), "invalid UTF-8 continuation byte"
+        @assert b0 != 0xF0 || b1 >= 0x90, "overlong UTF-8 sequence"
+        @assert b0 != 0xF4 || b1 <= 0x8F, "UTF-8 code point exceeds U+10FFFF"
+        @return validate_utf8_at(value, len, index + 4, endian)
+    }
+
+    @assert 0, "invalid UTF-8 leading byte"
+}
+
+macro validate_utf8(value: int, len: int, endian: Endian) -> int {
+    @assert validate_string(value, len)
+    @return validate_utf8_at(value, len, 0, endian)
+}
+
+macro string_to_ascii(s: String, len: int, endian: Endian) -> AsciiString {
+    @assert s.len == len, "conversion target length must match the source"
+    @return AsciiString(value = s.value, len = len, endian = endian)
+}
+
+macro string_to_utf8(s: String, len: int, endian: Endian) -> Utf8String {
+    @assert s.len == len, "conversion target length must match the source"
+    @return Utf8String(value = s.value, len = len, endian = endian)
+}
+
+macro ascii_to_utf8(s: AsciiString, len: int, endian: Endian) -> Utf8String {
+    @assert s.len == len, "conversion target length must match the source"
+    @assert s.endian == endian, "conversion cannot silently change byte order"
+    @return Utf8String(value = s.value, len = len, endian = endian)
+}
+
+pub macro ascii_byte_at(s: AsciiString, index: int) -> int {
+    @return byte_at(s.value, s.len, index, s.endian)
+}
+
+pub macro utf8_byte_at(s: Utf8String, index: int) -> int {
+    @return byte_at(s.value, s.len, index, s.endian)
+}
+
+macro ascii_case_byte(byte: int, upper: int) -> int {
+    @if upper && byte >= 'a' && byte <= 'z' {
+        @return byte - ('a' - 'A')
+    }
+    @if !upper && byte >= 'A' && byte <= 'Z' {
+        @return byte + ('a' - 'A')
+    }
+    @return byte
+}
+
+macro byte_shift(index: int, len: int, endian: Endian) -> int {
+    @if endian == Endian.Little {
+        @return index * BITS_PER_BYTE
+    }
+    @return (len - index - 1) * BITS_PER_BYTE
+}
+
+macro ascii_case_value(value: int, len: int, index: int, endian: Endian, upper: int) -> int {
+    @if index == len {
+        @return 0
+    }
+    const byte = ascii_case_byte(byte_at(value, len, index, endian), upper)
+    @return (byte << byte_shift(index, len, endian)) | ascii_case_value(value, len, index + 1, endian, upper)
+}
+
+pub macro ascii_upper(s: AsciiString) -> AsciiString {
+    @return AsciiString<s.len, s.endian> {
+        value: ascii_case_value(s.value, s.len, 0, s.endian, 1),
+        len: s.len,
+        endian: s.endian,
+    }
+}
+
+pub macro ascii_lower(s: AsciiString) -> AsciiString {
+    @return AsciiString<s.len, s.endian> {
+        value: ascii_case_value(s.value, s.len, 0, s.endian, 0),
+        len: s.len,
+        endian: s.endian,
+    }
+}
+
+pub macro ascii_title(s: AsciiString) -> AsciiString {
+    @if s.len == 0 {
+        @return s
+    }
+    const first = byte_at(s.value, s.len, 0, s.endian)
+    const cased = ascii_case_byte(first, 1)
+    const shift = byte_shift(0, s.len, s.endian)
+    const mask = 0xFF << shift
+    @return AsciiString<s.len, s.endian> {
+        value: (s.value & ~mask) | (cased << shift),
+        len: s.len,
+        endian: s.endian,
+    }
+}
+
+macro utf8_codepoint_count_at(value: int, len: int, index: int, endian: Endian) -> int {
+    @if index == len {
+        @return 0
+    }
+    const lead = byte_at(value, len, index, endian)
+    @if lead <= 0x7F {
+        @return 1 + utf8_codepoint_count_at(value, len, index + 1, endian)
+    }
+    @if lead <= 0xDF {
+        @return 1 + utf8_codepoint_count_at(value, len, index + 2, endian)
+    }
+    @if lead <= 0xEF {
+        @return 1 + utf8_codepoint_count_at(value, len, index + 3, endian)
+    }
+    @return 1 + utf8_codepoint_count_at(value, len, index + 4, endian)
+}
+
+pub macro utf8_codepoint_count(s: Utf8String) -> int {
+    @return utf8_codepoint_count_at(s.value, s.len, 0, s.endian)
+}
+
+macro utf8_is_ascii_at(value: int, len: int, index: int, endian: Endian) -> int {
+    @if index == len {
+        @return 1
+    }
+    @if byte_at(value, len, index, endian) >= 0x80 {
+        @return 0
+    }
+    @return utf8_is_ascii_at(value, len, index + 1, endian)
+}
+
+pub macro utf8_is_ascii(s: Utf8String) -> int {
+    @return utf8_is_ascii_at(s.value, s.len, 0, s.endian)
+}
