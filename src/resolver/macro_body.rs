@@ -196,16 +196,18 @@ impl<'a> AliasResolver<'a> {
 
             let after_hooks = crate::facets::extract_exprs(&declaration.facets, "after");
             if !after_hooks.is_empty() {
-                let returned = expansion.returned.clone().ok_or_else(|| {
-                    ResolveError::ExpectedValueExpression { span: declaration.span }
-                })?;
                 let mut after_scope = scope.clone();
+                let fields = expansion
+                    .returned
+                    .clone()
+                    .map(|value| vec![("returned".to_string(), value)])
+                    .unwrap_or_default();
                 after_scope.insert(
                     "self".to_string(),
                     Value::Struct {
                         symbol,
                         args: Vec::new(),
-                        fields: vec![("returned".to_string(), returned)],
+                        fields,
                         nominal: None,
                     },
                 );

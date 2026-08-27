@@ -678,8 +678,18 @@ impl<'a> AliasResolver<'a> {
         target: &ResolvedType,
         span: Span,
     ) -> Result<Value, ResolveError> {
+        self.convert_to_inner(value, target, span, true)
+    }
+
+    fn convert_to_inner(
+        &mut self,
+        value: Value,
+        target: &ResolvedType,
+        span: Span,
+        allow_explicit: bool,
+    ) -> Result<Value, ResolveError> {
         let source_ty = self.value_type(&value)?;
-        if source_ty != *target {
+        if allow_explicit && source_ty != *target {
             if let Some(converted) = self.try_explicit_conversion(&value, &source_ty, target, span)? {
                 return Ok(converted);
             }
@@ -703,7 +713,7 @@ impl<'a> AliasResolver<'a> {
                     }
                 }
 
-                let converted = self.convert_to(value, underlying, span)?;
+                let converted = self.convert_to_inner(value, underlying, span, allow_explicit)?;
 
                 Ok(tag_nominal(converted, *symbol))
             }
@@ -725,7 +735,7 @@ impl<'a> AliasResolver<'a> {
                         });
                     };
 
-                    let wrapped = self.convert_to(value, field_ty, span)?;
+                    let wrapped = self.convert_to_inner(value, field_ty, span, allow_explicit)?;
                     let fields = vec![(field_name.clone(), wrapped)];
 
                     self.check_struct_invariants(*symbol, args, &fields, span)?;
@@ -797,16 +807,7 @@ impl<'a> AliasResolver<'a> {
             return Ok(None);
         };
         let converted = self.eval_value(&template, &scope)?;
-        let actual = self.value_type(&converted)?;
-        if actual != *target {
-            return Err(ResolveError::TypeMismatch {
-                name: "conversion result".to_string(),
-                expected: describe_type(target, self.symbols),
-                actual: describe_type(&actual, self.symbols),
-                span,
-            });
-        }
-        Ok(Some(converted))
+        self.convert_to_inner(converted, target, span, false).map(Some)
     }
 
     fn type_facet_exprs(
