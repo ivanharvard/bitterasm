@@ -199,6 +199,8 @@ impl<'src> Lexer<'src> {
 
                 if self.consume_if('=') {
                     self.push(TokenKind::EqualEqual, start);
+                } else if self.consume_if('>') {
+                    self.push(TokenKind::FatArrow, start);
                 } else {
                     self.push(TokenKind::Equal, start);
                 }
@@ -791,6 +793,26 @@ mod tests {
                 TokenKind::Identifier("emit".into()),
                 TokenKind::Integer("0xff".into()),
                 TokenKind::Newline,
+                TokenKind::RBrace,
+                TokenKind::Newline,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn lexes_match_fat_arrow() {
+        assert_eq!(
+            kinds("@match x { 0 => {} }\n"),
+            vec![
+                TokenKind::At,
+                TokenKind::Identifier("match".into()),
+                TokenKind::Identifier("x".into()),
+                TokenKind::LBrace,
+                TokenKind::Integer("0".into()),
+                TokenKind::FatArrow,
+                TokenKind::LBrace,
+                TokenKind::RBrace,
                 TokenKind::RBrace,
                 TokenKind::Newline,
                 TokenKind::Eof,

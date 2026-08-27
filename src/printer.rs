@@ -48,9 +48,13 @@ pub fn print_statement(statement: &Statement, indent: usize) -> String {
 
         Statement::Enum(decl) => {
             let pub_kw = if decl.is_pub { "pub " } else { "" };
-            let variants = decl.variants.join(", ");
+            let generics = print_generic_params(&decl.generic_params);
+            let variants = decl.variants.iter().map(|variant| match &variant.payload {
+                Some(ty) => format!("{}: {}", variant.name, print_type_expr(ty)),
+                None => variant.name.clone(),
+            }).collect::<Vec<_>>().join(", ");
 
-            format!("{pad}{pub_kw}enum {name} {{ {variants} }}", name = decl.name)
+            format!("{pad}{pub_kw}enum {name}{generics} {{ {variants} }}", name = decl.name)
         }
 
         Statement::TypeAlias(decl) => {
@@ -101,6 +105,15 @@ pub fn print_statement(statement: &Statement, indent: usize) -> String {
 
         Statement::Meta(meta) => {
             let args = meta.args.iter().map(print_expr).collect::<Vec<_>>().join(", ");
+
+            if meta.name == "match" {
+                let arms = meta.match_arms.iter().map(|arm| {
+                    let pattern = arm.pattern.as_ref().map(print_expr).unwrap_or_else(|| "_".to_string());
+                    format!("{}{} => {{\n{}\n{}}}", INDENT.repeat(indent + 1), pattern,
+                        print_statements(&arm.body, indent + 2), INDENT.repeat(indent + 1))
+                }).collect::<Vec<_>>().join(",\n");
+                return format!("{pad}@match {args} {{\n{arms}\n{pad}}}");
+            }
 
             match &meta.body {
                 None if args.is_empty() => format!("{pad}@{}", meta.name),
@@ -302,6 +315,14 @@ pub fn print_expr(expr: &Expr) -> String {
             format!("{}({args})", print_expr(callee))
         }
 
+        Expr::EnumVariant { enum_name, generic_args, variant, payload, .. } => {
+            let generics = print_generic_arguments(generic_args);
+            match payload {
+                Some(value) => format!("{enum_name}{generics}.{variant}({})", print_expr(value)),
+                None => format!("{enum_name}{generics}.{variant}"),
+            }
+        }
+
         Expr::Unary { op, operand, .. } => format!("{}{}", print_unary_op(*op), print_expr(operand)),
 
         Expr::Binary { left, op, right, .. } => {
@@ -310,7 +331,7 @@ pub fn print_expr(expr: &Expr) -> String {
 
         Expr::Splice { inner, .. } => format!("`{}`", print_expr(inner)),
 
-        Expr::As { value, ty, .. } => format!("{} @as {}", print_expr(value), print_type_expr(ty)),
+        Expr::As { value, ty, .. } => format!("{} as {}", print_expr(value), print_type_expr(ty)),
 
         Expr::Here { .. } => "@here".to_string(),
 

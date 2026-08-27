@@ -485,6 +485,14 @@ fn rename_statement(statement: &mut Statement, renames: &HashMap<String, String>
             if let Some(mangled) = renames.get(&decl.name) {
                 decl.name = mangled.clone();
             }
+            for param in &mut decl.generic_params {
+                rename_generic_parameter(param, renames);
+            }
+            for variant in &mut decl.variants {
+                if let Some(payload) = &mut variant.payload {
+                    rename_type_expr(payload, renames);
+                }
+            }
         }
 
         Statement::Import(_) | Statement::Label(_) | Statement::Invocation(_) => {}
@@ -508,6 +516,15 @@ fn rename_meta_statement(meta: &mut MetaStatement, renames: &HashMap<String, Str
 
     if let Some(else_body) = &mut meta.else_body {
         for statement in else_body {
+            rename_statement(statement, renames);
+        }
+    }
+
+    for arm in &mut meta.match_arms {
+        if let Some(pattern) = &mut arm.pattern {
+            rename_expr(pattern, renames);
+        }
+        for statement in &mut arm.body {
             rename_statement(statement, renames);
         }
     }
@@ -608,6 +625,21 @@ fn rename_expr(expr: &mut Expr, renames: &HashMap<String, String>) {
 
             for argument in arguments {
                 rename_expr(&mut argument.value, renames);
+            }
+        }
+
+        Expr::EnumVariant { enum_name, generic_args, payload, .. } => {
+            if let Some(mangled) = renames.get(enum_name) {
+                *enum_name = mangled.clone();
+            }
+            for arg in generic_args {
+                match arg {
+                    TypeArgument::Type(ty) => rename_type_expr(ty, renames),
+                    TypeArgument::Const(expr) => rename_expr(expr, renames),
+                }
+            }
+            if let Some(payload) = payload {
+                rename_expr(payload, renames);
             }
         }
 

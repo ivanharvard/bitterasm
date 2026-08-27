@@ -102,6 +102,16 @@ pub enum Expr {
         span: Span,
     },
 
+    /// A qualified enum variant such as `Option<int>.Some(42)` or
+    /// `Option<int>.None`.
+    EnumVariant {
+        enum_name: String,
+        generic_args: Vec<TypeArgument>,
+        variant: String,
+        payload: Option<Box<Expr>>,
+        span: Span,
+    },
+
     /// `Array<u8, N> { field: value, ... }` — brace-literal struct
     /// construction. `generic_args` is empty for a non-generic callee (e.g.
     /// `U8String { chars: ... }`); when present, they're parsed only when
@@ -117,7 +127,7 @@ pub enum Expr {
         span: Span,
     },
 
-    /// `expr @as Type` — the only way to produce a value of a nominal
+    /// `expr as Type` — the only way to produce a value of a nominal
     /// (invariant-bearing) `type` alias: checks every invariant along
     /// `Type`'s alias chain, auto-wrapping `expr`'s value into a
     /// single-field struct's field where needed (recursing — "holds all
@@ -186,6 +196,7 @@ impl Expr {
             | Expr::String { span, .. }
             | Expr::Member { span, .. }
             | Expr::Call { span, .. }
+            | Expr::EnumVariant { span, .. }
             | Expr::Construct { span, .. }
             | Expr::As { span, .. }
             | Expr::Unary { span, .. }
@@ -277,6 +288,17 @@ pub struct MetaStatement {
     /// `@if`'s trailing `@else { ... }`, when present. `None` for every
     /// other meta, including an `@if` with no `@else`.
     pub else_body: Option<Vec<Statement>>,
+
+    /// `@match`'s ordered arms. A `None` pattern is Rust's `_` wildcard.
+    /// Empty for every other meta statement.
+    pub match_arms: Vec<MatchArm>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchArm {
+    pub pattern: Option<Expr>,
+    pub body: Vec<Statement>,
     pub span: Span,
 }
 
@@ -323,16 +345,21 @@ pub struct ConstDeclaration {
     pub span: Span,
 }
 
-/// `pub enum Endian { Little, Big }` — bare-variant-list only, parsed and
-/// registered as a symbol (`SymbolKind::Enum`) but not otherwise wired into
-/// `Value`/`ResolvedType`; a value-position use of a variant (`Endian.Little`)
-/// isn't resolvable yet. Minimal on purpose — see `resolver::mod`'s
-/// `SymbolKind::Enum` doc.
+/// An enum declaration. A variant may be payload-free (`None`) or carry one
+/// typed value (`Some: T`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumDeclaration {
     pub name: String,
     pub is_pub: bool,
-    pub variants: Vec<String>,
+    pub generic_params: Vec<GenericParameter>,
+    pub variants: Vec<EnumVariantDeclaration>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumVariantDeclaration {
+    pub name: String,
+    pub payload: Option<TypeExpr>,
     pub span: Span,
 }
 

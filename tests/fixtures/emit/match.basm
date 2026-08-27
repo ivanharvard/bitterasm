@@ -1,0 +1,13 @@
+macro classify(x: int) {
+    @match x {
+        0 => {
+            @emit 10
+        },
+        1 + 1 => {
+            @emit 20
+        },
+        _ => {
+            @emit 30
+        }
+    }
+}

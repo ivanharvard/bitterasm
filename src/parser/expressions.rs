@@ -126,6 +126,28 @@ impl Parser {
                     let start = left.span().start;
                     let (generic_args, _) = self.parse_generic_argument_list(Some(&name), start)?;
 
+                    if self.check(&TokenKind::Dot) {
+                        self.advance();
+                        let variant = self.expect_identifier()?;
+                        let payload = if self.check(&TokenKind::LParen) {
+                            self.advance();
+                            let value = self.parse_expr()?;
+                            self.expect_simple(TokenKind::RParen)?;
+                            Some(Box::new(value))
+                        } else {
+                            None
+                        };
+                        let end = self.previous().span.end;
+                        left = Expr::EnumVariant {
+                            enum_name: name,
+                            generic_args,
+                            variant,
+                            payload,
+                            span: Span::new(start, end),
+                        };
+                        continue;
+                    }
+
                     if !self.check(&TokenKind::LBrace) {
                         return Err(ParseError::new(
                             "expected `{` after generic arguments in a brace-literal \
@@ -140,12 +162,12 @@ impl Parser {
                 }
             }
 
-            // postfix: `@as` — the only way to produce a value of a nominal
+            // postfix: `as` — the only way to produce a value of a nominal
             // (invariant-bearing) `type` alias.
             //
-            //  3 @as int16_t
-            //  "Abc" @as String<3>
-            if self.at_as_meta() {
+            //  3 as int16_t
+            //  "Abc" as String<3>
+            if self.check(&TokenKind::As) {
                 let binding_power = 100;
 
                 if binding_power < min_bp {
@@ -154,7 +176,6 @@ impl Parser {
 
                 let start = left.span().start;
 
-                self.advance(); // `@`
                 self.advance(); // `as`
 
                 let ty = self.parse_type_expr()?;
@@ -586,6 +607,7 @@ fn set_expr_span(expr: &mut Expr, new_span: Span) {
         | Expr::String { span, .. }
         | Expr::Member { span, .. }
         | Expr::Call { span, .. }
+        | Expr::EnumVariant { span, .. }
         | Expr::Construct { span, .. }
         | Expr::As { span, .. }
         | Expr::Unary { span, .. }

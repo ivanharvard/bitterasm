@@ -8,7 +8,7 @@ type UByte = Bits<8>
     | invariant value < 100
 
 macro make(v: int) {
-    @emit v @as UByte
+    @emit v as UByte
 }
 
 macro take(x: UByte) {

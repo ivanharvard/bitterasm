@@ -19,6 +19,7 @@ impl Parser {
         match name.as_str() {
             "for" => self.parse_for_meta(start),
             "if" => self.parse_if_meta(start),
+            "match" => self.parse_match_meta(start),
 
             _ => {
                 let mut args = Vec::new();
@@ -39,6 +40,7 @@ impl Parser {
                     args,
                     body: None,
                     else_body: None,
+                    match_arms: Vec::new(),
                     span: Span::new(start, end),
                 })
             }
@@ -80,6 +82,7 @@ impl Parser {
             args: vec![var, source],
             body: Some(body),
             else_body: None,
+            match_arms: Vec::new(),
             span: Span::new(start, body_end),
         })
     }
@@ -121,6 +124,65 @@ impl Parser {
             args: vec![condition],
             body: Some(body),
             else_body,
+            match_arms: Vec::new(),
+            span: Span::new(start, end),
+        })
+    }
+
+    // `@match value { pattern => { body }, _ => { fallback } }`.
+    fn parse_match_meta(&mut self, start: usize) -> Result<MetaStatement, ParseError> {
+        let outer_restriction = self.restrict_brace_construction;
+        self.restrict_brace_construction = true;
+        let scrutinee = self.parse_expr();
+        self.restrict_brace_construction = outer_restriction;
+        let scrutinee = scrutinee?;
+
+        self.skip_newlines();
+        self.expect_simple(TokenKind::LBrace)?;
+        self.skip_newlines();
+
+        let mut arms = Vec::new();
+        while !self.check(&TokenKind::RBrace) {
+            if self.at_eof() {
+                return Err(ParseError::new(
+                    "unterminated `@match` body",
+                    self.current().span,
+                ));
+            }
+
+            let arm_start = self.current().span.start;
+            let pattern =
+                if matches!(&self.current().kind, TokenKind::Identifier(name) if name == "_") {
+                    self.advance();
+                    None
+                } else {
+                    Some(self.parse_expr()?)
+                };
+            self.expect_simple(TokenKind::FatArrow)?;
+            self.skip_newlines();
+            let (body, arm_end) = self.parse_statement_block("unterminated `@match` arm")?;
+            arms.push(crate::ast::MatchArm {
+                pattern,
+                body,
+                span: Span::new(arm_start, arm_end),
+            });
+
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+            }
+            self.skip_newlines();
+        }
+
+        let end = self.current().span.end;
+        self.expect_simple(TokenKind::RBrace)?;
+        self.consume_trailing_newline();
+
+        Ok(MetaStatement {
+            name: "match".to_string(),
+            args: vec![scrutinee],
+            body: None,
+            else_body: None,
+            match_arms: arms,
             span: Span::new(start, end),
         })
     }

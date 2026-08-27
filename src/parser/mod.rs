@@ -318,19 +318,6 @@ impl Parser {
                 .is_some_and(|token| matches!(&token.kind, TokenKind::Identifier(name) if name == "else"))
     }
 
-    // True when the upcoming tokens are `@as` — used by the postfix `expr
-    // @as Type` cast/coercion form in expression position, same lookahead
-    // shape as `at_else_meta`. `as` is its own reserved token
-    // (`TokenKind::As`), not a plain identifier — unlike `@else`/`@here`,
-    // whose second word is lexed as `Identifier`.
-    fn at_as_meta(&self) -> bool {
-        self.check(&TokenKind::At)
-            && self
-                .tokens
-                .get(self.pos + 1)
-                .is_some_and(|token| matches!(&token.kind, TokenKind::As))
-    }
-
     // Optional trailing newline after a block's closing `}`, mirroring
     // `parse_macro_declaration`/`parse_struct_declaration`'s own
     // closing-brace handling.

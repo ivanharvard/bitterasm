@@ -296,7 +296,7 @@ pub enum ResolveError {
         span: Span,
     },
 
-    // `@as`'s target, after unwrapping every nominal alias layer, is a
+    // `as`'s target, after unwrapping every nominal alias layer, is a
     // struct that isn't already the source value's own shape and doesn't
     // have exactly one field to auto-wrap the source value into — there's
     // no single rule for turning an arbitrary value into a multi-field (or

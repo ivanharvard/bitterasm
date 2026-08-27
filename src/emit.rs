@@ -26,6 +26,12 @@ pub enum EmittedValue {
         args: Vec<EmittedGenericArg>,
         fields: Vec<(String, EmittedValue)>,
     },
+    Enum {
+        name: String,
+        args: Vec<EmittedGenericArg>,
+        variant: String,
+        payload: Option<Box<EmittedValue>>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -40,6 +46,7 @@ pub enum EmittedGenericArg {
 pub enum EmittedType {
     Builtin { name: String },
     Struct { name: String, args: Vec<EmittedGenericArg> },
+    Enum { name: String, args: Vec<EmittedGenericArg> },
 }
 
 pub fn reify_value(symbols: &SymbolTable, value: &Value) -> EmittedValue {
@@ -56,6 +63,12 @@ pub fn reify_value(symbols: &SymbolTable, value: &Value) -> EmittedValue {
                 .iter()
                 .map(|(name, value)| (name.clone(), reify_value(symbols, value)))
                 .collect(),
+        },
+        Value::Enum { symbol, args, variant, payload } => EmittedValue::Enum {
+            name: symbols.get(*symbol).name.clone(),
+            args: args.iter().map(|arg| reify_generic_arg(symbols, arg)).collect(),
+            variant: variant.clone(),
+            payload: payload.as_ref().map(|value| Box::new(reify_value(symbols, value))),
         },
     }
 }
@@ -82,6 +95,10 @@ fn reify_type(symbols: &SymbolTable, ty: &ResolvedType) -> EmittedType {
         ResolvedType::Builtin(BuiltinType::Int) => EmittedType::Builtin { name: "int".to_string() },
 
         ResolvedType::Struct { symbol, args } => EmittedType::Struct {
+            name: symbols.get(*symbol).name.clone(),
+            args: args.iter().map(|arg| reify_generic_arg(symbols, arg)).collect(),
+        },
+        ResolvedType::Enum { symbol, args } => EmittedType::Enum {
             name: symbols.get(*symbol).name.clone(),
             args: args.iter().map(|arg| reify_generic_arg(symbols, arg)).collect(),
         },

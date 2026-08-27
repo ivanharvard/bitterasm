@@ -226,6 +226,15 @@ fn substitute_statement(statement: &Statement, substitutions: &HashMap<String, E
                     .else_body
                     .as_ref()
                     .map(|body| substitute_statements(body, substitutions)),
+                match_arms: meta
+                    .match_arms
+                    .iter()
+                    .map(|arm| crate::ast::MatchArm {
+                        pattern: arm.pattern.as_ref().map(|pattern| substitute_expr(pattern, substitutions)),
+                        body: substitute_statements(&arm.body, substitutions),
+                        span: arm.span,
+                    })
+                    .collect(),
                 span: meta.span,
             })
         }
@@ -396,6 +405,20 @@ pub fn substitute_expr(expr: &Expr, substitutions: &HashMap<String, Expr>) -> Ex
                     span: argument.span,
                 })
                 .collect(),
+            span: *span,
+        },
+
+        Expr::EnumVariant { enum_name, generic_args, variant, payload, span } => Expr::EnumVariant {
+            enum_name: enum_name.clone(),
+            generic_args: generic_args
+                .iter()
+                .map(|arg| match arg {
+                    TypeArgument::Type(ty) => TypeArgument::Type(substitute_type_expr(ty, substitutions)),
+                    TypeArgument::Const(expr) => TypeArgument::Const(substitute_expr(expr, substitutions)),
+                })
+                .collect(),
+            variant: variant.clone(),
+            payload: payload.as_ref().map(|value| Box::new(substitute_expr(value, substitutions))),
             span: *span,
         },
 

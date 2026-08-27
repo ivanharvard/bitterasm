@@ -23,6 +23,10 @@ pub enum ResolvedType {
         symbol: SymbolId,
         args: Vec<ResolvedGenericArg>,
     },
+    Enum {
+        symbol: SymbolId,
+        args: Vec<ResolvedGenericArg>,
+    },
     TypeParameter {
         name: String
     },

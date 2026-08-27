@@ -65,6 +65,7 @@ pub enum TokenKind {
     ShiftRight,
 
     Arrow,
+    FatArrow,
 
     Dollar,
     Backtick,

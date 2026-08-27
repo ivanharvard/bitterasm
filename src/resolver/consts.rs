@@ -192,6 +192,16 @@ pub(super) fn referenced_identifiers(expr: &crate::ast::Expr) -> Vec<String> {
                 stack.push(callee);
                 stack.extend(arguments.iter().map(|arg| &arg.value));
             }
+            Expr::EnumVariant { generic_args, payload, .. } => {
+                for arg in generic_args {
+                    if let TypeArgument::Const(expr) = arg {
+                        stack.push(expr);
+                    }
+                }
+                if let Some(payload) = payload {
+                    stack.push(payload);
+                }
+            }
             Expr::Unary { operand, .. } => stack.push(operand),
             Expr::Binary { left, right, .. } => {
                 stack.push(left);
@@ -346,8 +356,8 @@ fn is_int_shaped_inner(program: &Program, expr: &Expr, visiting: &mut HashSet<St
             shaped
         }
 
-        // `@as`'s shape isn't knowable syntactically — `x @as int` is
-        // int-shaped, `x @as SomeStruct` isn't — so, same as `Member`/
+        // `as`'s shape isn't knowable syntactically — `x as int` is
+        // int-shaped, `x as SomeStruct` isn't — so, same as `Member`/
         // `Call`/`Construct`, it's conservatively treated as not, deferring
         // to the general `Value` evaluator rather than guessing.
         _ => !matches!(

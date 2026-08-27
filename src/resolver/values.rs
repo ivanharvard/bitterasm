@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use crate::ast::{literal_name, CallArgument, ConstructItem, Expr, NamePart, Statement};
 use crate::eval::{self, EvalError, Int};
 use crate::token::Span;
-use crate::types::{GenericParameter, StructBodyItem, TypeArgument};
+use crate::types::{GenericParameter, StructBodyItem, TypeArgument, TypeExpr};
 
 use super::aliases::{AliasResolver, LabelMode};
 use super::consts::find_const_declaration;
@@ -30,13 +30,19 @@ use super::ResolveError;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Int(Int),
+    Enum {
+        symbol: SymbolId,
+        args: Vec<ResolvedGenericArg>,
+        variant: String,
+        payload: Option<Box<Value>>,
+    },
     Struct {
         symbol: SymbolId,
         args: Vec<ResolvedGenericArg>,
         fields: Vec<(String, Value)>,
 
         /// The outermost nominal (invariant-bearing) `type` alias this
-        /// value was produced *as*, if any — set only by `@as`
+        /// value was produced *as*, if any — set only by `as`
         /// (`AliasResolver::convert_to`), `None` everywhere else (a struct
         /// built by `eval_call_value`/`eval_construct_value` directly, even
         /// through an alias name, isn't tagged — see those functions' own
@@ -61,6 +67,43 @@ pub(super) enum ConstValueState {
 }
 
 impl<'a> AliasResolver<'a> {
+    fn eval_enum_variant(
+        &mut self,
+        enum_name: &str,
+        generic_args: &[TypeArgument],
+        variant: &str,
+        arguments: &[CallArgument],
+        span: Span,
+        scope: &HashMap<String, Value>,
+    ) -> Result<Value, ResolveError> {
+        let base = TypeExpr::Named { path: vec![enum_name.to_string()], span };
+        let ty = if generic_args.is_empty() {
+            base
+        } else {
+            TypeExpr::Apply { base: Box::new(base), args: generic_args.to_vec(), span }
+        };
+        let ResolvedType::Enum { symbol, args } = self.resolve_type_expr(&ty)? else {
+            return Err(ResolveError::ExpectedType { name: enum_name.to_string(), span });
+        };
+        let expected_payload = self.instantiate_enum_payload(symbol, &args, variant, span)?;
+        let payload = match (expected_payload, arguments) {
+            (None, []) => None,
+            (Some(payload_ty), [argument]) if argument.name.is_none() => {
+                let value = self.eval_value(&argument.value, scope)?;
+                Some(Box::new(self.convert_to(value, &payload_ty, argument.span)?))
+            }
+            (expected, actual) => {
+                return Err(ResolveError::InvalidArgumentCount {
+                    name: format!("{enum_name}.{variant}"),
+                    expected: usize::from(expected.is_some()),
+                    actual: actual.len(),
+                    span,
+                });
+            }
+        };
+        Ok(Value::Enum { symbol, args, variant: variant.to_string(), payload })
+    }
+
     pub fn eval_value(
         &mut self,
         expr: &Expr,
@@ -109,7 +152,13 @@ impl<'a> AliasResolver<'a> {
             // order — see `AliasResolver::values_emitted`.
             Expr::Here { .. } => Ok(Value::Int(self.values_emitted.clone())),
 
-            Expr::Member { object, member, span } => match self.eval_value(object, scope)? {
+            Expr::Member { object, member, span } => {
+                if let Expr::Identifier { name, .. } = object.as_ref() {
+                    if self.lookup_symbol(name).is_some_and(|id| self.get_symbol(id).kind == SymbolKind::Enum) {
+                        return self.eval_enum_variant(name, &[], member, &[], *span, scope);
+                    }
+                }
+                match self.eval_value(object, scope)? {
                 Value::Struct { symbol, fields, .. } => fields
                     .into_iter()
                     .find(|(name, _)| name == member)
@@ -120,11 +169,38 @@ impl<'a> AliasResolver<'a> {
                         span: *span,
                     }),
 
-                Value::Int(_) => Err(ResolveError::ExpectedStructValue { span: *span }),
-            },
+                Value::Int(_) | Value::Enum { .. } => {
+                    Err(ResolveError::ExpectedStructValue { span: *span })
+                }
+                }
+            }
 
             Expr::Call { callee, arguments, span } => {
+                if let Expr::Member { object, member, .. } = callee.as_ref() {
+                    if let Expr::Identifier { name, .. } = object.as_ref() {
+                        return self.eval_enum_variant(name, &[], member, arguments, *span, scope);
+                    }
+                }
                 self.eval_call_value(callee, arguments, *span, scope)
+            }
+
+            Expr::EnumVariant { enum_name, generic_args, variant, payload, span } => {
+                let arguments = payload
+                    .iter()
+                    .map(|value| CallArgument {
+                        name: None,
+                        value: value.as_ref().clone(),
+                        span: value.span(),
+                    })
+                    .collect::<Vec<_>>();
+                self.eval_enum_variant(
+                    enum_name,
+                    generic_args,
+                    variant,
+                    &arguments,
+                    *span,
+                    scope,
+                )
             }
 
             Expr::Construct { callee, generic_args, fields, span } => {
@@ -144,7 +220,7 @@ impl<'a> AliasResolver<'a> {
             // lex time (`lexer::lex_char`). Nothing about *length* survives
             // this: `"\0A"` and `"A"` pack to the identical value, which is
             // exactly why interpreting a packed int as "a string of length
-            // N" always requires an explicit `N` (`@as String<N>`) rather
+            // N" always requires an explicit `N` (`as String<N>`) rather
             // than ever being inferred back out of the number itself.
             Expr::String { value, .. } => {
                 Ok(Value::Int(Int::from_bytes_be(num_bigint::Sign::Plus, value.as_bytes())))
@@ -182,7 +258,7 @@ impl<'a> AliasResolver<'a> {
         // already worked for a *plain* alias before nominal wrapping
         // existed. It does mean the alias's own invariant isn't checked
         // through this path yet (only the underlying struct's, via
-        // `check_struct_invariants` below) — only `@as`/a checked `const`
+        // `check_struct_invariants` below) — only `as`/a checked `const`
         // check an alias's own invariant, once those exist.
         let ResolvedType::Struct { symbol, args } = resolved.strip_alias().clone() else {
             return Err(ResolveError::ExpectedStructCallee {
@@ -301,7 +377,7 @@ impl<'a> AliasResolver<'a> {
         self.check_struct_invariants(symbol, &args, &fields, span)?;
 
         // Constructing directly through a nominal alias's own name (rather
-        // than `@as`) doesn't tag the result — see the comment where its
+        // than `as`) doesn't tag the result — see the comment where its
         // callee gets resolved, above. `nominal: None` here is that
         // decision made concrete, not an oversight.
         Ok(Value::Struct { symbol, args, fields, nominal: None })
@@ -522,7 +598,7 @@ impl<'a> AliasResolver<'a> {
         Ok(fields)
     }
 
-    // `@as`'s entire job: convert `value` into `target`, which may be a
+    // `as`'s entire job: convert `value` into `target`, which may be a
     // chain of nominal `ResolvedType::Alias` layers wrapping an eventual
     // `Builtin`/`Struct`. Each alias layer's own `invariant`(s) are checked
     // against `value` *as given* (never against some already-wrapped
@@ -592,9 +668,20 @@ impl<'a> AliasResolver<'a> {
                 }
             },
 
+            ResolvedType::Enum { symbol, args } => match &value {
+                Value::Enum { symbol: value_symbol, args: value_args, .. }
+                    if value_symbol == symbol && value_args == args => Ok(value),
+                _ => Err(ResolveError::CannotCoerce {
+                    type_name: self.get_symbol(*symbol).name.clone(),
+                    span,
+                }),
+            },
+
             ResolvedType::Builtin(BuiltinType::Int) => match value {
                 Value::Int(_) => Ok(value),
-                Value::Struct { .. } => Err(ResolveError::ExpectedIntValue { span }),
+                Value::Struct { .. } | Value::Enum { .. } => {
+                    Err(ResolveError::ExpectedIntValue { span })
+                }
             },
 
             ResolvedType::TypeParameter { name } => {
@@ -729,7 +816,9 @@ impl<'a> AliasResolver<'a> {
     ) -> Result<Int, ResolveError> {
         match self.eval_value(expr, scope)? {
             Value::Int(value) => Ok(value),
-            Value::Struct { .. } => Err(ResolveError::ExpectedIntValue { span: expr.span() }),
+            Value::Struct { .. } | Value::Enum { .. } => {
+                Err(ResolveError::ExpectedIntValue { span: expr.span() })
+            }
         }
     }
 
@@ -792,6 +881,11 @@ impl<'a> AliasResolver<'a> {
         Ok(match value {
             Value::Int(_) => ResolvedType::Builtin(BuiltinType::Int),
 
+            Value::Enum { symbol, args, .. } => ResolvedType::Enum {
+                symbol: *symbol,
+                args: args.clone(),
+            },
+
             Value::Struct { symbol, args, nominal: Some(alias), .. } => {
                 let resolved = self.resolve_alias(*alias)?;
 
@@ -820,7 +914,7 @@ impl<'a> AliasResolver<'a> {
 // tagging one is a no-op: the invariant was still enforced right now by the
 // caller, but the *value* itself can't carry "this is a PositiveInt"
 // forward the way a tagged struct can, meaning a macro param/field typed as
-// such an alias needs its own `@as` at that point too. A known scope
+// such an alias needs its own `as` at that point too. A known scope
 // boundary of today's `Value` shape, not an oversight — see
 // `Value::Struct::nominal`'s doc.
 fn tag_nominal(value: Value, symbol: SymbolId) -> Value {
@@ -829,7 +923,7 @@ fn tag_nominal(value: Value, symbol: SymbolId) -> Value {
             Value::Struct { symbol: inner_symbol, args, fields, nominal: Some(symbol) }
         }
 
-        Value::Int(_) => value,
+        Value::Int(_) | Value::Enum { .. } => value,
     }
 }
 
@@ -863,7 +957,7 @@ fn int_only_scope(scope: &HashMap<String, Value>) -> HashMap<String, Int> {
         .iter()
         .filter_map(|(name, value)| match value {
             Value::Int(int) => Some((name.clone(), int.clone())),
-            Value::Struct { .. } => None,
+            Value::Struct { .. } | Value::Enum { .. } => None,
         })
         .collect()
 }
@@ -958,12 +1052,8 @@ mod tests {
         assert_eq!(value, Value::Int(Int::from(42)));
     }
 
-    // Enum declarations are parsed and registered as symbols, but not
-    // wired into `Value`/`ResolvedType` — see `ast::EnumDeclaration`'s doc.
-    // A value-position use of a variant should fail with an ordinary
-    // resolve error, not panic.
     #[test]
-    fn enum_variant_in_value_position_is_a_resolve_error_not_a_panic() {
+    fn evaluates_payload_free_enum_variant() {
         let program = parse_fixture("enum_value_position.basm");
 
         let declaration = find_macro(&program, "use_variant");
@@ -971,9 +1061,8 @@ mod tests {
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
-        let result = resolver.eval_value(emit_expr(declaration), &HashMap::new());
-
-        assert!(result.is_err());
+        let value = resolver.eval_value(emit_expr(declaration), &HashMap::new()).unwrap();
+        assert!(matches!(value, Value::Enum { ref variant, payload: None, .. } if variant == "Little"));
     }
 
     #[test]
@@ -1504,7 +1593,7 @@ mod tests {
 
         // A plain, untagged `Bits<8>` value that would satisfy `UByte`'s
         // own invariant structurally (50 < 100) still can't be handed to a
-        // `UByte`-typed parameter directly — only `@as` (or a checked
+        // `UByte`-typed parameter directly — only `as` (or a checked
         // `const`) may produce a value that type-checks as `UByte`.
         let untagged = Value::Struct {
             symbol: bits_id,

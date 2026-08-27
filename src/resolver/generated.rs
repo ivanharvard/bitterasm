@@ -54,9 +54,8 @@ impl<'a> AliasResolver<'a> {
             Statement::Macro(decl) => (decl.name.clone(), SymbolKind::Macro, decl.span),
             Statement::Label(label) => (label.name.clone(), SymbolKind::Label, label.span),
 
-            // No macro-body syntax produces a generated `enum` today (see
-            // `ast::EnumDeclaration`'s doc — enums aren't wired into macro
-            // bodies at all yet), but the shape costs nothing to support.
+            // Generated enums use the same symbol-registration path as
+            // source-level enums.
             Statement::Enum(decl) => (decl.name.clone(), SymbolKind::Enum, decl.span),
 
             // Only ever reached with an already-literal-named `pub const`

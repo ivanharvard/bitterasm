@@ -90,6 +90,10 @@ fn pack_value(value: &EmittedValue) -> Result<Packed, String> {
             "can't tell how many bits a bare Int (`{value}`) should occupy — \
              wrap it in a `bits<N>` struct"
         )),
+
+        EmittedValue::Enum { name, variant, .. } => Err(format!(
+            "can't infer a machine-code layout for enum value `{name}.{variant}`"
+        )),
     }
 }
 

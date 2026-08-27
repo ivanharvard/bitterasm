@@ -1,0 +1,23 @@
+pub enum Option<T> {
+    Some: T,
+    None,
+}
+
+macro unwrap_or(option: Option<int>, fallback: int) -> int {
+    @match option {
+        Some(value) => {
+            @return value
+        },
+        None => {
+            @return fallback
+        }
+    }
+}
+
+macro make_some(value: int) -> Option<int> {
+    @return Option<int>.Some(value)
+}
+
+macro make_none() -> Option<int> {
+    @return Option<int>.None
+}

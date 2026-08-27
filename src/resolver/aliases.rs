@@ -385,10 +385,7 @@ impl<'a> AliasResolver<'a> {
             // Not wired into `Value`/`ResolvedType` yet — see
             // `ast::EnumDeclaration`'s doc.
             SymbolKind::Enum => {
-                Err(ResolveError::ExpectedType {
-                    name: name.clone(),
-                    span,
-                })
+                Ok(ResolvedType::Enum { symbol: id, args: Vec::new() })
             }
         }
     }
@@ -425,6 +422,23 @@ impl<'a> AliasResolver<'a> {
                     symbol,
                     args: resolved_args,
                 })
+            }
+
+            ResolvedType::Enum { symbol, .. } => {
+                let expected = self.find_enum_declaration(symbol)?.generic_params.len();
+                if args.len() != expected {
+                    return Err(ResolveError::InvalidGenericArity {
+                        name: self.get_symbol(symbol).name.clone(),
+                        expected,
+                        actual: args.len(),
+                        span,
+                    });
+                }
+                let resolved_args = args
+                    .iter()
+                    .map(|arg| self.resolve_generic_args(arg))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(ResolvedType::Enum { symbol, args: resolved_args })
             }
 
             ResolvedType::Builtin(_) => {
@@ -573,6 +587,27 @@ impl<'a> AliasResolver<'a> {
         Err(ResolveError::Internal {
             message: format!(
                 "symbol table contains struct `{}` but no matching AST declaration exists",
+                symbol.name,
+            ),
+            span: symbol.span,
+        })
+    }
+
+    pub(super) fn find_enum_declaration(
+        &self,
+        id: SymbolId,
+    ) -> Result<&crate::ast::EnumDeclaration, ResolveError> {
+        let symbol = self.get_symbol(id);
+        for statement in self.program.statements.iter().chain(&self.generated) {
+            if let Statement::Enum(declaration) = statement {
+                if declaration.name == symbol.name {
+                    return Ok(declaration);
+                }
+            }
+        }
+        Err(ResolveError::Internal {
+            message: format!(
+                "symbol table contains enum `{}` but no matching AST declaration exists",
                 symbol.name,
             ),
             span: symbol.span,
@@ -740,7 +775,7 @@ mod tests {
 
         // A plain `Bits<8>` value doesn't satisfy `UByte` just because it's
         // shaped the same — that's the whole point of nominal typing: only
-        // going through the checked gate (`@as`/a checked `const`, neither
+        // going through the checked gate (`as`/a checked `const`, neither
         // built yet) produces a value that type-checks as `UByte`.
         assert_ne!(nominal, underlying);
     }

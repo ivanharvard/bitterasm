@@ -272,6 +272,45 @@ impl<'a> AliasResolver<'a> {
                         }
                     }
 
+                    "match" => {
+                        let [scrutinee] = meta.args.as_slice() else {
+                            return Err(ResolveError::Internal {
+                                message: "`@match` should always have one scrutinee — the parser \
+                                          guarantees this shape"
+                                    .to_string(),
+                                span: meta.span,
+                            });
+                        };
+
+                        let value = self.eval_value(scrutinee, &scope)?;
+                        let mut chosen = None;
+                        for arm in &meta.match_arms {
+                            let bindings = match &arm.pattern {
+                                Some(pattern) => self.match_pattern(pattern, &value, &scope)?,
+                                None => Some(HashMap::new()),
+                            };
+                            if let Some(bindings) = bindings {
+                                chosen = Some((&arm.body, bindings));
+                                break;
+                            }
+                        }
+
+                        if let Some((chosen_body, bindings)) = chosen {
+                            let mut arm_scope = scope.clone();
+                            arm_scope.extend(bindings);
+                            let nested = self.walk_macro_body(chosen_body, &arm_scope, stack)?;
+                            emitted.extend(nested.emitted);
+                            generated.extend(nested.generated);
+                            if nested.returned.is_some() {
+                                return Ok(MacroExpansion {
+                                    emitted,
+                                    generated,
+                                    returned: nested.returned,
+                                });
+                            }
+                        }
+                    }
+
                     "for" => {
                         let [var, source_expr] = meta.args.as_slice() else {
                             return Err(ResolveError::Internal {
@@ -383,6 +422,47 @@ impl<'a> AliasResolver<'a> {
         Ok(MacroExpansion { emitted, generated, returned: None })
     }
 
+    fn match_pattern(
+        &mut self,
+        pattern: &Expr,
+        value: &Value,
+        scope: &HashMap<String, Value>,
+    ) -> Result<Option<HashMap<String, Value>>, ResolveError> {
+        if let Value::Enum { variant, payload, .. } = value {
+            match pattern {
+                Expr::Identifier { name, .. } if name == variant && payload.is_none() => {
+                    return Ok(Some(HashMap::new()));
+                }
+                Expr::Call { callee, arguments, .. } => {
+                    let Expr::Identifier { name, .. } = callee.as_ref() else {
+                        return Ok(None);
+                    };
+                    if name != variant || arguments.len() != 1 {
+                        return Ok(None);
+                    }
+                    let Some(payload) = payload.as_deref() else {
+                        return Ok(None);
+                    };
+                    if let Expr::Identifier { name: binding, .. } = &arguments[0].value {
+                        let mut bindings = HashMap::new();
+                        if binding != "_" {
+                            bindings.insert(binding.clone(), payload.clone());
+                        }
+                        return Ok(Some(bindings));
+                    }
+                    return Ok((self.eval_value(&arguments[0].value, scope)? == *payload)
+                        .then(HashMap::new));
+                }
+                Expr::EnumVariant { .. } => {
+                    return Ok((self.eval_value(pattern, scope)? == *value).then(HashMap::new));
+                }
+                _ => return Ok(None),
+            }
+        }
+
+        Ok((self.eval_value(pattern, scope)? == *value).then(HashMap::new))
+    }
+
     fn splice_const(
         &mut self,
         decl: &ConstDeclaration,
@@ -439,6 +519,19 @@ impl<'a> AliasResolver<'a> {
                     .collect::<Result<_, ResolveError>>()?,
                 span: *span,
             }),
+
+            Expr::EnumVariant { enum_name, generic_args, variant, payload, span } => {
+                Ok(Expr::EnumVariant {
+                    enum_name: enum_name.clone(),
+                    generic_args: generic_args.clone(),
+                    variant: variant.clone(),
+                    payload: payload
+                        .as_ref()
+                        .map(|value| self.splice_expr(value, scope).map(Box::new))
+                        .transpose()?,
+                    span: *span,
+                })
+            }
 
             Expr::Unary { op, operand, span } => Ok(Expr::Unary {
                 op: *op,
@@ -556,7 +649,9 @@ impl<'a> AliasResolver<'a> {
 fn reify_value(value: &Value, span: Span) -> Result<Expr, ResolveError> {
     match value {
         Value::Int(int) => Ok(Expr::Integer { raw: int.to_string(), span }),
-        Value::Struct { .. } => Err(ResolveError::UnsupportedSpliceValue { span }),
+        Value::Struct { .. } | Value::Enum { .. } => {
+            Err(ResolveError::UnsupportedSpliceValue { span })
+        }
     }
 }
 
@@ -631,6 +726,78 @@ mod tests {
                 returned: Some(Value::Int(Int::from(15))),
             }
         );
+    }
+
+    #[test]
+    fn match_selects_the_first_equal_arm_or_wildcard() {
+        let program = parse_fixture("match.basm");
+        let declaration = find_macro(&program, "classify");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("classify").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        for (input, expected) in [(0, 10), (2, 20), (9, 30)] {
+            let result = resolver
+                .run_macro_body(
+                    symbol,
+                    declaration,
+                    vec![Value::Int(Int::from(input))],
+                    &mut Vec::new(),
+                )
+                .unwrap();
+            assert_eq!(result.emitted, vec![Value::Int(Int::from(expected))]);
+        }
+    }
+
+    #[test]
+    fn option_variants_construct_and_destructure() {
+        let program = parse_fixture("option.basm");
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let some_decl = find_macro(&program, "make_some");
+        let some_symbol = symbols.lookup("make_some").unwrap();
+        let some = resolver
+            .run_macro_body(
+                some_symbol,
+                some_decl,
+                vec![Value::Int(Int::from(42))],
+                &mut Vec::new(),
+            )
+            .unwrap()
+            .returned
+            .unwrap();
+
+        let unwrap_decl = find_macro(&program, "unwrap_or");
+        let unwrap_symbol = symbols.lookup("unwrap_or").unwrap();
+        let unwrapped = resolver
+            .run_macro_body(
+                unwrap_symbol,
+                unwrap_decl,
+                vec![some, Value::Int(Int::from(7))],
+                &mut Vec::new(),
+            )
+            .unwrap();
+        assert_eq!(unwrapped.returned, Some(Value::Int(Int::from(42))));
+
+        let none_decl = find_macro(&program, "make_none");
+        let none_symbol = symbols.lookup("make_none").unwrap();
+        let none = resolver
+            .run_macro_body(none_symbol, none_decl, vec![], &mut Vec::new())
+            .unwrap()
+            .returned
+            .unwrap();
+        let fallback = resolver
+            .run_macro_body(
+                unwrap_symbol,
+                unwrap_decl,
+                vec![none, Value::Int(Int::from(7))],
+                &mut Vec::new(),
+            )
+            .unwrap();
+        assert_eq!(fallback.returned, Some(Value::Int(Int::from(7))));
     }
 
     #[test]

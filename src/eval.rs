@@ -51,6 +51,7 @@ pub fn eval(expr: &Expr, scope: &HashMap<String, Int>) -> Result<Int, EvalError>
         Expr::String { span, .. }
         | Expr::Member { span, .. }
         | Expr::Call { span, .. }
+        | Expr::EnumVariant { span, .. }
         | Expr::Construct { span, .. }
         | Expr::As { span, .. }
         | Expr::Range { span, .. } => Err(EvalError::NotConstant { span: *span }),

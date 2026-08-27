@@ -163,6 +163,33 @@ fn unroll_meta(
             Ok(())
         }
 
+        "match" => {
+            let [scrutinee] = meta.args.as_slice() else {
+                return Err(ResolveError::Internal {
+                    message: "top-level `@match` should always have one scrutinee — the parser \
+                              guarantees this shape"
+                        .to_string(),
+                    span: meta.span,
+                });
+            };
+            let value = eval_top_level_const(scrutinee, consts)?;
+            let mut chosen = None;
+            for arm in &meta.match_arms {
+                let matches = match &arm.pattern {
+                    Some(pattern) => eval_top_level_const(pattern, consts)? == value,
+                    None => true,
+                };
+                if matches {
+                    chosen = Some(&arm.body);
+                    break;
+                }
+            }
+            if let Some(body) = chosen {
+                out.extend(unroll_statements(body, consts)?);
+            }
+            Ok(())
+        }
+
         // Every other meta (`@emit`, `@return`, `@assert`, `@here`) only
         // makes sense inside a macro body — the same
         // `UnsupportedMacroStatement`-shaped rejection `walk_macro_body`

@@ -332,6 +332,26 @@ fn parses_unary_expression() {
 }
 
 #[test]
+fn parses_as_as_an_ordinary_expression_operator() {
+    let program = parse(lex("const byte = value as Byte\n").unwrap()).unwrap();
+    let Statement::Const(decl) = &program.statements[0] else {
+        panic!("expected const declaration")
+    };
+    assert!(matches!(
+        &decl.value,
+        Expr::As { value, ty, .. }
+            if matches!(value.as_ref(), Expr::Identifier { name, .. } if name == "value")
+                && ty.name() == Some("Byte")
+    ));
+}
+
+#[test]
+fn rejects_the_old_at_as_spelling() {
+    let error = parse(lex("const byte = value @as Byte\n").unwrap()).unwrap_err();
+    assert!(error.message.contains("constant value"));
+}
+
+#[test]
 fn parses_splice_expression() {
     let program =
         parse(lex("mov r1, `foo + 1`\n").unwrap()).unwrap();
@@ -530,6 +550,25 @@ fn for_meta_accepts_any_expression_as_its_source() {
 }
 
 #[test]
+fn parses_match_with_rust_style_arms() {
+    let program = parse(
+        lex("macro foo(x: int) {\n    @match x {\n        0 => { @emit 1\n        },\n        _ => { @emit 2\n        }\n    }\n}\n")
+            .unwrap(),
+    )
+    .unwrap();
+    let Statement::Macro(decl) = &program.statements[0] else {
+        panic!("expected macro")
+    };
+    let Statement::Meta(meta) = &decl.body[0] else {
+        panic!("expected meta")
+    };
+    assert_eq!(meta.name, "match");
+    assert_eq!(meta.match_arms.len(), 2);
+    assert!(matches!(meta.match_arms[0].pattern, Some(Expr::Integer { .. })));
+    assert!(meta.match_arms[1].pattern.is_none());
+}
+
+#[test]
 fn parses_const_declaration() {
     let program =
         parse(lex("const r1 = Reg(id = 1)\n").unwrap()).unwrap();
@@ -634,7 +673,19 @@ fn parses_pub_enum() {
 
     assert_eq!(decl.name, "Endian");
     assert!(decl.is_pub);
-    assert_eq!(decl.variants, vec!["Little".to_string(), "Big".to_string()]);
+    assert_eq!(decl.variants.iter().map(|variant| variant.name.as_str()).collect::<Vec<_>>(), vec!["Little", "Big"]);
+    assert!(decl.variants.iter().all(|variant| variant.payload.is_none()));
+}
+
+#[test]
+fn parses_generic_enum_with_payload_variant() {
+    let program = parse(lex("pub enum Option<T> {\n    Some: T,\n    None\n}\n").unwrap()).unwrap();
+    let Statement::Enum(decl) = &program.statements[0] else { panic!("expected enum") };
+    assert_eq!(decl.generic_params.len(), 1);
+    assert_eq!(decl.variants[0].name, "Some");
+    assert!(decl.variants[0].payload.is_some());
+    assert_eq!(decl.variants[1].name, "None");
+    assert!(decl.variants[1].payload.is_none());
 }
 
 #[test]

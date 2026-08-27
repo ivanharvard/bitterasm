@@ -1,4 +1,4 @@
-use crate::ast::{EnumDeclaration, StructDeclaration};
+use crate::ast::{EnumDeclaration, EnumVariantDeclaration, StructDeclaration};
 
 use super::*;
 
@@ -17,6 +17,9 @@ impl Parser {
 
         let name = self.expect_identifier()?;
 
+        let generic_params = self.parse_generic_params()?;
+        self.register_generic_signature(&name, &generic_params);
+
         self.skip_newlines();
         self.expect_simple(TokenKind::LBrace)?;
         self.skip_newlines();
@@ -31,7 +34,24 @@ impl Parser {
                 ));
             }
 
-            variants.push(self.expect_identifier()?);
+            let variant_start = self.current().span.start;
+            let variant_name = self.expect_identifier()?;
+            let payload = if self.check(&TokenKind::Colon) {
+                self.advance();
+                Some(self.parse_type_expr()?)
+            } else {
+                None
+            };
+            let variant_end = payload
+                .as_ref()
+                .map(TypeExpr::span)
+                .map(|span| span.end)
+                .unwrap_or_else(|| self.previous().span.end);
+            variants.push(EnumVariantDeclaration {
+                name: variant_name,
+                payload,
+                span: Span::new(variant_start, variant_end),
+            });
 
             self.skip_newlines();
 
@@ -53,6 +73,7 @@ impl Parser {
         Ok(EnumDeclaration {
             name,
             is_pub,
+            generic_params,
             variants,
             span: Span::new(start, closing.span.end),
         })

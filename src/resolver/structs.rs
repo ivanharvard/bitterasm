@@ -40,6 +40,30 @@ struct UnrolledField {
 }
 
 impl<'a> AliasResolver<'a> {
+    pub(super) fn instantiate_enum_payload(
+        &mut self,
+        id: SymbolId,
+        args: &[ResolvedGenericArg],
+        variant_name: &str,
+        span: Span,
+    ) -> Result<Option<ResolvedType>, ResolveError> {
+        let declaration = self.find_enum_declaration(id)?;
+        let scope = generic_arg_scope(&declaration.generic_params, args);
+        let variant = declaration
+            .variants
+            .iter()
+            .find(|variant| variant.name == variant_name)
+            .cloned()
+            .ok_or_else(|| ResolveError::UnknownField {
+                type_name: declaration.name.clone(),
+                field: variant_name.to_string(),
+                span,
+            })?;
+        let previous = std::mem::replace(&mut self.generic_scope, scope);
+        let result = variant.payload.as_ref().map(|ty| self.resolve_type_expr(ty)).transpose();
+        self.generic_scope = previous;
+        result
+    }
     pub fn resolve_all_structs(
         &mut self
     ) -> Result<HashMap<SymbolId, Vec<ResolvedType>>, ResolveError> {
@@ -451,6 +475,7 @@ pub(super) fn describe_type(ty: &ResolvedType, symbols: &SymbolTable) -> String 
     match ty {
         ResolvedType::Builtin(BuiltinType::Int) => "int".to_string(),
         ResolvedType::Struct { symbol, .. } => symbols.get(*symbol).name.clone(),
+        ResolvedType::Enum { symbol, .. } => symbols.get(*symbol).name.clone(),
         ResolvedType::TypeParameter { name } => name.clone(),
 
         // The alias's own name reads better in a diagnostic than its
