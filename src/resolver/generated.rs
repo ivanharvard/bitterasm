@@ -152,6 +152,7 @@ impl<'a> AliasResolver<'a> {
         &mut self,
         start: &Expr,
         end: &Expr,
+        inclusive: bool,
         span: Span,
         scope: &HashMap<String, Value>,
     ) -> Result<Value, ResolveError> {
@@ -164,7 +165,7 @@ impl<'a> AliasResolver<'a> {
         let mut i = start_value;
         let mut iterations: u64 = 0;
 
-        while i < end_value {
+        while if inclusive { i <= end_value } else { i < end_value } {
             iterations += 1;
 
             if iterations > MAX_FOR_ITERATIONS {
@@ -239,8 +240,8 @@ impl<'a> AliasResolver<'a> {
         // does not imply optimization" governs what a macro's expansion
         // emits, not how the resolver internally computes compiler-owned
         // sugar like this one.
-        if let Expr::Range { start, end, span } = source {
-            return self.eval_range_for_source(start, end, *span, scope);
+        if let Expr::Range { start, end, inclusive, span } = source {
+            return self.eval_range_for_source(start, end, *inclusive, *span, scope);
         }
 
         let value = self.eval_value(source, scope)?;
@@ -267,6 +268,7 @@ impl<'a> AliasResolver<'a> {
         &mut self,
         start: &Expr,
         end: &Expr,
+        inclusive: bool,
         span: Span,
         scope: &HashMap<String, Value>,
     ) -> Result<Vec<(String, Value)>, ResolveError> {
@@ -277,7 +279,7 @@ impl<'a> AliasResolver<'a> {
         let mut i = start_value;
         let mut iterations: u64 = 0;
 
-        while i < end_value {
+        while if inclusive { i <= end_value } else { i < end_value } {
             iterations += 1;
 
             if iterations > MAX_FOR_ITERATIONS {

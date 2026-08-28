@@ -471,6 +471,34 @@ fn parses_for_meta_with_range_and_body() {
 }
 
 #[test]
+fn parses_inclusive_range() {
+    let program = parse(
+        lex("macro foo() {\n    @for i in 0..=16 {\n        @emit i\n    }\n}\n").unwrap(),
+    )
+    .unwrap();
+
+    let Statement::Macro(decl) = &program.statements[0] else {
+        panic!("expected macro declaration");
+    };
+
+    let Statement::Meta(meta) = &decl.body[0] else {
+        panic!("expected meta statement");
+    };
+
+    let [_, source] = meta.args.as_slice() else {
+        panic!("expected [var, source] args, got {:?}", meta.args);
+    };
+
+    let Expr::Range { start, end, inclusive, .. } = source else {
+        panic!("expected a Range source, got {source:?}");
+    };
+
+    assert!(*inclusive);
+    assert!(matches!(start.as_ref(), Expr::Integer { raw, .. } if raw == "0"));
+    assert!(matches!(end.as_ref(), Expr::Integer { raw, .. } if raw == "16"));
+}
+
+#[test]
 fn parses_if_without_else() {
     let program = parse(
         lex("macro foo() {\n    @if x == 1 {\n        @emit 1\n    }\n}\n").unwrap(),

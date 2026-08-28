@@ -159,6 +159,8 @@ impl<'src> Lexer<'src> {
                 if self.consume_if('.') {
                     if self.consume_if('.') {
                         self.push(TokenKind::Ellipsis, start);
+                    } else if self.consume_if('=') {
+                        self.push(TokenKind::DotDotEq, start);
                     } else {
                         self.push(TokenKind::DotDot, start);
                     }
@@ -827,6 +829,20 @@ mod tests {
             vec![
                 TokenKind::Integer("0".into()),
                 TokenKind::DotDot,
+                TokenKind::Identifier("N".into()),
+                TokenKind::Newline,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn lexes_inclusive_range() {
+        assert_eq!(
+            kinds("0..=N\n"),
+            vec![
+                TokenKind::Integer("0".into()),
+                TokenKind::DotDotEq,
                 TokenKind::Identifier("N".into()),
                 TokenKind::Newline,
                 TokenKind::Eof,

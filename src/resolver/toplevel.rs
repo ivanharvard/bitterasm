@@ -26,7 +26,7 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{literal_name, Expr, MetaStatement, Program, Statement};
+use crate::ast::{literal_name, Expr, MetaStatement, NamePart, Program, SplicedName, Statement};
 use crate::eval::{self, EvalError, Int};
 use crate::expander;
 
@@ -51,18 +51,56 @@ fn unroll_statements(
             Statement::Meta(meta) => unroll_meta(meta, consts, &mut out)?,
 
             Statement::Const(decl) => {
+                let mut decl = decl.clone();
+                decl.name = fold_spliced_name(&decl.name, consts)?;
+
                 // Best-effort: this pass doesn't need to fully evaluate
                 // the program, only track enough to unroll `@for`/`@if` —
-                // a const whose name or value isn't staticaly evaluable
-                // this way is simply not tracked, and any real error in it
-                // surfaces later from `ConstEvaluator` instead.
+                // a const whose value isn't staticaly evaluable this way is
+                // simply not tracked, and any real error in it surfaces
+                // later from `ConstEvaluator` instead.
                 if let Some(name) = literal_name(&decl.name) {
                     if let Ok(value) = eval::eval(&decl.value, consts) {
                         consts.insert(name, value);
                     }
                 }
 
-                out.push(statement.clone());
+                out.push(Statement::Const(decl));
+            }
+
+            // A name built with `` `expr` `` splices (see
+            // `ast::NamePart`) only makes sense once its splices are
+            // evaluated to literal text — normally that happens against a
+            // live macro invocation's scope
+            // (`resolver::values::AliasResolver::resolve_spliced_name`),
+            // which doesn't exist here. But a declaration copied out of a
+            // top-level `@for` body already had its loop variable
+            // literalized by `expander::substitute_statements` above, so any
+            // splice left in its name is just an ordinary constant
+            // expression over the same `consts` a `@for` bound can
+            // reference — fold it the same way.
+            Statement::Struct(decl) => {
+                let mut decl = decl.clone();
+                decl.name = fold_spliced_name(&decl.name, consts)?;
+                out.push(Statement::Struct(decl));
+            }
+
+            Statement::Enum(decl) => {
+                let mut decl = decl.clone();
+                decl.name = fold_spliced_name(&decl.name, consts)?;
+                out.push(Statement::Enum(decl));
+            }
+
+            Statement::TypeAlias(decl) => {
+                let mut decl = decl.clone();
+                decl.name = fold_spliced_name(&decl.name, consts)?;
+                out.push(Statement::TypeAlias(decl));
+            }
+
+            Statement::Macro(decl) => {
+                let mut decl = decl.clone();
+                decl.name = fold_spliced_name(&decl.name, consts)?;
+                out.push(Statement::Macro(decl));
             }
 
             other => out.push(other.clone()),
@@ -102,9 +140,10 @@ fn unroll_meta(
             // ever unroll literal `start..end` range sugar — see the
             // module doc and `ResolveError::TopLevelForRequiresRange`'s
             // doc.
-            let Expr::Range { start: start_expr, end: end_expr, .. } = source else {
+            let Expr::Range { start: start_expr, end: end_expr, inclusive, .. } = source else {
                 return Err(ResolveError::TopLevelForRequiresRange { span: source.span() });
             };
+            let inclusive = *inclusive;
 
             let body = meta.body.as_ref().ok_or_else(|| ResolveError::Internal {
                 message: "top-level `@for` should always carry a body — the parser \
@@ -119,7 +158,7 @@ fn unroll_meta(
             let mut i = start;
             let mut iterations: u64 = 0;
 
-            while i < end {
+            while if inclusive { i <= end } else { i < end } {
                 iterations += 1;
 
                 if iterations > MAX_FOR_ITERATIONS {
@@ -199,6 +238,21 @@ fn unroll_meta(
             span: meta.span,
         }),
     }
+}
+
+fn fold_spliced_name(
+    parts: &[NamePart],
+    consts: &HashMap<String, Int>,
+) -> Result<SplicedName, ResolveError> {
+    parts
+        .iter()
+        .map(|part| match part {
+            NamePart::Literal(text) => Ok(NamePart::Literal(text.clone())),
+            NamePart::Splice(expr) => {
+                Ok(NamePart::Literal(eval_top_level_const(expr, consts)?.to_string()))
+            }
+        })
+        .collect()
 }
 
 fn eval_top_level_const(expr: &Expr, consts: &HashMap<String, Int>) -> Result<Int, ResolveError> {
@@ -309,5 +363,38 @@ mod tests {
     fn a_bare_top_level_emit_is_rejected() {
         let error = unroll("@emit 5\n").unwrap_err();
         assert!(matches!(error, ResolveError::UnsupportedMacroStatement { .. }));
+    }
+
+    fn const_names(program: &Program) -> Vec<String> {
+        program
+            .statements
+            .iter()
+            .filter_map(|statement| match statement {
+                Statement::Const(decl) => literal_name(&decl.name),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn for_folds_a_spliced_const_name_using_the_literalized_loop_var() {
+        let program = unroll("@for i in 0..3 {\n    pub const x`i` = i\n}\n").unwrap();
+        assert_eq!(const_names(&program), vec!["x0", "x1", "x2"]);
+    }
+
+    #[test]
+    fn for_over_an_inclusive_range_includes_the_end_bound() {
+        let program = unroll("@for i in 0..=2 {\n    make_reg(i)\n}\n").unwrap();
+
+        assert_eq!(invocation_names(&program), vec!["make_reg", "make_reg", "make_reg"]);
+        assert_eq!(invocation_first_arg_raw(&program, 0), "0");
+        assert_eq!(invocation_first_arg_raw(&program, 1), "1");
+        assert_eq!(invocation_first_arg_raw(&program, 2), "2");
+    }
+
+    #[test]
+    fn for_over_an_empty_inclusive_range_produces_one_iteration() {
+        let program = unroll("@for i in 0..=0 {\n    make_reg(i)\n}\n").unwrap();
+        assert_eq!(invocation_names(&program), vec!["make_reg"]);
     }
 }

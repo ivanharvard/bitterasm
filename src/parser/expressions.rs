@@ -189,14 +189,14 @@ impl Parser {
                 continue;
             }
 
-            // infix: `start..end` range sugar — see `ast::Expr::Range`'s doc.
-            // Binds looser than every real binary operator (including `||`,
-            // the loosest of those) since the only expressions ever written
-            // on either side in practice are simple ones (`0..N`,
-            // `0..arr.len`, `arr.len..0`); this just keeps
-            // `a + b..c + d` reading as `(a + b)..(c + d)` rather than
+            // infix: `start..end` / `start..=end` range sugar — see
+            // `ast::Expr::Range`'s doc. Binds looser than every real binary
+            // operator (including `||`, the loosest of those) since the
+            // only expressions ever written on either side in practice are
+            // simple ones (`0..N`, `0..arr.len`, `arr.len..0`); this just
+            // keeps `a + b..c + d` reading as `(a + b)..(c + d)` rather than
             // requiring parens.
-            if self.check(&TokenKind::DotDot) {
+            if self.check(&TokenKind::DotDot) || self.check(&TokenKind::DotDotEq) {
                 let left_bp = 1;
                 let right_bp = 2;
 
@@ -204,6 +204,7 @@ impl Parser {
                     break;
                 }
 
+                let inclusive = self.check(&TokenKind::DotDotEq);
                 self.advance();
 
                 let end = self.parse_expr_bp_until(right_bp, stop)?;
@@ -213,6 +214,7 @@ impl Parser {
                 left = Expr::Range {
                     start: Box::new(left),
                     end: Box::new(end),
+                    inclusive,
                     span,
                 };
 

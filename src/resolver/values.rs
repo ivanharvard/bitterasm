@@ -293,7 +293,9 @@ impl<'a> AliasResolver<'a> {
             // `resolver::generated::eval_range_value`). `@for`'s four call
             // sites all consume the result uniformly, like any other
             // struct-valued `in`-expression.
-            Expr::Range { start, end, span } => self.eval_range_value(start, end, *span, scope),
+            Expr::Range { start, end, inclusive, span } => {
+                self.eval_range_value(start, end, *inclusive, *span, scope)
+            }
         }
     }
 

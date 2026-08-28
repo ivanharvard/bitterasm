@@ -192,16 +192,19 @@ pub enum Expr {
         span: Span,
     },
 
-    /// `start..end` — exclusive-upper-bound range sugar. Not a value on its
-    /// own (evaluating one directly is `EvalError::NotConstant`); the only
-    /// place it evaluates to something is `resolver::values::eval_value`,
-    /// which turns it into a synthesized `Value::Struct` with one pub field
-    /// per element (see `resolver::generated::eval_range_value`) — `@for`'s
-    /// four call sites all consume it that way, uniformly with any other
-    /// struct-valued `in`-expression.
+    /// `start..end` (`inclusive: false`) or `start..=end` (`inclusive:
+    /// true`) — range sugar, upper bound exclusive or inclusive
+    /// respectively. Not a value on its own (evaluating one directly is
+    /// `EvalError::NotConstant`); the only place it evaluates to something
+    /// is `resolver::values::eval_value`, which turns it into a synthesized
+    /// `Value::Struct` with one pub field per element (see
+    /// `resolver::generated::eval_range_value`) — `@for`'s four call sites
+    /// all consume it that way, uniformly with any other struct-valued
+    /// `in`-expression.
     Range {
         start: Box<Expr>,
         end: Box<Expr>,
+        inclusive: bool,
         span: Span,
     },
 }

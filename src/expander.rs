@@ -483,9 +483,10 @@ pub fn substitute_expr(expr: &Expr, substitutions: &HashMap<String, Expr>) -> Ex
             span: *span,
         },
 
-        Expr::Range { start, end, span } => Expr::Range {
+        Expr::Range { start, end, inclusive, span } => Expr::Range {
             start: Box::new(substitute_expr(start, substitutions)),
             end: Box::new(substitute_expr(end, substitutions)),
+            inclusive: *inclusive,
             span: *span,
         },
     }

@@ -349,6 +349,7 @@ fn token_text(kind: &TokenKind) -> String {
 
         TokenKind::Dot => ".".to_string(),
         TokenKind::DotDot => "..".to_string(),
+        TokenKind::DotDotEq => "..=".to_string(),
         TokenKind::Ellipsis => "...".to_string(),
         TokenKind::Comma => ",".to_string(),
         TokenKind::Colon => ":".to_string(),
@@ -463,7 +464,10 @@ pub fn print_expr(expr: &Expr) -> String {
             format!("{}{generics} {{ {body} }}", print_expr(callee))
         }
 
-        Expr::Range { start, end, .. } => format!("{}..{}", print_expr(start), print_expr(end)),
+        Expr::Range { start, end, inclusive, .. } => {
+            let op = if *inclusive { "..=" } else { ".." };
+            format!("{}{op}{}", print_expr(start), print_expr(end))
+        }
     }
 }
 

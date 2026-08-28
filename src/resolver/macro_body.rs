@@ -1027,9 +1027,10 @@ impl<'a> AliasResolver<'a> {
                 span: *span,
             }),
 
-            Expr::Range { start, end, span } => Ok(Expr::Range {
+            Expr::Range { start, end, inclusive, span } => Ok(Expr::Range {
                 start: Box::new(self.splice_expr(start, scope)?),
                 end: Box::new(self.splice_expr(end, scope)?),
+                inclusive: *inclusive,
                 span: *span,
             }),
         }
