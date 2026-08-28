@@ -316,11 +316,12 @@ fn resolve_and_expand(path: &Path) -> Result<Expansion, CompileError> {
     Ok(Expansion { symbols, emitted, generated })
 }
 
-/// Resolves every struct/alias in the program up front (independent of
-/// label passes — struct/alias resolution never touches `@here`/labels).
-/// Run identically on both pass resolvers rather than sharing state across
-/// them, mirroring how `stack` (the macro-recursion guard) is deliberately
-/// never shared across separate top-level expansions either.
+/// Resolves every struct/alias/const in the program up front (independent
+/// of label passes — none of struct/alias/const-value resolution touches
+/// `@here`/labels). Run identically on both pass resolvers rather than
+/// sharing state across them, mirroring how `stack` (the macro-recursion
+/// guard) is deliberately never shared across separate top-level
+/// expansions either.
 fn resolve_structs_and_aliases(alias_resolver: &mut resolver::AliasResolver) -> Result<(), resolver::ResolveError> {
     alias_resolver.resolve_all_structs()?;
     let aliases = alias_resolver.resolve_all()?;
@@ -334,6 +335,13 @@ fn resolve_structs_and_aliases(alias_resolver: &mut resolver::AliasResolver) -> 
             alias_resolver.instantiate_struct_fields(*symbol, args)?;
         }
     }
+
+    // A broken declaration fails the whole command even if nothing reaches
+    // it — already true of every struct/alias above; extends the same
+    // guarantee to a const's *value*, previously only checked on demand
+    // (see `resolver::values::AliasResolver::resolve_all_const_values`).
+    alias_resolver.resolve_all_const_values()?;
+
     Ok(())
 }
 

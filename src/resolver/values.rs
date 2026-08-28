@@ -1104,6 +1104,33 @@ impl<'a> AliasResolver<'a> {
         }
     }
 
+    /// Resolves every top-level `const`'s *value* up front, extending
+    /// `main::resolve_structs_and_aliases`'s "a broken declaration fails the
+    /// whole command even if nothing reaches it" guarantee (already applied
+    /// to every struct/type-alias) to const values too. Without this, a
+    /// const's value is purely demand-driven (`resolve_const_value`, just
+    /// above) — nothing forces it, so a const nothing in the program
+    /// actually references can sit broken indefinitely. That's not just
+    /// dead code: a `pub const` in a std module is routinely left unused by
+    /// any *given* importer (not every RISC-V dialect names every ABI
+    /// register), so without this a broken one would only ever surface at
+    /// whichever importer happens to be the first to reference it, not at
+    /// `check`/`compile` time for the module that actually declared it.
+    pub fn resolve_all_const_values(&mut self) -> Result<(), ResolveError> {
+        let consts: Vec<(String, Span)> = self
+            .symbols
+            .iter()
+            .filter(|symbol| symbol.kind == SymbolKind::Const)
+            .map(|symbol| (symbol.name.clone(), symbol.span))
+            .collect();
+
+        for (name, span) in consts {
+            self.resolve_const_value(&name, span)?;
+        }
+
+        Ok(())
+    }
+
     /// Resolves a top-level label's `SymbolId` to the value-count position
     /// it was recorded at (see `AliasResolver::record_label_position`).
     /// `id` is already known to be `SymbolKind::Label` by the caller.
@@ -1550,6 +1577,34 @@ mod tests {
         // exercises the same fallback recursively.
         let via_zero = resolver.expand_invocation(invocations[1], &HashMap::new()).unwrap();
         assert_eq!(via_zero.emitted, vec![Value::Int(Int::from(0))]);
+    }
+
+    #[test]
+    fn resolve_all_const_values_catches_a_broken_const_nothing_references() {
+        // `broken` is never referenced by anything else in the program —
+        // previously nothing forced its value to be evaluated at all, so a
+        // dangling reference like this would silently pass `check`/`compile`
+        // and only surface at whichever importer eventually referenced it.
+        let source = "struct Reg {\n    id: int\n}\n\npub const r0 = Reg(id = 0)\n\
+                       pub const broken = does_not_exist\n";
+        let tokens = lexer::lex(source).expect("fixture should lex");
+        let program = parser::parse(tokens).expect("fixture should parse");
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let error = resolver.resolve_all_const_values().unwrap_err();
+        assert!(matches!(error, ResolveError::UnknownConstant { name, .. } if name == "does_not_exist"));
+    }
+
+    #[test]
+    fn resolve_all_const_values_accepts_every_valid_const() {
+        let program = parse_fixture("named_const_reference.basm");
+        let symbols = collect_symbols(&program).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        resolver.resolve_all_const_values().unwrap();
     }
 
     #[test]
