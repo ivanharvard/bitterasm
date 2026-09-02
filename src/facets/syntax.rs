@@ -21,8 +21,15 @@
 //! thread patterns across file imports — so it's `pub(crate)`, not a bare
 //! private `mod`.
 //!
-//! Two accepted v1 limitations: a pattern can't describe a call-site
-//! literal `$` (any `$` starts or ends a capture), and within one file a
+//! A pattern spells a call-site literal `$` as `\$` (the same escape the
+//! lexer already recognizes outside strings, `TokenKind::Escaped('$')`) —
+//! a bare `$` always starts or ends a capture, so this is the only way to
+//! tell the pattern grammar "no, this one is a literal character." The
+//! escape only disambiguates the *pattern's own* source; the call site
+//! that matches it types a plain, unescaped `$` (`subq $24, %rbp`'s `$24`
+//! prefix, say) — see `split_into_segments`.
+//!
+//! One remaining v1 limitation: within one file a
 //! custom-syntax call site that textually precedes its own declaration can
 //! fail to parse — the same-file prepass tolerates its own parse errors by
 //! discarding them and moving on, so it usually still reaches (and
@@ -122,6 +129,15 @@ fn split_into_segments(tokens: Vec<TokenKind>) -> Result<Vec<PatternSegment>, St
     let mut iter = tokens.into_iter();
 
     while let Some(token) = iter.next() {
+        // `\$` in the pattern's own source spells a literal dollar sign —
+        // the call site that matches it types a bare, unescaped `$`
+        // (`TokenKind::Dollar`), so that's what goes into the literal
+        // segment, not the `Escaped` token itself.
+        if token == TokenKind::Escaped('$') {
+            literal.push(TokenKind::Dollar);
+            continue;
+        }
+
         if token != TokenKind::Dollar {
             literal.push(token);
             continue;

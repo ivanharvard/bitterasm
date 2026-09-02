@@ -1034,6 +1034,34 @@ fn syntax_facet_rejects_unbalanced_dollar() {
 }
 
 #[test]
+fn custom_syntax_matches_att_style_literal_dollar_and_percent() {
+    // `\$` in the pattern spells a literal `$`; the call site itself types
+    // a bare, unescaped `$24` — same relationship AT&T syntax expects
+    // between an immediate's `$` prefix and a register's `%` prefix.
+    let source = "macro subq(imm: int, reg: int) | syntax { subq \\$$imm$, %$reg$ } {\n}\n\n\
+                  subq $24, %rbp\n";
+
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    let Statement::Invocation(invocation) = &program.statements[1] else {
+        panic!("expected invocation");
+    };
+
+    assert_eq!(invocation.name, "subq");
+    assert_eq!(invocation.operands.len(), 2);
+
+    assert!(matches!(
+        &invocation.operands[0],
+        Expr::Integer { raw, .. } if raw == "24"
+    ));
+
+    assert!(matches!(
+        &invocation.operands[1],
+        Expr::Identifier { name, .. } if name == "rbp"
+    ));
+}
+
+#[test]
 fn syntax_facet_rejects_unknown_capture_name() {
     let source = "macro mov(dst: int, value: int) | syntax { mov $dst$, $bogus$ } {\n}\n";
 
