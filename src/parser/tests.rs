@@ -1102,6 +1102,29 @@ fn escaped_dollar_pattern_does_not_collide_with_plain_capture_pattern() {
 }
 
 #[test]
+fn custom_syntax_cannot_shadow_an_at_led_statement() {
+    // `parse_statement` dispatches on a statement's own leading token
+    // before ever consulting custom syntax: `TokenKind::At` always goes to
+    // `parse_meta_statement`, and only `TokenKind::Identifier` reaches
+    // `parse_invocation_statement` (where `macro_syntaxes` /
+    // `unanchored_syntaxes` live). A `syntax` pattern is free to *contain*
+    // a literal `@` mid-pattern, but one spelled starting with `@` can
+    // never actually fire at a real `@`-led call site — there's no way for
+    // user-declared syntax to invent a new top-level `@name` form.
+    let source = "macro foo(x: int) | syntax { @foo $x$ } {\n}\n\n@foo 5\n";
+
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    let Statement::Meta(meta) = &program.statements[1] else {
+        panic!("expected `@foo 5` to still parse as an ordinary meta statement, got {:?}", program.statements[1]);
+    };
+
+    assert_eq!(meta.name, "foo");
+    assert_eq!(meta.args.len(), 1);
+    assert!(matches!(&meta.args[0], Expr::Integer { raw, .. } if raw == "5"));
+}
+
+#[test]
 fn syntax_facet_rejects_unknown_capture_name() {
     let source = "macro mov(dst: int, value: int) | syntax { mov $dst$, $bogus$ } {\n}\n";
 

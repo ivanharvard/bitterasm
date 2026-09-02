@@ -1911,6 +1911,35 @@ mod tests {
         ));
     }
 
+    // The parser's `@name` dispatch (`parser::macros::parse_meta_statement`)
+    // has a generic fallback shared by `@emit`/`@return`/`@assert`'s common
+    // "name, then a comma-separated arg list" shape, so it happily *parses*
+    // any `@word` — there's no user-level way to register a new one (custom
+    // `syntax` patterns are only ever tried for identifier-led statements,
+    // never for one whose leading token is already `@`), but that generic
+    // parse means the real gate against "someone invents a new `@`" sits
+    // here, in resolution, against the fixed name set below — not in the
+    // parser.
+    #[test]
+    fn bare_unknown_at_name_is_rejected() {
+        let tokens = lexer::lex("macro foo() {\n    @frobnicate 1, 2\n}\n").expect("fixture should lex");
+        let program = parser::parse(tokens).expect("fixture should parse");
+
+        let declaration = find_macro(&program, "foo");
+        let symbols = collect_symbols(&program).unwrap();
+        let symbol = symbols.lookup("foo").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut stack = Vec::new();
+        let error = resolver.run_macro_body(symbol, declaration, vec![], &mut stack).unwrap_err();
+
+        assert!(matches!(
+            error,
+            ResolveError::UnsupportedMacroStatement { kind, .. } if kind == "@frobnicate"
+        ));
+    }
+
     #[test]
     fn backward_label_reference_resolves_to_recorded_position() {
         let program = parse_fixture("backward_label.basm");
