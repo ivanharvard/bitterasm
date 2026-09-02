@@ -1062,6 +1062,46 @@ fn custom_syntax_matches_att_style_literal_dollar_and_percent() {
 }
 
 #[test]
+fn syntax_ambiguity_still_detected_across_escaped_dollar_patterns() {
+    // Two macros register structurally identical `\$`-based patterns (both
+    // unanchored, since neither's leading literal is its own macro name) —
+    // the escape must feed the same collision check as any other literal
+    // segment, not sidestep it.
+    let source = "macro subq(imm: int, reg: int) | syntax { mov \\$$imm$, %$reg$ } {\n}\n\
+                  macro movq(imm: int, reg: int) | syntax { mov \\$$imm$, %$reg$ } {\n}\n\n\
+                  mov $24, %rbp\n";
+
+    let error = parse(lex(source).unwrap()).unwrap_err();
+    assert!(error.message.contains("ambiguous syntax for"));
+    assert!(error.message.contains("subq"));
+    assert!(error.message.contains("movq"));
+}
+
+#[test]
+fn escaped_dollar_pattern_does_not_collide_with_plain_capture_pattern() {
+    // A literal `\$` prefix and a bare capture at the same pattern position
+    // are different segments (Literal(Dollar) vs Capture) — a call site
+    // should resolve to exactly one of the two macros depending on whether
+    // it actually types a `$`, never both and never neither.
+    let source = "macro subq(imm: int, reg: int) | syntax { arith \\$$imm$, %$reg$ } {\n}\n\
+                  macro addr(imm: int, reg: int) | syntax { arith $imm$, %$reg$ } {\n}\n\n\
+                  arith $24, %rbp\n\
+                  arith 24, %rbp\n";
+
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    let Statement::Invocation(dollar_call) = &program.statements[2] else {
+        panic!("expected invocation");
+    };
+    assert_eq!(dollar_call.name, "subq");
+
+    let Statement::Invocation(plain_call) = &program.statements[3] else {
+        panic!("expected invocation");
+    };
+    assert_eq!(plain_call.name, "addr");
+}
+
+#[test]
 fn syntax_facet_rejects_unknown_capture_name() {
     let source = "macro mov(dst: int, value: int) | syntax { mov $dst$, $bogus$ } {\n}\n";
 
