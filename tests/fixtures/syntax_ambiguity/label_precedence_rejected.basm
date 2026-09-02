@@ -1,0 +1,5 @@
+macro foo(x: int) | syntax { foo: $x$ } {
+    @emit x
+}
+
+foo: 5

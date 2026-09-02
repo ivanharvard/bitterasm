@@ -1,7 +1,18 @@
+use std::path::Path;
+
 use super::*;
 use crate::ast::literal_name;
 use crate::lexer::lex;
 use crate::types::StructBodyItem;
+
+fn read_fixture(name: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/syntax_ambiguity")
+        .join(name);
+
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read fixture {}: {error}", path.display()))
+}
 
 #[test]
 fn parses_empty_program() {
@@ -1024,6 +1035,46 @@ fn custom_syntax_with_operator_shaped_literal_separator() {
         &invocation.operands[1],
         Expr::Integer { raw, .. } if raw == "7"
     ));
+}
+
+#[test]
+fn syntax_pattern_shadowed_by_label_colon_is_rejected_at_declaration() {
+    // `parse_statement` reads any `identifier :` as a label before it ever
+    // looks at registered custom syntax — a pattern needing a literal `:`
+    // as the call site's very *second* token (`foo: $x$`) can therefore
+    // never fire, no matter what. This used to parse fine and only fail
+    // later, confusingly, at the unrelated call site
+    // (`tests/fixtures/syntax_ambiguity/label_precedence_rejected.basm`
+    // shows the exact shape); it's now caught right at the declaration.
+    let source = read_fixture("label_precedence_rejected.basm");
+
+    let error = parse(lex(&source).unwrap()).unwrap_err();
+    assert!(error.message.contains("can never match"));
+    assert!(error.message.contains("label"));
+}
+
+#[test]
+fn syntax_pattern_with_later_colon_does_not_collide_with_real_labels() {
+    // A `:` anywhere *after* the pattern's leading token is fine — the
+    // call site's second token isn't `:` there, so the label check never
+    // fires — and an unrelated real label declared elsewhere in the same
+    // file is completely unaffected.
+    let source = read_fixture("label_precedence_allowed.basm");
+
+    let program = parse(lex(&source).unwrap()).unwrap();
+
+    let Statement::Invocation(first_call) = &program.statements[1] else {
+        panic!("expected invocation, got {:?}", program.statements[1]);
+    };
+    assert_eq!(first_call.name, "check");
+    assert_eq!(first_call.operands.len(), 2);
+
+    assert!(matches!(program.statements[2], Statement::Label(_)));
+
+    let Statement::Invocation(second_call) = &program.statements[3] else {
+        panic!("expected invocation, got {:?}", program.statements[3]);
+    };
+    assert_eq!(second_call.name, "check");
 }
 
 #[test]

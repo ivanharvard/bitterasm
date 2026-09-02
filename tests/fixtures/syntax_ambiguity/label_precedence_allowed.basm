@@ -1,0 +1,9 @@
+macro check(cond: int, body: int) | syntax { check $cond$: $body$ } {
+    @emit cond
+    @emit body
+}
+
+check 1: 2
+
+real_label:
+check 3: 4

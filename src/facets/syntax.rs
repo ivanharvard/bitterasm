@@ -29,6 +29,15 @@
 //! that matches it types a plain, unescaped `$` (`subq $24, %rbp`'s `$24`
 //! prefix, say) — see `split_into_segments`.
 //!
+//! `:` shows up twice in this file for related but distinct reasons. Right
+//! after a pattern's leading token, it's rejected outright at declaration
+//! time (`validate_not_shadowed_by_label`): `parse_statement` always reads
+//! `word:` as a label before it ever looks at custom syntax, so a pattern
+//! shaped `foo: $x$` could never fire at any call site, under any file
+//! ordering — there's no ordering fix for it, only rejection. Anywhere
+//! *else* in a pattern, `:` is an ordinary literal separator, and only runs
+//! into the ordering limitation below like any other separator would.
+//!
 //! One remaining v1 limitation: within one file a
 //! custom-syntax call site that textually precedes its own declaration can
 //! fail to parse — the same-file prepass tolerates its own parse errors by
@@ -98,6 +107,7 @@ pub fn parse_pattern(
 
     validate_captures(&segments, params)?;
     validate_no_empty_gaps(&segments)?;
+    validate_not_shadowed_by_label(&segments)?;
 
     Ok(SyntaxPattern {
         segments,
@@ -202,6 +212,31 @@ fn validate_captures(segments: &[PatternSegment], params: &[String]) -> Result<(
             1 => {}
             _ => return Err(format!("parameter `{param}` is captured more than once")),
         }
+    }
+
+    Ok(())
+}
+
+/// `crate::parser::statements::Parser::parse_statement` reads any
+/// `identifier :` as a label unconditionally — before it ever looks at
+/// `macro_syntaxes`/`unanchored_syntaxes` — so nothing about a registered
+/// pattern can change that outcome. A pattern whose first segment is a
+/// literal with `:` as its *second* token (`foo: $x$`, tokenized as
+/// `[Identifier("foo"), Colon]`) therefore describes a call site
+/// (`foo: ...`) that is guaranteed, every time, to already be spoken for by
+/// label syntax before this pattern is ever tried — dead on arrival,
+/// regardless of anchoring. A `:` anywhere *later* in the pattern is fine
+/// (e.g. `check $cond$: $body$` — the call site's second token there is
+/// whatever `$cond$` starts with, not `:`).
+fn validate_not_shadowed_by_label(segments: &[PatternSegment]) -> Result<(), String> {
+    if let Some(PatternSegment::Literal(tokens)) = segments.first()
+        && tokens.get(1) == Some(&TokenKind::Colon)
+    {
+        return Err(
+            "a `:` right after the pattern's leading token can never match — the parser \
+             always reads `word:` as a label before trying any custom syntax"
+                .to_string(),
+        );
     }
 
     Ok(())
