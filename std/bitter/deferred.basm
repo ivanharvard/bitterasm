@@ -1,0 +1,107 @@
+# `bitter`-specific vocabulary: values only `bitter` (the binary evaluator),
+# not the compiler, can resolve. `@here` used to be a core language keyword,
+# eagerly resolved by the resolver's own live position counter — an
+# assumption baked into the language core that "emission is ordered and
+# positions are referenceable." `Deferred`/`here()` replace that: `here()`
+# never resolves to a concrete `Int` at compile time, so any arithmetic
+# built from it stays a `Deferred` expression tree all the way through
+# `.em`, and only `bitter` — once it knows which emitted instruction it's
+# packing — can say what a `here()` marker actually means. A different
+# evaluator, or a future multi-stream-aware one, gives `here()` (or
+# whatever it calls its own equivalent) a different meaning entirely,
+# without anything here needing to change.
+
+pub enum Op { Sub, Mul, Shr, Band }
+
+pub struct BinOp {
+    op: Op,
+    left: Deferred,
+    right: Deferred,
+}
+
+pub enum Deferred {
+    Leaf: int,
+    Here,
+    Node: BinOp,
+}
+
+# Zero resolver computation happens here — that's the whole point.
+pub macro here() -> Deferred {
+    @return Deferred.Here
+}
+
+# ---------------------------------------------------------------
+# sub
+# ---------------------------------------------------------------
+
+pub macro sub(a: int, b: int) -> int {
+    @return a - b
+}
+
+pub macro sub(a: Deferred, b: int) -> Deferred {
+    @return Deferred.Node(BinOp(op = Op.Sub, left = a, right = Deferred.Leaf(b)))
+}
+
+pub macro sub(a: int, b: Deferred) -> Deferred {
+    @return Deferred.Node(BinOp(op = Op.Sub, left = Deferred.Leaf(a), right = b))
+}
+
+pub macro sub(a: Deferred, b: Deferred) -> Deferred {
+    @return Deferred.Node(BinOp(op = Op.Sub, left = a, right = b))
+}
+
+# ---------------------------------------------------------------
+# mul
+# ---------------------------------------------------------------
+
+pub macro mul(a: int, b: int) -> int {
+    @return a * b
+}
+
+pub macro mul(a: Deferred, b: int) -> Deferred {
+    @return Deferred.Node(BinOp(op = Op.Mul, left = a, right = Deferred.Leaf(b)))
+}
+
+pub macro mul(a: int, b: Deferred) -> Deferred {
+    @return Deferred.Node(BinOp(op = Op.Mul, left = Deferred.Leaf(a), right = b))
+}
+
+pub macro mul(a: Deferred, b: Deferred) -> Deferred {
+    @return Deferred.Node(BinOp(op = Op.Mul, left = a, right = b))
+}
+
+# ---------------------------------------------------------------
+# shr — only (int,int) and (Deferred,int): nothing in std/riscv ever shifts
+# by a not-yet-resolved amount. (int,Deferred)/(Deferred,Deferred) are a
+# trivial, symmetric addition later if something needs them.
+# ---------------------------------------------------------------
+
+pub macro shr(a: int, b: int) -> int {
+    @return a >> b
+}
+
+pub macro shr(a: Deferred, b: int) -> Deferred {
+    @return Deferred.Node(BinOp(op = Op.Shr, left = a, right = Deferred.Leaf(b)))
+}
+
+# ---------------------------------------------------------------
+# band — same reduced shape as shr, same reasoning.
+# ---------------------------------------------------------------
+
+pub macro band(a: int, b: int) -> int {
+    @return a & b
+}
+
+pub macro band(a: Deferred, b: int) -> Deferred {
+    @return Deferred.Node(BinOp(op = Op.Band, left = a, right = Deferred.Leaf(b)))
+}
+
+# Pairs a `Deferred` value with the bit width it's meant to occupy once
+# resolved — the one piece of information `bits<N>` normally carries that a
+# bare `Deferred` value can't (a `Deferred.Leaf(5)` alone doesn't say how
+# many bits "5" should occupy; the field it's constructed into does).
+# `bitter` recognizes this struct by name exactly the way it already
+# recognizes `bits`.
+pub struct Positioned<const width: int> {
+    value: Deferred,
+}

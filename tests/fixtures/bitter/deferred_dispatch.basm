@@ -1,0 +1,61 @@
+from std.bitter.deferred import *
+
+# Proves the overload-dispatch mechanism genuinely produces a `Deferred`
+# residual for a non-Int operand — something no real RV32I branch/jump
+# macro can ever exercise on its own, since `here()` is *always* `Deferred`
+# there (see std/bitter/deferred.basm's own header). `x` stands in for "some
+# value the compiler doesn't concretely know" — in real use that's always
+# `here()`; here it's constructed directly so every overload, not just the
+# one `here()` happens to need, gets exercised.
+
+macro verify() {
+    # both operands concrete: folds all the way to a plain Int, exactly
+    # like every RType/IType/SType/UType field in std/riscv already does.
+    @assert sub(7, 3) == 4
+    @assert mul(6, 7) == 42
+    @assert shr(256, 4) == 16
+    @assert band(0b1010, 0b0110) == 0b0010
+
+    const x = Deferred.Leaf(10)
+
+    # one operand deferred: dispatch picks the Deferred-producing overload
+    # and builds the expected one-level node, instead of erroring or
+    # silently discarding the operand's real shape.
+    @assert sub(x, 3) == Deferred.Node(BinOp(op = Op.Sub, left = x, right = Deferred.Leaf(3)))
+    @assert mul(x, 4) == Deferred.Node(BinOp(op = Op.Mul, left = x, right = Deferred.Leaf(4)))
+    @assert shr(x, 2) == Deferred.Node(BinOp(op = Op.Shr, left = x, right = Deferred.Leaf(2)))
+    @assert band(x, 1) == Deferred.Node(BinOp(op = Op.Band, left = x, right = Deferred.Leaf(1)))
+
+    # operand order and both-sides-deferred also dispatch correctly, not
+    # just the "left operand happens to be deferred" case the real RV32I
+    # migration actually produces.
+    @assert sub(3, x) == Deferred.Node(BinOp(op = Op.Sub, left = Deferred.Leaf(3), right = x))
+    @assert sub(x, x) == Deferred.Node(BinOp(op = Op.Sub, left = x, right = x))
+
+    # here() itself: always opaque, never a concrete Int — the whole point.
+    @assert sub(5, here()) == Deferred.Node(BinOp(op = Op.Sub, left = Deferred.Leaf(5), right = Deferred.Here))
+
+    # nesting: once any operand in a chain is Deferred, every later call in
+    # the same expression keeps building the tree rather than collapsing
+    # back to Int — exactly the composition beq/jal now rely on
+    # (`mul(sub(target, here()), 4)` then `band(shr(offset, N), M)`).
+    const chained = band(shr(mul(sub(x, 5), 4), 12), 1)
+    @assert chained == Deferred.Node(BinOp(
+        op = Op.Band,
+        left = Deferred.Node(BinOp(
+            op = Op.Shr,
+            left = Deferred.Node(BinOp(
+                op = Op.Mul,
+                left = Deferred.Node(BinOp(op = Op.Sub, left = x, right = Deferred.Leaf(5))),
+                right = Deferred.Leaf(4)
+            )),
+            right = Deferred.Leaf(12)
+        )),
+        right = Deferred.Leaf(1)
+    ))
+
+    const p = Positioned<1> { value: chained }
+    @emit p
+}
+
+verify
