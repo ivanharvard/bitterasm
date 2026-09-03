@@ -9,8 +9,12 @@
 //! most-significant field first — matching how every format struct in
 //! `std/riscv/native.basm` documents its own field order.
 
+use bitterasm::ast::{BinaryOp, Expr};
 use bitterasm::emit::{EmittedGenericArg, EmittedValue};
+use bitterasm::eval;
+use bitterasm::token::Span;
 use num_bigint::BigInt;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum Endian {
@@ -28,8 +32,8 @@ struct Packed {
 pub fn pack_stream(values: &[EmittedValue], endian: Endian) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
 
-    for value in values {
-        let packed = pack_value(value)?;
+    for (here_index, value) in values.iter().enumerate() {
+        let packed = pack_value(value, here_index)?;
 
         if packed.width_bits % 8 != 0 {
             return Err(format!(
@@ -44,7 +48,15 @@ pub fn pack_stream(values: &[EmittedValue], endian: Endian) -> Result<Vec<u8>, S
     Ok(bytes)
 }
 
-fn pack_value(value: &EmittedValue) -> Result<Packed, String> {
+// `here_index` is which top-level emitted entry (0-based, in emission
+// order) is currently being packed — the same count `std.bitter.deferred`'s
+// `here()` used to mean back when `@here` computed it eagerly at compile
+// time (see `Deferred::Here`'s resolution below). It's threaded unchanged
+// through every recursive call within one top-level value's packing, since
+// a `Positioned<N>` can nest arbitrarily deep inside another struct's
+// fields but always means "here" relative to the *top-level* instruction
+// it was emitted as part of.
+fn pack_value(value: &EmittedValue, here_index: usize) -> Result<Packed, String> {
     match value {
         EmittedValue::Struct { name, args, fields } if name == "bits" => {
             let width_bits = bits_width(args)?;
@@ -70,6 +82,24 @@ fn pack_value(value: &EmittedValue) -> Result<Packed, String> {
             Ok(Packed { value: raw & mask, width_bits })
         }
 
+        // `std.bitter.deferred`'s `Positioned<width>` — a `Deferred` value
+        // (never a plain Int; that's the point of `here()`) paired with
+        // the bit width it's meant to occupy. Resolved against this call's
+        // `here_index`, then masked exactly like a `bits<N>` leaf.
+        EmittedValue::Struct { name, args, fields } if name == "Positioned" => {
+            let width_bits = bits_width(args)?;
+
+            let (_, deferred) = fields
+                .iter()
+                .find(|(field_name, _)| field_name == "value")
+                .ok_or_else(|| "a `Positioned<N>` value is missing its `value` field".to_string())?;
+
+            let raw = resolve_deferred(deferred, here_index)?;
+
+            let mask = (BigInt::from(1) << width_bits) - BigInt::from(1);
+            Ok(Packed { value: raw & mask, width_bits })
+        }
+
         // Any other struct is walked one level deeper: its own fields,
         // concatenated in declaration order, the same way a `bits<N>`
         // struct's fields would be if this were the top-level call.
@@ -78,7 +108,7 @@ fn pack_value(value: &EmittedValue) -> Result<Packed, String> {
             let mut width_bits = 0usize;
 
             for (_, field) in fields {
-                let packed = pack_value(field)?;
+                let packed = pack_value(field, here_index)?;
                 value = (value << packed.width_bits) | packed.value;
                 width_bits += packed.width_bits;
             }
@@ -94,6 +124,87 @@ fn pack_value(value: &EmittedValue) -> Result<Packed, String> {
         EmittedValue::Enum { name, variant, .. } => Err(format!(
             "can't infer a machine-code layout for enum value `{name}.{variant}`"
         )),
+    }
+}
+
+// Resolves a `std.bitter.deferred.Deferred` value (an `EmittedValue::Enum`
+// named `Deferred`) into a concrete `BigInt`, using `here_index` for any
+// `Here` marker found inside it. Reuses `bitterasm::eval::eval` for the
+// actual arithmetic on `Sub`/`Mul`/`Shr`/`Band` nodes rather than
+// re-deriving BigInt shift/mask semantics by hand — this guarantees
+// identical behavior (negative-offset shifts included) to what the
+// resolver used to compute eagerly for `@here`-based offsets.
+fn resolve_deferred(deferred: &EmittedValue, here_index: usize) -> Result<BigInt, String> {
+    let EmittedValue::Enum { name, variant, payload, .. } = deferred else {
+        return Err(format!("expected a `Deferred` value, found {deferred:?}"));
+    };
+    if name != "Deferred" {
+        return Err(format!("expected a `Deferred` value, found enum `{name}`"));
+    }
+
+    match variant.as_str() {
+        "Leaf" => {
+            let Some(payload) = payload else {
+                return Err("`Deferred.Leaf` is missing its payload".to_string());
+            };
+            let EmittedValue::Int { value } = payload.as_ref() else {
+                return Err(format!("`Deferred.Leaf`'s payload should be an Int, found {payload:?}"));
+            };
+            value.parse::<BigInt>().map_err(|error| format!("`{value}` isn't a valid integer: {error}"))
+        }
+
+        "Here" => Ok(BigInt::from(here_index)),
+
+        "Node" => {
+            let Some(payload) = payload else {
+                return Err("`Deferred.Node` is missing its payload".to_string());
+            };
+            let EmittedValue::Struct { name, fields, .. } = payload.as_ref() else {
+                return Err(format!("`Deferred.Node`'s payload should be a `BinOp` struct, found {payload:?}"));
+            };
+            if name != "BinOp" {
+                return Err(format!("`Deferred.Node`'s payload should be a `BinOp` struct, found `{name}`"));
+            }
+
+            let field = |field_name: &str| {
+                fields
+                    .iter()
+                    .find(|(n, _)| n == field_name)
+                    .map(|(_, v)| v)
+                    .ok_or_else(|| format!("a `BinOp` value is missing its `{field_name}` field"))
+            };
+
+            let EmittedValue::Enum { name: op_name, variant: op_variant, .. } = field("op")? else {
+                return Err(format!("a `BinOp`'s `op` field should be an `Op` enum, found {:?}", field("op")?));
+            };
+            if op_name != "Op" {
+                return Err(format!("a `BinOp`'s `op` field should be an `Op` enum, found `{op_name}`"));
+            }
+
+            let op = match op_variant.as_str() {
+                "Sub" => BinaryOp::Subtract,
+                "Mul" => BinaryOp::Multiply,
+                "Shr" => BinaryOp::ShiftRight,
+                "Band" => BinaryOp::BitAnd,
+                other => return Err(format!("unknown `Op` variant `{other}`")),
+            };
+
+            let left = resolve_deferred(field("left")?, here_index)?;
+            let right = resolve_deferred(field("right")?, here_index)?;
+
+            let span = Span::new(0, 0);
+            let expr = Expr::Binary {
+                left: Box::new(Expr::Integer { raw: left.to_string(), span }),
+                op,
+                right: Box::new(Expr::Integer { raw: right.to_string(), span }),
+                span,
+            };
+
+            eval::eval(&expr, &HashMap::new())
+                .map_err(|error| format!("failed to resolve a `Deferred` expression: {error:?}"))
+        }
+
+        other => Err(format!("unknown `Deferred` variant `{other}`")),
     }
 }
 
@@ -178,7 +289,7 @@ mod tests {
     #[test]
     fn masks_a_value_wider_than_its_declared_bit_width() {
         let value = bits("4", "255");
-        let packed = pack_value(&value).unwrap();
+        let packed = pack_value(&value, 0).unwrap();
         assert_eq!(packed.value, BigInt::from(0b1111));
         assert_eq!(packed.width_bits, 4);
     }
@@ -195,5 +306,113 @@ mod tests {
         let value = EmittedValue::Int { value: "3".to_string() };
         let error = pack_stream(&[value], Endian::Little).unwrap_err();
         assert!(error.contains("bare Int"), "{error}");
+    }
+
+    // --- std.bitter.deferred: Positioned<N> / Deferred resolution ---
+
+    fn deferred_leaf(value: &str) -> EmittedValue {
+        EmittedValue::Enum {
+            name: "Deferred".to_string(),
+            args: vec![],
+            variant: "Leaf".to_string(),
+            payload: Some(Box::new(EmittedValue::Int { value: value.to_string() })),
+        }
+    }
+
+    fn deferred_here() -> EmittedValue {
+        EmittedValue::Enum {
+            name: "Deferred".to_string(),
+            args: vec![],
+            variant: "Here".to_string(),
+            payload: None,
+        }
+    }
+
+    fn deferred_node(op: &str, left: EmittedValue, right: EmittedValue) -> EmittedValue {
+        EmittedValue::Enum {
+            name: "Deferred".to_string(),
+            args: vec![],
+            variant: "Node".to_string(),
+            payload: Some(Box::new(EmittedValue::Struct {
+                name: "BinOp".to_string(),
+                args: vec![],
+                fields: vec![
+                    (
+                        "op".to_string(),
+                        EmittedValue::Enum {
+                            name: "Op".to_string(),
+                            args: vec![],
+                            variant: op.to_string(),
+                            payload: None,
+                        },
+                    ),
+                    ("left".to_string(), left),
+                    ("right".to_string(), right),
+                ],
+            })),
+        }
+    }
+
+    fn positioned(width: &str, value: EmittedValue) -> EmittedValue {
+        EmittedValue::Struct {
+            name: "Positioned".to_string(),
+            args: vec![EmittedGenericArg::Const { value: width.to_string() }],
+            fields: vec![("value".to_string(), value)],
+        }
+    }
+
+    #[test]
+    fn resolves_a_bare_here_marker_to_its_top_level_index() {
+        let value = positioned("8", deferred_here());
+        assert_eq!(pack_value(&value, 5).unwrap().value, BigInt::from(5));
+    }
+
+    #[test]
+    fn resolves_a_bare_leaf_regardless_of_here_index() {
+        let value = positioned("8", deferred_leaf("42"));
+        assert_eq!(pack_value(&value, 999).unwrap().value, BigInt::from(42));
+    }
+
+    #[test]
+    fn resolves_the_exact_tree_beqs_offset_computation_builds() {
+        // mirrors `mul(sub(target, here()), 4)` for a branch whose label
+        // target is instruction 3, packed as the 10th emitted instruction
+        // (here_index = 9) -> (3 - 9) * 4 = -24.
+        let offset = deferred_node(
+            "Mul",
+            deferred_node("Sub", deferred_leaf("3"), deferred_here()),
+            deferred_leaf("4"),
+        );
+        // then `band(shr(offset, 1), 0b1111)` (BType's imm4_1 field; 0b1111 = 15).
+        let imm4_1 = deferred_node(
+            "Band",
+            deferred_node("Shr", offset, deferred_leaf("1")),
+            deferred_leaf("15"),
+        );
+        let value = positioned("4", imm4_1);
+
+        // -24 >> 1 = -12; -12 & 0b1111 (two's-complement) = 0b0100, then
+        // masked again to 4 bits by `pack_value` itself (a no-op here).
+        assert_eq!(pack_value(&value, 9).unwrap().value, BigInt::from(0b0100));
+    }
+
+    #[test]
+    fn masks_a_resolved_deferred_value_wider_than_its_declared_width() {
+        let value = positioned("4", deferred_leaf("255"));
+        let packed = pack_value(&value, 0).unwrap();
+        assert_eq!(packed.value, BigInt::from(0b1111));
+        assert_eq!(packed.width_bits, 4);
+    }
+
+    #[test]
+    fn rejects_a_deferred_value_with_an_unknown_variant() {
+        let bogus = EmittedValue::Enum {
+            name: "Deferred".to_string(),
+            args: vec![],
+            variant: "Bogus".to_string(),
+            payload: None,
+        };
+        let error = resolve_deferred(&bogus, 0).unwrap_err();
+        assert!(error.contains("unknown"), "{error}");
     }
 }
