@@ -258,26 +258,26 @@ fn resolve_and_expand(path: &Path) -> Result<Expansion, CompileError> {
         .map(|(id, value)| (symbols.get(*id).name.clone(), value.clone()))
         .collect();
 
-    // A label reference (or `@here`) can be a *forward* reference — a
-    // label whose `foo:` line appears later in the program than the
-    // invocation that names it — so a label's position can't always be
-    // known the first time it's read. Two passes over the same program
-    // solve this: pass 1 runs the real expansion machinery in
-    // `LabelMode::Tolerant`, so an as-yet-unrecorded (forward-referenced)
-    // label silently gets a placeholder position instead of erroring, just
-    // to discover where every top-level label actually ends up; pass 2
-    // reruns the same expansion for real, in `LabelMode::Strict`, now that
-    // every position is known. This is only sound because a wrong
-    // placeholder changes what gets emitted at some points during pass 1,
-    // never how *many* values get emitted — which requires that an
-    // `@if`/`@for` inside a macro body never makes its own condition/range
-    // depend on `@here` or a label's position (both `@if`/`@for` exist
-    // now, but nothing checks this restriction; it's on the author of an
-    // `@if`/`@for`-using macro to not violate it, the same way today's
-    // language already trusts a macro not to have an infinite `@for`).
-    // Top-level `@for`/`@if` (`resolver::unroll_top_level`) doesn't have
-    // this problem at all — it runs before either pass, over plain
-    // top-level consts only, with no notion of `@here`/labels yet.
+    // A label reference can be a *forward* reference — a label whose
+    // `foo:` line appears later in the program than the invocation that
+    // names it — so a label's position can't always be known the first
+    // time it's read. Two passes over the same program solve this: pass 1
+    // runs the real expansion machinery in `LabelMode::Tolerant`, so an
+    // as-yet-unrecorded (forward-referenced) label silently gets a
+    // placeholder position instead of erroring, just to discover where
+    // every top-level label actually ends up; pass 2 reruns the same
+    // expansion for real, in `LabelMode::Strict`, now that every position
+    // is known. This is only sound because a wrong placeholder changes
+    // what gets emitted at some points during pass 1, never how *many*
+    // values get emitted — which requires that an `@if`/`@for` inside a
+    // macro body never makes its own condition/range depend on a label's
+    // position (both `@if`/`@for` exist now, but nothing checks this
+    // restriction; it's on the author of an `@if`/`@for`-using macro to
+    // not violate it, the same way today's language already trusts a
+    // macro not to have an infinite `@for`). Top-level `@for`/`@if`
+    // (`resolver::unroll_top_level`) doesn't have this problem at all — it
+    // runs before either pass, over plain top-level consts only, with no
+    // notion of labels yet.
     let mut discovery = resolver::AliasResolver::new(
         &program,
         &symbols,
@@ -318,7 +318,7 @@ fn resolve_and_expand(path: &Path) -> Result<Expansion, CompileError> {
 
 /// Resolves every struct/alias/const in the program up front (independent
 /// of label passes — none of struct/alias/const-value resolution touches
-/// `@here`/labels). Run identically on both pass resolvers rather than
+/// labels). Run identically on both pass resolvers rather than
 /// sharing state across them, mirroring how `stack` (the macro-recursion
 /// guard) is deliberately never shared across separate top-level
 /// expansions either.

@@ -182,16 +182,6 @@ pub enum Expr {
         span: Span,
     },
 
-    /// `@here` — how many values have been `@emit`'d so far in this
-    /// expansion, as a plain count (not bits/bytes; see
-    /// `resolver::aliases::AliasResolver::values_emitted`). Unlike
-    /// `@emit`/`@return`, which only make sense as their own body
-    /// statement, `@here` is meant to be used inline (`target - @here`),
-    /// so it's a primary expression rather than a `MetaStatement`.
-    Here {
-        span: Span,
-    },
-
     /// `start..end` (`inclusive: false`) or `start..=end` (`inclusive:
     /// true`) — range sugar, upper bound exclusive or inclusive
     /// respectively. Not a value on its own (evaluating one directly is
@@ -223,7 +213,6 @@ impl Expr {
             | Expr::Unary { span, .. }
             | Expr::Binary { span, .. }
             | Expr::Splice { span, .. }
-            | Expr::Here { span, .. }
             | Expr::Range { span, .. } => *span,
         }
     }

@@ -56,12 +56,6 @@ pub fn eval(expr: &Expr, scope: &HashMap<String, Int>) -> Result<Int, EvalError>
         | Expr::As { span, .. }
         | Expr::Range { span, .. } => Err(EvalError::NotConstant { span: *span }),
 
-        // `@here` needs a live macro expansion in progress (see
-        // `resolver::values::eval_value`) — meaningless in this
-        // plain-`Int` evaluator, used for const-folding and generic-const
-        // arguments where no expansion is happening.
-        Expr::Here { span } => Err(EvalError::NotConstant { span: *span }),
-
         Expr::Unary { op, operand, .. } => {
             let value = eval(operand, scope)?;
 

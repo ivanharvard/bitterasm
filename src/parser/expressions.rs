@@ -367,39 +367,6 @@ impl Parser {
             }
 
             // ============
-            // @here
-            // ============
-            //
-            // Every other `@`-prefixed directive (`@emit`, `@return`, ...)
-            // only makes sense as its own body statement and is parsed by
-            // `parse_meta_statement` instead — `@here` is the one that
-            // needs to work inline (`target - @here`), so it's recognized
-            // here as a primary expression. Deliberately narrow: only the
-            // literal identifier `here` is accepted after `@` in
-            // expression position; nothing else is a general "any `@foo`
-            // is an expression" mechanism.
-
-            TokenKind::At => {
-                let start = token.span.start;
-
-                self.advance();
-
-                let name_token = self.current().clone();
-                let name = self.expect_identifier()?;
-
-                if name != "here" {
-                    return Err(ParseError::new(
-                        format!("expected `here` after `@` in an expression, found `{name}`"),
-                        name_token.span,
-                    ));
-                }
-
-                Ok(Expr::Here {
-                    span: Span::new(start, name_token.span.end),
-                })
-            }
-
-            // ============
             // unary -
             // ============
 
@@ -614,7 +581,6 @@ fn set_expr_span(expr: &mut Expr, new_span: Span) {
         | Expr::Unary { span, .. }
         | Expr::Binary { span, .. }
         | Expr::Splice { span, .. }
-        | Expr::Here { span, .. }
         | Expr::Range { span, .. } => {
             *span = new_span;
         }

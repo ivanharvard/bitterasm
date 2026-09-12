@@ -547,10 +547,10 @@ impl<'a> AliasResolver<'a> {
                         [expr] => {
                             emitted.push(self.eval_value(expr, &scope)?);
                             // Advances the shared, whole-program-persistent
-                            // counter `@here` reads — see
-                            // `AliasResolver::values_emitted`. A nested
-                            // invocation's own `@emit`s bump this same
-                            // field through the shared `&mut self`, so
+                            // counter a label's position is recorded
+                            // against — see `AliasResolver::values_emitted`.
+                            // A nested invocation's own `@emit`s bump this
+                            // same field through the shared `&mut self`, so
                             // there's nothing extra to do where nested
                             // `emitted`/`generated` get folded in below.
                             self.values_emitted += Int::from(1);
@@ -947,7 +947,7 @@ impl<'a> AliasResolver<'a> {
                 reify_value(&value, *span)
             }
 
-            Expr::Identifier { .. } | Expr::Integer { .. } | Expr::String { .. } | Expr::Here { .. } => {
+            Expr::Identifier { .. } | Expr::Integer { .. } | Expr::String { .. } => {
                 Ok(expr.clone())
             }
 
@@ -1842,58 +1842,12 @@ mod tests {
     }
 
     // =============
-    // @here / labels
+    // labels
     // =============
 
     #[test]
-    fn at_here_counts_values_emitted_so_far() {
-        let program = parse_fixture("here_basic.basm");
-
-        let declaration = find_macro(&program, "emits_here");
-        let symbols = collect_symbols(&program).unwrap();
-        let symbol = symbols.lookup("emits_here").unwrap();
-        let consts = HashMap::new();
-        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
-
-        let mut stack = Vec::new();
-        let result = resolver.run_macro_body(symbol, declaration, vec![], &mut stack).unwrap();
-
-        // Nothing has emitted yet when `@here` is reached, so it reads 0 —
-        // the index the very next `@emit` (99) will land at.
-        assert_eq!(result.emitted, vec![Value::Int(Int::from(0)), Value::Int(Int::from(99))]);
-    }
-
-    #[test]
-    fn at_here_reflects_nested_invocation_emits() {
-        let program = parse_fixture("here_reflects_nested_invocation.basm");
-
-        let declaration = find_macro(&program, "outer");
-        let symbols = collect_symbols(&program).unwrap();
-        let symbol = symbols.lookup("outer").unwrap();
-        let consts = HashMap::new();
-        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
-
-        let mut stack = Vec::new();
-        let result = resolver.run_macro_body(symbol, declaration, vec![], &mut stack).unwrap();
-
-        // outer's own `@emit 0`, then helper's two `@emit`s (1, 2) flatten
-        // into the same shared counter before outer's own `@here` is
-        // reached, so `@here == 3` — not just "how many statements outer
-        // itself has run so far".
-        assert_eq!(
-            result.emitted,
-            vec![
-                Value::Int(Int::from(0)),
-                Value::Int(Int::from(1)),
-                Value::Int(Int::from(2)),
-                Value::Int(Int::from(3)),
-            ]
-        );
-    }
-
-    #[test]
-    fn bare_here_statement_is_unsupported() {
-        let tokens = lexer::lex("macro foo() {\n    @here\n}\n").expect("fixture should lex");
+    fn bare_unknown_meta_statement_is_unsupported() {
+        let tokens = lexer::lex("macro foo() {\n    @frobnicate\n}\n").expect("fixture should lex");
         let program = parser::parse(tokens).expect("fixture should parse");
 
         let declaration = find_macro(&program, "foo");
@@ -1907,7 +1861,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            ResolveError::UnsupportedMacroStatement { kind, .. } if kind == "@here"
+            ResolveError::UnsupportedMacroStatement { kind, .. } if kind == "@frobnicate"
         ));
     }
 
@@ -2034,17 +1988,17 @@ mod tests {
             }
         }
 
-        // noop -> 1; reads_target loop_start (backward, -1 instruction —
-        // the exact worked proof from the design conversation); reads_target
-        // skip_target (forward, +2 instructions — this is the case a
+        // noop -> 1 (index 0); reads_target loop_start (backward —
+        // loop_start was recorded at index 0, before that first noop ran);
+        // reads_target skip_target (forward, index 4 — this is the case a
         // single-pass resolver would get wrong, since `skip_target` isn't
         // known yet the first time it's referenced); noop -> 1.
         assert_eq!(
             emitted,
             vec![
                 Value::Int(Int::from(1)),
-                Value::Int(Int::from(-1)),
-                Value::Int(Int::from(2)),
+                Value::Int(Int::from(0)),
+                Value::Int(Int::from(4)),
                 Value::Int(Int::from(1)),
             ]
         );

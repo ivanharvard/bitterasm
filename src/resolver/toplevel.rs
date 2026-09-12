@@ -15,8 +15,8 @@
 //! Deliberately restricted to what's staticaly evaluable this way: a
 //! `@for`'s bounds or an `@if`'s condition may only reference *earlier*
 //! top-level consts, tracked as this pass sweeps the program left to
-//! right — no forward references, and nothing depending on `@here` or a
-//! label's position (those don't exist until the real resolver runs).
+//! right — no forward references, and nothing depending on a label's
+//! position (that doesn't exist until the real resolver runs).
 //! This mirrors the restriction the const generic evaluator
 //! ([`super::aliases::AliasResolver::eval_const_expr`]) already lives
 //! under, just applied one level up, before symbol collection instead of
@@ -229,7 +229,7 @@ fn unroll_meta(
             Ok(())
         }
 
-        // Every other meta (`@emit`, `@return`, `@assert`, `@here`) only
+        // Every other meta (`@emit`, `@return`, `@assert`) only
         // makes sense inside a macro body — the same
         // `UnsupportedMacroStatement`-shaped rejection `walk_macro_body`
         // already gives it there, just reached at the top level instead.

@@ -82,12 +82,13 @@ pub struct AliasResolver<'a> {
     pub(super) generic_scope: HashMap<String, GenericBinding>,
 
     // How many values have been `@emit`'d so far, in whole-program
-    // emission order — read by `@here`, advanced once per `@emit` (see
-    // `macro_body::walk_macro_body`). Unlike `stack` above, this must
-    // *not* reset per top-level invocation: it tracks a position in the
-    // same flattened stream `main::resolve_and_expand`'s own `emitted`
-    // accumulates across the whole program, so it only resets when a
-    // fresh `AliasResolver` is constructed for a new pass.
+    // emission order — what a label's recorded position is measured in,
+    // advanced once per `@emit` (see `macro_body::walk_macro_body`).
+    // Unlike `stack` above, this must *not* reset per top-level invocation:
+    // it tracks a position in the same flattened stream
+    // `main::resolve_and_expand`'s own `emitted` accumulates across the
+    // whole program, so it only resets when a fresh `AliasResolver` is
+    // constructed for a new pass.
     pub(super) values_emitted: Int,
     pub(super) label_positions: HashMap<SymbolId, Int>,
     pub(super) label_mode: LabelMode,
@@ -154,7 +155,7 @@ impl<'a> AliasResolver<'a> {
         }
     }
 
-    /// Convenience for callers that don't care about label/`@here`
+    /// Convenience for callers that don't care about label position
     /// resolution across a whole-program two-pass expansion (unit tests
     /// resolving a single fixture's types/macro body in isolation) —
     /// equivalent to [`AliasResolver::new`] with `LabelMode::Strict` and no

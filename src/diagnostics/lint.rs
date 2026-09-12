@@ -479,7 +479,7 @@ fn collect_expr_identifiers(expr: &Expr, names: &mut HashSet<String>) {
             collect_expr_identifiers(left, names);
             collect_expr_identifiers(right, names);
         }
-        Expr::Integer { .. } | Expr::String { .. } | Expr::Here { .. } => {}
+        Expr::Integer { .. } | Expr::String { .. } => {}
     }
 }
 

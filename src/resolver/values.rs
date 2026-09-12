@@ -168,11 +168,6 @@ impl<'a> AliasResolver<'a> {
             // why an expression like `dst.id + 1` isn't supported yet (see
             // module doc): a Member/Call leaf inside a Binary/Unary tree
             // never reaches this match arm to be resolved as a Value.
-            // `@here` has the same problem in principle (`eval::eval`
-            // doesn't know what expansion is in progress) but is common
-            // enough to be worth the small fix: substitute every `@here`
-            // leaf with its current value as a literal first, so `target -
-            // @here` still folds through the ordinary Int evaluator.
             Expr::Integer { .. } | Expr::Unary { .. } | Expr::Binary { .. } => {
                 let rewritten = self.materialize_int_expr(expr, scope)?;
                 eval::eval(&rewritten, &HashMap::new())
@@ -198,10 +193,6 @@ impl<'a> AliasResolver<'a> {
                     _ => self.resolve_const_value(name, *span),
                 },
             },
-
-            // How many values have been `@emit`'d so far, in whole-program
-            // order — see `AliasResolver::values_emitted`.
-            Expr::Here { .. } => Ok(Value::Int(self.values_emitted.clone())),
 
             Expr::Member { object, member, span } => {
                 let member = self.resolve_spliced_name(member, scope)?;
@@ -318,10 +309,6 @@ impl<'a> AliasResolver<'a> {
                 span: *span,
             }),
             Expr::Splice { inner, .. } => self.materialize_int_expr(inner, scope),
-            Expr::Here { span } => Ok(Expr::Integer {
-                raw: self.values_emitted.to_string(),
-                span: *span,
-            }),
             other => match self.eval_value(other, scope)? {
                 Value::Int(value) => Ok(Expr::Integer {
                     raw: value.to_string(),

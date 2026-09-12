@@ -1,5 +1,5 @@
 # B-type: branches, with real backward and forward label targets — see
-# std/riscv/native.basm's `target`/`@here` design. `add` lines are filler,
+# std/riscv/impl.basm's `target`/`here()` design. `add` lines are filler,
 # just to give branch offsets some nontrivial magnitude/variety; they're
 # not testing anything on their own (R-type already has its own case).
 loop_start:

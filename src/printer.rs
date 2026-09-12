@@ -455,8 +455,6 @@ pub fn print_expr(expr: &Expr) -> String {
 
         Expr::As { value, ty, .. } => format!("{} as {}", print_expr(value), print_type_expr(ty)),
 
-        Expr::Here { .. } => "@here".to_string(),
-
         Expr::Construct { callee, generic_args, fields, .. } => {
             let generics = print_generic_arguments(generic_args);
             let body = fields.iter().map(print_construct_item).collect::<Vec<_>>().join(", ");

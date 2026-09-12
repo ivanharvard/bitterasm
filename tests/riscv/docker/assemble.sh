@@ -5,16 +5,17 @@
 #
 # Assembled and linked as one program, with .text placed at address 0
 # (`-Ttext=0x0`) so the first instruction sits at PC 0 — matching
-# `bitterasm`'s own convention that `@here`/a label's position starts
-# counting from the top of the program (see std/riscv/native.basm's
-# branch/jump macros). Whole-file, not per-instruction: earlier versions of
-# this script assembled one bare-literal-offset instruction at a time,
-# synthesizing a fake local label via `.org` so GNU as had *something* to
-# resolve a bare number against — but bitterasm's branch/jump macros no
-# longer take a raw byte offset at all (see native.basm's own doc comment:
-# their operand is now the target *instruction*, converted to a byte delta
-# internally via `@here`). GNU as has no equivalent "raw already-computed
-# delta" mode for a bare literal — it always treats a branch/jump operand
+# `bitterasm`'s own convention that a label's position starts counting from
+# the top of the program (see std/riscv/impl.basm's branch/jump macros).
+# Whole-file, not per-instruction: earlier versions of this script assembled
+# one bare-literal-offset instruction at a time, synthesizing a fake local
+# label via `.org` so GNU as had *something* to resolve a bare number
+# against — but bitterasm's branch/jump macros no longer take a raw byte
+# offset at all (see impl.basm's own doc comment: their operand is now the
+# target *instruction*, converted to a byte delta internally via
+# `here()`/`Deferred`, resolved by `bitter` at pack time). GNU as has no
+# equivalent "raw already-computed delta" mode for a bare literal — it
+# always treats a branch/jump operand
 # as a target address — so a bare-literal test case can no longer agree
 # with this oracle at all; real labels, which both sides resolve
 # independently and are expected to agree on by the whole design of the

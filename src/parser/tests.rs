@@ -388,39 +388,23 @@ fn parses_splice_expression() {
 }
 
 #[test]
-fn parses_here_expression_inline() {
-    let program =
-        parse(lex("mov r1, target - @here\n").unwrap()).unwrap();
-
-    let Statement::Invocation(invocation) = &program.statements[0] else {
-        panic!("expected invocation");
-    };
-
-    let Expr::Binary { right, .. } = &invocation.operands[1] else {
-        panic!("expected binary expression");
-    };
-
-    assert!(matches!(right.as_ref(), Expr::Here { .. }));
-}
-
-#[test]
-fn here_expression_rejects_any_other_at_name() {
+fn at_is_not_valid_in_expression_position() {
     let error = parse(lex("mov r1, @foo\n").unwrap()).unwrap_err();
 
     assert!(
-        format!("{error}").contains("here"),
-        "expected the error to mention `here`, got: {error}"
+        format!("{error}").contains("expected expression"),
+        "expected an 'expected expression' parse error, got: {error}"
     );
 }
 
 #[test]
-fn bare_here_statement_still_parses_as_a_meta_statement() {
-    // `@here` only makes sense inline (`target - @here`); a bare `@here`
-    // line parses fine (same generic `@`-directive grammar as `@emit`) but
-    // is left for the resolver to reject — see
-    // `resolver::macro_body::tests::bare_here_statement_is_unsupported`.
+fn bare_unknown_meta_statement_still_parses_as_a_meta_statement() {
+    // Any `@name` line parses as a generic meta statement at this level
+    // (same grammar as `@emit`) regardless of whether `name` is one the
+    // resolver actually supports — that's left for the resolver to reject —
+    // see `resolver::macro_body::tests::bare_unknown_meta_statement_is_unsupported`.
     let program = parse(
-        lex("macro foo() {\n    @here\n}\n").unwrap(),
+        lex("macro foo() {\n    @frobnicate\n}\n").unwrap(),
     )
     .unwrap();
 
@@ -430,7 +414,7 @@ fn bare_here_statement_still_parses_as_a_meta_statement() {
 
     assert!(matches!(
         &decl.body[0],
-        Statement::Meta(meta) if meta.name == "here"
+        Statement::Meta(meta) if meta.name == "frobnicate"
     ));
 }
 

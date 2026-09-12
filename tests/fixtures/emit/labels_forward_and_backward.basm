@@ -3,8 +3,7 @@ macro noop() {
 }
 
 macro reads_target(target: int) {
-    const offset = target - @here
-    @emit offset
+    @emit target
 }
 
 loop_start:

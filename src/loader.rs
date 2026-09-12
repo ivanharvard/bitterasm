@@ -763,7 +763,7 @@ fn rename_expr(expr: &mut Expr, renames: &HashMap<String, String>) {
             }
         }
 
-        Expr::Integer { .. } | Expr::String { .. } | Expr::Here { .. } => {}
+        Expr::Integer { .. } | Expr::String { .. } => {}
 
         Expr::Member { object, .. } => rename_expr(object, renames),
 
