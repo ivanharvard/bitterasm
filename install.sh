@@ -31,6 +31,15 @@ build_and_copy() {
 
 install_bitterasm=false
 install_bitter=false
+install_lsp=false
+
+# Not part of this repo — a separate project, cloned as a sibling checkout
+# purely by convention (`bitterasm-lsp`'s own Cargo.toml currently depends
+# on this repo via a local `path = "../bitterasm"`, so it only builds at
+# all when laid out this way). Someone who cloned just `bitterasm` won't
+# have it, and shouldn't see a prompt for something that isn't there.
+lsp_dir="$(cd "$repo_root/.." && pwd)/bitterasm-lsp"
+lsp_install_script="$lsp_dir/install.sh"
 
 if ask "Install the bitterasm language (compiler)?"; then
     install_bitterasm=true
@@ -40,12 +49,23 @@ if ask "Install the bitter CLI (exporter)?"; then
     install_bitter=true
 fi
 
+if [ -x "$lsp_install_script" ]; then
+    if ask "Found a bitterasm-lsp checkout alongside this repo — install the language server and VS Code extension too?"; then
+        install_lsp=true
+    fi
+fi
+
 if [ "$install_bitterasm" = true ]; then
     build_and_copy bitterasm
 fi
 
 if [ "$install_bitter" = true ]; then
     build_and_copy bitter
+fi
+
+if [ "$install_lsp" = true ]; then
+    echo "Installing bitterasm-lsp..."
+    "$lsp_install_script"
 fi
 
 echo "Installing standard library..."
