@@ -104,6 +104,21 @@ pub struct AliasResolver<'a> {
     // after `program.statements`. See `super::generated`.
     pub(super) generated_symbols: SymbolTable,
     pub(super) generated: Vec<Statement>,
+
+    // Which module the code *currently being evaluated* lexically lives
+    // in — not the caller's module, the callee's: entering a macro body,
+    // resolving a top-level const's value, checking a struct's own
+    // `invariant`, or running a chosen `to`/`from` template all switch this
+    // to whichever module actually wrote that expression, for the duration
+    // of evaluating it, then restore it (see `AliasResolver::with_module`).
+    // Backs non-`pub` struct field visibility (`values::eval_value`'s
+    // `Expr::Member` arm): a field access is only allowed when this equals
+    // the accessed struct's own declaring module
+    // (`AliasResolver::symbol_module`). Top-level code outside any macro
+    // (a label, a bare invocation — see `crate::loader`'s doc on why these
+    // never get spliced from another file) always runs as the entry
+    // module, which is what this starts out as.
+    pub(super) current_module: usize,
 }
 
 impl<'a> AliasResolver<'a> {
@@ -116,12 +131,17 @@ impl<'a> AliasResolver<'a> {
     /// -resolution passes this instance runs: `Tolerant` with an empty map
     /// for position-discovery, `Strict` with that pass's completed map for
     /// the real expansion. See `main::resolve_and_expand`.
+    ///
+    /// `entry_module` is the module id of the file `bitterasm` was actually
+    /// asked to compile (`crate::loader::ModuleOrigins::entry_module`) —
+    /// where top-level code outside any macro is considered to run.
     pub fn new(
         program: &'a Program,
         symbols: &'a SymbolTable,
         consts: &'a HashMap<String, Int>,
         label_mode: LabelMode,
         known_label_positions: HashMap<SymbolId, Int>,
+        entry_module: usize,
     ) -> Self {
         let mut states = HashMap::new();
         let mut const_value_states = HashMap::new();
@@ -152,21 +172,47 @@ impl<'a> AliasResolver<'a> {
             label_mode,
             generated_symbols: SymbolTable::with_base(symbols.len()),
             generated: Vec::new(),
+            current_module: entry_module,
         }
     }
 
     /// Convenience for callers that don't care about label position
     /// resolution across a whole-program two-pass expansion (unit tests
     /// resolving a single fixture's types/macro body in isolation) —
-    /// equivalent to [`AliasResolver::new`] with `LabelMode::Strict` and no
-    /// pre-recorded label positions. A real `bitterasm compile`/`expand`
-    /// run should go through the two-pass driver in `main.rs` instead.
+    /// equivalent to [`AliasResolver::new`] with `LabelMode::Strict`, no
+    /// pre-recorded label positions, and entry module `0` (fine for a
+    /// single-file fixture with no cross-module privacy to exercise). A
+    /// real `bitterasm compile`/`expand` run should go through the
+    /// two-pass driver in `main.rs` instead.
     pub fn new_single_pass(
         program: &'a Program,
         symbols: &'a SymbolTable,
         consts: &'a HashMap<String, Int>,
     ) -> Self {
-        Self::new(program, symbols, consts, LabelMode::Strict, HashMap::new())
+        Self::new(program, symbols, consts, LabelMode::Strict, HashMap::new(), 0)
+    }
+
+    /// Looks up which module declared `id` — the main `symbols` table for
+    /// an ordinary top-level declaration, `generated_symbols` for one
+    /// discovered mid-resolution (see `generated_symbols`'s own doc); a
+    /// `SymbolId`'s value alone says which table actually holds it, the
+    /// same dispatch `AliasResolver::get_symbol` already does.
+    pub(super) fn symbol_module(&self, id: SymbolId) -> usize {
+        self.get_symbol(id).module
+    }
+
+    /// Runs `f` with `current_module` switched to `module` for its
+    /// duration, restoring whatever it was before — even if `f` returns
+    /// `Err`, since this only ever wraps a plain value-returning closure,
+    /// never one that can itself unwind past the restore (mirrors how
+    /// `macro_body::run_macro_body_inner` saves and restores
+    /// `generic_scope` around its own closure).
+    pub(super) fn with_module<T>(&mut self, module: usize, f: impl FnOnce(&mut Self) -> T) -> T {
+        let previous = self.current_module;
+        self.current_module = module;
+        let result = f(self);
+        self.current_module = previous;
+        result
     }
 
     /// Records `id`'s position as "however many values have been emitted
@@ -775,7 +821,7 @@ mod tests {
     #[test]
     fn invariant_bearing_alias_resolves_nominal() {
         let program = parse_fixture("nominal_alias_invariant.basm");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let bits_id = symbols.lookup("Bits").unwrap();
         let ubyte_id = symbols.lookup("UByte").unwrap();
         let consts = HashMap::new();
@@ -799,7 +845,7 @@ mod tests {
     #[test]
     fn plain_alias_stays_transparent() {
         let program = parse_fixture("nominal_alias_invariant.basm");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let bits_id = symbols.lookup("Bits").unwrap();
         let byte_id = symbols.lookup("Byte").unwrap();
         let consts = HashMap::new();
@@ -816,7 +862,7 @@ mod tests {
     #[test]
     fn nominal_alias_is_not_equal_to_its_underlying_type() {
         let program = parse_fixture("nominal_alias_invariant.basm");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let bits_id = symbols.lookup("Bits").unwrap();
         let ubyte_id = symbols.lookup("UByte").unwrap();
         let consts = HashMap::new();
@@ -835,7 +881,7 @@ mod tests {
     #[test]
     fn ambiguous_invariant_binder_is_rejected() {
         let program = parse_fixture("ambiguous_alias_invariant.basm");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let bad_id = symbols.lookup("Bad").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);

@@ -33,11 +33,28 @@ use crate::expander;
 use super::macro_body::MAX_FOR_ITERATIONS;
 use super::ResolveError;
 
-pub fn unroll_top_level(program: Program) -> Result<Program, ResolveError> {
+/// Like the single-`Program` form this used to be, but also returns which
+/// module (index into `module_of`, one entry per `program.statements`)
+/// declared each statement in the result — a `@for`/`@if` wrapper's own
+/// module carries over onto everything it unrolls into, since all of it
+/// traces back to the same file's source text regardless of how many
+/// concrete statements it expands to. `module_of.len()` must equal
+/// `program.statements.len()`.
+pub fn unroll_top_level(
+    program: Program,
+    module_of: &[usize],
+) -> Result<(Program, Vec<usize>), ResolveError> {
     let mut consts: HashMap<String, Int> = HashMap::new();
-    let statements = unroll_statements(&program.statements, &mut consts)?;
+    let mut statements = Vec::new();
+    let mut statement_modules = Vec::new();
 
-    Ok(Program { statements, span: program.span })
+    for (statement, &module) in program.statements.iter().zip(module_of) {
+        let unrolled = unroll_statements(std::slice::from_ref(statement), &mut consts)?;
+        statement_modules.extend(std::iter::repeat(module).take(unrolled.len()));
+        statements.extend(unrolled);
+    }
+
+    Ok((Program { statements, span: program.span }, statement_modules))
 }
 
 fn unroll_statements(
@@ -273,7 +290,8 @@ mod tests {
     fn unroll(source: &str) -> Result<Program, ResolveError> {
         let tokens = lexer::lex(source).expect("fixture should lex");
         let program = parser::parse(tokens).expect("fixture should parse");
-        unroll_top_level(program)
+        let module_of = vec![0; program.statements.len()];
+        unroll_top_level(program, &module_of).map(|(program, _)| program)
     }
 
     fn invocation_names(program: &Program) -> Vec<&str> {

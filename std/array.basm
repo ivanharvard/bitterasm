@@ -7,7 +7,7 @@ pub struct Array<T, const N: int>
         pub __el`i`: T,
     }
 
-    pub len: int = N,
+    pub skip len: int = N,
 }
 
 macro oob_check<T>(

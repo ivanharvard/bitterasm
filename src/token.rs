@@ -12,6 +12,7 @@ pub enum TokenKind {
     Import,
     As,
     Pub,
+    Skip,
 
     Macro,
     Type,

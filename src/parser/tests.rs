@@ -706,6 +706,37 @@ struct Reg<const width: int> {
 }
 
 #[test]
+fn parses_pub_skip_struct_field() {
+    let source = r#"
+struct Array<T, const n: int> {
+    pub el: T,
+    pub skip len: int = n
+}
+"#;
+
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    let Statement::Struct(declaration) = &program.statements[0] else {
+        panic!("expected struct");
+    };
+
+    let StructBodyItem::Field(el_field) = &declaration.fields[0] else {
+        panic!("expected a plain field");
+    };
+
+    assert!(el_field.is_pub);
+    assert!(!el_field.is_skip);
+
+    let StructBodyItem::Field(len_field) = &declaration.fields[1] else {
+        panic!("expected a plain field");
+    };
+
+    assert_eq!(literal_name(&len_field.name), Some("len".to_string()));
+    assert!(len_field.is_pub);
+    assert!(len_field.is_skip);
+}
+
+#[test]
 fn rejects_const_as_a_struct_field_modifier() {
     let source = r#"
 struct Reg {

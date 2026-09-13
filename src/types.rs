@@ -111,8 +111,18 @@ pub struct StructField {
     /// Whether `@for i in X` (`X` resolving to this struct's type) visits
     /// this field — a non-`pub` field stays internal bookkeeping (e.g.
     /// whatever an `invariant` needs) even when the rest of the struct is
-    /// iterated. See `resolver::generated::eval_for_source`.
+    /// iterated, and so does a `pub skip` field (see `is_skip` below). See
+    /// `resolver::generated::eval_for_source`.
     pub is_pub: bool,
+
+    /// `pub skip name: T` — a field that's ordinarily visible (`pub`,
+    /// nameable, part of construction) but deliberately excluded from
+    /// `@for`'s walk, for a field that isn't one of the struct's "elements"
+    /// even though it's public — e.g. `Array<T, N>`'s `len`, which would
+    /// otherwise get swept into `@for x in someArray` alongside every
+    /// `__el{i}: T`. Meaningless (and harmless) on a non-`pub` field, which
+    /// is already excluded from `@for` on its own.
+    pub is_skip: bool,
 
     /// `= expr` — evaluated (against the struct's own bound generic const
     /// args, not sibling field values) and used only when this field is

@@ -36,6 +36,7 @@ struct UnrolledField {
     name: String,
     ty: TypeExpr,
     is_pub: bool,
+    is_skip: bool,
     default: Option<Expr>,
 }
 
@@ -130,19 +131,19 @@ impl<'a> AliasResolver<'a> {
     }
 
     // Like `instantiate_struct_fields`, but keeps each field's name
-    // (plus its `is_pub`/`default`) alongside its resolved type instead of
-    // discarding them — brace-literal construction
+    // (plus its `is_pub`/`is_skip`/`default`) alongside its resolved type
+    // instead of discarding them — brace-literal construction
     // (`resolver::values::eval_construct_value`) needs the name to match a
     // declared field against a provided one and the type to check the
-    // provided value against it; `is_pub` is what `eval_for_source`
-    // (`struct_field_pub_flags`, just below) filters `@for` on, and
-    // `default` is what a construction falls back to when a field's
-    // omitted.
+    // provided value against it; `is_pub`/`is_skip` are what
+    // `eval_for_source` (`struct_field_iterable_flags`, just below) filters
+    // `@for` on, and `default` is what a construction falls back to when a
+    // field's omitted.
     pub(super) fn instantiate_struct_fields_named(
         &mut self,
         id: SymbolId,
         args: &[ResolvedGenericArg],
-    ) -> Result<Vec<(String, ResolvedType, bool, Option<Expr>)>, ResolveError> {
+    ) -> Result<Vec<(String, ResolvedType, bool, bool, Option<Expr>)>, ResolveError> {
         let declaration = self.find_struct_declaration(id)?;
         let scope = generic_arg_scope(&declaration.generic_params, args);
         let items = declaration.fields.clone();
@@ -154,7 +155,7 @@ impl<'a> AliasResolver<'a> {
                 .into_iter()
                 .map(|field| {
                     let ty = self.resolve_type_expr(&field.ty)?;
-                    Ok((field.name, ty, field.is_pub, field.default))
+                    Ok((field.name, ty, field.is_pub, field.is_skip, field.default))
                 })
                 .collect(),
             Err(error) => Err(error),
@@ -166,11 +167,14 @@ impl<'a> AliasResolver<'a> {
     }
 
     // Thin sibling of `instantiate_struct_fields_named` that only the
-    // `is_pub` flag survives from — `resolver::generated::eval_for_source`
-    // uses this to filter a struct value's fields down to the ones `@for`
-    // should actually visit, without needing to resolve every field's full
-    // type just to read one bit off it.
-    pub(super) fn struct_field_pub_flags(
+    // combined "does `@for` visit this field" bit survives from —
+    // `resolver::generated::eval_for_source` uses this to filter a struct
+    // value's fields down to the ones `@for` should actually visit, without
+    // needing to resolve every field's full type just to read this off it.
+    // A field is visited when it's `pub` and not also marked `skip` — a
+    // `pub skip` field (e.g. `Array<T, N>`'s `len`) stays ordinarily
+    // visible/constructible but is deliberately excluded from this walk.
+    pub(super) fn struct_field_iterable_flags(
         &mut self,
         id: SymbolId,
         args: &[ResolvedGenericArg],
@@ -178,7 +182,7 @@ impl<'a> AliasResolver<'a> {
         Ok(self
             .instantiate_struct_fields_named(id, args)?
             .into_iter()
-            .map(|(_, _, is_pub, _)| is_pub)
+            .map(|(_, _, is_pub, is_skip, _)| is_pub && !is_skip)
             .collect())
     }
 
@@ -232,17 +236,25 @@ impl<'a> AliasResolver<'a> {
             },
         );
 
-        for invariant in &invariants {
-            if !self.eval_truthy(invariant, &scope)? {
-                return Err(ResolveError::InvariantViolated {
-                    type_name: self.get_symbol(symbol).name.clone(),
-                    invariant: crate::printer::print_expr(invariant),
-                    span,
-                });
+        // `symbol`'s own `invariant` facets can freely read `symbol`'s own
+        // non-`pub` fields via `source.field` (`std.decimal`'s `Decimal`
+        // does exactly this) — they're declared in `symbol`'s own module,
+        // so they always run as it, regardless of which module's code
+        // triggered this construction/conversion.
+        let module = self.symbol_module(symbol);
+        self.with_module(module, |this| {
+            for invariant in &invariants {
+                if !this.eval_truthy(invariant, &scope)? {
+                    return Err(ResolveError::InvariantViolated {
+                        type_name: this.get_symbol(symbol).name.clone(),
+                        invariant: crate::printer::print_expr(invariant),
+                        span,
+                    });
+                }
             }
-        }
 
-        Ok(())
+            Ok(())
+        })
     }
 
     // Resolves the type of a single named field on a (possibly generic)
@@ -337,6 +349,7 @@ impl<'a> AliasResolver<'a> {
                         name,
                         ty: field.ty.clone(),
                         is_pub: field.is_pub,
+                        is_skip: field.is_skip,
                         default: field.default.clone(),
                     });
                 }
@@ -531,7 +544,7 @@ mod tests {
     #[test]
     fn for_generated_fields_resolve_under_a_concrete_instantiation() {
         let program = parse_fixture("for_generated_struct_fields.basm");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let array_id = symbols.lookup("Array").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -552,7 +565,7 @@ mod tests {
     #[test]
     fn for_generated_field_names_are_reachable_via_field_type() {
         let program = parse_fixture("for_generated_struct_fields.basm");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let array_id = symbols.lookup("Array").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -585,7 +598,7 @@ mod tests {
         // still succeed, just without any `@for`-generated fields to show
         // for it (see `AliasResolver::unroll_struct_body`'s doc).
         let program = parse_fixture("for_generated_struct_fields.basm");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -600,7 +613,7 @@ mod tests {
         // `Int` — a struct-valued element (like `Wrapper`'s `inner` field
         // here) doesn't fit that model. See `AliasResolver::unroll_struct_body`.
         let program = parse_fixture("struct_body_for_over_struct_valued_field.basm");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let uses_for_id = symbols.lookup("UsesFor").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -613,7 +626,7 @@ mod tests {
     #[test]
     fn if_true_includes_the_field_and_false_omits_it() {
         let program = parse_fixture("if_generated_struct_field.basm");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let conditional_id = symbols.lookup("Conditional").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);

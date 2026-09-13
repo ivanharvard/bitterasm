@@ -28,6 +28,13 @@ pub struct Symbol {
     pub kind: SymbolKind,
     pub name: String,
     pub span: Span,
+
+    /// Which module (an index assigned by `crate::loader`, meaningful only
+    /// as "same or different" — not a path) declared this symbol. Backs
+    /// non-`pub` struct field visibility: a field access is only allowed
+    /// when `AliasResolver::current_module` matches the accessed struct's
+    /// own `module` here. See `crate::loader::ModuleOrigins`.
+    pub module: usize,
 }
 
 /// ```
@@ -37,11 +44,11 @@ pub struct Symbol {
 /// let mut table = SymbolTable::new();
 /// let span = Span::new(0, 0);
 ///
-/// let id = table.insert("Reg".to_string(), SymbolKind::Struct, span).unwrap();
+/// let id = table.insert("Reg".to_string(), SymbolKind::Struct, span, 0).unwrap();
 /// assert_eq!(table.lookup("Reg"), Some(id));
 ///
 /// // Re-inserting the same name fails rather than shadowing it.
-/// assert!(table.insert("Reg".to_string(), SymbolKind::Struct, span).is_err());
+/// assert!(table.insert("Reg".to_string(), SymbolKind::Struct, span, 0).is_err());
 /// ```
 #[derive(Debug, Default)]
 pub struct SymbolTable {
@@ -78,7 +85,7 @@ impl SymbolTable {
     }
 
     pub fn insert(
-        &mut self, name: String, kind: SymbolKind, span: Span
+        &mut self, name: String, kind: SymbolKind, span: Span, module: usize
     ) -> Result<SymbolId, DuplicateSymbol> {
         if let Some(existing) = self.by_name.get(&name) {
             // Macros form overload sets. Every other declaration remains
@@ -101,6 +108,7 @@ impl SymbolTable {
             kind,
             name: name.clone(),
             span,
+            module,
         });
 
         self.by_name.entry(name).or_default().push(id);

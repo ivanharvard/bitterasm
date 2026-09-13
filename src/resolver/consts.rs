@@ -393,7 +393,7 @@ mod tests {
     #[test]
     fn struct_valued_const_referencing_another_is_skipped_not_rejected() {
         let program = parse_fixture("named_const_reference.basm");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
 
         // `zero = r0` is a bare identifier referencing a struct-valued
         // const — `is_int_shaped` used to take that at face value and let

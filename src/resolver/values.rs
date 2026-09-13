@@ -202,15 +202,50 @@ impl<'a> AliasResolver<'a> {
                     }
                 }
                 match self.eval_value(object, scope)? {
-                Value::Struct { symbol, fields, .. } => fields
-                    .into_iter()
-                    .find(|(name, _)| name == &member)
-                    .map(|(_, value)| value)
-                    .ok_or_else(|| ResolveError::UnknownField {
-                        type_name: self.get_symbol(symbol).name.clone(),
-                        field: member,
-                        span: *span,
-                    }),
+                Value::Struct { symbol, args, fields, .. } => {
+                    // A field declared without `pub` may only be read from
+                    // the module that declared the struct — same rule
+                    // `eval_call_value`/`eval_construct_value` enforce on
+                    // the write side when a field is named explicitly.
+                    // Looked up by name against the *declaration* (not
+                    // `fields`, which is a plain `Vec<(String, Value)>`
+                    // with no visibility bit of its own) via the same
+                    // `instantiate_struct_fields_named` every other
+                    // field-by-name lookup already goes through.
+                    //
+                    // Guarded on `symbol` actually naming a struct: an
+                    // `after`-hook's synthetic `result` value
+                    // (`macro_body::run_macro_body_inner`) reuses the
+                    // *macro's own* `SymbolId` here as a scope-binding
+                    // convenience, not a real struct declaration —
+                    // `instantiate_struct_fields_named` would error trying
+                    // to resolve fields for it, and nothing about it is
+                    // ever privacy-sensitive to begin with.
+                    let is_private = self.get_symbol(symbol).kind == SymbolKind::Struct && {
+                        let declared = self.instantiate_struct_fields_named(symbol, &args)?;
+                        declared
+                            .iter()
+                            .any(|(declared_name, _, is_pub, ..)| *declared_name == member && !is_pub)
+                    };
+
+                    if is_private && self.symbol_module(symbol) != self.current_module {
+                        return Err(ResolveError::PrivateFieldAccess {
+                            type_name: self.get_symbol(symbol).name.clone(),
+                            field: member,
+                            span: *span,
+                        });
+                    }
+
+                    fields
+                        .into_iter()
+                        .find(|(name, _)| name == &member)
+                        .map(|(_, value)| value)
+                        .ok_or_else(|| ResolveError::UnknownField {
+                            type_name: self.get_symbol(symbol).name.clone(),
+                            field: member,
+                            span: *span,
+                        })
+                }
 
                 Value::Int(_) | Value::Enum { .. } => {
                     Err(ResolveError::ExpectedStructValue { span: *span })
@@ -369,14 +404,13 @@ impl<'a> AliasResolver<'a> {
             });
         };
 
-        let declared_fields: Vec<(String, Option<Expr>)> = self
+        let declared_fields: Vec<(String, bool, Option<Expr>)> = self
             .find_struct_declaration(symbol)?
             .fields
             .iter()
             .filter_map(|item| match item {
-                StructBodyItem::Field(field) => {
-                    literal_name(&field.name).map(|name| (name, field.default.clone()))
-                }
+                StructBodyItem::Field(field) => literal_name(&field.name)
+                    .map(|name| (name, field.is_pub, field.default.clone())),
 
                 // `@for`/`@if`-generated fields aren't visible through
                 // this paren-call construction path yet — it predates
@@ -388,8 +422,8 @@ impl<'a> AliasResolver<'a> {
             })
             .collect();
 
-        let field_names: Vec<String> = declared_fields.iter().map(|(name, _)| name.clone()).collect();
-        let required_count = declared_fields.iter().filter(|(_, default)| default.is_none()).count();
+        let field_names: Vec<String> = declared_fields.iter().map(|(name, ..)| name.clone()).collect();
+        let required_count = declared_fields.iter().filter(|(_, _, default)| default.is_none()).count();
 
         if arguments.len() < required_count || arguments.len() > field_names.len() {
             return Err(ResolveError::InvalidArgumentCount {
@@ -405,8 +439,21 @@ impl<'a> AliasResolver<'a> {
         for (index, argument) in arguments.iter().enumerate() {
             let field_name = match &argument.name {
                 Some(explicit) => {
-                    if !field_names.contains(explicit) {
+                    let Some((_, is_pub, _)) =
+                        declared_fields.iter().find(|(declared_name, ..)| declared_name == explicit)
+                    else {
                         return Err(ResolveError::UnknownField {
+                            type_name: name.clone(),
+                            field: explicit.clone(),
+                            span: argument.span,
+                        });
+                    };
+
+                    // Write side of `Expr::Member`'s read check: naming a
+                    // non-`pub` field explicitly is only allowed from the
+                    // struct's own declaring module.
+                    if !is_pub && self.symbol_module(symbol) != self.current_module {
+                        return Err(ResolveError::PrivateFieldAccess {
                             type_name: name.clone(),
                             field: explicit.clone(),
                             span: argument.span,
@@ -445,7 +492,7 @@ impl<'a> AliasResolver<'a> {
         let struct_ty = ResolvedType::Struct { symbol, args: args.clone() };
         let mut fields = Vec::with_capacity(field_names.len());
 
-        for (field_name, default) in declared_fields {
+        for (field_name, _is_pub, default) in declared_fields {
             let value = match by_name.remove(&field_name) {
                 Some(value) => value,
                 None => {
@@ -457,7 +504,11 @@ impl<'a> AliasResolver<'a> {
                         span,
                     })?;
 
-                    self.eval_value(&default, &default_scope)?
+                    // A field's own `= expr` default is declared alongside
+                    // it, in the struct's own module — same reasoning as
+                    // `check_struct_invariants`.
+                    let declaring_module = self.symbol_module(symbol);
+                    self.with_module(declaring_module, |this| this.eval_value(&default, &default_scope))?
                 }
             };
 
@@ -525,7 +576,7 @@ impl<'a> AliasResolver<'a> {
         let declared = self.instantiate_struct_fields_named(symbol, &args)?;
         let provided = self.unroll_construct_items(fields, scope)?;
 
-        let required_count = declared.iter().filter(|(_, _, _, default)| default.is_none()).count();
+        let required_count = declared.iter().filter(|(_, _, _, _, default)| default.is_none()).count();
 
         if provided.len() < required_count || provided.len() > declared.len() {
             return Err(ResolveError::InvalidArgumentCount {
@@ -539,8 +590,22 @@ impl<'a> AliasResolver<'a> {
         let mut by_name: HashMap<String, Value> = HashMap::new();
 
         for (field_name, value) in provided {
-            if !declared.iter().any(|(declared_name, ..)| *declared_name == field_name) {
+            let Some((_, _, is_pub, ..)) =
+                declared.iter().find(|(declared_name, ..)| *declared_name == field_name)
+            else {
                 return Err(ResolveError::UnknownField {
+                    type_name: name.clone(),
+                    field: field_name,
+                    span,
+                });
+            };
+
+            // Supplying a non-`pub` field by name is the write side of the
+            // same rule `values::eval_value`'s `Expr::Member` arm enforces
+            // for reads: only code in the struct's own declaring module may
+            // name it at all.
+            if !is_pub && self.symbol_module(symbol) != self.current_module {
+                return Err(ResolveError::PrivateFieldAccess {
                     type_name: name.clone(),
                     field: field_name,
                     span,
@@ -568,7 +633,7 @@ impl<'a> AliasResolver<'a> {
 
         let mut result_fields = Vec::with_capacity(declared.len());
 
-        for (field_name, expected, _is_pub, default) in declared {
+        for (field_name, expected, _is_pub, _is_skip, default) in declared {
             let value = match by_name.remove(&field_name) {
                 Some(value) => value,
                 None => {
@@ -580,7 +645,8 @@ impl<'a> AliasResolver<'a> {
                         span,
                     })?;
 
-                    self.eval_value(&default, &default_scope)?
+                    let declaring_module = self.symbol_module(symbol);
+                    self.with_module(declaring_module, |this| this.eval_value(&default, &default_scope))?
                 }
             };
 
@@ -851,7 +917,7 @@ impl<'a> AliasResolver<'a> {
             if self.template_returns(&template, target)?
                 && self.template_accepts(&template, &to_scope)
             {
-                candidates.push((template, to_scope.clone()));
+                candidates.push((template, to_scope.clone(), resolved_type_symbol(source_ty)));
             }
         }
 
@@ -864,7 +930,7 @@ impl<'a> AliasResolver<'a> {
             if self.template_returns(&template, target)?
                 && self.template_accepts(&template, &from_scope)
             {
-                candidates.push((template, from_scope.clone()));
+                candidates.push((template, from_scope.clone(), resolved_type_symbol(target)));
             }
         }
 
@@ -876,10 +942,23 @@ impl<'a> AliasResolver<'a> {
             });
         }
 
-        let Some((template, scope)) = candidates.pop() else {
+        let Some((template, scope, owner)) = candidates.pop() else {
             return Ok(None);
         };
-        let converted = self.eval_value(&template, &scope)?;
+
+        // `template` is a `to`/`from` facet expression, declared alongside
+        // whichever type actually carries that facet — same "runs as its
+        // own declaring module" reasoning as `check_struct_invariants`.
+        // `owner` is `None` only for a `ResolvedType` shape `type_facet_exprs`
+        // never returns facets for, so this loop can't actually run then —
+        // `current_module` stays whatever it already was.
+        let converted = match owner {
+            Some(owner) => {
+                let module = self.symbol_module(owner);
+                self.with_module(module, |this| this.eval_value(&template, &scope))?
+            }
+            None => self.eval_value(&template, &scope)?,
+        };
         let converted = self.specialize_conversion_result(converted, target, span)?;
         self.convert_to_inner(converted, target, span, false).map(Some)
     }
@@ -944,6 +1023,10 @@ impl<'a> AliasResolver<'a> {
         }))
     }
 
+    // The symbol `type_facet_exprs` actually reads a `to`/`from`/`invariant`
+    // facet list off of, when `ty` is a shape that can carry one — kept
+    // separate since a caller of `type_facet_exprs` (`try_explicit_conversion`)
+    // also needs the symbol itself, not just the facets it names.
     fn type_facet_exprs(
         &self,
         ty: &ResolvedType,
@@ -1062,18 +1145,24 @@ impl<'a> AliasResolver<'a> {
                 .ok_or(error),
         };
 
-        let result = declaration.and_then(|declaration| {
-            let value = declaration.value.clone();
-            let ty = declaration.ty.clone();
-            let value = self.eval_value(&value, &HashMap::new())?;
+        // `id`'s own value expression runs as `id`'s own declaring module,
+        // not whatever module first referenced it — same reasoning as
+        // `run_macro_body_inner`'s `current_module` switch.
+        let module = self.symbol_module(id);
+        let result = self.with_module(module, |this| {
+            declaration.and_then(|declaration| {
+                let value = declaration.value.clone();
+                let ty = declaration.ty.clone();
+                let value = this.eval_value(&value, &HashMap::new())?;
 
-            match ty {
-                Some(ty) => {
-                    let target = self.resolve_type_expr(&ty)?;
-                    self.convert_to(value, &target, declaration.span)
+                match ty {
+                    Some(ty) => {
+                        let target = this.resolve_type_expr(&ty)?;
+                        this.convert_to(value, &target, declaration.span)
+                    }
+                    None => Ok(value),
                 }
-                None => Ok(value),
-            }
+            })
         });
 
         self.const_value_stack.pop();
@@ -1275,6 +1364,17 @@ fn tag_nominal(value: Value, symbol: SymbolId) -> Value {
     }
 }
 
+// `ty`'s own declaring symbol, when `ty` is a shape `type_facet_exprs`
+// actually reads facets off of — `None` for anything else (a builtin, a
+// type parameter, a plain enum with no `to`/`from`), the same cases where
+// `type_facet_exprs` itself returns an empty facet list.
+fn resolved_type_symbol(ty: &ResolvedType) -> Option<SymbolId> {
+    match ty {
+        ResolvedType::Struct { symbol, .. } | ResolvedType::Alias { symbol, .. } => Some(*symbol),
+        _ => None,
+    }
+}
+
 fn into_value_error(error: EvalError, scope: &HashMap<String, Value>) -> ResolveError {
     match error {
         // If the name is in scope at all, it was used where an Int was
@@ -1352,7 +1452,7 @@ mod tests {
     fn evaluates_plain_int_emit() {
         let program = parse_fixture("double.basm");
         let declaration = find_macro(&program, "double");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1369,7 +1469,7 @@ mod tests {
         let program = parse_fixture("enum_value_position.basm");
 
         let declaration = find_macro(&program, "use_variant");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1382,7 +1482,7 @@ mod tests {
         let program = parse_fixture("make_reg_named.basm");
 
         let declaration = find_macro(&program, "make_reg");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let reg_id = symbols.lookup("Reg").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -1411,7 +1511,7 @@ mod tests {
         let program = parse_fixture("make_reg_positional.basm");
 
         let declaration = find_macro(&program, "make_reg");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let reg_id = symbols.lookup("Reg").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -1440,7 +1540,7 @@ mod tests {
         let program = parse_fixture("read_id.basm");
 
         let declaration = find_macro(&program, "read_id");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let reg_id = symbols.lookup("Reg").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -1469,7 +1569,7 @@ mod tests {
         let program = parse_fixture("unknown_field.basm");
 
         let declaration = find_macro(&program, "bad");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1487,7 +1587,7 @@ mod tests {
         let program = parse_fixture("wrong_arity.basm");
 
         let declaration = find_macro(&program, "bad");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1505,7 +1605,7 @@ mod tests {
         let program = parse_fixture("field_type_mismatch.basm");
 
         let declaration = find_macro(&program, "wrap");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1530,7 +1630,7 @@ mod tests {
         let program = parse_fixture("non_struct_callee.basm");
 
         let declaration = find_macro(&program, "bad");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1546,7 +1646,7 @@ mod tests {
     #[test]
     fn resolves_top_level_named_const_as_invocation_operand() {
         let program = parse_fixture("named_const_reference.basm");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1576,7 +1676,7 @@ mod tests {
                        pub const broken = does_not_exist\n";
         let tokens = lexer::lex(source).expect("fixture should lex");
         let program = parser::parse(tokens).expect("fixture should parse");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1587,7 +1687,7 @@ mod tests {
     #[test]
     fn resolve_all_const_values_accepts_every_valid_const() {
         let program = parse_fixture("named_const_reference.basm");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1599,7 +1699,7 @@ mod tests {
         let program = parse_fixture("construct_flat_fields.basm");
 
         let declaration = find_macro(&program, "make_reg");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let reg_id = symbols.lookup("Reg").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -1628,7 +1728,7 @@ mod tests {
         let program = parse_fixture("struct_field_default.basm");
 
         let declaration = find_macro(&program, "make_reg_call_with_default");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let reg_id = symbols.lookup("Reg").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -1657,7 +1757,7 @@ mod tests {
         let program = parse_fixture("struct_field_default.basm");
 
         let declaration = find_macro(&program, "make_reg_call_override_default");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1678,7 +1778,7 @@ mod tests {
         let program = parse_fixture("struct_field_default.basm");
 
         let declaration = find_macro(&program, "make_reg_construct_with_default");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1699,7 +1799,7 @@ mod tests {
         let program = parse_fixture("construct_generic_for.basm");
 
         let declaration = find_macro(&program, "make_array");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let array_id = symbols.lookup("Array").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -1729,7 +1829,7 @@ mod tests {
         let program = parse_fixture("construct_generic_for_if.basm");
 
         let declaration = find_macro(&program, "make_array");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1758,7 +1858,7 @@ mod tests {
         let program = parse_fixture("construct_with_invariant.basm");
 
         let declaration = find_macro(&program, "make");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1773,7 +1873,7 @@ mod tests {
         let program = parse_fixture("construct_with_invariant.basm");
 
         let declaration = find_macro(&program, "make");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1791,7 +1891,7 @@ mod tests {
         let program = parse_fixture("call_with_invariant.basm");
 
         let declaration = find_macro(&program, "make");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1806,7 +1906,7 @@ mod tests {
         let program = parse_fixture("string_literal_value.basm");
 
         let declaration = find_macro(&program, "make");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1821,7 +1921,7 @@ mod tests {
         let program = parse_fixture("string_literal_value.basm");
 
         let declaration = find_macro(&program, "make_multi");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1836,7 +1936,7 @@ mod tests {
         let program = parse_fixture("call_with_invariant.basm");
 
         let declaration = find_macro(&program, "make");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1854,7 +1954,7 @@ mod tests {
         let program = parse_fixture("as_conversion.basm");
 
         let declaration = find_macro(&program, "make");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let bits_id = symbols.lookup("Bits").unwrap();
         let ubyte_id = symbols.lookup("UByte").unwrap();
         let consts = HashMap::new();
@@ -1881,7 +1981,7 @@ mod tests {
         let program = parse_fixture("as_conversion.basm");
 
         let declaration = find_macro(&program, "make");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1904,7 +2004,7 @@ mod tests {
         let program = parse_fixture("as_conversion.basm");
 
         let declaration = find_macro(&program, "make");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1926,7 +2026,7 @@ mod tests {
     fn a_value_bypassing_as_does_not_satisfy_a_nominal_parameter() {
         let program = parse_fixture("as_conversion.basm");
 
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let bits_id = symbols.lookup("Bits").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -1956,7 +2056,7 @@ mod tests {
     #[test]
     fn checked_const_wraps_and_tags_its_declared_value() {
         let program = parse_fixture("checked_const.basm");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let bits_id = symbols.lookup("Bits").unwrap();
         let ubyte_id = symbols.lookup("UByte").unwrap();
         let consts = HashMap::new();
@@ -1980,7 +2080,7 @@ mod tests {
     #[test]
     fn checked_const_is_usable_as_an_invocation_operand_with_no_as_at_the_call_site() {
         let program = parse_fixture("checked_const.basm");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let bits_id = symbols.lookup("Bits").unwrap();
         let ubyte_id = symbols.lookup("UByte").unwrap();
         let consts = HashMap::new();
@@ -2005,7 +2105,7 @@ mod tests {
     #[test]
     fn checked_const_rejects_a_declared_value_failing_its_types_invariant() {
         let program = parse_fixture("checked_const_out_of_range.basm");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 

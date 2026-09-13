@@ -2,8 +2,12 @@
 //! itself: [`collect_symbols`] builds a whole-program [`SymbolTable`] of
 //! top-level declarations, and [`AliasResolver`] resolves [`crate::types::TypeExpr`]
 //! trees against that table into [`ResolvedType`]s, instantiating generic
-//! struct fields along the way. Import resolution has already happened by
-//! this point, so nothing here needs to know about modules or files.
+//! struct fields along the way. Import resolution (splicing every imported
+//! declaration into one flat statement list) has already happened by this
+//! point — but each declaration's *origin* module still matters for
+//! non-`pub` struct field visibility, so `collect_symbols` takes a
+//! `module_of` slice (from `crate::loader::ModuleOrigins`, reshuffled
+//! through `resolver::unroll_top_level`) to tag each [`Symbol`] with it.
 
 mod aliases;
 mod consts;
@@ -29,10 +33,13 @@ pub use values::Value;
 use crate::ast::{Program, Statement};
 use crate::token::Span;
 
-pub fn collect_symbols(program: &Program) -> Result<SymbolTable, ResolveError> {
+/// `module_of[i]` is the module that declared `program.statements[i]` —
+/// same length as `program.statements`, in the same order. Test call sites
+/// that don't care about module attribution can pass an all-zeros slice.
+pub fn collect_symbols(program: &Program, module_of: &[usize]) -> Result<SymbolTable, ResolveError> {
     let mut table = SymbolTable::new();
 
-    for statement in &program.statements {
+    for (statement, &module) in program.statements.iter().zip(module_of) {
         let result = match statement {
             // A top-level struct/enum/type-alias/macro's name can't contain
             // an unevaluated `` `expr` `` splice — evaluating one needs a
@@ -47,7 +54,7 @@ pub fn collect_symbols(program: &Program) -> Result<SymbolTable, ResolveError> {
                     return Err(ResolveError::ComputedNameNotAllowed { span: decl.span });
                 };
 
-                table.insert(name, SymbolKind::Struct, decl.span)
+                table.insert(name, SymbolKind::Struct, decl.span, module)
             }
 
             Statement::Enum(decl) => {
@@ -55,7 +62,7 @@ pub fn collect_symbols(program: &Program) -> Result<SymbolTable, ResolveError> {
                     return Err(ResolveError::ComputedNameNotAllowed { span: decl.span });
                 };
 
-                table.insert(name, SymbolKind::Enum, decl.span)
+                table.insert(name, SymbolKind::Enum, decl.span, module)
             }
 
             Statement::TypeAlias(decl) => {
@@ -63,7 +70,7 @@ pub fn collect_symbols(program: &Program) -> Result<SymbolTable, ResolveError> {
                     return Err(ResolveError::ComputedNameNotAllowed { span: decl.span });
                 };
 
-                table.insert(name, SymbolKind::TypeAlias, decl.span)
+                table.insert(name, SymbolKind::TypeAlias, decl.span, module)
             }
 
             Statement::Const(decl) => {
@@ -71,7 +78,7 @@ pub fn collect_symbols(program: &Program) -> Result<SymbolTable, ResolveError> {
                     return Err(ResolveError::ComputedNameNotAllowed { span: decl.span });
                 };
 
-                table.insert(name, SymbolKind::Const, decl.span)
+                table.insert(name, SymbolKind::Const, decl.span, module)
             }
 
             Statement::Macro(decl) => {
@@ -79,7 +86,7 @@ pub fn collect_symbols(program: &Program) -> Result<SymbolTable, ResolveError> {
                     return Err(ResolveError::ComputedNameNotAllowed { span: decl.span });
                 };
 
-                table.insert(name, SymbolKind::Macro, decl.span)
+                table.insert(name, SymbolKind::Macro, decl.span, module)
             }
 
             // Only top-level labels are registered — `collect_symbols`
@@ -92,6 +99,7 @@ pub fn collect_symbols(program: &Program) -> Result<SymbolTable, ResolveError> {
                     label.name.clone(),
                     SymbolKind::Label,
                     label.span,
+                    module,
                 )
             }
 
@@ -165,6 +173,15 @@ pub enum ResolveError {
     },
 
     UnknownField {
+        type_name: String,
+        field: String,
+        span: Span,
+    },
+
+    /// `field` exists on `type_name` but isn't `pub`, and the code trying
+    /// to read or supply it isn't in the module that declared `type_name`
+    /// — see `AliasResolver::current_module`/`symbol_module`.
+    PrivateFieldAccess {
         type_name: String,
         field: String,
         span: Span,
@@ -398,7 +415,8 @@ impl ResolveError {
             | Self::DivisionByZero { span } | Self::ExpectedType { span, .. }
             | Self::InvalidGenericArity { span, .. } | Self::ExpectedConstant { span, .. }
             | Self::ExpectedConstantExpression { span } | Self::UnknownConstant { span, .. }
-            | Self::UnknownField { span, .. } | Self::FacetNotApplicable { span, .. }
+            | Self::UnknownField { span, .. } | Self::PrivateFieldAccess { span, .. }
+            | Self::FacetNotApplicable { span, .. }
             | Self::DuplicateFacet { span, .. } | Self::InvalidArgumentCount { span, .. }
             | Self::ExpectedStructCallee { span, .. } | Self::ExpectedIntValue { span }
             | Self::ExpectedStructValue { span } | Self::ExpectedValueExpression { span }
@@ -422,7 +440,7 @@ impl ResolveError {
             | Self::ExpectedType { name, .. } | Self::ExpectedConstant { name, .. }
             | Self::UnknownConstant { name, .. } | Self::UnknownMacro { name, .. }
             | Self::ExpectedMacro { name, .. } => Some(name),
-            Self::UnknownField { field, .. } => Some(field),
+            Self::UnknownField { field, .. } | Self::PrivateFieldAccess { field, .. } => Some(field),
             _ => None,
         }
     }

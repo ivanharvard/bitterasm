@@ -258,6 +258,8 @@ impl<'a> AliasResolver<'a> {
         // `macro_call_stack` already uses — correctly nests across a
         // recursive/nested macro call, generic or not.
         let previous_generic_scope = std::mem::take(&mut self.generic_scope);
+        let previous_module = self.current_module;
+        self.current_module = self.symbol_module(symbol);
 
         self.macro_call_stack.push(symbol);
         let result = (|| {
@@ -318,6 +320,7 @@ impl<'a> AliasResolver<'a> {
 
         self.macro_call_stack.pop();
         self.generic_scope = previous_generic_scope;
+        self.current_module = previous_module;
         result
     }
 
@@ -1154,7 +1157,7 @@ mod tests {
         let program = parse_fixture("combo.basm");
 
         let declaration = find_macro(&program, "combo");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("combo").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -1178,7 +1181,7 @@ mod tests {
     fn match_selects_the_first_equal_arm_or_wildcard() {
         let program = parse_fixture("match.basm");
         let declaration = find_macro(&program, "classify");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("classify").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -1199,7 +1202,7 @@ mod tests {
     #[test]
     fn option_variants_construct_and_destructure() {
         let program = parse_fixture("option.basm");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1249,7 +1252,7 @@ mod tests {
     #[test]
     fn to_and_from_facets_convert_struct_fields_and_sources() {
         let program = parse_fixture("conversion_facets.basm");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1310,7 +1313,7 @@ mod tests {
     #[test]
     fn before_and_after_hooks_see_parameters_and_returned_value() {
         let program = parse_fixture("macro_hooks.basm");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
         let declaration = find_macro(&program, "increment");
@@ -1342,7 +1345,7 @@ mod tests {
         let program = parse_fixture("generic_alias.basm");
 
         let declaration = find_macro(&program, "make_byte");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("make_byte").unwrap();
         let bits_id = symbols.lookup("bits").unwrap();
         let consts = HashMap::new();
@@ -1373,7 +1376,7 @@ mod tests {
         let program = parse_fixture("unsupported_statement.basm");
 
         let declaration = find_macro(&program, "bad");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("bad").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -1391,7 +1394,7 @@ mod tests {
         let program = parse_fixture("top_level_invocation.basm");
 
         let invocation = find_invocation(&program, "double");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1414,7 +1417,7 @@ mod tests {
         let program = parse_fixture("nested_invocation.basm");
 
         let declaration = find_macro(&program, "outer");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("outer").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -1443,7 +1446,7 @@ mod tests {
         let program = parse_fixture("read_id.basm");
 
         let declaration = find_macro(&program, "read_id");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("read_id").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -1468,7 +1471,7 @@ mod tests {
         let program = parse_fixture("self_recursive.basm");
 
         let declaration = find_macro(&program, "loopy");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("loopy").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -1491,7 +1494,7 @@ mod tests {
         let program = parse_fixture("mutual_recursion.basm");
 
         let declaration = find_macro(&program, "ping");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("ping").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -1522,7 +1525,7 @@ mod tests {
                       macro calculate() { @emit factorial(6)\n }\n\
                       calculate\n";
         let program = parser::parse(lexer::lex(source).unwrap()).unwrap();
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
         let invocation = find_invocation(&program, "calculate");
@@ -1541,7 +1544,7 @@ mod tests {
                       macro calculate() { @emit sum_to(100)\n }\n\
                       calculate\n";
         let program = parser::parse(lexer::lex(source).unwrap()).unwrap();
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
         let invocation = find_invocation(&program, "calculate");
@@ -1557,7 +1560,7 @@ mod tests {
                       macro calculate() { @emit forever(0)\n }\n\
                       calculate\n";
         let program = parser::parse(lexer::lex(source).unwrap()).unwrap();
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
         let invocation = find_invocation(&program, "calculate");
@@ -1573,7 +1576,7 @@ mod tests {
         let program = parse_fixture("invocation_names_struct.basm");
 
         let invocation = find_invocation(&program, "Reg");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1588,7 +1591,7 @@ mod tests {
         let program = parse_fixture("unknown_invocation.basm");
 
         let invocation = find_invocation(&program, "ghost");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1603,7 +1606,7 @@ mod tests {
         let program = parse_fixture("local_const.basm");
 
         let declaration = find_macro(&program, "doubles");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("doubles").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -1628,7 +1631,7 @@ mod tests {
         let program = parse_fixture("spliced_const_name.basm");
 
         let declaration = find_macro(&program, "make_reg64");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("make_reg64").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -1652,7 +1655,7 @@ mod tests {
         let program = parse_fixture("generated_pub_const.basm");
 
         let declaration = find_macro(&program, "make_reg");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("make_reg").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -1693,7 +1696,7 @@ mod tests {
         let program = parse_fixture("generated_declarations.basm");
 
         let declaration = find_macro(&program, "make_stuff");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("make_stuff").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -1724,7 +1727,7 @@ mod tests {
         let program = parse_fixture("generated_declaration_spliced_name.basm");
 
         let declaration = find_macro(&program, "make_reg_type");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("make_reg_type").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -1746,7 +1749,7 @@ mod tests {
         let program = parse_fixture("generic_macro_array_updated.basm");
 
         let invocation = find_invocation(&program, "updated");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -1774,7 +1777,7 @@ mod tests {
         let program = parse_fixture("nested_invocation_generates.basm");
 
         let declaration = find_macro(&program, "outer");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("outer").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -1799,7 +1802,7 @@ mod tests {
         let program = parse_fixture("generated_duplicate_name.basm");
 
         let declaration = find_macro(&program, "outer_twice");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("outer_twice").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -1818,7 +1821,7 @@ mod tests {
         let program = parse_fixture("generated_const_leaves_bare_identifiers.basm");
 
         let declaration = find_macro(&program, "make_ref");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("make_ref").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -1851,7 +1854,7 @@ mod tests {
         let program = parser::parse(tokens).expect("fixture should parse");
 
         let declaration = find_macro(&program, "foo");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("foo").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -1870,7 +1873,7 @@ mod tests {
         let program = parse_fixture("backward_label.basm");
 
         let declaration = find_macro(&program, "reads_label");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("reads_label").unwrap();
         let label_id = symbols.lookup("mylabel").unwrap();
         let consts = HashMap::new();
@@ -1879,7 +1882,7 @@ mod tests {
         positions.insert(label_id, Int::from(0));
 
         let mut resolver =
-            AliasResolver::new(&program, &symbols, &consts, LabelMode::Strict, positions);
+            AliasResolver::new(&program, &symbols, &consts, LabelMode::Strict, positions, 0);
 
         let mut stack = Vec::new();
         let result = resolver.run_macro_body(symbol, declaration, vec![], &mut stack).unwrap();
@@ -1892,15 +1895,21 @@ mod tests {
         let program = parse_fixture("unknown_identifier_in_body.basm");
 
         let declaration = find_macro(&program, "reads_nothing");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("reads_nothing").unwrap();
         let consts = HashMap::new();
 
         // Tolerant mode only substitutes a placeholder for a *known*
         // label whose position isn't recorded yet — a name that isn't a
         // symbol at all keeps erroring immediately, in either mode.
-        let mut resolver =
-            AliasResolver::new(&program, &symbols, &consts, LabelMode::Tolerant, HashMap::new());
+        let mut resolver = AliasResolver::new(
+            &program,
+            &symbols,
+            &consts,
+            LabelMode::Tolerant,
+            HashMap::new(),
+            0,
+        );
 
         let mut stack = Vec::new();
         let error = resolver.run_macro_body(symbol, declaration, vec![], &mut stack).unwrap_err();
@@ -1915,7 +1924,7 @@ mod tests {
     fn label_name_colliding_with_a_const_is_a_duplicate_symbol() {
         let program = parse_fixture("label_collides_with_const.basm");
 
-        let error = collect_symbols(&program).unwrap_err();
+        let error = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap_err();
 
         assert!(matches!(
             error,
@@ -1926,7 +1935,7 @@ mod tests {
     #[test]
     fn forward_and_backward_label_references_resolve_via_two_pass_discovery() {
         let program = parse_fixture("labels_forward_and_backward.basm");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
 
         // Pass 1 (position discovery, tolerant): mirrors
@@ -1941,6 +1950,7 @@ mod tests {
             &consts,
             LabelMode::Tolerant,
             HashMap::new(),
+            0,
         );
 
         for statement in &program.statements {
@@ -1968,6 +1978,7 @@ mod tests {
             &consts,
             LabelMode::Strict,
             label_positions,
+            0,
         );
 
         let mut emitted = Vec::new();
@@ -2009,7 +2020,7 @@ mod tests {
         let program = parse_fixture("assert_condition.basm");
 
         let declaration = find_macro(&program, "double");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("double").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -2034,7 +2045,7 @@ mod tests {
         let program = parse_fixture("assert_condition.basm");
 
         let declaration = find_macro(&program, "double");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("double").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -2050,7 +2061,7 @@ mod tests {
         let program = parse_fixture("assert_with_message.basm");
 
         let declaration = find_macro(&program, "double");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("double").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -2071,7 +2082,7 @@ mod tests {
         let program = parse_fixture("assert_non_string_message.basm");
 
         let declaration = find_macro(&program, "double");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("double").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -2087,7 +2098,7 @@ mod tests {
         let program = parse_fixture("assert_wrong_arity.basm");
 
         let declaration = find_macro(&program, "double");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("double").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -2106,7 +2117,7 @@ mod tests {
         let program = parse_fixture("assert_non_int_condition.basm");
 
         let declaration = find_macro(&program, "bad");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("bad").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -2122,7 +2133,7 @@ mod tests {
         let program = parse_fixture("for_basic.basm");
 
         let declaration = find_macro(&program, "emit_range");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("emit_range").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -2152,7 +2163,7 @@ mod tests {
         let program = parse_fixture("for_basic.basm");
 
         let declaration = find_macro(&program, "emit_range");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("emit_range").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -2173,7 +2184,7 @@ mod tests {
         let program = parse_fixture("for_over_struct_pub_fields.basm");
 
         let declaration = find_macro(&program, "emit_pub_fields");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let macro_symbol = symbols.lookup("emit_pub_fields").unwrap();
         let mixed_symbol = symbols.lookup("Mixed").unwrap();
         let consts = HashMap::new();
@@ -2206,11 +2217,52 @@ mod tests {
     }
 
     #[test]
+    fn for_over_a_struct_value_skips_a_pub_skip_field() {
+        let program = parse_fixture("for_over_struct_pub_skip_fields.basm");
+
+        let declaration = find_macro(&program, "emit_pub_fields");
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
+        let macro_symbol = symbols.lookup("emit_pub_fields").unwrap();
+        let mixed_symbol = symbols.lookup("Mixed").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let arg = Value::Struct {
+            symbol: mixed_symbol,
+            args: vec![],
+            fields: vec![
+                ("a".to_string(), Value::Int(Int::from(1))),
+                ("b".to_string(), Value::Int(Int::from(2))),
+                ("len".to_string(), Value::Int(Int::from(99))),
+                ("c".to_string(), Value::Int(Int::from(3))),
+            ],
+            nominal: None,
+        };
+
+        let mut stack = Vec::new();
+        let result = resolver
+            .run_macro_body(macro_symbol, declaration, vec![arg], &mut stack)
+            .unwrap();
+
+        // `b` is excluded for the usual reason (not `pub`); `len` is
+        // excluded despite being `pub`, because `skip` marks it as
+        // deliberately not one of the struct's iterated elements.
+        assert_eq!(
+            result,
+            MacroExpansion {
+                emitted: vec![Value::Int(Int::from(1)), Value::Int(Int::from(3))],
+                generated: vec![],
+                returned: None,
+            }
+        );
+    }
+
+    #[test]
     fn return_inside_for_stops_the_whole_body_not_just_the_iteration() {
         let program = parse_fixture("for_with_return.basm");
 
         let declaration = find_macro(&program, "loop_then_return");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("loop_then_return").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -2238,7 +2290,7 @@ mod tests {
         let program = parse_fixture("if_else.basm");
 
         let declaration = find_macro(&program, "sign");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("sign").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -2263,7 +2315,7 @@ mod tests {
         let program = parse_fixture("if_else.basm");
 
         let declaration = find_macro(&program, "sign");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("sign").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -2288,7 +2340,7 @@ mod tests {
         let program = parse_fixture("if_no_else.basm");
 
         let declaration = find_macro(&program, "maybe_emit");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("maybe_emit").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -2313,7 +2365,7 @@ mod tests {
         let program = parse_fixture("for_if_nested.basm");
 
         let declaration = find_macro(&program, "replace_at");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("replace_at").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
@@ -2350,7 +2402,7 @@ mod tests {
                       macro encode(value: Reg) { @emit 22\n }\n\
                       encode 7\nencode Reg(3)\n";
         let program = parser::parse(lexer::lex(source).unwrap()).unwrap();
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         assert_eq!(symbols.lookup_all("encode").len(), 2);
 
         let consts = HashMap::new();
@@ -2380,7 +2432,7 @@ mod tests {
                       macro pick(left: int, right: int) { @emit 2\n }\n\
                       pick 3\npick 3, 4\n";
         let program = parser::parse(lexer::lex(source).unwrap()).unwrap();
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
@@ -2403,7 +2455,7 @@ mod tests {
         let source = "macro scale(value: int, places: int = 2, factor: int = 10 * places) { @emit value * factor\n }\n\
                       scale 3\nscale 3, 4\nscale 3, 4, 5\n";
         let program = parser::parse(lexer::lex(source).unwrap()).unwrap();
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
         let emitted: Vec<_> = program
@@ -2424,7 +2476,7 @@ mod tests {
                       macro use_default() { @emit precision()\n }\n\
                       use_default\n";
         let program = parser::parse(lexer::lex(source).unwrap()).unwrap();
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
         let invocation = find_invocation(&program, "use_default");
@@ -2441,7 +2493,7 @@ mod tests {
                       macro choose(value: Reg, precision: int = 10) { @emit 2\n }\n\
                       choose 3\nchoose Reg(4)\n";
         let program = parser::parse(lexer::lex(source).unwrap()).unwrap();
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
         let emitted: Vec<_> = program
@@ -2462,7 +2514,7 @@ mod tests {
                       macro choose(other: int) { @emit 2\n }\n\
                       choose 3\n";
         let program = parser::parse(lexer::lex(source).unwrap()).unwrap();
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
         let invocation = find_invocation(&program, "choose");
@@ -2480,7 +2532,7 @@ mod tests {
                       macro choose(value: Reg) { @emit 2\n }\n\
                       choose 1, 2\n";
         let program = parser::parse(lexer::lex(source).unwrap()).unwrap();
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
         let invocation = find_invocation(&program, "choose");
@@ -2497,7 +2549,7 @@ mod tests {
         let program = parse_fixture("if_non_int_condition.basm");
 
         let declaration = find_macro(&program, "bad");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let symbol = symbols.lookup("bad").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);

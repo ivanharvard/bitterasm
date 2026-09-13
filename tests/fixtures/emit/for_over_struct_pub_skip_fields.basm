@@ -1,0 +1,12 @@
+struct Mixed {
+    pub a: int,
+    b: int,
+    pub skip len: int,
+    pub c: int
+}
+
+macro emit_pub_fields(m: Mixed) {
+    @for i in m {
+        @emit i
+    }
+}

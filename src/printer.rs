@@ -341,6 +341,7 @@ fn token_text(kind: &TokenKind) -> String {
         TokenKind::Import => "import".to_string(),
         TokenKind::As => "as".to_string(),
         TokenKind::Pub => "pub".to_string(),
+        TokenKind::Skip => "skip".to_string(),
         TokenKind::Macro => "macro".to_string(),
         TokenKind::Type => "type".to_string(),
         TokenKind::Struct => "struct".to_string(),

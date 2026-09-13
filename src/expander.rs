@@ -275,6 +275,7 @@ fn substitute_struct_body_items(
                 name: substitute_spliced_name(&field.name, substitutions),
                 ty: substitute_type_expr(&field.ty, substitutions),
                 is_pub: field.is_pub,
+                is_skip: field.is_skip,
                 default: field.default.as_ref().map(|d| substitute_expr(d, substitutions)),
                 span: field.span,
             }),

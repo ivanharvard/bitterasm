@@ -258,6 +258,13 @@ impl Parser {
             false
         };
 
+        let is_skip = if self.check(&TokenKind::Skip) {
+            self.advance();
+            true
+        } else {
+            false
+        };
+
         let (name, _) = self.parse_spliced_name()?;
 
         self.expect_simple(TokenKind::Colon)?;
@@ -281,6 +288,7 @@ impl Parser {
             name,
             ty,
             is_pub,
+            is_skip,
             default,
             span: Span::new(start, end),
         })

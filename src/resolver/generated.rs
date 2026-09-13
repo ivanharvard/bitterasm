@@ -126,7 +126,7 @@ impl<'a> AliasResolver<'a> {
         };
 
         self.generated_symbols
-            .insert(name.clone(), kind, span)
+            .insert(name.clone(), kind, span, self.current_module)
             .map_err(|duplicate| ResolveError::DuplicateSymbol {
                 name: duplicate.name,
                 span: duplicate.span,
@@ -181,6 +181,7 @@ impl<'a> AliasResolver<'a> {
                     span,
                 },
                 is_pub: true,
+                is_skip: false,
                 default: None,
                 span,
             }));
@@ -250,12 +251,12 @@ impl<'a> AliasResolver<'a> {
             return Err(ResolveError::ExpectedStructValue { span: source.span() });
         };
 
-        let pub_flags = self.struct_field_pub_flags(symbol, &args)?;
+        let iterable_flags = self.struct_field_iterable_flags(symbol, &args)?;
 
         Ok(fields
             .into_iter()
-            .zip(pub_flags)
-            .filter(|(_, is_pub)| *is_pub)
+            .zip(iterable_flags)
+            .filter(|(_, is_iterable)| *is_iterable)
             .map(|(field, _)| field)
             .collect())
     }

@@ -14,9 +14,9 @@
 pub enum Op { Sub, Mul, Shr, Band }
 
 pub struct BinOp {
-    op: Op,
-    left: Deferred,
-    right: Deferred,
+    pub op: Op,
+    pub left: Deferred,
+    pub right: Deferred,
 }
 
 pub enum Deferred {
@@ -103,5 +103,5 @@ pub macro band(a: Deferred, b: int) -> Deferred {
 # `bitter` recognizes this struct by name exactly the way it already
 # recognizes `bits`.
 pub struct Positioned<const width: int> {
-    value: Deferred,
+    pub value: Deferred,
 }

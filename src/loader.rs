@@ -136,6 +136,58 @@ struct LoadedModule {
 }
 
 pub fn load_program(entry: &Path) -> Result<Program, LoadError> {
+    Ok(load_program_with_modules(entry)?.0)
+}
+
+/// A loaded program's statements, one-to-one with a "which file declared
+/// this" tag per statement — [`ModuleOrigins::path`] turns that tag back
+/// into a path for diagnostics. Every statement in the flattened program
+/// has a tag: the entry file's own top-level statements get its module id
+/// (whatever [`load_module`] happened to assign it, not necessarily 0 — see
+/// `load_module`'s own doc), and everything spliced in from an import
+/// carries the module id of whichever file actually declared it, however
+/// many other files it was spliced through to get there.
+#[derive(Debug, Clone, Default)]
+pub struct ModuleOrigins {
+    module_of_statement: Vec<usize>,
+    paths: Vec<PathBuf>,
+    entry_module: usize,
+}
+
+impl ModuleOrigins {
+    pub fn module_of(&self, statement_index: usize) -> usize {
+        self.module_of_statement[statement_index]
+    }
+
+    /// One entry per statement in the `Program` this came from, in the
+    /// same order — the shape [`crate::resolver::unroll_top_level`] takes.
+    pub fn all(&self) -> &[usize] {
+        &self.module_of_statement
+    }
+
+    pub fn path(&self, module: usize) -> &Path {
+        &self.paths[module]
+    }
+
+    /// The module id of the file originally passed to
+    /// [`load_program_with_modules`] — not necessarily 0; see
+    /// [`load_module`]'s own doc for why discovery order doesn't guarantee
+    /// that.
+    pub fn entry_module(&self) -> usize {
+        self.entry_module
+    }
+}
+
+/// Like [`load_program`], but also returns, for each of the returned
+/// `Program`'s top-level statements, which file originally declared it —
+/// needed to enforce a non-`pub` struct field's visibility against the
+/// module that's actually trying to read it, since that check has to
+/// survive the same flattening that makes privacy for top-level
+/// declarations need name-mangling in the first place (see "privacy
+/// mangling" below). Ordinary callers that don't care about module
+/// attribution (formatting, `expand`, every existing test) should keep
+/// using [`load_program`].
+pub fn load_program_with_modules(entry: &Path) -> Result<(Program, ModuleOrigins), LoadError> {
     let entry_path = canonicalize(entry)?;
 
     let mut cache: HashMap<PathBuf, LoadedModule> = HashMap::new();
@@ -151,20 +203,41 @@ pub fn load_program(entry: &Path) -> Result<Program, LoadError> {
 
     let entry_module = &cache[&entry_path];
     let span = entry_module.span;
+    let entry_module_id = entry_module.module_id;
 
     let mut statements = Vec::new();
+    let mut module_of_statement = Vec::new();
 
     for statement in &entry_module.statements {
         match statement {
             Statement::Import(import) => {
-                statements.extend(splice_import(import, &entry_path, &cache, &mut spliced)?);
+                let mut spliced_modules = Vec::new();
+                statements.extend(splice_import(
+                    import,
+                    &entry_path,
+                    &cache,
+                    &mut spliced,
+                    &mut spliced_modules,
+                )?);
+                module_of_statement.extend(spliced_modules);
             }
 
-            other => statements.push(other.clone()),
+            other => {
+                statements.push(other.clone());
+                module_of_statement.push(entry_module_id);
+            }
         }
     }
 
-    Ok(Program { statements, span })
+    let mut paths: Vec<PathBuf> = vec![PathBuf::new(); cache.len()];
+    for (path, module) in &cache {
+        paths[module.module_id] = path.clone();
+    }
+
+    Ok((
+        Program { statements, span },
+        ModuleOrigins { module_of_statement, paths, entry_module: entry_module_id },
+    ))
 }
 
 /// Loads and parses the entry module with all imported parser signatures and
@@ -371,6 +444,7 @@ fn splice_import(
     importer: &Path,
     cache: &HashMap<PathBuf, LoadedModule>,
     spliced: &mut HashSet<PathBuf>,
+    out_modules: &mut Vec<usize>,
 ) -> Result<Vec<Statement>, LoadError> {
     let target_paths: Vec<PathBuf> = match resolve_import_paths(import, importer)? {
         ImportResolution::Plain(target_path) => {
@@ -412,7 +486,7 @@ fn splice_import(
     let mut out = Vec::new();
 
     for target_path in &target_paths {
-        collect_declarations(target_path, cache, spliced, &mut out)?;
+        collect_declarations(target_path, cache, spliced, &mut out, out_modules)?;
     }
 
     Ok(out)
@@ -423,6 +497,7 @@ fn collect_declarations(
     cache: &HashMap<PathBuf, LoadedModule>,
     spliced: &mut HashSet<PathBuf>,
     out: &mut Vec<Statement>,
+    out_modules: &mut Vec<usize>,
 ) -> Result<(), LoadError> {
     if !spliced.insert(path.to_path_buf()) {
         return Ok(());
@@ -441,7 +516,7 @@ fn collect_declarations(
         match statement {
             Statement::Import(nested) => {
                 let nested_path = resolve_module_path(&nested.module, path)?;
-                collect_declarations(&nested_path, cache, spliced, out)?;
+                collect_declarations(&nested_path, cache, spliced, out, out_modules)?;
             }
 
             // A top-level `@for`/`@if`/`@match` (see `resolver::toplevel`'s
@@ -464,6 +539,7 @@ fn collect_declarations(
                 let mut declaration = statement.clone();
                 rename_statement(&mut declaration, &renames);
                 out.push(declaration);
+                out_modules.push(module.module_id);
             }
 
             // Labels and invocations are program bodies, not declarations;
@@ -958,7 +1034,7 @@ mod tests {
 
         assert_eq!(bits_struct.fields.len(), 1);
 
-        let symbols = crate::resolver::collect_symbols(&program)
+        let symbols = crate::resolver::collect_symbols(&program, &vec![0; program.statements.len()])
             .expect("symbol collection should succeed");
 
         let no_consts = HashMap::new();
@@ -992,7 +1068,7 @@ mod tests {
 
         let program = load_program(&dir.join("a.basm")).expect("a.basm should load");
 
-        let symbols = crate::resolver::collect_symbols(&program)
+        let symbols = crate::resolver::collect_symbols(&program, &vec![0; program.statements.len()])
             .expect("symbol collection should succeed");
 
         let consts = crate::resolver::ConstEvaluator::new(&program, &symbols)
@@ -1083,6 +1159,42 @@ mod tests {
     }
 
     #[test]
+    fn module_origins_attribute_entry_and_spliced_statements_to_different_modules() {
+        let dir = scratch_dir("module_origins");
+
+        fs::write(dir.join("helper.basm"), "pub struct Helper { x: int }\n").unwrap();
+        fs::write(
+            dir.join("main.basm"),
+            "from .helper import *\n\npub struct Main { y: int }\n",
+        )
+        .unwrap();
+
+        let (program, origins) =
+            load_program_with_modules(&dir.join("main.basm")).expect("main.basm should load");
+
+        let helper_index = program
+            .statements
+            .iter()
+            .position(|s| matches!(s, Statement::Struct(decl) if literal_name(&decl.name).as_deref() == Some("Helper")))
+            .expect("Helper should be present");
+
+        let main_index = program
+            .statements
+            .iter()
+            .position(|s| matches!(s, Statement::Struct(decl) if literal_name(&decl.name).as_deref() == Some("Main")))
+            .expect("Main should be present");
+
+        let helper_module = origins.module_of(helper_index);
+        let main_module = origins.module_of(main_index);
+
+        assert_ne!(helper_module, main_module);
+        assert_eq!(origins.path(helper_module), dir.join("helper.basm"));
+        assert_eq!(origins.path(main_module), dir.join("main.basm"));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn import_star_carries_a_top_level_for_across_the_module_boundary() {
         // `regs.basm`'s declarations only exist inside an unexpanded
         // `@for`, not as bare top-level statements — `collect_declarations`
@@ -1100,7 +1212,9 @@ mod tests {
         fs::write(dir.join("main.basm"), "from .regs import *\n").unwrap();
 
         let program = load_program(&dir.join("main.basm")).expect("main.basm should load");
-        let program = crate::resolver::unroll_top_level(program).expect("should unroll");
+        let module_of = vec![0; program.statements.len()];
+        let (program, _) =
+            crate::resolver::unroll_top_level(program, &module_of).expect("should unroll");
 
         let const_names: Vec<String> = program
             .statements
@@ -1165,7 +1279,7 @@ mod tests {
         let program = load_program(&dir.join("uses_public.basm"))
             .expect("uses_public.basm should load");
 
-        let symbols = crate::resolver::collect_symbols(&program)
+        let symbols = crate::resolver::collect_symbols(&program, &vec![0; program.statements.len()])
             .expect("symbol collection should succeed");
 
         crate::resolver::AliasResolver::new_single_pass(&program, &symbols, &HashMap::new())
@@ -1183,7 +1297,7 @@ mod tests {
         let program = load_program(&dir.join("uses_private.basm"))
             .expect("uses_private.basm should load (privacy is a resolve-time concern)");
 
-        let symbols = crate::resolver::collect_symbols(&program)
+        let symbols = crate::resolver::collect_symbols(&program, &vec![0; program.statements.len()])
             .expect("symbol collection should succeed");
 
         let result =
@@ -1193,6 +1307,190 @@ mod tests {
             matches!(result, Err(crate::resolver::ResolveError::UnknownType { .. })),
             "expected Helper to be unresolvable from outside priv.basm, got {result:?}",
         );
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn non_pub_struct_field_is_unreachable_from_outside_its_module() {
+        // `private_declaration_is_unreachable_outside_its_module`'s
+        // counterpart one level down: `Foo` itself is `pub` and perfectly
+        // reachable from `main.basm`, but its `x` field isn't — reading
+        // `.x` on a `Foo` value from a module other than the one that
+        // declared `Foo` is rejected, even though nothing about naming
+        // `Foo` or constructing/receiving a value of it was a problem.
+        let dir = scratch_dir("private_field_cross_module");
+
+        fs::write(dir.join("helper.basm"), "pub struct Foo { x: int }\n").unwrap();
+        fs::write(
+            dir.join("main.basm"),
+            "from .helper import *\n\nmacro reads_x(f: Foo) -> int {\n    @return f.x\n}\n",
+        )
+        .unwrap();
+
+        let (program, origins) =
+            load_program_with_modules(&dir.join("main.basm")).expect("main.basm should load");
+        let (program, statement_modules) =
+            crate::resolver::unroll_top_level(program, origins.all()).expect("should unroll");
+        let symbols = crate::resolver::collect_symbols(&program, &statement_modules)
+            .expect("symbol collection should succeed");
+
+        let macro_symbol = symbols.lookup("reads_x").unwrap();
+        let foo_symbol = symbols.lookup("Foo").unwrap();
+        let declaration = program
+            .statements
+            .iter()
+            .find_map(|statement| match statement {
+                Statement::Macro(decl) if literal_name(&decl.name).as_deref() == Some("reads_x") => {
+                    Some(decl.clone())
+                }
+                _ => None,
+            })
+            .expect("reads_x should be in the merged program");
+
+        let consts = HashMap::new();
+        let mut resolver = crate::resolver::AliasResolver::new(
+            &program,
+            &symbols,
+            &consts,
+            crate::resolver::LabelMode::Strict,
+            HashMap::new(),
+            origins.entry_module(),
+        );
+
+        let arg = crate::resolver::Value::Struct {
+            symbol: foo_symbol,
+            args: vec![],
+            fields: vec![("x".to_string(), crate::resolver::Value::Int(crate::eval::Int::from(1)))],
+            nominal: None,
+        };
+
+        let mut stack = Vec::new();
+        let error = resolver
+            .run_macro_body(macro_symbol, &declaration, vec![arg], &mut stack)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            crate::resolver::ResolveError::PrivateFieldAccess { field, type_name, .. }
+                if field == "x" && type_name == "Foo"
+        ));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn non_pub_struct_field_is_reachable_from_its_own_module() {
+        // Positive control for the test above: the exact same shape, but
+        // `Foo` and `reads_x` both live in the one file that declares `Foo`
+        // — same-module access to a non-`pub` field is unaffected.
+        let dir = scratch_dir("private_field_same_module");
+
+        fs::write(
+            dir.join("main.basm"),
+            "struct Foo { x: int }\n\nmacro reads_x(f: Foo) -> int {\n    @return f.x\n}\n",
+        )
+        .unwrap();
+
+        let (program, origins) =
+            load_program_with_modules(&dir.join("main.basm")).expect("main.basm should load");
+        let (program, statement_modules) =
+            crate::resolver::unroll_top_level(program, origins.all()).expect("should unroll");
+        let symbols = crate::resolver::collect_symbols(&program, &statement_modules)
+            .expect("symbol collection should succeed");
+
+        let macro_symbol = symbols.lookup("reads_x").unwrap();
+        let foo_symbol = symbols.lookup("Foo").unwrap();
+        let declaration = program
+            .statements
+            .iter()
+            .find_map(|statement| match statement {
+                Statement::Macro(decl) if literal_name(&decl.name).as_deref() == Some("reads_x") => {
+                    Some(decl.clone())
+                }
+                _ => None,
+            })
+            .expect("reads_x should be in the program");
+
+        let consts = HashMap::new();
+        let mut resolver = crate::resolver::AliasResolver::new(
+            &program,
+            &symbols,
+            &consts,
+            crate::resolver::LabelMode::Strict,
+            HashMap::new(),
+            origins.entry_module(),
+        );
+
+        let arg = crate::resolver::Value::Struct {
+            symbol: foo_symbol,
+            args: vec![],
+            fields: vec![("x".to_string(), crate::resolver::Value::Int(crate::eval::Int::from(1)))],
+            nominal: None,
+        };
+
+        let mut stack = Vec::new();
+        let result = resolver.run_macro_body(macro_symbol, &declaration, vec![arg], &mut stack);
+
+        assert!(result.is_ok(), "expected same-module field access to succeed, got {result:?}");
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn non_pub_struct_field_cannot_be_named_in_construction_from_outside_its_module() {
+        // The write side of the same rule: naming a non-`pub` field
+        // explicitly in a brace-literal construction is rejected from
+        // outside `Foo`'s own module too, not just reading it back out
+        // afterward.
+        let dir = scratch_dir("private_field_write_cross_module");
+
+        fs::write(dir.join("helper.basm"), "pub struct Foo { x: int }\n").unwrap();
+        fs::write(
+            dir.join("main.basm"),
+            "from .helper import *\n\nmacro makes_foo() -> Foo {\n    @return Foo { x: 1 }\n}\n",
+        )
+        .unwrap();
+
+        let (program, origins) =
+            load_program_with_modules(&dir.join("main.basm")).expect("main.basm should load");
+        let (program, statement_modules) =
+            crate::resolver::unroll_top_level(program, origins.all()).expect("should unroll");
+        let symbols = crate::resolver::collect_symbols(&program, &statement_modules)
+            .expect("symbol collection should succeed");
+
+        let macro_symbol = symbols.lookup("makes_foo").unwrap();
+        let declaration = program
+            .statements
+            .iter()
+            .find_map(|statement| match statement {
+                Statement::Macro(decl) if literal_name(&decl.name).as_deref() == Some("makes_foo") => {
+                    Some(decl.clone())
+                }
+                _ => None,
+            })
+            .expect("makes_foo should be in the merged program");
+
+        let consts = HashMap::new();
+        let mut resolver = crate::resolver::AliasResolver::new(
+            &program,
+            &symbols,
+            &consts,
+            crate::resolver::LabelMode::Strict,
+            HashMap::new(),
+            origins.entry_module(),
+        );
+
+        let mut stack = Vec::new();
+        let error = resolver
+            .run_macro_body(macro_symbol, &declaration, vec![], &mut stack)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            crate::resolver::ResolveError::PrivateFieldAccess { field, type_name, .. }
+                if field == "x" && type_name == "Foo"
+        ));
 
         fs::remove_dir_all(&dir).ok();
     }
@@ -1246,7 +1544,7 @@ mod tests {
 
         // Without per-module mangling both files' `Helper` would land in the
         // same flat symbol table under the same name and collide here.
-        let symbols = crate::resolver::collect_symbols(&program)
+        let symbols = crate::resolver::collect_symbols(&program, &vec![0; program.statements.len()])
             .expect("both private Helpers should coexist without a duplicate-symbol error");
 
         let no_consts = HashMap::new();

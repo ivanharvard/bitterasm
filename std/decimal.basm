@@ -10,8 +10,8 @@ pub struct Decimal
     | to decimal_to_fraction(source)
     | from decimal_from_int(source)
 {
-    value: int,
-    scale: int
+    pub value: int,
+    pub scale: int
 }
 
 pub macro decimal_to_int(x: Decimal) -> int {
@@ -33,8 +33,8 @@ pub struct Fraction
     | to fraction_to_decimal(source, PRECISION)
     | from fraction_from_int(source)
 {
-    n: int,
-    d: int
+    pub n: int,
+    pub d: int
 }
 
 pub macro fraction_to_int(x: Fraction) -> int {

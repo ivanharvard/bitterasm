@@ -243,14 +243,17 @@ impl From<resolver::ResolveError> for CompileError {
 }
 
 fn resolve_and_expand(path: &Path) -> Result<Expansion, CompileError> {
-    let program = loader::load_program(path)?;
+    let (program, origins) = loader::load_program_with_modules(path)?;
+    let entry_module = origins.entry_module();
 
     // Unrolls every top-level `@for`/`@if` into concrete statements before
     // anything else (symbol collection included) ever sees them — see
-    // `resolver::unroll_top_level`'s module doc.
-    let program = resolver::unroll_top_level(program)?;
+    // `resolver::unroll_top_level`'s module doc. `statement_modules` is
+    // `origins`'s per-statement attribution, reshuffled to match: whatever
+    // a `@for`/`@if` wrapper unrolls into inherits its own module.
+    let (program, statement_modules) = resolver::unroll_top_level(program, origins.all())?;
     resolver::validate_facets(&program)?;
-    let symbols = resolver::collect_symbols(&program)?;
+    let symbols = resolver::collect_symbols(&program, &statement_modules)?;
     let consts = resolver::ConstEvaluator::new(&program, &symbols).evaluate_all()?;
 
     let consts_by_name: HashMap<String, eval::Int> = consts
@@ -284,6 +287,7 @@ fn resolve_and_expand(path: &Path) -> Result<Expansion, CompileError> {
         &consts_by_name,
         resolver::LabelMode::Tolerant,
         HashMap::new(),
+        entry_module,
     );
 
     resolve_structs_and_aliases(&mut discovery)?;
@@ -297,6 +301,7 @@ fn resolve_and_expand(path: &Path) -> Result<Expansion, CompileError> {
         &consts_by_name,
         resolver::LabelMode::Strict,
         label_positions,
+        entry_module,
     );
 
     // Every struct/alias in the program is resolved up front, whether or

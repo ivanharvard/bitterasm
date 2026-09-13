@@ -160,7 +160,7 @@ mod tests {
     #[test]
     fn reifies_an_int() {
         let symbols =
-            collect_symbols(&Program { statements: vec![], span: Span::new(0, 0) }).unwrap();
+            collect_symbols(&Program { statements: vec![], span: Span::new(0, 0) }, &[]).unwrap();
 
         assert_eq!(
             reify_value(&symbols, &Value::Int(Int::from(42))),
@@ -173,7 +173,7 @@ mod tests {
         let program = parse_fixture("generic_alias.basm");
 
         let declaration = find_macro(&program, "make_byte");
-        let symbols = collect_symbols(&program).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 

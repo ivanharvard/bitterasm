@@ -40,6 +40,7 @@ pub fn resolve_error(error: ResolveError, source: Option<SourceId>) -> Diagnosti
         ExpectedConstantExpression { span } => ("expected a constant expression".into(), span),
         UnknownConstant { name, span } => (format!("unknown constant `{name}`"), span),
         UnknownField { type_name, field, span } => (format!("type `{type_name}` has no field `{field}`"), span),
+        PrivateFieldAccess { type_name, field, span } => (format!("field `{field}` of `{type_name}` is private to the module that declared it"), span),
         FacetNotApplicable { facet, span } => (format!("facet `{facet}` is not applicable here"), span),
         DuplicateFacet { facet, span } => (format!("duplicate facet `{facet}`"), span),
         InvalidArgumentCount { name, expected, actual, span } => (format!("`{name}` expects {expected} argument(s), but {actual} were supplied"), span),

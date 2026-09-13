@@ -314,6 +314,7 @@ impl<'src> Lexer<'src> {
             "import" => TokenKind::Import,
             "as" => TokenKind::As,
             "pub" => TokenKind::Pub,
+            "skip" => TokenKind::Skip,
 
             "macro" => TokenKind::Macro,
             "type" => TokenKind::Type,
