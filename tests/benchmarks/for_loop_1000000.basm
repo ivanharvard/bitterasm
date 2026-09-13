@@ -1,0 +1,7 @@
+macro emit_square(i: int) {
+    @emit i * i
+}
+
+@for i in 0..1000000 {
+    emit_square(i)
+}
