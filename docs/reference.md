@@ -49,6 +49,34 @@ leaving it exactly as constructible and readable (`arr.len`) as any other
 `pub` field. `skip` on a non-`pub` field is legal but has no effect: such a
 field is already excluded from `@for`.
 
+## `in`: membership as a boolean
+
+`value in source` tests the same relation `@for var in source` walks
+generatively — true when `source` produces some element equal to `value` —
+just checked instead of bound to `var`. `source` is either shape `@for`
+already accepts:
+
+- **A range.** `idx in 0..len` / `idx in 0..=len` is a plain bound check
+  (`0 <= idx < len`, or `<= len` for the inclusive form) — no iteration
+  happens, so it's cheap even for a range far larger than `@for` would ever
+  actually unroll.
+- **A struct/array value.** `x in someArray` is true when `x` equals one of
+  `someArray`'s iterable elements — exactly the `pub`, non-`skip` fields
+  `@for i in someArray` would visit, in the same order. A field excluded
+  from `@for` (non-`pub`, or `pub skip`) is equally excluded from `in`.
+
+```text
+macro assert_in_bounds(idx: int, len: int) {
+    | invariant idx in 0..len
+}
+```
+
+`in` doesn't extend to a type name (`x in SomeEnum`, testing whether `x` is
+one of `SomeEnum`'s valid discriminants) — that's membership against a
+*type* rather than a value already in hand, a different relation than the
+one `@for`/`in` share, so it's deliberately out of scope rather than
+overloading the same keyword with a second meaning.
+
 ## Macro defaults
 
 Trailing macro parameters may provide default value expressions:

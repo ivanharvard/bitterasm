@@ -475,7 +475,9 @@ fn collect_expr_identifiers(expr: &Expr, names: &mut HashSet<String>) {
         }
         Expr::Unary { operand: value, .. } |
         Expr::Splice { inner: value, .. } => collect_expr_identifiers(value, names),
-        Expr::Binary { left, right, .. } | Expr::Range { start: left, end: right, .. } => {
+        Expr::Binary { left, right, .. }
+        | Expr::Range { start: left, end: right, .. }
+        | Expr::In { value: left, source: right, .. } => {
             collect_expr_identifiers(left, names);
             collect_expr_identifiers(right, names);
         }

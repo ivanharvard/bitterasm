@@ -322,6 +322,39 @@ impl<'a> AliasResolver<'a> {
             Expr::Range { start, end, inclusive, span } => {
                 self.eval_range_value(start, end, *inclusive, *span, scope)
             }
+
+            // `value in source` — see `ast::Expr::In`'s doc. A literal
+            // range is a plain integer bound check: going through
+            // `eval_for_source` would materialize up to
+            // `MAX_FOR_ITERATIONS` elements just to linearly search them,
+            // wasteful for what's usually a bounds check like `invariant
+            // idx in 0..len`. Anything else (a struct/array value) falls
+            // back to `eval_for_source`, walking exactly the same `pub`,
+            // non-`skip` fields `@for` would visit.
+            Expr::In { value, source, .. } => {
+                if let Expr::Range { start, end, inclusive, .. } = source.as_ref() {
+                    let needle = self.eval_int(value, scope)?;
+                    let start = self.eval_int(start, scope)?;
+                    let end = self.eval_int(end, scope)?;
+
+                    let contains = if *inclusive {
+                        needle >= start && needle <= end
+                    } else {
+                        needle >= start && needle < end
+                    };
+
+                    return Ok(Value::Int(Int::from(contains)));
+                }
+
+                let needle = self.eval_value(value, scope)?;
+
+                let found = self
+                    .eval_for_source(source, scope)?
+                    .into_iter()
+                    .any(|(_, element)| element == needle);
+
+                Ok(Value::Int(Int::from(found)))
+            }
         }
     }
 
@@ -1664,6 +1697,87 @@ mod tests {
         // exercises the same fallback recursively.
         let via_zero = resolver.expand_invocation(invocations[1], &HashMap::new()).unwrap();
         assert_eq!(via_zero.emitted, vec![Value::Int(Int::from(0))]);
+    }
+
+    #[test]
+    fn in_a_range_is_true_for_a_member_and_false_past_the_exclusive_upper_bound() {
+        let program = parse_fixture("in_expr.basm");
+        let declaration = find_macro(&program, "in_range");
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut member_scope = HashMap::new();
+        member_scope.insert("idx".to_string(), Value::Int(Int::from(2)));
+        member_scope.insert("len".to_string(), Value::Int(Int::from(5)));
+        assert_eq!(
+            resolver.eval_value(emit_expr(declaration), &member_scope).unwrap(),
+            Value::Int(Int::from(1)),
+        );
+
+        let mut at_upper_bound_scope = HashMap::new();
+        at_upper_bound_scope.insert("idx".to_string(), Value::Int(Int::from(5)));
+        at_upper_bound_scope.insert("len".to_string(), Value::Int(Int::from(5)));
+        assert_eq!(
+            resolver.eval_value(emit_expr(declaration), &at_upper_bound_scope).unwrap(),
+            Value::Int(Int::from(0)),
+        );
+    }
+
+    #[test]
+    fn in_an_inclusive_range_is_true_at_the_upper_bound() {
+        let program = parse_fixture("in_expr.basm");
+        let declaration = find_macro(&program, "in_range_inclusive");
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mut scope = HashMap::new();
+        scope.insert("idx".to_string(), Value::Int(Int::from(5)));
+        scope.insert("len".to_string(), Value::Int(Int::from(5)));
+
+        assert_eq!(
+            resolver.eval_value(emit_expr(declaration), &scope).unwrap(),
+            Value::Int(Int::from(1)),
+        );
+    }
+
+    #[test]
+    fn in_a_struct_value_only_matches_its_iterable_pub_non_skip_fields() {
+        let program = parse_fixture("in_expr.basm");
+        let declaration = find_macro(&program, "in_struct");
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
+        let mixed_symbol = symbols.lookup("Mixed").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let mixed = Value::Struct {
+            symbol: mixed_symbol,
+            args: vec![],
+            fields: vec![
+                ("a".to_string(), Value::Int(Int::from(1))),
+                ("b".to_string(), Value::Int(Int::from(2))),
+                ("len".to_string(), Value::Int(Int::from(99))),
+                ("c".to_string(), Value::Int(Int::from(3))),
+            ],
+            nominal: None,
+        };
+
+        let mut matches = |needle: i64| {
+            let mut scope = HashMap::new();
+            scope.insert("needle".to_string(), Value::Int(Int::from(needle)));
+            scope.insert("m".to_string(), mixed.clone());
+            resolver.eval_value(emit_expr(declaration), &scope).unwrap()
+        };
+
+        // `a` and `c` are `pub` and iterable.
+        assert_eq!(matches(1), Value::Int(Int::from(1)));
+        assert_eq!(matches(3), Value::Int(Int::from(1)));
+
+        // `b` isn't `pub`; `len` is `pub skip` — neither is iterable, the
+        // same fields `@for needle in m` would skip.
+        assert_eq!(matches(2), Value::Int(Int::from(0)));
+        assert_eq!(matches(99), Value::Int(Int::from(0)));
     }
 
     #[test]

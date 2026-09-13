@@ -188,7 +188,7 @@ impl Parser {
     fn parse_struct_for_item(&mut self, start: usize) -> Result<StructBodyItem, ParseError> {
         let var = self.expect_identifier()?;
 
-        self.expect_keyword("in")?;
+        self.expect_simple(TokenKind::In)?;
 
         let outer_restriction = self.restrict_brace_construction;
         self.restrict_brace_construction = true;

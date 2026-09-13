@@ -197,6 +197,22 @@ pub enum Expr {
         inclusive: bool,
         span: Span,
     },
+
+    /// `value in source` — true when `source` (a literal range or any
+    /// expression evaluating to a struct/array value) produces some
+    /// element equal to `value`. The same "does `source` contain this"
+    /// relation `@for var in source` walks generatively (binding each
+    /// element in turn); this is that relation tested instead of walked —
+    /// see `resolver::values::eval_value`'s `Expr::In` arm, which shares
+    /// `resolver::generated::eval_for_source` with `@for` for exactly this
+    /// reason. Deliberately scoped to ranges and struct/array values only:
+    /// there's no `x in SomeEnumType` (membership against a *type* rather
+    /// than a value in hand) here, to keep `in`'s meaning uniform.
+    In {
+        value: Box<Expr>,
+        source: Box<Expr>,
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -213,7 +229,8 @@ impl Expr {
             | Expr::Unary { span, .. }
             | Expr::Binary { span, .. }
             | Expr::Splice { span, .. }
-            | Expr::Range { span, .. } => *span,
+            | Expr::Range { span, .. }
+            | Expr::In { span, .. } => *span,
         }
     }
 }

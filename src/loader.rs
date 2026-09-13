@@ -899,6 +899,11 @@ fn rename_expr(expr: &mut Expr, renames: &HashMap<String, String>) {
             rename_expr(start, renames);
             rename_expr(end, renames);
         }
+
+        Expr::In { value, source, .. } => {
+            rename_expr(value, renames);
+            rename_expr(source, renames);
+        }
     }
 }
 

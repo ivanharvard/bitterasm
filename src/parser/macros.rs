@@ -59,7 +59,7 @@ impl Parser {
         let var_name = self.expect_identifier()?;
         let var = Expr::Identifier { name: var_name, span: var_token.span };
 
-        self.expect_keyword("in")?;
+        self.expect_simple(TokenKind::In)?;
 
         let outer_restriction = self.restrict_brace_construction;
         self.restrict_brace_construction = true;

@@ -340,6 +340,7 @@ fn token_text(kind: &TokenKind) -> String {
         TokenKind::From => "from".to_string(),
         TokenKind::Import => "import".to_string(),
         TokenKind::As => "as".to_string(),
+        TokenKind::In => "in".to_string(),
         TokenKind::Pub => "pub".to_string(),
         TokenKind::Skip => "skip".to_string(),
         TokenKind::Macro => "macro".to_string(),
@@ -467,6 +468,8 @@ pub fn print_expr(expr: &Expr) -> String {
             let op = if *inclusive { "..=" } else { ".." };
             format!("{}{op}{}", print_expr(start), print_expr(end))
         }
+
+        Expr::In { value, source, .. } => format!("{} in {}", print_expr(value), print_expr(source)),
     }
 }
 

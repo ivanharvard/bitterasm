@@ -103,7 +103,7 @@ impl Parser {
     fn parse_construct_for_item(&mut self, start: usize) -> Result<ConstructItem, ParseError> {
         let var = self.expect_identifier()?;
 
-        self.expect_keyword("in")?;
+        self.expect_simple(TokenKind::In)?;
 
         let outer_restriction = self.restrict_brace_construction;
         self.restrict_brace_construction = true;

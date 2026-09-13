@@ -237,6 +237,11 @@ pub(super) fn referenced_identifiers(expr: &crate::ast::Expr) -> Vec<String> {
                 stack.push(start);
                 stack.push(end);
             }
+
+            Expr::In { value, source, .. } => {
+                stack.push(value);
+                stack.push(source);
+            }
         }
     }
 

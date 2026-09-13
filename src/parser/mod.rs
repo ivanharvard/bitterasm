@@ -390,25 +390,6 @@ impl Parser {
         }
     }
 
-    // A contextual keyword (`in`, `else`) recognized only where a
-    // specific construct's grammar expects it — not a general reserved
-    // word.
-    fn expect_keyword(&mut self, keyword: &str) -> Result<(), ParseError> {
-        let token = self.current().clone();
-
-        match &token.kind {
-            TokenKind::Identifier(name) if name == keyword => {
-                self.advance();
-                Ok(())
-            }
-
-            other => Err(ParseError::new(
-                format!("expected `{keyword}`, found {other:?}"),
-                token.span,
-            )),
-        }
-    }
-
     // True when the upcoming tokens are `@else` — used by `@if`
     // (macro-body statements) and a struct body's own `@if` alike, to
     // decide whether a then-branch is followed by an else branch without

@@ -221,6 +221,57 @@ impl Parser {
                 continue;
             }
 
+            // infix: `value in source` — boolean membership, see
+            // `ast::Expr::In`'s doc. Sits at the same precedence tier as
+            // the comparison operators just below (`a + b in c` reads as
+            // `(a + b) in c`, `flag && x in y` reads as `flag && (x in
+            // y)`), but its right-hand side is parsed separately from the
+            // generic binary-op dispatch so a literal range can follow:
+            // `..`/`..=` bind looser (`left_bp` 1) than comparison-tier
+            // operators, so if `source` were parsed through the generic
+            // path at comparison-tier `min_bp`, `x in 0..n` would only
+            // capture `0` and leave `..n` dangling.
+            if self.check(&TokenKind::In) {
+                let left_bp = 50;
+                let right_bp = 51;
+
+                if left_bp < min_bp {
+                    break;
+                }
+
+                let start = left.span().start;
+                self.advance(); // `in`
+
+                let bound = self.parse_expr_bp_until(right_bp, stop)?;
+
+                let source = if self.check(&TokenKind::DotDot) || self.check(&TokenKind::DotDotEq) {
+                    let inclusive = self.check(&TokenKind::DotDotEq);
+                    self.advance();
+
+                    let end = self.parse_expr_bp_until(right_bp, stop)?;
+                    let range_span = Span::new(bound.span().start, end.span().end);
+
+                    Expr::Range {
+                        start: Box::new(bound),
+                        end: Box::new(end),
+                        inclusive,
+                        span: range_span,
+                    }
+                } else {
+                    bound
+                };
+
+                let span = Span::new(start, source.span().end);
+
+                left = Expr::In {
+                    value: Box::new(left),
+                    source: Box::new(source),
+                    span,
+                };
+
+                continue;
+            }
+
             // ============
             // binary ops
             // ============
@@ -581,7 +632,8 @@ fn set_expr_span(expr: &mut Expr, new_span: Span) {
         | Expr::Unary { span, .. }
         | Expr::Binary { span, .. }
         | Expr::Splice { span, .. }
-        | Expr::Range { span, .. } => {
+        | Expr::Range { span, .. }
+        | Expr::In { span, .. } => {
             *span = new_span;
         }
     }

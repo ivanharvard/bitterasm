@@ -11,6 +11,7 @@ pub enum TokenKind {
     From,
     Import,
     As,
+    In,
     Pub,
     Skip,
 

@@ -565,8 +565,8 @@ fn for_meta_requires_the_in_keyword() {
     let error = parse(lex("macro foo() {\n    @for i 0..16 {\n    }\n}\n").unwrap()).unwrap_err();
 
     assert!(
-        format!("{error}").contains("in"),
-        "expected the error to mention `in`, got: {error}"
+        format!("{error}").contains("In"),
+        "expected the error to mention the `in` keyword, got: {error}"
     );
 }
 

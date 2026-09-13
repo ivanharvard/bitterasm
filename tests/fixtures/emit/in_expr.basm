@@ -1,0 +1,18 @@
+struct Mixed {
+    pub a: int,
+    b: int,
+    pub skip len: int,
+    pub c: int
+}
+
+macro in_range(idx: int, len: int) {
+    @emit idx in 0..len
+}
+
+macro in_range_inclusive(idx: int, len: int) {
+    @emit idx in 0..=len
+}
+
+macro in_struct(needle: int, m: Mixed) {
+    @emit needle in m
+}

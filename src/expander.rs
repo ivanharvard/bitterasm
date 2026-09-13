@@ -490,6 +490,12 @@ pub fn substitute_expr(expr: &Expr, substitutions: &HashMap<String, Expr>) -> Ex
             inclusive: *inclusive,
             span: *span,
         },
+
+        Expr::In { value, source, span } => Expr::In {
+            value: Box::new(substitute_expr(value, substitutions)),
+            source: Box::new(substitute_expr(source, substitutions)),
+            span: *span,
+        },
     }
 }
 

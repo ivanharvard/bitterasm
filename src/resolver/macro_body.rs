@@ -1036,6 +1036,12 @@ impl<'a> AliasResolver<'a> {
                 inclusive: *inclusive,
                 span: *span,
             }),
+
+            Expr::In { value, source, span } => Ok(Expr::In {
+                value: Box::new(self.splice_expr(value, scope)?),
+                source: Box::new(self.splice_expr(source, scope)?),
+                span: *span,
+            }),
         }
     }
 
