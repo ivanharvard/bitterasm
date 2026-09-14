@@ -1,0 +1,39 @@
+from std.wasm.impl import *
+
+# A representative, structurally valid function body: sums 1..n-1 into
+# local 1 using local 2 as the loop counter, local 0 as the (implicit)
+# parameter `n`. Exercises the philosophy claim end to end: a stack
+# machine's instructions as ordinary macros, structured control flow via
+# an explicit `block`+`loop`+`br`/`br_if` depth pair (no `here()`, no
+# address-based labels anywhere), and multi-byte LEB128 immediates
+# alongside single-byte opcodes in the same flat emitted-value stream.
+#
+# `br_if(1)` targets the enclosing `block` (exits it — WASM's "break");
+# `br(0)` targets the enclosing `loop` (jumps to its own top — WASM's
+# "continue"). Both depths are plain integers the caller works out from
+# the nesting visible in this file, exactly as raw WASM bytecode requires.
+
+i32_const(0)
+local_set(1)
+i32_const(1)
+local_set(2)
+block(EMPTY_BLOCKTYPE)
+loop(EMPTY_BLOCKTYPE)
+local_get(2)
+local_get(0)
+i32_lt_s
+i32_eqz
+br_if(1)
+local_get(1)
+local_get(2)
+i32_add
+local_set(1)
+local_get(2)
+i32_const(1)
+i32_add
+local_set(2)
+br(0)
+end
+end
+local_get(1)
+return_

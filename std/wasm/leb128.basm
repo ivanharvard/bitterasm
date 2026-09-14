@@ -1,0 +1,136 @@
+from std.binary import *
+
+# One LEB128 group, always 8 bits wide (7 payload bits plus a continuation
+# bit) — its own alias, the same reasoning `std/riscv`/`std/pdp10` give
+# every instruction-word field: `bits<8>` alone can't be constructed with
+# plain call syntax (a bare generic struct needs a brace literal), and
+# giving the width a name keeps every signature below self-documenting.
+pub type Byte = bits<8>
+
+# A fixed-length run of bytes, meant to be `bitter`-packed directly (as a
+# LEB128 encoding here, or as a whole instruction's bytes in
+# `std/wasm/impl.basm`). Deliberately not `std.array`'s `Array<T, N>`:
+# `Array` carries a `len: int` bookkeeping field alongside its elements,
+# which is exactly what `bitter`'s packer can't handle — it walks every
+# field of any struct it doesn't specifically recognize and expects each to
+# bottom out in a `bits<N>` leaf, and `len` is a bare `int`. `Bytes<N>` is
+# nothing but `N` numbered `Byte` fields, so that walk always succeeds.
+pub struct Bytes<const N: int>
+    | invariant N >= 0
+{
+    @for i in 0..N {
+        pub __el`i`: Byte,
+    }
+}
+
+# =================
+# unsigned LEB128
+# =================
+# Every WASM index, count, and unsigned immediate is encoded as a sequence
+# of 7-bit groups, each tagged with a continuation bit — the high bit is
+# set on every group but the last. Because every value an instruction macro
+# ever encodes is known at compile time (bitterasm has no runtime values),
+# the number of groups a given `value` needs is itself compile-time
+# computable, the same way `std.binary`'s `bit_width` counts bits: no
+# evaluator support is needed for any of this, it's ordinary recursion over
+# an `int`.
+#
+# `uleb128`/`sleb128` below don't take the group count as a macro generic
+# parameter — a macro call has no syntax for supplying generic arguments
+# explicitly (unlike a struct's `Name<Args>{...}` brace literal), and here
+# the count isn't inferable from any argument's type either, since it's a
+# property of `value`'s own magnitude. Instead each takes the count as a
+# plain `int` parameter (`..._padded`), with the common minimal-length case
+# as a small wrapper — the same "underspecified generic return type, real
+# shape decided in the body" pattern `std/array.basm`'s `updated`/`reversed`
+# already use (`-> Array<T, ...>`).
+
+# Number of 7-bit groups `value` needs as unsigned LEB128.
+pub macro uleb128_length(value: int) -> int {
+    @assert value >= 0, "uleb128_length expects a non-negative value"
+    @if value < 0x80 {
+        @return 1
+    } @else {
+        @return 1 + uleb128_length(value >> 7)
+    }
+}
+
+# The `index`th 7-bit group (low bit first) of `value`'s LEB128 encoding,
+# given the encoding is `length` groups long — the continuation bit is set
+# on every group except the last (`index == length - 1`). Shared by both
+# `uleb128_padded`/`sleb128_padded` below: the only difference between
+# signed and unsigned LEB128 is how many groups the *value* needs (see
+# `sleb128_length`), not how any individual group's bits are extracted.
+macro leb128_group(
+    value: int,
+    index: int,
+    length: int
+) -> Byte {
+    const group = (value >> (7 * index)) & 0x7F
+    @if index < length - 1 {
+        @return Byte(0x80 | group)
+    } @else {
+        @return Byte(group)
+    }
+}
+
+# Encodes `value` as unsigned LEB128 into exactly `n` bytes. `n` is normally
+# `uleb128_length(value)` (that's what plain `uleb128` below does); passing
+# a larger `n` produces a non-minimal encoding, padded with zero groups up
+# to `n` — the WASM spec explicitly permits this (up to a value's max byte
+# count for its bit width), which is how a section-length prefix can be
+# given a fixed width before the length it measures is actually known (see
+# `std/wasm/impl.basm`).
+pub macro uleb128_padded(
+    value: int,
+    n: int
+) -> Bytes<...> {
+    @return Bytes<n> {
+        @for i in 0..n {
+            __el`i`: leb128_group(value, i, n),
+        }
+    }
+}
+
+pub macro uleb128(value: int) -> Bytes<...> {
+    @return uleb128_padded(value, uleb128_length(value))
+}
+
+# =================
+# signed LEB128
+# =================
+# WASM's own numeric constants (`i32.const`, `i64.const`) are encoded as
+# signed LEB128. Group extraction is identical to the unsigned case (`&`
+# and `>>` on a negative `int` already behave as two's-complement here,
+# confirmed empirically against this repo's `bitterasm` binary); only the
+# termination rule differs, since a negative value's high groups are all
+# `0x7F` rather than all `0x00` and never reach exactly zero.
+
+# Number of 7-bit groups `value` needs as signed LEB128 — stops once the
+# remaining bits are pure sign-extension of the last emitted group's own
+# sign bit, matching the standard SLEB128 encoding loop's termination test.
+pub macro sleb128_length(value: int) -> int {
+    const group = value & 0x7F
+    const rest = value >> 7
+    @if (rest == 0 && (group & 0x40) == 0) || (rest == -1 && (group & 0x40) != 0) {
+        @return 1
+    } @else {
+        @return 1 + sleb128_length(rest)
+    }
+}
+
+# See `uleb128_padded` — same idea, signed termination rule.
+pub macro sleb128_padded(
+    value: int,
+    n: int
+) -> Bytes<...> {
+    @return Bytes<n> {
+        @for i in 0..n {
+            __el`i`: leb128_group(value, i, n),
+        }
+    }
+}
+
+pub macro sleb128(value: int) -> Bytes<...> {
+    @return sleb128_padded(value, sleb128_length(value))
+}

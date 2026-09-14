@@ -1,0 +1,3 @@
+from std.wasm.impl import *
+
+i32_const(-5)

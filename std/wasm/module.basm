@@ -1,0 +1,117 @@
+from std.binary import *
+from std.bitter.deferred import *
+from std.wasm.leb128 import *
+
+# =================
+# encoding a not-yet-known length
+# =================
+# A WASM section (and, inside the Code section, each function body) is
+# prefixed with the ULEB128-encoded byte length of whatever follows it —
+# not knowable until everything after it has been emitted. `span(start,
+# end)` (`std.bitter.deferred`) gives a `Deferred` value for exactly that,
+# resolved by `bitter` once it knows both labels' positions and every
+# entry's own packed width. This section builds that `Deferred` into
+# actual LEB128 bytes, the same way `std/riscv`'s `beq` builds its
+# PC-relative offset into `BType`'s scattered immediate fields: by
+# splitting a `Deferred` value with `shr`/`band` rather than plain `int`
+# arithmetic, and wrapping each resulting piece in `Positioned<N>` so
+# `bitter` resolves it once the real value is known.
+#
+# Unlike `uleb128`/`sleb128` in `std/wasm/leb128.basm`, the byte count
+# can't be computed from the value here — the value isn't known until
+# `bitter` resolves it, only the *caller* knows how many bytes to budget
+# for. So every group here always carries its continuation bit as a plain,
+# immediately-known `bool` (fixed by `index`/`n` alone), never folded into
+# the deferred payload itself — there's no `Deferred`-valued bitwise OR in
+# `std.bitter.deferred` (nor any need for one), so continuation and payload
+# are two separate fields of one byte rather than one OR'd-together value.
+# WASM's binary format explicitly allows this non-minimal, fixed-width
+# LEB128 form (padded with zero groups up to a value's max byte count for
+# its bit width), which is exactly what a fixed `n` produces whenever the
+# real length turns out smaller than `n` bytes can hold.
+pub struct Leb128Group {
+    pub continuation: bool,
+    pub payload: Positioned<7>,
+}
+
+macro deferred_leb128_group(
+    value: Deferred,
+    index: int,
+    length: int
+) -> Leb128Group {
+    const payload = band(shr(value, 7 * index), 0x7F)
+    @if index < length - 1 {
+        @return Leb128Group(
+            continuation = true,
+            payload = Positioned<7> { value: payload }
+        )
+    } @else {
+        @return Leb128Group(
+            continuation = false,
+            payload = Positioned<7> { value: payload }
+        )
+    }
+}
+
+pub struct DeferredLeb128<const N: int>
+    | invariant N >= 0
+{
+    @for i in 0..N {
+        pub __el`i`: Leb128Group,
+    }
+}
+
+# Encodes `value` (typically `span(start, end)`) as fixed-width unsigned
+# LEB128 into exactly `n` bytes, `@emit`'d directly — this is meant to be
+# invoked as a top-level statement, a length-prefix "instruction" in its
+# own right, the same way `std/wasm/impl.basm`'s opcodes are.
+pub macro deferred_uleb128(
+    value: Deferred,
+    n: int
+) -> DeferredLeb128<...> {
+    @emit DeferredLeb128<n> {
+        @for i in 0..n {
+            __el`i`: deferred_leb128_group(value, i, n),
+        }
+    }
+}
+
+# =================
+# module structure
+# =================
+# A representative MVP subset of the module container format — enough to
+# build one exported, zero-argument function — not full coverage of every
+# section kind (Table/Memory/Global/Start/Element/Data aren't covered
+# here). `std/` is meant to grow, per the README's own "Status" section.
+
+pub macro byte(value: int) -> Byte {
+    @emit Byte(value)
+}
+
+# The 8-byte preamble every module starts with: magic (`\0asm`) then
+# version 1. Neither is length-prefixed — there's nothing optional or
+# variable-length about it to measure.
+pub macro header() -> Bytes<8> {
+    @emit Bytes<8> {
+        __el0: Byte(0x00),
+        __el1: Byte(0x61),
+        __el2: Byte(0x73),
+        __el3: Byte(0x6D),
+        __el4: Byte(0x01),
+        __el5: Byte(0x00),
+        __el6: Byte(0x00),
+        __el7: Byte(0x00),
+    }
+}
+
+# A function type with no parameters and exactly one result — the one
+# shape this MVP subset needs. `0x60` is the functype form marker every
+# WASM function type starts with.
+pub macro func_type_0_to_1(result: Byte) -> Bytes<4> {
+    @emit Bytes<4> {
+        __el0: Byte(0x60),
+        __el1: Byte(0x00),
+        __el2: Byte(0x01),
+        __el3: result,
+    }
+}

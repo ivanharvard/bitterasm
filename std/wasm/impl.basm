@@ -1,0 +1,179 @@
+from std.wasm.leb128 import *
+
+# WASM opcode names use a dotted convention (`i32.const`, `local.get`) that
+# isn't valid bitterasm identifier syntax — dots are member access. Names
+# here use underscores instead (`i32_const`, `local_get`); a `native.basm`-
+# style syntax layer offering the dotted spelling via the `syntax` facet
+# (the same way `std/riscv/native.basm` sits over `std/riscv/impl.basm`) is
+# straightforward future work, not needed to prove out the encoding itself.
+
+# =================
+# value types
+# =================
+
+pub const I32: Byte = Byte(0x7F)
+pub const I64: Byte = Byte(0x7E)
+pub const F32: Byte = Byte(0x7D)
+pub const F64: Byte = Byte(0x7C)
+
+# The blocktype byte meaning "this block produces no value." WASM also
+# allows a value-type byte (`I32` etc., above, for a block producing one
+# value) or a signed LEB128 type index (the multi-value proposal's
+# function-typed blocks) — the latter isn't covered by this MVP subset.
+pub const EMPTY_BLOCKTYPE: Byte = Byte(0x40)
+
+# =================
+# opcode/immediate framing
+# =================
+# Every WASM instruction is a one-byte opcode, optionally followed by a
+# handful of immediate bytes (LEB128-encoded indices/counts/constants, or a
+# single blocktype byte for `block`/`loop`/`if`). A bare opcode with no
+# immediate is just a `Byte`, `@emit`'d directly — `bitter` already knows
+# how to pack a bare `bits<N>` leaf. An opcode *with* an immediate is this
+# one small struct; `bitter`'s generic "walk any other struct's fields in
+# declaration order" fallback concatenates `opcode` then `imm` with no help
+# needed, exactly the way it concatenates `std/riscv`'s multi-field format
+# structs.
+pub struct OpWithImm<const N: int> {
+    opcode: Byte,
+    imm: Bytes<N>,
+}
+
+macro op_with_uleb128(
+    opcode: int,
+    value: int
+) -> OpWithImm<...> {
+    const n = uleb128_length(value)
+    @return OpWithImm<n> { opcode: Byte(opcode), imm: uleb128(value) }
+}
+
+macro op_with_sleb128(
+    opcode: int,
+    value: int
+) -> OpWithImm<...> {
+    const n = sleb128_length(value)
+    @return OpWithImm<n> { opcode: Byte(opcode), imm: sleb128(value) }
+}
+
+macro op_with_byte(
+    opcode: int,
+    immediate: Byte
+) -> OpWithImm<1> {
+    @return OpWithImm<1> {
+        opcode: Byte(opcode),
+        imm: Bytes<1> { __el0: immediate }
+    }
+}
+
+# =================
+# control instructions
+# =================
+# `br`/`br_if` take a plain relative nesting-depth `int` from the caller —
+# real WASM binary semantics exactly (`br 0` targets the innermost
+# enclosing `block`/`loop`), computed by the caller rather than resolved
+# automatically from a named block. `std.bitter.deferred`'s `here()`/
+# `Positioned<N>` machinery (what `std/riscv`'s branch instructions use)
+# has no role here: that machinery computes address deltas from a flat
+# emission-position count, which has no meaning for a depth-based branch —
+# so this file, like `std/pdp10/impl.basm`'s `jrst`/`jumpa`, never imports
+# `std.bitter.deferred`.
+
+pub macro unreachable() -> Byte {
+    @emit Byte(0x00)
+}
+
+pub macro nop() -> Byte {
+    @emit Byte(0x01)
+}
+
+pub macro block(blocktype: Byte) -> OpWithImm<1> {
+    @emit op_with_byte(0x02, blocktype)
+}
+
+pub macro loop(blocktype: Byte) -> OpWithImm<1> {
+    @emit op_with_byte(0x03, blocktype)
+}
+
+pub macro if_(blocktype: Byte) -> OpWithImm<1> {
+    @emit op_with_byte(0x04, blocktype)
+}
+
+pub macro else_() -> Byte {
+    @emit Byte(0x05)
+}
+
+pub macro end() -> Byte {
+    @emit Byte(0x0B)
+}
+
+pub macro br(depth: int) -> OpWithImm<...> {
+    @emit op_with_uleb128(0x0C, depth)
+}
+
+pub macro br_if(depth: int) -> OpWithImm<...> {
+    @emit op_with_uleb128(0x0D, depth)
+}
+
+pub macro return_() -> Byte {
+    @emit Byte(0x0F)
+}
+
+pub macro call(func_index: int) -> OpWithImm<...> {
+    @emit op_with_uleb128(0x10, func_index)
+}
+
+# =================
+# parametric instructions
+# =================
+
+pub macro drop() -> Byte {
+    @emit Byte(0x1A)
+}
+
+# =================
+# variable instructions
+# =================
+
+pub macro local_get(index: int) -> OpWithImm<...> {
+    @emit op_with_uleb128(0x20, index)
+}
+
+pub macro local_set(index: int) -> OpWithImm<...> {
+    @emit op_with_uleb128(0x21, index)
+}
+
+pub macro local_tee(index: int) -> OpWithImm<...> {
+    @emit op_with_uleb128(0x22, index)
+}
+
+# =================
+# numeric instructions
+# =================
+# A representative subset (constants, comparison, arithmetic on `i32`), not
+# full ISA coverage — `std/` is meant to grow, per the README's own
+# "Status" section, the same way `std/pdp10` shipped with a representative
+# subset rather than every DEC PRM opcode.
+
+pub macro i32_const(value: int) -> OpWithImm<...> {
+    @emit op_with_sleb128(0x41, value)
+}
+
+pub macro i32_eqz() -> Byte {
+    @emit Byte(0x45)
+}
+
+pub macro i32_lt_s() -> Byte {
+    @emit Byte(0x48)
+}
+
+pub macro i32_add() -> Byte {
+    @emit Byte(0x6A)
+}
+
+pub macro i32_sub() -> Byte {
+    @emit Byte(0x6B)
+}
+
+pub macro i32_mul() -> Byte {
+    @emit Byte(0x6C)
+}

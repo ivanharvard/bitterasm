@@ -1,0 +1,89 @@
+from std.wasm.module import *
+from std.wasm.impl import *
+from std.bitter.deferred import *
+
+header
+
+# =================
+# Type section: one type, () -> i32
+# =================
+byte(0x01)
+deferred_uleb128 span(type_body_start, type_body_end), 1
+type_body_start:
+byte(0x01)
+func_type_0_to_1(I32)
+type_body_end:
+
+# =================
+# Function section: one function, using type 0
+# =================
+byte(0x03)
+deferred_uleb128 span(function_body_start, function_body_end), 1
+function_body_start:
+byte(0x01)
+byte(0x00)
+function_body_end:
+
+# =================
+# Export section: export function 0 as "sum_to_ten"
+# =================
+byte(0x07)
+deferred_uleb128 span(export_body_start, export_body_end), 1
+export_body_start:
+byte(0x01)
+byte(0x0A)
+byte(0x73)
+byte(0x75)
+byte(0x6D)
+byte(0x5F)
+byte(0x74)
+byte(0x6F)
+byte(0x5F)
+byte(0x74)
+byte(0x65)
+byte(0x6E)
+byte(0x00)
+byte(0x00)
+export_body_end:
+
+# =================
+# Code section: one function body
+# =================
+byte(0x0A)
+deferred_uleb128 span(code_body_start, code_body_end), 1
+code_body_start:
+byte(0x01)
+deferred_uleb128 span(func_body_start, func_body_end), 1
+func_body_start:
+byte(0x01)
+byte(0x03)
+byte(0x7F)
+i32_const(10)
+local_set(0)
+i32_const(0)
+local_set(1)
+i32_const(1)
+local_set(2)
+block(EMPTY_BLOCKTYPE)
+loop(EMPTY_BLOCKTYPE)
+local_get(2)
+local_get(0)
+i32_lt_s
+i32_eqz
+br_if(1)
+local_get(1)
+local_get(2)
+i32_add
+local_set(1)
+local_get(2)
+i32_const(1)
+i32_add
+local_set(2)
+br(0)
+end
+end
+local_get(1)
+return_
+end
+func_body_end:
+code_body_end:

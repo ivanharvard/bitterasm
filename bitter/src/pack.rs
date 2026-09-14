@@ -40,15 +40,60 @@ struct Packed {
 }
 
 pub fn pack_stream(values: &[EmittedValue]) -> Result<Vec<u8>, String> {
+    // Every top-level entry's packed byte width is knowable structurally,
+    // with no `Deferred` resolved at all — a `bits<N>`/`Positioned<N>`
+    // leaf's width is always its own const generic argument, never a
+    // function of the value it resolves to. Computing all of them up front
+    // is what lets `Op::Span` (see `resolve_span` below) answer "how many
+    // bytes lie between these two entries" — including entries later than
+    // the one currently being packed, which a single forward pass over
+    // `values` could never otherwise see.
+    let byte_widths: Vec<usize> = values
+        .iter()
+        .map(|value| structural_width_bits(value).map(|width_bits| width_bits.div_ceil(8)))
+        .collect::<Result<_, _>>()?;
+
     let mut bytes = Vec::new();
 
     for (here_index, value) in values.iter().enumerate() {
-        let packed = pack_value(value, here_index)?;
+        let packed = pack_value(value, here_index, &byte_widths)?;
         let width_bytes = packed.width_bits.div_ceil(8);
         bytes.extend(to_bytes(&packed.value, width_bytes));
     }
 
     Ok(bytes)
+}
+
+// A width-only echo of `pack_value`'s own structural walk, deliberately not
+// sharing code with it: this never resolves a `Deferred` (no `here_index`,
+// no `byte_widths` — it's what *produces* `byte_widths`), so it never needs
+// to recognize `LittleEndian` specially either. A `LittleEndian<T, width>`
+// value's `value` field is walked like any other struct's one field, which
+// yields the same width `pack_value` would separately verify against its
+// declared `width` argument.
+fn structural_width_bits(value: &EmittedValue) -> Result<usize, String> {
+    match value {
+        EmittedValue::Struct { name, args, .. } if name == "bits" => bits_width(args),
+
+        EmittedValue::Struct { name, args, .. } if name == "Positioned" => bits_width(args),
+
+        EmittedValue::Struct { fields, .. } => {
+            let mut width_bits = 0usize;
+            for (_, field) in fields {
+                width_bits += structural_width_bits(field)?;
+            }
+            Ok(width_bits)
+        }
+
+        EmittedValue::Int { value } => Err(format!(
+            "can't tell how many bits a bare Int (`{value}`) should occupy — \
+             wrap it in a `bits<N>` struct"
+        )),
+
+        EmittedValue::Enum { name, variant, .. } => Err(format!(
+            "can't infer a machine-code layout for enum value `{name}.{variant}`"
+        )),
+    }
 }
 
 // `here_index` is which top-level emitted entry (0-based, in emission
@@ -59,7 +104,7 @@ pub fn pack_stream(values: &[EmittedValue]) -> Result<Vec<u8>, String> {
 // a `Positioned<N>` can nest arbitrarily deep inside another struct's
 // fields but always means "here" relative to the *top-level* instruction
 // it was emitted as part of.
-fn pack_value(value: &EmittedValue, here_index: usize) -> Result<Packed, String> {
+fn pack_value(value: &EmittedValue, here_index: usize, byte_widths: &[usize]) -> Result<Packed, String> {
     match value {
         EmittedValue::Struct { name, args, fields } if name == "bits" => {
             let width_bits = bits_width(args)?;
@@ -97,7 +142,7 @@ fn pack_value(value: &EmittedValue, here_index: usize) -> Result<Packed, String>
                 .find(|(field_name, _)| field_name == "value")
                 .ok_or_else(|| "a `Positioned<N>` value is missing its `value` field".to_string())?;
 
-            let raw = resolve_deferred(deferred, here_index)?;
+            let raw = resolve_deferred(deferred, here_index, byte_widths)?;
 
             let mask = (BigInt::from(1) << width_bits) - BigInt::from(1);
             Ok(Packed { value: raw & mask, width_bits })
@@ -118,7 +163,7 @@ fn pack_value(value: &EmittedValue, here_index: usize) -> Result<Packed, String>
                 .find(|(field_name, _)| field_name == "value")
                 .ok_or_else(|| "a `LittleEndian<T, width>` value is missing its `value` field".to_string())?;
 
-            let packed = pack_value(inner, here_index)?;
+            let packed = pack_value(inner, here_index, byte_widths)?;
 
             if packed.width_bits != declared_width {
                 return Err(format!(
@@ -143,7 +188,7 @@ fn pack_value(value: &EmittedValue, here_index: usize) -> Result<Packed, String>
             let mut width_bits = 0usize;
 
             for (_, field) in fields {
-                let packed = pack_value(field, here_index)?;
+                let packed = pack_value(field, here_index, byte_widths)?;
                 value = (value << packed.width_bits) | packed.value;
                 width_bits += packed.width_bits;
             }
@@ -164,12 +209,14 @@ fn pack_value(value: &EmittedValue, here_index: usize) -> Result<Packed, String>
 
 // Resolves a `std.bitter.deferred.Deferred` value (an `EmittedValue::Enum`
 // named `Deferred`) into a concrete `BigInt`, using `here_index` for any
-// `Here` marker found inside it. Reuses `bitterasm::eval::eval` for the
-// actual arithmetic on `Sub`/`Mul`/`Shr`/`Band` nodes rather than
-// re-deriving BigInt shift/mask semantics by hand — this guarantees
-// identical behavior (negative-offset shifts included) to what the
-// resolver used to compute eagerly for `@here`-based offsets.
-fn resolve_deferred(deferred: &EmittedValue, here_index: usize) -> Result<BigInt, String> {
+// `Here` marker found inside it and `byte_widths` (every top-level entry's
+// own packed byte width, computed structurally by `pack_stream` before any
+// entry's value is resolved) for any `Span` marker. Reuses
+// `bitterasm::eval::eval` for the actual arithmetic on `Sub`/`Mul`/`Shr`/
+// `Band` nodes rather than re-deriving BigInt shift/mask semantics by hand
+// — this guarantees identical behavior (negative-offset shifts included)
+// to what the resolver used to compute eagerly for `@here`-based offsets.
+fn resolve_deferred(deferred: &EmittedValue, here_index: usize, byte_widths: &[usize]) -> Result<BigInt, String> {
     let EmittedValue::Enum { name, variant, payload, .. } = deferred else {
         return Err(format!("expected a `Deferred` value, found {deferred:?}"));
     };
@@ -216,6 +263,16 @@ fn resolve_deferred(deferred: &EmittedValue, here_index: usize) -> Result<BigInt
                 return Err(format!("a `BinOp`'s `op` field should be an `Op` enum, found `{op_name}`"));
             }
 
+            // `Span` isn't ordinary arithmetic on two already-resolved
+            // integers the way `Sub`/`Mul`/`Shr`/`Band` are — it looks up
+            // structurally-known widths instead, so it's resolved on its
+            // own rather than routed through `bitterasm::eval::eval`.
+            if op_variant == "Span" {
+                let from = resolve_deferred(field("left")?, here_index, byte_widths)?;
+                let to = resolve_deferred(field("right")?, here_index, byte_widths)?;
+                return resolve_span(&from, &to, byte_widths);
+            }
+
             let op = match op_variant.as_str() {
                 "Sub" => BinaryOp::Subtract,
                 "Mul" => BinaryOp::Multiply,
@@ -224,8 +281,8 @@ fn resolve_deferred(deferred: &EmittedValue, here_index: usize) -> Result<BigInt
                 other => return Err(format!("unknown `Op` variant `{other}`")),
             };
 
-            let left = resolve_deferred(field("left")?, here_index)?;
-            let right = resolve_deferred(field("right")?, here_index)?;
+            let left = resolve_deferred(field("left")?, here_index, byte_widths)?;
+            let right = resolve_deferred(field("right")?, here_index, byte_widths)?;
 
             let span = Span::new(0, 0);
             let expr = Expr::Binary {
@@ -241,6 +298,38 @@ fn resolve_deferred(deferred: &EmittedValue, here_index: usize) -> Result<BigInt
 
         other => Err(format!("unknown `Deferred` variant `{other}`")),
     }
+}
+
+// `std.bitter.deferred`'s `span(from, to)`: the total packed byte width of
+// every top-level emitted entry in the half-open range `[from, to)`. `from`
+// and `to` are ordinarily each a label's resolved position (see
+// `std/bitter/deferred.basm`'s doc comment on `span` for why `here()`
+// itself can't serve as an endpoint here), which bitterasm's own resolver
+// has already reduced to a plain `int` well before `bitter` ever sees the
+// `.em` file — so unlike `Here`, neither endpoint depends on which entry
+// this `Span` node happens to be embedded in.
+fn resolve_span(from: &BigInt, to: &BigInt, byte_widths: &[usize]) -> Result<BigInt, String> {
+    let from = span_index(from, byte_widths.len())?;
+    let to = span_index(to, byte_widths.len())?;
+
+    if from > to {
+        return Err(format!("`span`'s `from` ({from}) must not be greater than its `to` ({to})"));
+    }
+
+    Ok(BigInt::from(byte_widths[from..to].iter().sum::<usize>()))
+}
+
+fn span_index(value: &BigInt, entry_count: usize) -> Result<usize, String> {
+    let index =
+        usize::try_from(value).map_err(|_| format!("`span`'s endpoint {value} isn't a valid emitted-value index"))?;
+
+    if index > entry_count {
+        return Err(format!(
+            "`span`'s endpoint {index} is past the end of the emitted-value stream ({entry_count} entries)"
+        ));
+    }
+
+    Ok(index)
 }
 
 fn bits_width(args: &[EmittedGenericArg]) -> Result<usize, String> {
@@ -354,21 +443,21 @@ mod tests {
     #[test]
     fn little_endian_wrapper_rejects_a_width_mismatch() {
         let value = little_endian("16", r_type("0", "3", "2", "0", "1", "51"));
-        let error = pack_value(&value, 0).unwrap_err();
+        let error = pack_value(&value, 0, &[]).unwrap_err();
         assert!(error.contains("resolved to 32 bit(s), not 16"), "{error}");
     }
 
     #[test]
     fn little_endian_wrapper_rejects_a_non_byte_multiple_width() {
         let value = little_endian("5", bits("5", "1"));
-        let error = pack_value(&value, 0).unwrap_err();
+        let error = pack_value(&value, 0, &[]).unwrap_err();
         assert!(error.contains("isn't a whole number of bytes"), "{error}");
     }
 
     #[test]
     fn masks_a_value_wider_than_its_declared_bit_width() {
         let value = bits("4", "255");
-        let packed = pack_value(&value, 0).unwrap();
+        let packed = pack_value(&value, 0, &[]).unwrap();
         assert_eq!(packed.value, BigInt::from(0b1111));
         assert_eq!(packed.width_bits, 4);
     }
@@ -486,13 +575,13 @@ mod tests {
     #[test]
     fn resolves_a_bare_here_marker_to_its_top_level_index() {
         let value = positioned("8", deferred_here());
-        assert_eq!(pack_value(&value, 5).unwrap().value, BigInt::from(5));
+        assert_eq!(pack_value(&value, 5, &[]).unwrap().value, BigInt::from(5));
     }
 
     #[test]
     fn resolves_a_bare_leaf_regardless_of_here_index() {
         let value = positioned("8", deferred_leaf("42"));
-        assert_eq!(pack_value(&value, 999).unwrap().value, BigInt::from(42));
+        assert_eq!(pack_value(&value, 999, &[]).unwrap().value, BigInt::from(42));
     }
 
     #[test]
@@ -515,13 +604,13 @@ mod tests {
 
         // -24 >> 1 = -12; -12 & 0b1111 (two's-complement) = 0b0100, then
         // masked again to 4 bits by `pack_value` itself (a no-op here).
-        assert_eq!(pack_value(&value, 9).unwrap().value, BigInt::from(0b0100));
+        assert_eq!(pack_value(&value, 9, &[]).unwrap().value, BigInt::from(0b0100));
     }
 
     #[test]
     fn masks_a_resolved_deferred_value_wider_than_its_declared_width() {
         let value = positioned("4", deferred_leaf("255"));
-        let packed = pack_value(&value, 0).unwrap();
+        let packed = pack_value(&value, 0, &[]).unwrap();
         assert_eq!(packed.value, BigInt::from(0b1111));
         assert_eq!(packed.width_bits, 4);
     }
@@ -534,7 +623,68 @@ mod tests {
             variant: "Bogus".to_string(),
             payload: None,
         };
-        let error = resolve_deferred(&bogus, 0).unwrap_err();
+        let error = resolve_deferred(&bogus, 0, &[]).unwrap_err();
         assert!(error.contains("unknown"), "{error}");
+    }
+
+    // --- std.bitter.deferred: `span(from, to)` / `Op::Span` ---
+
+    fn deferred_span(from: &str, to: &str) -> EmittedValue {
+        deferred_node("Span", deferred_leaf(from), deferred_leaf(to))
+    }
+
+    #[test]
+    fn span_sums_the_packed_byte_widths_of_entries_in_its_half_open_range() {
+        // Three top-level entries of 1, 2, and 1 byte; a fourth entry
+        // reports the packed size of the first two (indices [0, 2)) — a
+        // stand-in for a length-prefix entry measuring a body emitted
+        // after it, entirely independent of which entry embeds the `Span`
+        // itself (unlike `Here`, which always means "whichever entry
+        // contains me" — see `resolve_span`'s doc comment for why `span`'s
+        // endpoints have to come from something other than `here()`).
+        let values = [
+            bits("8", "170"),
+            bits("16", "4660"),
+            positioned("8", deferred_span("0", "2")),
+        ];
+        let bytes = pack_stream(&values).unwrap();
+        assert_eq!(bytes, vec![0xAA, 0x12, 0x34, 0x03]);
+    }
+
+    #[test]
+    fn span_of_an_empty_range_is_zero() {
+        let values = [bits("8", "170"), positioned("8", deferred_span("0", "0"))];
+        let bytes = pack_stream(&values).unwrap();
+        assert_eq!(bytes, vec![0xAA, 0x00]);
+    }
+
+    #[test]
+    fn span_rejects_a_from_greater_than_to() {
+        let values = [bits("8", "170"), positioned("8", deferred_span("1", "0"))];
+        let error = pack_stream(&values).unwrap_err();
+        assert!(error.contains("must not be greater than"), "{error}");
+    }
+
+    #[test]
+    fn span_rejects_an_endpoint_past_the_end_of_the_stream() {
+        let values = [bits("8", "170"), positioned("8", deferred_span("0", "5"))];
+        let error = pack_stream(&values).unwrap_err();
+        assert!(error.contains("past the end"), "{error}");
+    }
+
+    #[test]
+    fn span_endpoints_dont_depend_on_which_entry_the_span_itself_is_embedded_in() {
+        // The same `span(0, 2)` computation as the first test above, but
+        // now embedded in the *first* entry rather than the last — proving
+        // its result is a property of the two endpoint indices alone, not
+        // of `here_index` the way `Deferred.Here` resolution is.
+        let offset = deferred_span("1", "3");
+        let value = positioned("8", offset);
+        assert_eq!(resolve_deferred(&value_field(&value), 0, &[7, 3, 2]).unwrap(), BigInt::from(5));
+    }
+
+    fn value_field(positioned: &EmittedValue) -> EmittedValue {
+        let EmittedValue::Struct { fields, .. } = positioned else { panic!("expected a struct") };
+        fields.iter().find(|(name, _)| name == "value").unwrap().1.clone()
     }
 }

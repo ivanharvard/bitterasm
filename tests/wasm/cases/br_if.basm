@@ -1,0 +1,3 @@
+from std.wasm.impl import *
+
+br_if(1)

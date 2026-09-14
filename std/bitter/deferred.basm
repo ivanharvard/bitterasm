@@ -1,4 +1,4 @@
-pub enum Op { Sub, Mul, Shr, Band }
+pub enum Op { Sub, Mul, Shr, Band, Span }
 
 pub struct BinOp {
     pub op: Op,
@@ -80,6 +80,35 @@ pub macro band(a: int, b: int) -> int {
 
 pub macro band(a: Deferred, b: int) -> Deferred {
     @return Deferred.Node(BinOp(op = Op.Band, left = a, right = Deferred.Leaf(b)))
+}
+
+# ---------------------------------------------------------------
+# span — unlike `sub`/`mul`/`shr`/`band`, this isn't arithmetic on two
+# already-resolved integers: it asks whatever evaluator resolves it "how
+# much lies between these two points in the emitted-value stream," in
+# whatever unit that evaluator measures such things (bytes, for `bitter`).
+# It's this file's vocabulary for that relationship, the same way `here()`
+# is its vocabulary for "which position am I" — neither says anything
+# about bytes or addresses itself, only the evaluator that resolves them
+# does.
+#
+# Both endpoints are plain `int`s, not `Deferred`, and in particular not
+# `here()`: a bare `Deferred.Here` carries no identity of its own — it
+# always resolves to "whichever entry ends up containing me," regardless
+# of where in the source the `here()` call that produced it was written.
+# Two separate `here()` calls later combined into one *other* entry (e.g.
+# a length-prefix emitted before the span it measures) would therefore
+# both resolve to that other entry's own position, not to the positions
+# where each was captured — useless for marking two distinct points.
+# Labels don't have this problem: `name:` already resolves to a fixed,
+# nameable position via bitterasm's own two-pass resolver, independent of
+# where its value later gets used, exactly what two distinct endpoints
+# here need. So `span`'s callers are expected to pass two label names
+# (already plain `int`s by the time a macro body sees them, exactly like
+# `std/riscv`'s branch instructions take a label as their `target: int`),
+# not `here()`.
+pub macro span(start: int, end: int) -> Deferred {
+    @return Deferred.Node(BinOp(op = Op.Span, left = Deferred.Leaf(start), right = Deferred.Leaf(end)))
 }
 
 # Pairs a `Deferred` value with the bit width it's meant to occupy once
