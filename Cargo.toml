@@ -3,8 +3,14 @@ members = ["bitter"]
 
 [package]
 name = "bitterasm"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 edition = "2024"
+description = "A metalanguage for constructing assembly languages, assuming almost nothing about the target architecture."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ivanharvard/bitterasm"
+readme = "README.md"
+keywords = ["assembler", "compiler", "metaprogramming", "assembly"]
+categories = ["compilers", "parser-implementations"]
 
 [dependencies]
 num-bigint = "0.4"
