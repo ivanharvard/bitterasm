@@ -52,7 +52,6 @@ pub macro reversed<T>(arr: Array<T, ...>) -> Array<T, ...>
     }
 }
 
-# note to AI: i am editing this file. you can ignore this for now.
 pub macro popped(arr: Array<T, N>) -> Array<T, N-1>
 {   
     @assert N > 0
