@@ -1,16 +1,3 @@
-# `bitter`-specific vocabulary: values only `bitter` (the binary evaluator),
-# not the compiler, can resolve. `@here` used to be a core language keyword,
-# eagerly resolved by the resolver's own live position counter — an
-# assumption baked into the language core that "emission is ordered and
-# positions are referenceable." `Deferred`/`here()` replace that: `here()`
-# never resolves to a concrete `Int` at compile time, so any arithmetic
-# built from it stays a `Deferred` expression tree all the way through
-# `.em`, and only `bitter` — once it knows which emitted instruction it's
-# packing — can say what a `here()` marker actually means. A different
-# evaluator, or a future multi-stream-aware one, gives `here()` (or
-# whatever it calls its own equivalent) a different meaning entirely,
-# without anything here needing to change.
-
 pub enum Op { Sub, Mul, Shr, Band }
 
 pub struct BinOp {
@@ -25,7 +12,6 @@ pub enum Deferred {
     Node: BinOp,
 }
 
-# Zero resolver computation happens here — that's the whole point.
 pub macro here() -> Deferred {
     @return Deferred.Here
 }

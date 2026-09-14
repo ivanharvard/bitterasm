@@ -41,8 +41,14 @@ pub enum EmittedGenericArg {
     Type(EmittedType),
 }
 
+// Its own tag key can't also be "kind": `Type(EmittedType)` above is a
+// newtype variant, so serde flattens `EmittedType`'s own tagged
+// representation into the same JSON object as `EmittedGenericArg`'s "kind"
+// tag — two fields both named "kind" in one object, which serde's
+// internally-tagged deserializer rejects as ambiguous the moment a real
+// type generic argument (as opposed to a const one) is actually emitted.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind")]
+#[serde(tag = "type_kind")]
 pub enum EmittedType {
     Builtin { name: String },
     Struct { name: String, args: Vec<EmittedGenericArg> },

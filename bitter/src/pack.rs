@@ -8,41 +8,44 @@
 //! declaration order and concatenates whatever `bits<N>` leaves it finds,
 //! most-significant field first — matching how every format struct in
 //! `std/riscv/native.basm` documents its own field order.
+//!
+//! There is no evaluator-level notion of "byte order" here — no flag, no
+//! CLI option, nothing every architecture is required to have an opinion
+//! about. Each top-level emitted value is packed by concatenating its bits
+//! most-significant-first, then padded with zero bits at the high end up to
+//! the next whole byte (a value that is already a whole number of bits
+//! wide, like every RV32I instruction, pads by zero bytes). That is the
+//! only contract: it makes no assumption that a target's native word size
+//! is a multiple of 8 (see `std.bitter.byte_order`'s own doc comment for
+//! why a word-addressed architecture like the PDP-10 never touches byte
+//! order at all). An architecture that *is* byte-addressable and wants
+//! little-endian output opts into that itself, explicitly, by wrapping its
+//! fully-assembled instruction value in `std.bitter.byte_order`'s
+//! `LittleEndian<T, width>` — recognized here by name exactly like `bits`
+//! and `Positioned` are.
 
 use bitterasm::ast::{BinaryOp, Expr};
 use bitterasm::emit::{EmittedGenericArg, EmittedValue};
 use bitterasm::eval;
 use bitterasm::token::Span;
-use num_bigint::BigInt;
+use num_bigint::{BigInt, Sign};
 use std::collections::HashMap;
-
-#[derive(Debug, Clone, Copy, clap::ValueEnum)]
-pub enum Endian {
-    Little,
-    Big,
-}
 
 /// A value with a known bit width, produced by walking one `EmittedValue`
 /// down to its `bits<N>` leaves and concatenating them.
+#[derive(Debug)]
 struct Packed {
     value: BigInt,
     width_bits: usize,
 }
 
-pub fn pack_stream(values: &[EmittedValue], endian: Endian) -> Result<Vec<u8>, String> {
+pub fn pack_stream(values: &[EmittedValue]) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
 
     for (here_index, value) in values.iter().enumerate() {
         let packed = pack_value(value, here_index)?;
-
-        if packed.width_bits % 8 != 0 {
-            return Err(format!(
-                "emitted value is {} bit(s) wide, not a whole number of bytes",
-                packed.width_bits
-            ));
-        }
-
-        bytes.extend(to_bytes(&packed.value, packed.width_bits / 8, endian));
+        let width_bytes = packed.width_bits.div_ceil(8);
+        bytes.extend(to_bytes(&packed.value, width_bytes));
     }
 
     Ok(bytes)
@@ -98,6 +101,38 @@ fn pack_value(value: &EmittedValue, here_index: usize) -> Result<Packed, String>
 
             let mask = (BigInt::from(1) << width_bits) - BigInt::from(1);
             Ok(Packed { value: raw & mask, width_bits })
+        }
+
+        // `std.bitter.byte_order`'s `LittleEndian<T, width>` — walked one
+        // level deeper exactly like any other struct (so any `Positioned<N>`
+        // fields inside `T` are resolved against `here_index` first, the
+        // same as they would be unwrapped), then the fully-resolved,
+        // `width`-wide result is byte-reversed. This is the only place in
+        // this whole module that ever reorders bytes; nothing else here has
+        // an opinion about byte order at all.
+        EmittedValue::Struct { name, args, fields } if name == "LittleEndian" => {
+            let declared_width = const_width_arg(args)?;
+
+            let (_, inner) = fields
+                .iter()
+                .find(|(field_name, _)| field_name == "value")
+                .ok_or_else(|| "a `LittleEndian<T, width>` value is missing its `value` field".to_string())?;
+
+            let packed = pack_value(inner, here_index)?;
+
+            if packed.width_bits != declared_width {
+                return Err(format!(
+                    "`LittleEndian<_, {declared_width}>` wraps a value that resolved to {} bit(s), not {declared_width}",
+                    packed.width_bits
+                ));
+            }
+            if declared_width % 8 != 0 {
+                return Err(format!(
+                    "`LittleEndian<_, {declared_width}>` isn't a whole number of bytes — byte order is only meaningful for byte-addressable widths"
+                ));
+            }
+
+            Ok(Packed { value: reverse_bytes(&packed.value, declared_width / 8), width_bits: declared_width })
         }
 
         // Any other struct is walked one level deeper: its own fields,
@@ -222,25 +257,44 @@ fn bits_width(args: &[EmittedGenericArg]) -> Result<usize, String> {
         .map_err(|error| format!("`{value}` isn't a valid bit width: {error}"))
 }
 
-/// `width_bytes` is `value`'s exact byte width (already checked to be a
-/// whole number of bytes by the caller) — `value` is non-negative here
-/// (masked to width by `pack_value`), so this is just BigInt's minimal
-/// big-endian encoding, left-padded with zero bytes to that width and
-/// reversed for `Endian::Little`.
-fn to_bytes(value: &BigInt, width_bytes: usize, endian: Endian) -> Vec<u8> {
+/// Like `bits_width`, but scans for the first const argument rather than
+/// assuming it's the only (and therefore first) one — `LittleEndian<T,
+/// width>` carries a type argument ahead of its width, unlike `bits<N>` and
+/// `Positioned<N>`, which only ever have the one.
+fn const_width_arg(args: &[EmittedGenericArg]) -> Result<usize, String> {
+    let width_arg = args
+        .iter()
+        .find_map(|arg| match arg {
+            EmittedGenericArg::Const { value } => Some(value),
+            EmittedGenericArg::Type(_) => None,
+        })
+        .ok_or_else(|| "missing a const width argument".to_string())?;
+
+    width_arg
+        .parse::<usize>()
+        .map_err(|error| format!("`{width_arg}` isn't a valid bit width: {error}"))
+}
+
+/// `value` is non-negative here (masked to width by `pack_value`), so this
+/// is just BigInt's minimal big-endian encoding, left-padded with zero
+/// bytes up to `width_bytes`.
+fn to_bytes(value: &BigInt, width_bytes: usize) -> Vec<u8> {
     let (_, mut be_bytes) = value.to_bytes_be();
 
     while be_bytes.len() < width_bytes {
         be_bytes.insert(0, 0);
     }
 
-    match endian {
-        Endian::Big => be_bytes,
-        Endian::Little => {
-            be_bytes.reverse();
-            be_bytes
-        }
-    }
+    be_bytes
+}
+
+/// Reverses the byte order of a `width_bytes`-wide value — the one and only
+/// byte-reordering operation this module performs, and only ever on behalf
+/// of an explicit `LittleEndian<T, width>` wrapper.
+fn reverse_bytes(value: &BigInt, width_bytes: usize) -> BigInt {
+    let mut bytes = to_bytes(value, width_bytes);
+    bytes.reverse();
+    BigInt::from_bytes_be(Sign::Plus, &bytes)
 }
 
 #[cfg(test)]
@@ -270,20 +324,45 @@ mod tests {
         }
     }
 
+    fn little_endian(width: &str, value: EmittedValue) -> EmittedValue {
+        EmittedValue::Struct {
+            name: "LittleEndian".to_string(),
+            args: vec![
+                EmittedGenericArg::Type(bitterasm::emit::EmittedType::Struct { name: "RType".to_string(), args: vec![] }),
+                EmittedGenericArg::Const { value: width.to_string() },
+            ],
+            fields: vec![("value".to_string(), value)],
+        }
+    }
+
     #[test]
-    fn packs_add_x1_x2_x3_little_endian() {
-        // add x1, x2, x3 -> 0x003100b3 (funct7=0, rs2=3, rs1=2, funct3=0, rd=1, opcode=0b0110011=51)
+    fn packs_add_x1_x2_x3_big_endian_bit_order_by_default() {
+        // add x1, x2, x3 -> 0x003100b3 (funct7=0, rs2=3, rs1=2, funct3=0, rd=1, opcode=0b0110011=51),
+        // concatenated most-significant-field-first with no reordering.
         let value = r_type("0", "3", "2", "0", "1", "51");
-        let bytes = pack_stream(&[value], Endian::Little).unwrap();
+        let bytes = pack_stream(&[value]).unwrap();
+        assert_eq!(bytes, vec![0x00, 0x31, 0x00, 0xb3]);
+    }
+
+    #[test]
+    fn little_endian_wrapper_reverses_the_bytes() {
+        let value = little_endian("32", r_type("0", "3", "2", "0", "1", "51"));
+        let bytes = pack_stream(&[value]).unwrap();
         assert_eq!(bytes, vec![0xb3, 0x00, 0x31, 0x00]);
     }
 
     #[test]
-    fn packs_big_endian_as_the_reverse_of_little() {
-        let value = r_type("0", "3", "2", "0", "1", "51");
-        let little = pack_stream(&[value.clone()], Endian::Little).unwrap();
-        let big = pack_stream(&[value], Endian::Big).unwrap();
-        assert_eq!(big, little.into_iter().rev().collect::<Vec<u8>>());
+    fn little_endian_wrapper_rejects_a_width_mismatch() {
+        let value = little_endian("16", r_type("0", "3", "2", "0", "1", "51"));
+        let error = pack_value(&value, 0).unwrap_err();
+        assert!(error.contains("resolved to 32 bit(s), not 16"), "{error}");
+    }
+
+    #[test]
+    fn little_endian_wrapper_rejects_a_non_byte_multiple_width() {
+        let value = little_endian("5", bits("5", "1"));
+        let error = pack_value(&value, 0).unwrap_err();
+        assert!(error.contains("isn't a whole number of bytes"), "{error}");
     }
 
     #[test]
@@ -295,16 +374,29 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_non_byte_aligned_stream() {
+    fn pads_a_non_byte_multiple_value_with_zero_bits_at_the_high_end() {
+        // No architecture assumption here about word size being a multiple
+        // of 8 — see the module doc comment. `0b1` in 5 bits pads up to one
+        // byte as `0b00000001`.
         let value = bits("5", "1");
-        let error = pack_stream(&[value], Endian::Little).unwrap_err();
-        assert!(error.contains("not a whole number of bytes"), "{error}");
+        let bytes = pack_stream(&[value]).unwrap();
+        assert_eq!(bytes, vec![0x01]);
+    }
+
+    #[test]
+    fn pads_a_36_bit_word_up_to_five_bytes() {
+        // The PDP-10-shaped case: a native word width that isn't a multiple
+        // of 8 at all. 0xF_FFFF_FFFF (36 ones) should pad to exactly 5
+        // bytes, no more, with the extra 4 bits zero at the high end.
+        let value = bits("36", "68719476735"); // 2^36 - 1
+        let bytes = pack_stream(&[value]).unwrap();
+        assert_eq!(bytes, vec![0x0F, 0xFF, 0xFF, 0xFF, 0xFF]);
     }
 
     #[test]
     fn rejects_a_bare_int_with_no_declared_width() {
         let value = EmittedValue::Int { value: "3".to_string() };
-        let error = pack_stream(&[value], Endian::Little).unwrap_err();
+        let error = pack_stream(&[value]).unwrap_err();
         assert!(error.contains("bare Int"), "{error}");
     }
 

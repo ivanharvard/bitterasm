@@ -106,8 +106,11 @@ def encode_case(em_path: pathlib.Path, workdir: pathlib.Path) -> list[int]:
     if result.returncode != 0:
         raise RuntimeError(f"bitter encode failed for {em_path.name}:\n{result.stderr}")
 
-    # RV32I words are 32 bits, little-endian — `bitter encode`'s default
-    # byte order (see bitter/src/pack.rs) and the target ISA's actual one.
+    # RV32I words are 32 bits, little-endian — not something `bitter encode`
+    # has an opinion about (it has no byte-order flag at all; see
+    # bitter/src/pack.rs's module doc), but something std/riscv/impl.basm
+    # states for itself by wrapping every instruction format in
+    # `std.bitter.byte_order`'s `LittleEndian<T, 32>`.
     data = bin_path.read_bytes()
     return [int.from_bytes(data[i : i + 4], "little") for i in range(0, len(data), 4)]
 

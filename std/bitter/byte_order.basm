@@ -1,0 +1,17 @@
+# Wraps an already-structured value with the byte order `bitter` should
+# serialize it in, once every field inside — including any still-`Deferred`
+# `Positioned<N>` ones — has been resolved and concatenated into a single
+# bit pattern the declared `width` wide. `bitter` recognizes this struct by
+# name exactly the way it already recognizes `bits` and `Positioned`.
+#
+# There's no such wrapper for "big-endian," and no evaluator-level flag that
+# picks a byte order for a whole compile: `bitter`'s default, with nothing
+# wrapping a value, is to concatenate bits most-significant-first and never
+# reorder them — the only byte order a target that isn't byte-addressable at
+# all (a word machine, say) can be said to have. `LittleEndian<T, width>` is
+# how a byte-addressable architecture package opts itself into the other
+# one; an architecture that never reaches for it never states an opinion
+# `bitter` has to know about.
+pub struct LittleEndian<T, const width: int> {
+    pub value: T,
+}

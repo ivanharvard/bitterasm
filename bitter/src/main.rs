@@ -5,8 +5,6 @@ use clap::{Parser, Subcommand};
 
 mod pack;
 
-use pack::Endian;
-
 #[derive(Parser)]
 #[command(name = "bitter", version, about = "Exporter CLI for BitterASM-emitted values")]
 struct Cli {
@@ -23,10 +21,6 @@ enum Command {
         /// Defaults to `path` with its extension swapped to `.bin`.
         #[arg(short, long)]
         output: Option<PathBuf>,
-
-        /// Byte order to serialize each emitted value in.
-        #[arg(long, value_enum, default_value = "little")]
-        endian: Endian,
     },
 
     /// Anything `bitter` doesn't recognize itself is handed to `bitterasm`
@@ -42,7 +36,7 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Encode { path, output, endian } => encode(&path, output, endian),
+        Command::Encode { path, output } => encode(&path, output),
         Command::External(args) => delegate_to_bitterasm(&args),
     }
 }
@@ -82,7 +76,7 @@ fn delegate_to_bitterasm(args: &[String]) {
     }
 }
 
-fn encode(path: &PathBuf, output: Option<PathBuf>, endian: Endian) {
+fn encode(path: &PathBuf, output: Option<PathBuf>) {
     let json = match std::fs::read_to_string(path) {
         Ok(json) => json,
 
@@ -101,7 +95,7 @@ fn encode(path: &PathBuf, output: Option<PathBuf>, endian: Endian) {
         }
     };
 
-    let bytes = match pack::pack_stream(&values, endian) {
+    let bytes = match pack::pack_stream(&values) {
         Ok(bytes) => bytes,
 
         Err(error) => {
