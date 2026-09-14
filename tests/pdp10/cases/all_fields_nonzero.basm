@@ -1,0 +1,6 @@
+from std.pdp10.impl import *
+
+# Every field simultaneously non-zero, so no field can silently bleed into
+# its neighbor once the 36-bit word is padded into 5 bytes: ac/i straddle
+# one byte boundary and x/y straddle another.
+move ac15, 1, Index(15), 0x3FFFF

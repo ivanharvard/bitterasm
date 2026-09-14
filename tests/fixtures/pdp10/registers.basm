@@ -1,0 +1,14 @@
+from std.pdp10.impl import *
+
+# Exercises a spread of the `@for`-generated ac0..ac15 constants directly
+# (the splice syntax that generated them, `` `i` ``, only forms new names at
+# a declaration site — referencing an already-declared one is just its
+# plain name, same as any other constant).
+move ac0, 0, Index(0), 0
+move ac1, 0, Index(0), 0
+move ac7, 0, Index(0), 0
+move ac15, 0, Index(0), 0
+
+# Index and AC are both `bits<4>`, so an accumulator constant is directly
+# usable wherever an index register is expected, with no wrapping needed.
+move ac0, 1, ac3, 100

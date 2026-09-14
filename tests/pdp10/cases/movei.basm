@@ -1,0 +1,3 @@
+from std.pdp10.impl import *
+
+movei ac1, 0, Index(0), 42

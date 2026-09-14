@@ -1,0 +1,252 @@
+from std.binary import *
+
+# =================
+# accumulators
+# =================
+# 16 general-purpose accumulators. Unlike RISC-V's `x0`, no accumulator is
+# wired to zero by the ISA, and no ABI names are assigned here: ITS,
+# TOPS-10, and TOPS-20 each had their own accumulator conventions (which
+# one is the stack pointer, if any), and picking one would be inventing a
+# convention this language has no business asserting.
+
+pub type AC = bits<4>
+
+@for i in 0..16 {
+    pub const ac`i` = AC(i)
+}
+
+# =================
+# field widths
+# =================
+# One alias per distinct instruction-word field, even where widths
+# coincide (`Index` and `AC` are both `bits<4>` — any accumulator can
+# double as an index register — but each gets its own alias so a struct
+# field stays self-documenting about which role it plays).
+
+pub type Opcode = bits<9>
+pub type Indirect = bits<1>
+pub type Index = bits<4>
+pub type Addr = bits<18>
+
+# =================
+# instruction format
+# =================
+# Nearly every PDP-10 instruction shares this one 36-bit shape (opcode 9 /
+# ac 4 / indirect 1 / index 4 / address 18 — field order is bit order,
+# most-significant field first, matching how `bitter`'s packer concatenates
+# a struct's fields, and matching the field order the DEC PDP-10 System
+# Reference Manual's own "BASIC INSTRUCTIONS" word-format diagram uses).
+#
+# Unlike RV32I there's no second or third format to disambiguate: opcode
+# alone always picks the instruction, and `i`/`x`/`y` always mean the same
+# thing structurally. What `i`/`x`/`y` mean once a real CPU resolves them
+# into an effective address at runtime is exactly the kind of execution
+# semantics bitterasm has no business modeling — same boundary RISC-V's own
+# instruction macros already draw around their own operand fields. Every
+# macro below just encodes the literal bits its caller supplies.
+#
+# No `LittleEndian<Instr, 36>` wrapper: the PDP-10 is word-addressed, not
+# byte-addressable, so byte order isn't a property it has (see
+# `std.bitter.byte_order`'s own doc comment). `bitter`'s packer pads this
+# struct's 36 bits to 5 bytes on its own, with no help needed here.
+pub struct Instr {
+    opcode: Opcode,
+    ac: AC,
+    i: Indirect,
+    x: Index,
+    y: Addr,
+}
+
+# =================
+# instructions
+# =================
+# A representative subset, not full ISA coverage — enough categories to
+# prove the 36-bit format actually works: no-address control, jumps to a
+# direct address, immediate load, memory load/store, arithmetic (register-
+# and immediate-addressed), logical, compare-and-skip, and exchange.
+# Opcode values below are from the DEC PDP-10 System Reference Manual
+# (DEC-10-HGAA-D), Appendix A's numeric instruction-mnemonic listing.
+
+# HALT is documented in the manual's own word-format chart as `JRST 4,` —
+# opcode 0254 with the ac field fixed to 4, not a separate opcode of its
+# own.
+pub macro halt() -> Instr {
+    @emit Instr(
+        opcode = Opcode(0o254),
+        ac = AC(4),
+        i = Indirect(0),
+        x = Index(0),
+        y = Addr(0)
+    )
+}
+
+pub macro jrst(
+    i: int,
+    x: Index,
+    y: int
+) -> Instr {
+    @emit Instr(
+        opcode = Opcode(0o254),
+        ac = AC(0),
+        i = Indirect(i & 0b1),
+        x = x,
+        y = Addr(y & 0x3FFFF)
+    )
+}
+
+pub macro jumpa(
+    i: int,
+    x: Index,
+    y: int
+) -> Instr {
+    @emit Instr(
+        opcode = Opcode(0o324),
+        ac = AC(0),
+        i = Indirect(i & 0b1),
+        x = x,
+        y = Addr(y & 0x3FFFF)
+    )
+}
+
+pub macro movei(
+    ac: AC,
+    i: int,
+    x: Index,
+    y: int
+) -> Instr {
+    @emit Instr(
+        opcode = Opcode(0o201),
+        ac = ac,
+        i = Indirect(i & 0b1),
+        x = x,
+        y = Addr(y & 0x3FFFF)
+    )
+}
+
+pub macro move(
+    ac: AC,
+    i: int,
+    x: Index,
+    y: int
+) -> Instr {
+    @emit Instr(
+        opcode = Opcode(0o200),
+        ac = ac,
+        i = Indirect(i & 0b1),
+        x = x,
+        y = Addr(y & 0x3FFFF)
+    )
+}
+
+pub macro movem(
+    ac: AC,
+    i: int,
+    x: Index,
+    y: int
+) -> Instr {
+    @emit Instr(
+        opcode = Opcode(0o202),
+        ac = ac,
+        i = Indirect(i & 0b1),
+        x = x,
+        y = Addr(y & 0x3FFFF)
+    )
+}
+
+# `y` doubles as another accumulator's address when the caller wants
+# AC-to-AC arithmetic: the first 16 words of memory (addresses 0-17 octal)
+# are wired to the accumulators themselves, so `add(ac1, 0, 0, 2)` adds
+# `ac2` into `ac1` with no separate register-register format needed.
+pub macro add(
+    ac: AC,
+    i: int,
+    x: Index,
+    y: int
+) -> Instr {
+    @emit Instr(
+        opcode = Opcode(0o270),
+        ac = ac,
+        i = Indirect(i & 0b1),
+        x = x,
+        y = Addr(y & 0x3FFFF)
+    )
+}
+
+pub macro addi(
+    ac: AC,
+    i: int,
+    x: Index,
+    y: int
+) -> Instr {
+    @emit Instr(
+        opcode = Opcode(0o271),
+        ac = ac,
+        i = Indirect(i & 0b1),
+        x = x,
+        y = Addr(y & 0x3FFFF)
+    )
+}
+
+pub macro sub(
+    ac: AC,
+    i: int,
+    x: Index,
+    y: int
+) -> Instr {
+    @emit Instr(
+        opcode = Opcode(0o274),
+        ac = ac,
+        i = Indirect(i & 0b1),
+        x = x,
+        y = Addr(y & 0x3FFFF)
+    )
+}
+
+pub macro and(
+    ac: AC,
+    i: int,
+    x: Index,
+    y: int
+) -> Instr {
+    @emit Instr(
+        opcode = Opcode(0o404),
+        ac = ac,
+        i = Indirect(i & 0b1),
+        x = x,
+        y = Addr(y & 0x3FFFF)
+    )
+}
+
+# Compare AC with the effective operand and skip the next instruction if
+# not equal — PDP-10's actual conditional-control-flow primitive. It never
+# needs a PC-relative delta the way RISC-V's `beq`/`bne` do (no `here()`,
+# no `Positioned<N>`): "skip the next instruction" needs no address at all.
+pub macro cain(
+    ac: AC,
+    i: int,
+    x: Index,
+    y: int
+) -> Instr {
+    @emit Instr(
+        opcode = Opcode(0o306),
+        ac = ac,
+        i = Indirect(i & 0b1),
+        x = x,
+        y = Addr(y & 0x3FFFF)
+    )
+}
+
+pub macro exch(
+    ac: AC,
+    i: int,
+    x: Index,
+    y: int
+) -> Instr {
+    @emit Instr(
+        opcode = Opcode(0o250),
+        ac = ac,
+        i = Indirect(i & 0b1),
+        x = x,
+        y = Addr(y & 0x3FFFF)
+    )
+}

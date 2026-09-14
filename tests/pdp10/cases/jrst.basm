@@ -1,0 +1,3 @@
+from std.pdp10.impl import *
+
+jrst 1, Index(3), 100

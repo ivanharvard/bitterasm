@@ -39,3 +39,13 @@ fn deferred_dispatch_fixture_checks_cleanly() {
 fn math_all_ops_fixture_checks_cleanly() {
     assert_checks_cleanly("tests/fixtures/math/all_ops.basm");
 }
+
+#[test]
+fn pdp10_all_instructions_fixture_checks_cleanly() {
+    assert_checks_cleanly("tests/fixtures/pdp10/all_instructions.basm");
+}
+
+#[test]
+fn pdp10_registers_fixture_checks_cleanly() {
+    assert_checks_cleanly("tests/fixtures/pdp10/registers.basm");
+}

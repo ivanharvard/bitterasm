@@ -393,6 +393,36 @@ mod tests {
         assert_eq!(bytes, vec![0x0F, 0xFF, 0xFF, 0xFF, 0xFF]);
     }
 
+    fn pdp10_instr(opcode: &str, ac: &str, i: &str, x: &str, y: &str) -> EmittedValue {
+        EmittedValue::Struct {
+            name: "Instr".to_string(),
+            args: vec![],
+            fields: vec![
+                ("opcode".to_string(), bits("9", opcode)),
+                ("ac".to_string(), bits("4", ac)),
+                ("i".to_string(), bits("1", i)),
+                ("x".to_string(), bits("4", x)),
+                ("y".to_string(), bits("18", y)),
+            ],
+        }
+    }
+
+    #[test]
+    fn packs_a_pdp10_instr_struct_the_same_way_a_bare_36_bit_int_would() {
+        // Closes the gap `pads_a_36_bit_word_up_to_five_bytes` leaves open:
+        // that test proves `bitter` can pad a single bare 36-bit `bits<36>`
+        // leaf; this proves it does the identical thing once those 36 bits
+        // are assembled from PDP-10's actual five-field struct (opcode 9 /
+        // ac 4 / i 1 / x 4 / y 18), where two field boundaries (ac/i and
+        // x/y) land in the middle of a byte rather than on one.
+        // move ac15, 1, 15, 0x3FFFF -> opcode=0o200=128, ac=15, i=1, x=15,
+        // y=0x3FFFF, the same word `all_fields_nonzero.basm` exercises
+        // end-to-end in tests/pdp10_encoding.rs.
+        let value = pdp10_instr("128", "15", "1", "15", "262143");
+        let bytes = pack_stream(&[value]).unwrap();
+        assert_eq!(bytes, vec![0x04, 0x07, 0xFF, 0xFF, 0xFF]);
+    }
+
     #[test]
     fn rejects_a_bare_int_with_no_declared_width() {
         let value = EmittedValue::Int { value: "3".to_string() };
