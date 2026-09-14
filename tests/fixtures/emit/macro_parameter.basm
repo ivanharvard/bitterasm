@@ -1,0 +1,35 @@
+macro square(x: int) -> int {
+    @return x * x
+}
+
+macro double(x: int) -> int {
+    @return x * 2
+}
+
+macro apply<F: Fn(int) -> int>(x: int, f: F) -> int {
+    @return f(x)
+}
+
+macro verify() {
+    @emit apply(3, square)
+    @emit apply(3, double)
+}
+
+macro identity<T>(x: T) -> T {
+    @return x
+}
+
+macro verify_generic_macro_rejected() {
+    @emit apply(3, identity)
+}
+
+macro overloaded(x: int) -> int {
+    @return x
+}
+macro overloaded(x: int, y: int) -> int {
+    @return x + y
+}
+
+macro verify_overloaded_macro_rejected() {
+    @emit apply(3, overloaded)
+}

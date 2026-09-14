@@ -513,6 +513,14 @@ pub(super) fn describe_type(ty: &ResolvedType, symbols: &SymbolTable) -> String 
         // underlying struct's — "expected `uint8_t`, got `int`" over
         // "expected `bits`, got `int`".
         ResolvedType::Alias { symbol, .. } => symbols.get(*symbol).name.clone(),
+
+        ResolvedType::MacroType { params, ret } => {
+            let params = params.iter().map(|param| describe_type(param, symbols)).collect::<Vec<_>>().join(", ");
+            match ret {
+                Some(ret) => format!("Fn({params}) -> {}", describe_type(ret, symbols)),
+                None => format!("Fn({params})"),
+            }
+        }
     }
 }
 

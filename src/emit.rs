@@ -76,6 +76,16 @@ pub fn reify_value(symbols: &SymbolTable, value: &Value) -> EmittedValue {
             variant: variant.clone(),
             payload: payload.as_ref().map(|value| Box::new(reify_value(symbols, value))),
         },
+
+        // Compile-time-only metaprogramming machinery, not data — see
+        // `Value::Macro`'s doc. A well-typed program never reaches `@emit`
+        // with one in hand: a macro's own return type or a struct field can
+        // never be declared with a generic bound to it, only an ordinary
+        // *value* parameter (`f: F`, with `F` itself bound elsewhere by an
+        // `Fn(...)` constraint) can.
+        Value::Macro(_) => unreachable!(
+            "a macro is compile-time-only metaprogramming machinery and can never reach emission"
+        ),
     }
 }
 
@@ -123,6 +133,11 @@ fn reify_type(symbols: &SymbolTable, ty: &ResolvedType) -> EmittedType {
         // anything reaches emission, so the emitted shape just describes
         // the underlying structure `bitter` actually needs to encode.
         ResolvedType::Alias { .. } => reify_type(symbols, ty.strip_alias()),
+
+        // Same reasoning as `Value::Macro` in `reify_value` just above.
+        ResolvedType::MacroType { .. } => unreachable!(
+            "a macro's type is compile-time-only and can never reach emission"
+        ),
     }
 }
 

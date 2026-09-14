@@ -49,6 +49,18 @@ pub enum ResolvedType {
         invariants: Vec<Expr>,
         underlying: Box<ResolvedType>,
     },
+
+    /// The type of a macro passed by name as a value, e.g. `mapped`'s `f: F`
+    /// once `F` (bound by `F: Fn(T) -> S`, see [`crate::types::FnBound`]) is
+    /// inferred from whatever real macro was actually passed — see
+    /// `resolver::values::Value::Macro`. Always fully concrete: only a
+    /// non-generic macro can ever produce one (`AliasResolver::resolve_macro_value`),
+    /// so unlike `Struct`/`Enum` this never carries a `TypeParameter` inside
+    /// it that still needs binding.
+    MacroType {
+        params: Vec<ResolvedType>,
+        ret: Option<Box<ResolvedType>>,
+    },
 }
 
 impl ResolvedType {

@@ -296,6 +296,59 @@ fn rejects_required_macro_parameter_after_default() {
 }
 
 #[test]
+fn parses_a_generic_param_with_an_fn_bound() {
+    let program = parse(
+        lex("macro apply<F: Fn(int) -> int>(x: int, f: F) -> int {\n    @return f(x)\n}\n").unwrap(),
+    )
+    .unwrap();
+
+    let Statement::Macro(decl) = &program.statements[0] else {
+        panic!("expected macro declaration");
+    };
+
+    let GenericParameter::Type { name, bound: Some(bound), .. } = &decl.generic_params[0] else {
+        panic!("expected a bounded generic param, got {:?}", decl.generic_params[0]);
+    };
+    assert_eq!(name, "F");
+    assert!(matches!(bound.params.as_slice(), [TypeExpr::Named { path, .. }] if path == &["int"]));
+    assert!(matches!(
+        bound.ret.as_deref(),
+        Some(TypeExpr::Named { path, .. }) if path == &["int"]
+    ));
+
+    // `f`'s own type is an ordinary generic name, exactly like `value: T`
+    // already works for a plain (unbounded) type param — the bound lives on
+    // `F`'s declaration, not on `f`'s.
+    assert!(matches!(&decl.params[1].ty, TypeExpr::Named { path, .. } if path == &["F"]));
+
+    assert_eq!(
+        crate::printer::print_statement(&program.statements[0], 0),
+        "macro apply<F: Fn(int) -> int>(x: int, f: F) -> int\n{\n    @return f(x)\n}"
+    );
+}
+
+#[test]
+fn parses_an_fn_bound_with_no_declared_return() {
+    let program = parse(lex("macro run<F: Fn(int)>(f: F) {\n    f(1)\n}\n").unwrap()).unwrap();
+
+    let Statement::Macro(decl) = &program.statements[0] else {
+        panic!("expected macro declaration");
+    };
+
+    let GenericParameter::Type { bound: Some(bound), .. } = &decl.generic_params[0] else {
+        panic!("expected a bounded generic param, got {:?}", decl.generic_params[0]);
+    };
+    assert_eq!(bound.params.len(), 1);
+    assert!(bound.ret.is_none());
+}
+
+#[test]
+fn rejects_an_unrecognized_generic_bound() {
+    let error = parse(lex("macro run<F: NotFn(int)>(f: F) {\n}\n").unwrap()).unwrap_err();
+    assert!(error.message.contains("Fn(...)"), "unexpected message: {}", error.message);
+}
+
+#[test]
 fn parses_generic_arguments_spanning_multiple_lines() {
     let program = parse(
         lex("const x: Reg<\n    64\n> = 1\n").unwrap(),

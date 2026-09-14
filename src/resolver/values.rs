@@ -30,6 +30,20 @@ use super::ResolveError;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Int(Int),
+
+    /// A macro passed by its bare name, e.g. `square` in `mapped(arr,
+    /// square)` — only ever produced for a non-generic, non-overloaded
+    /// macro (`AliasResolver::resolve_macro_value`), and only ever
+    /// meaningful at compile time: it's bound to an ordinary value
+    /// parameter typed with a generic name (`f: F`), where `F` itself
+    /// carries an `F: Fn(T) -> S` bound checked against it
+    /// (`macro_body::AliasResolver::check_generic_bounds`) — never a
+    /// special-cased "macro type" of its own. Invoked from inside that
+    /// macro's own body (`AliasResolver::eval_bound_macro_call`) like any
+    /// other macro call, never emitted or stored in a struct field — see
+    /// `emit::reify_value`.
+    Macro(SymbolId),
+
     Enum {
         symbol: SymbolId,
         args: Vec<ResolvedGenericArg>,
@@ -190,6 +204,10 @@ impl<'a> AliasResolver<'a> {
                         self.resolve_label_value(id, *span)
                     }
 
+                    Some(id) if self.get_symbol(id).kind == SymbolKind::Macro => {
+                        self.resolve_macro_value(name, *span)
+                    }
+
                     _ => self.resolve_const_value(name, *span),
                 },
             },
@@ -247,7 +265,7 @@ impl<'a> AliasResolver<'a> {
                         })
                 }
 
-                Value::Int(_) | Value::Enum { .. } => {
+                Value::Int(_) | Value::Enum { .. } | Value::Macro(_) => {
                     Err(ResolveError::ExpectedStructValue { span: *span })
                 }
                 }
@@ -261,6 +279,15 @@ impl<'a> AliasResolver<'a> {
                     }
                 }
                 if let Expr::Identifier { name, .. } = callee.as_ref() {
+                    // A bound `f: F` parameter (e.g. `f` in `mapped`'s
+                    // body, `F` bound to a real macro) shadows a same-named
+                    // top-level macro
+                    // here exactly like `Expr::Identifier` already prefers
+                    // `scope` over a top-level const of the same name —
+                    // the value in hand always wins over a name lookup.
+                    if let Some(Value::Macro(symbol)) = scope.get(name) {
+                        return self.eval_bound_macro_call(*symbol, arguments, *span, scope);
+                    }
                     if self.lookup_symbol(name).is_some_and(|id| self.get_symbol(id).kind == SymbolKind::Macro) {
                         return self.eval_macro_call(name, arguments, *span, scope);
                     }
@@ -382,7 +409,7 @@ impl<'a> AliasResolver<'a> {
                     raw: value.to_string(),
                     span: other.span(),
                 }),
-                Value::Struct { .. } | Value::Enum { .. } => {
+                Value::Struct { .. } | Value::Enum { .. } | Value::Macro(_) => {
                     Err(ResolveError::ExpectedIntValue { span: other.span() })
                 }
             },
@@ -407,6 +434,58 @@ impl<'a> AliasResolver<'a> {
         self.run_macro_body_inner(symbol, &declaration, values)?
             .returned
             .ok_or(ResolveError::ExpectedValueExpression { span })
+    }
+
+    /// `f(x)` where `f: F` is already bound to `symbol` — the counterpart
+    /// of `eval_macro_call` for a macro reached
+    /// through a value in hand rather than a name lookup. No overload
+    /// resolution: `symbol` was already picked once, when `f` itself was
+    /// bound (`resolve_macro_value`), so this just runs it — argument count
+    /// and types are still checked the same way any macro call's are, by
+    /// `bind_macro_arguments` inside `run_macro_body_inner`.
+    fn eval_bound_macro_call(
+        &mut self,
+        symbol: SymbolId,
+        arguments: &[CallArgument],
+        span: Span,
+        scope: &HashMap<String, Value>,
+    ) -> Result<Value, ResolveError> {
+        if arguments.iter().any(|argument| argument.name.is_some()) {
+            return Err(ResolveError::ExpectedValueExpression { span });
+        }
+        let values = arguments
+            .iter()
+            .map(|argument| self.eval_value(&argument.value, scope))
+            .collect::<Result<Vec<_>, _>>()?;
+        let declaration = self.find_macro_declaration(symbol)?.clone();
+        self.run_macro_body_inner(symbol, &declaration, values)?
+            .returned
+            .ok_or(ResolveError::ExpectedValueExpression { span })
+    }
+
+    /// A bare macro name evaluated as a value, e.g. `square` in `mapped(arr,
+    /// square)` — see `Value::Macro`. Restricted to a macro that's both
+    /// non-overloaded and non-generic: an overload set has no single
+    /// argument list here to pick one member by (unlike an ordinary call,
+    /// which picks an overload from its own argument types), and a generic
+    /// macro's params/return aren't concrete types until *it's* called,
+    /// which never happens here — only `f(x)` inside whatever body `square`
+    /// ends up bound in does that, and by then there's no call-site
+    /// argument left to infer `T`/`const N` from. Passing a generic macro
+    /// through a wrapper that's already been instantiated for one concrete
+    /// signature remains possible; it's the bare name that's restricted, not
+    /// macros with generics in general.
+    fn resolve_macro_value(&mut self, name: &str, span: Span) -> Result<Value, ResolveError> {
+        let ids = self.lookup_symbols(name);
+        let [symbol] = ids.as_slice() else {
+            return Err(ResolveError::AmbiguousMacroValue { name: name.to_string(), span });
+        };
+        let symbol = *symbol;
+        let declaration = self.find_macro_declaration(symbol)?;
+        if !declaration.generic_params.is_empty() {
+            return Err(ResolveError::GenericMacroAsValue { name: name.to_string(), span });
+        }
+        Ok(Value::Macro(symbol))
     }
 
     fn eval_call_value(
@@ -755,7 +834,7 @@ impl<'a> AliasResolver<'a> {
                                 })?;
                             Int::from(index)
                         }
-                        Value::Enum { .. } | Value::Struct { .. } => {
+                        Value::Enum { .. } | Value::Struct { .. } | Value::Macro(_) => {
                             return Err(ResolveError::ExpectedIntValue { span: expr.span() });
                         }
                     };
@@ -921,13 +1000,25 @@ impl<'a> AliasResolver<'a> {
 
             ResolvedType::Builtin(BuiltinType::Int) => match value {
                 Value::Int(_) => Ok(value),
-                Value::Struct { .. } | Value::Enum { .. } => {
+                Value::Struct { .. } | Value::Enum { .. } | Value::Macro(_) => {
                     Err(ResolveError::ExpectedIntValue { span })
                 }
             },
 
             ResolvedType::TypeParameter { name } => {
                 Err(ResolveError::ExpectedType { name: name.clone(), span })
+            }
+
+            // A macro value's own type is always exactly equal to the
+            // signature that bound it in the first place (`check_generic_bounds`
+            // already checked that once) — nothing else ever needs
+            // converting *into* one.
+            ResolvedType::MacroType { .. } => {
+                if self.value_type(&value)? == *target {
+                    Ok(value)
+                } else {
+                    Err(ResolveError::CannotCoerce { type_name: "macro".to_string(), span })
+                }
             }
         }
     }
@@ -1034,7 +1125,9 @@ impl<'a> AliasResolver<'a> {
                 (*symbol, args, &self.find_enum_declaration(*symbol)?.generic_params)
             }
             ResolvedType::Alias { underlying, .. } => return self.type_argument_value(underlying),
-            ResolvedType::Builtin(_) | ResolvedType::TypeParameter { .. } => return Ok(None),
+            ResolvedType::Builtin(_) | ResolvedType::TypeParameter { .. } | ResolvedType::MacroType { .. } => {
+                return Ok(None);
+            }
         };
 
         let fields = params
@@ -1286,7 +1379,7 @@ impl<'a> AliasResolver<'a> {
     ) -> Result<Int, ResolveError> {
         match self.eval_value(expr, scope)? {
             Value::Int(value) => Ok(value),
-            Value::Struct { .. } | Value::Enum { .. } => {
+            Value::Struct { .. } | Value::Enum { .. } | Value::Macro(_) => {
                 Err(ResolveError::ExpectedIntValue { span: expr.span() })
             }
         }
@@ -1351,6 +1444,8 @@ impl<'a> AliasResolver<'a> {
         Ok(match value {
             Value::Int(_) => ResolvedType::Builtin(BuiltinType::Int),
 
+            Value::Macro(symbol) => self.macro_value_type(*symbol)?,
+
             Value::Enum { symbol, args, .. } => ResolvedType::Enum {
                 symbol: *symbol,
                 args: args.clone(),
@@ -1375,6 +1470,37 @@ impl<'a> AliasResolver<'a> {
             },
         })
     }
+
+    /// `symbol`'s declared signature as a `ResolvedType::MacroType` — always
+    /// resolved against an *empty* generic scope, restored after, rather
+    /// than whatever's currently active for the macro being expanded around
+    /// this call: `resolve_macro_value` already guarantees `symbol` itself
+    /// has no generic params of its own, so its declared param/return types
+    /// mean the same concrete thing regardless of who's asking, and
+    /// resolving them against a caller's unrelated `T`/`const N` bindings
+    /// would risk a same-named generic parameter shadowing a real type by
+    /// coincidence (see `resolve_named_type`).
+    fn macro_value_type(&mut self, symbol: SymbolId) -> Result<ResolvedType, ResolveError> {
+        let declaration = self.find_macro_declaration(symbol)?.clone();
+
+        let previous_generic_scope = std::mem::take(&mut self.generic_scope);
+        let result = (|| {
+            let params = declaration
+                .params
+                .iter()
+                .map(|param| self.resolve_type_expr(&param.ty))
+                .collect::<Result<Vec<_>, _>>()?;
+            let ret = declaration
+                .return_ty
+                .as_ref()
+                .map(|ty| self.resolve_type_expr(ty).map(Box::new))
+                .transpose()?;
+            Ok(ResolvedType::MacroType { params, ret })
+        })();
+        self.generic_scope = previous_generic_scope;
+
+        result
+    }
 }
 
 // `AliasResolver::convert_to`'s final step: mark `value` as having been
@@ -1393,7 +1519,7 @@ fn tag_nominal(value: Value, symbol: SymbolId) -> Value {
             Value::Struct { symbol: inner_symbol, args, fields, nominal: Some(symbol) }
         }
 
-        Value::Int(_) | Value::Enum { .. } => value,
+        Value::Int(_) | Value::Macro(_) | Value::Enum { .. } => value,
     }
 }
 

@@ -38,6 +38,61 @@ impl Parser {
         Ok(ty)
     }
 
+    // `Fn(T, U) -> S` (or `Fn(T, U)` with no declared return) — a generic
+    // type parameter's bound, given the parser is sitting on the `Fn`
+    // identifier (not yet consumed). Mirrors `macros::parse_macro_declaration`'s
+    // own param-list/return-type grammar, minus the name and body a
+    // declaration has and this doesn't need: this only describes a
+    // *signature* a bound value must match, not a definition. `Fn` is
+    // recognized by name here, not a keyword — bitterasm has no general
+    // trait system, just this one bound shape (see `GenericParameter::Type::bound`).
+    fn parse_fn_bound(&mut self) -> Result<FnBound, ParseError> {
+        let start = self.current().span.start;
+
+        let name = self.expect_identifier()?;
+        if name != "Fn" {
+            return Err(ParseError::new(
+                format!("expected a `Fn(...)` bound, found `{name}`"),
+                self.previous().span,
+            ));
+        }
+
+        self.expect_simple(TokenKind::LParen)?;
+        self.skip_newlines();
+
+        let mut params = Vec::new();
+
+        if !self.check(&TokenKind::RParen) {
+            params.push(self.parse_type_expr()?);
+            self.skip_newlines();
+
+            while self.check(&TokenKind::Comma) {
+                self.advance();
+                self.skip_newlines();
+                params.push(self.parse_type_expr()?);
+                self.skip_newlines();
+            }
+        }
+
+        self.expect_simple(TokenKind::RParen)?;
+        let mut end = self.previous().span.end;
+
+        let ret = if self.check(&TokenKind::Arrow) {
+            self.advance();
+            let ty = self.parse_type_expr()?;
+            end = ty.span().end;
+            Some(Box::new(ty))
+        } else {
+            None
+        };
+
+        Ok(FnBound {
+            params,
+            ret,
+            span: Span::new(start, end),
+        })
+    }
+
     // Parses a `<Arg, Arg, ...>` generic argument list, given the parser is
     // sitting on the opening `<` (not yet consumed). `name` is the callee's
     // own name (ignoring any module-path qualification), used to look up
@@ -192,10 +247,20 @@ impl Parser {
                 TokenKind::Identifier(_) => {
                     let name = self.expect_identifier()?;
 
-                    let end = self.previous().span.end;
+                    let mut end = self.previous().span.end;
+
+                    let bound = if self.check(&TokenKind::Colon) {
+                        self.advance();
+                        let bound = self.parse_fn_bound()?;
+                        end = bound.span.end;
+                        Some(bound)
+                    } else {
+                        None
+                    };
 
                     parameters.push(GenericParameter::Type {
                         name,
+                        bound,
                         span: Span::new(start, end),
                     });
                 }

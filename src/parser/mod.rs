@@ -28,7 +28,7 @@ use crate::ast::{
 
 use crate::facets::syntax::SyntaxPattern;
 use crate::token::{Span, Token, TokenKind};
-use crate::types::{GenericParameter, StructBodyItem, StructField, TypeExpr, TypeArgument};
+use crate::types::{FnBound, GenericParameter, StructBodyItem, StructField, TypeExpr, TypeArgument};
 
 mod expressions;
 mod statements;

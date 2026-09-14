@@ -802,8 +802,19 @@ fn rename_facet(facet: &mut Facet, renames: &HashMap<String, String>) {
 }
 
 fn rename_generic_parameter(param: &mut GenericParameter, renames: &HashMap<String, String>) {
-    if let GenericParameter::Const { ty, .. } = param {
-        rename_type_expr(ty, renames);
+    match param {
+        GenericParameter::Const { ty, .. } => rename_type_expr(ty, renames),
+
+        GenericParameter::Type { bound: Some(bound), .. } => {
+            for param in &mut bound.params {
+                rename_type_expr(param, renames);
+            }
+            if let Some(ret) = &mut bound.ret {
+                rename_type_expr(ret, renames);
+            }
+        }
+
+        GenericParameter::Type { bound: None, .. } => {}
     }
 }
 

@@ -1,5 +1,3 @@
-from std.iter import range
-
 pub struct Array<T, const N: int>
     | invariant N >= 0
 {
@@ -19,7 +17,7 @@ macro oob_check<T>(
 }
 
 pub macro get<T>(arr: Array<T, ...>, index: int) -> T
-    | syntax { get $arr$[$index$] }
+    | syntax { $arr$[$index$] }
     | before oob_check(arr, index)
 {
     @return arr.__el`index`
@@ -48,12 +46,41 @@ pub macro updated<T>(
 pub macro reversed<T>(arr: Array<T, ...>) -> Array<T, ...>
 {
     @return Array<T, arr.len> {
-        @for i in range(
-            arr.len,
-            0,
-            -1
-        ) {
-            __el`i - arr.len`: arr.__el`i`
+        @for i in 0..arr.len {
+            __el`i`: arr.__el`arr.len - 1 - i`,
+        }
+    }
+}
+
+# note to AI: i am editing this file. you can ignore this for now.
+pub macro popped(arr: Array<T, N>) -> Array<T, N-1>
+{   
+    @assert N > 0
+    const new_len = N - 1
+    @return Array<T, new_len>{
+        @for i in 0..new_len {
+            __el`i`: arr.__el`i`,
+        }
+    }
+}
+
+pub macro first(arr: Array<T, N>) -> T
+{
+    @assert N > 0
+    @return get(arr, 0)
+}
+
+pub macro last(arr: Array<T, N>) -> T 
+{
+    @assert N > 0
+    @return get(arr, N-1)
+}
+
+pub macro mapped<T, S, F: Fn(T) -> S>(arr: Array<T, ...>, f: F) -> Array<S, ...>
+{
+    @return Array<S, arr.len> {
+        @for i in 0..arr.len {
+            __el`i`: f(arr.__el`i`),
         }
     }
 }

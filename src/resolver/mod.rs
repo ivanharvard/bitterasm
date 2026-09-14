@@ -302,6 +302,23 @@ pub enum ResolveError {
         span: Span,
     },
 
+    /// A bare macro name (used as a value, e.g. `mapped(arr, square)`)
+    /// named an overload set with more than one member — there's no
+    /// argument list here to pick one by, unlike an ordinary call.
+    AmbiguousMacroValue {
+        name: String,
+        span: Span,
+    },
+
+    /// A bare macro name (used as a value) named a generic macro — its
+    /// params/return aren't concrete types until it's actually called,
+    /// which a bare name reference never does. See
+    /// `resolver::values::AliasResolver::resolve_macro_value`.
+    GenericMacroAsValue {
+        name: String,
+        span: Span,
+    },
+
     /// One of a generic macro's own declared params (`T`/`const N`) never
     /// appeared anywhere in its *value* parameters' types, so nothing at
     /// the call site could infer it — macro calls have no `<...>` slot to
@@ -425,6 +442,7 @@ impl ResolveError {
             | Self::ExpectedMacro { span, .. } | Self::NoMatchingMacroOverload { span, .. }
             | Self::AmbiguousMacroOverload { span, .. } | Self::MacroCallDepthExceeded { span, .. }
             | Self::MacroTailCallLimitExceeded { span, .. } | Self::UnresolvedMacroGenericParam { span, .. }
+            | Self::AmbiguousMacroValue { span, .. } | Self::GenericMacroAsValue { span, .. }
             | Self::AssertionFailed { span, .. }
             | Self::InvalidAssertMessage { span } | Self::TypeMismatch { span, .. }
             | Self::InvariantViolated { span, .. } | Self::CannotCoerce { span, .. }

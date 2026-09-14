@@ -540,6 +540,14 @@ impl<'a> AliasResolver<'a> {
                     span,
                 })
             }
+
+            // A macro's type has no `<...>` application syntax of its own
+            // (see `crate::types::FnBound`'s doc) — same rejection as
+            // `Builtin`/`TypeParameter` above.
+            ResolvedType::MacroType { .. } => {
+                let name = base.name().unwrap_or("<type>").to_string();
+                Err(ResolveError::ExpectedType { name, span })
+            }
         }
     }
 
