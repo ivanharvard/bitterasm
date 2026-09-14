@@ -76,9 +76,9 @@ pub macro last(arr: Array<T, N>) -> T
     @return get(arr, N-1)
 }
 
-pub macro mapped<T, S, F: Fn(T) -> S>(arr: Array<T, ...>, f: F) -> Array<S, ...>
+pub macro mapped<T, U, F: Fn(T) -> U>(arr: Array<T, ...>, f: F) -> Array<U, ...>
 {
-    @return Array<S, arr.len> {
+    @return Array<U, arr.len> {
         @for i in 0..arr.len {
             __el`i`: f(arr.__el`i`),
         }
