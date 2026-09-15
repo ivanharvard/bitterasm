@@ -1,0 +1,102 @@
+from std.wasm.module import *
+from std.wasm.impl import *
+from std.bitter.deferred import *
+
+# `i * i` is computed here at *compile* time, in bitterasm's arbitrary-
+# precision `int` -- unlike sum_squares_1000.basm's WASM-runtime `i32.mul`,
+# which truncates to 32 bits as part of the instruction itself, nothing
+# truncates this one automatically. Past i=46341, i*i exceeds i32's range
+# and `i32_const` (a plain signed-LEB128 encode of whatever `int` it's
+# given) would emit more than 5 bytes for it -- wasmtime's validator then
+# rejects the module ("invalid var_i32: integer too large"), a real
+# failure this benchmark hit at N=100000 before this wrapper was added.
+# `wrap_i32` reduces mod 2^32 and re-biases into i32's signed range first,
+# matching what `i32.mul` would have done at runtime.
+macro wrap_i32(v: int) -> int {
+    const masked = v & 0xFFFFFFFF
+    @if masked >= 0x80000000 {
+        @return masked - 0x100000000
+    } @else {
+        @return masked
+    }
+}
+
+# Unlike sum_squares_1000.basm (a runtime loop that JITs down to a handful
+# of native instructions no matter how big N is, so bitterasm's own
+# compile/encode work barely changes with N -- see the discussion this
+# file grew out of), this fully unrolls the sum at compile time: no WASM
+# loop at all, just N `i32_const(i*i); i32_add` pairs, the same way
+# `for_loop_1000.basm` unrolls into N emitted records. bitterasm's compile
+# time (and the resulting module's size) now genuinely scales with N; only
+# `wasmtime run`, executing straight-line code with no branches, stays
+# fast regardless of N.
+
+header
+
+# =================
+# Type section: one type, () -> i32
+# =================
+byte(0x01)
+deferred_uleb128 span(type_body_start, type_body_end), 1
+type_body_start:
+byte(0x01)
+func_type_0_to_1(I32)
+type_body_end:
+
+# =================
+# Function section: one function, using type 0
+# =================
+byte(0x03)
+deferred_uleb128 span(function_body_start, function_body_end), 1
+function_body_start:
+byte(0x01)
+byte(0x00)
+function_body_end:
+
+# =================
+# Export section: export function 0 as "sum_squares"
+# =================
+byte(0x07)
+deferred_uleb128 span(export_body_start, export_body_end), 1
+export_body_start:
+byte(0x01)
+byte(0x0B)
+byte(0x73)
+byte(0x75)
+byte(0x6D)
+byte(0x5F)
+byte(0x73)
+byte(0x71)
+byte(0x75)
+byte(0x61)
+byte(0x72)
+byte(0x65)
+byte(0x73)
+byte(0x00)
+byte(0x00)
+export_body_end:
+
+# =================
+# Code section: one function body -- unrolled wrapping sum of i*i, i in 0..10000
+# =================
+# Both spans below are sized with n=4 (room for a ULEB128 value up to
+# ~268M), not n=1 like the fixed-size sections above: unlike those, this
+# section's byte length scales with N -- 1000 unrolled `i32_const(i*i);
+# i32_add` pairs alone is already ~5KB, well past what a single LEB128
+# byte (max 127) can hold.
+byte(0x0A)
+deferred_uleb128 span(code_body_start, code_body_end), 4
+code_body_start:
+byte(0x01)
+deferred_uleb128 span(func_body_start, func_body_end), 4
+func_body_start:
+byte(0x00)
+i32_const(0)
+@for i in 0..10000 {
+    i32_const(wrap_i32(i * i))
+    i32_add
+}
+return_
+end
+func_body_end:
+code_body_end:
