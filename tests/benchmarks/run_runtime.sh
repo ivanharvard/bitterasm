@@ -30,12 +30,22 @@
 #     emitted directly, no WASM loop at all (the same shape
 #     for_loop_N.basm uses). This is the one that actually stresses
 #     bitterasm's compile time as N grows, which is also why it stops at
-#     N=100000 rather than N=1000000: unrolling turned out to scale
-#     noticeably worse than linearly (100000 took ~30s on the machine this
-#     was written on; extrapolating, 1000000 would take minutes), unlike
-#     for_loop_1000000.basm's flat Int emission, which compiles in single-
-#     digit seconds. That's a real bitterasm characteristic this benchmark
-#     surfaced, not a bug in the benchmark.
+#     N=100000 rather than N=1000000: careful (median-of-repeats) timing
+#     shows compile time here is linear in N with a large constant, not
+#     quadratic -- but that constant is still big enough that N=1000000
+#     would take minutes, versus for_loop_1000000.basm's flat Int
+#     emission, which compiles in single-digit seconds. The size of that
+#     constant traced back to a real bitterasm characteristic this
+#     benchmark surfaced: `AliasResolver::resolve_macro_overload` and
+#     friends used to deep-clone a whole `MacroDeclaration` (including its
+#     entire body) on every single macro call, so a call chain a dozen
+#     macros deep (`i32_const` -> `op_with_sleb128` -> `sleb128_length`/
+#     `sleb128_padded` -> ... ) paid for that clone at every link, on
+#     every one of the N unrolled statements. Fixed by caching each
+#     declaration behind an `Rc` (see `macro_decl_cache` in
+#     `src/resolver/aliases.rs`) so repeat lookups are a refcount bump
+#     instead of an AST clone -- roughly a 35-40% wall-time cut on this
+#     benchmark, not a change in its growth shape.
 #
 # Every number reported (time and memory alike) is the median of several
 # repeated runs, not a single sample -- the first exec of a freshly built

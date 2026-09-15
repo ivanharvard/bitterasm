@@ -56,6 +56,7 @@
 //! the time macro expansion happens the whole program is already flattened.
 
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use crate::ast::{
     literal_name, CallArgument, ConstDeclaration, ConstructItem, Expr, Invocation,
@@ -140,7 +141,7 @@ impl<'a> AliasResolver<'a> {
         name: &str,
         arguments: &[Value],
         span: Span,
-    ) -> Result<(SymbolId, MacroDeclaration), ResolveError> {
+    ) -> Result<(SymbolId, Rc<MacroDeclaration>), ResolveError> {
         let ids = self.lookup_symbols(name);
         if ids.is_empty() {
             return Err(ResolveError::UnknownMacro { name: name.to_string(), span });
@@ -151,7 +152,7 @@ impl<'a> AliasResolver<'a> {
 
         let mut declarations = Vec::with_capacity(ids.len());
         for id in ids {
-            declarations.push((id, self.find_macro_declaration(id)?.clone()));
+            declarations.push((id, self.find_macro_declaration_rc(id)?));
         }
 
         // Keep the established, specific arity/type diagnostics for a
@@ -936,7 +937,7 @@ impl<'a> AliasResolver<'a> {
         {
             return Ok(None);
         }
-        let current_declaration = self.find_macro_declaration(current)?.clone();
+        let current_declaration = self.find_macro_declaration_rc(current)?;
         if !crate::facets::extract_exprs(&current_declaration.facets, "after").is_empty() {
             return Ok(None);
         }

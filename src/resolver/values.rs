@@ -457,7 +457,7 @@ impl<'a> AliasResolver<'a> {
             .iter()
             .map(|argument| self.eval_value(&argument.value, scope))
             .collect::<Result<Vec<_>, _>>()?;
-        let declaration = self.find_macro_declaration(symbol)?.clone();
+        let declaration = self.find_macro_declaration_rc(symbol)?;
         self.run_macro_body_inner(symbol, &declaration, values)?
             .returned
             .ok_or(ResolveError::ExpectedValueExpression { span })
@@ -1481,7 +1481,7 @@ impl<'a> AliasResolver<'a> {
     /// would risk a same-named generic parameter shadowing a real type by
     /// coincidence (see `resolve_named_type`).
     fn macro_value_type(&mut self, symbol: SymbolId) -> Result<ResolvedType, ResolveError> {
-        let declaration = self.find_macro_declaration(symbol)?.clone();
+        let declaration = self.find_macro_declaration_rc(symbol)?;
 
         let previous_generic_scope = std::mem::take(&mut self.generic_scope);
         let result = (|| {

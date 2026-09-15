@@ -12,7 +12,9 @@
 //! ([`AliasResolver::resolve_alias`]), which in turn resolves the alias's
 //! own target type expression.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use crate::ast::{Expr, Program, Statement};
 use crate::eval::{self, EvalError, Int};
@@ -105,6 +107,19 @@ pub struct AliasResolver<'a> {
     pub(super) generated_symbols: SymbolTable,
     pub(super) generated: Vec<Statement>,
 
+    // Memoizes `find_macro_declaration`'s result as a cheap-to-clone `Rc`
+    // instead of the `MacroDeclaration` itself (params, facets, and its
+    // full body `Vec<Statement>`) -- a macro invoked N times inside a
+    // `@for`-unrolled program (the common case for library macros like
+    // `std/wasm/impl.basm`'s `i32_const`, itself called through several
+    // more macros per invocation) used to pay for a deep clone of its own
+    // declaration on every single call; this pays for it once per
+    // distinct macro, ever. `RefCell` because callers reach this through
+    // both `&self` and `&mut self` methods, and the cache is purely an
+    // internal memoization detail, not resolver state any caller should
+    // need `&mut self` to touch.
+    pub(super) macro_decl_cache: RefCell<HashMap<SymbolId, Rc<crate::ast::MacroDeclaration>>>,
+
     // Which module the code *currently being evaluated* lexically lives
     // in — not the caller's module, the callee's: entering a macro body,
     // resolving a top-level const's value, checking a struct's own
@@ -172,6 +187,7 @@ impl<'a> AliasResolver<'a> {
             label_mode,
             generated_symbols: SymbolTable::with_base(symbols.len()),
             generated: Vec::new(),
+            macro_decl_cache: RefCell::new(HashMap::new()),
             current_module: entry_module,
         }
     }
@@ -765,6 +781,25 @@ impl<'a> AliasResolver<'a> {
             ),
             span: symbol.span,
         })
+    }
+
+    /// Same lookup as [`Self::find_macro_declaration`], but returns a
+    /// cheap `Rc` clone (a refcount bump) instead of a deep clone of the
+    /// whole declaration -- see `macro_decl_cache`'s own doc for why that
+    /// distinction matters. Every caller that used to need an owned
+    /// `MacroDeclaration` (because it can't hold a borrow of `self` across
+    /// a later `&mut self` call, or needs several overload candidates
+    /// alive at once) should use this instead.
+    pub(super) fn find_macro_declaration_rc(
+        &self,
+        id: SymbolId,
+    ) -> Result<Rc<crate::ast::MacroDeclaration>, ResolveError> {
+        if let Some(cached) = self.macro_decl_cache.borrow().get(&id) {
+            return Ok(Rc::clone(cached));
+        }
+        let declaration = Rc::new(self.find_macro_declaration(id)?.clone());
+        self.macro_decl_cache.borrow_mut().insert(id, Rc::clone(&declaration));
+        Ok(declaration)
     }
 
     // ==============
