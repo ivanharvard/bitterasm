@@ -1,6 +1,8 @@
-# BitterASM
+<p align="center">
+  <img src="assets/logo.png" alt="BitterASM" width="480">
+</p>
 
-Making Assembly Sweeter.
+<p align="center">Making Assembly Sweeter.</p>
 
 ## What BitterASM is
 
