@@ -1,0 +1,24 @@
+<svg version="1.2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 1280" width="1280" height="1280">
+	<defs>
+		<clipPath clipPathUnits="userSpaceOnUse" id="cp1">
+			<path d="m1089.23 357.29l157.76 273.25-157.76 273.25h-315.53l-157.76-273.25 157.76-273.25z"/>
+		</clipPath>
+	</defs>
+	<style>
+		tspan { white-space:pre } 
+		.s0 { fill: #452b17 } 
+		.t1 { font-size: 205px;fill: #000000;font-weight: 400;font-family: "Alexandria-Regular", "Alexandria" } 
+		.t2 { font-size: 205px;fill: #ffffff;font-weight: 400;font-family: "Alexandria-Regular", "Alexandria" } 
+	</style>
+	<g clip-path="url(#cp1)">
+		<path id="Shape 1" fill-rule="evenodd" class="s0" d="m1089.23 357.29l157.76 273.25-157.76 273.25h-315.53l-157.76-273.25 157.76-273.25z"/>
+	</g>
+	<text id="Bitter" transform="translate(24,700)">
+		<tspan x="0" y="0" class="t1">B</tspan><tspan  y="0" class="t1">i</tspan><tspan  y="0" class="t1">t</tspan><tspan  y="0" class="t1">t</tspan><tspan  y="0" class="t1">e</tspan><tspan  y="0" class="t1">r</tspan><tspan  y="0" class="t1">
+</tspan>
+	</text>
+	<text id="ASM" transform="translate(695,700)">
+		<tspan x="0" y="0" class="t2">A</tspan><tspan  y="0" class="t2">S</tspan><tspan  y="0" class="t2">M
+</tspan>
+	</text>
+</svg>
