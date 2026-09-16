@@ -1,0 +1,12 @@
+macro noop() {
+    @emit 1
+}
+
+macro reads_target(target: int) {
+    @emit target
+}
+
+loop_start:
+noop
+reads_target loop_start
+noop

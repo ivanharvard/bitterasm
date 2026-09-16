@@ -101,7 +101,7 @@ impl<'a> AliasResolver<'a> {
         let Ok(index) = usize::try_from(value) else {
             return Value::Int(value.clone());
         };
-        let Ok(declaration) = self.find_enum_declaration(symbol) else {
+        let Ok(declaration) = self.find_enum_declaration_rc(symbol) else {
             return Value::Int(value.clone());
         };
         let Some(variant) = declaration.variants.get(index) else {
@@ -516,8 +516,8 @@ impl<'a> AliasResolver<'a> {
             });
         };
 
-        let declared_fields: Vec<(String, bool, Option<Expr>)> = self
-            .find_struct_declaration(symbol)?
+        let declaration = self.find_struct_declaration_rc(symbol)?;
+        let declared_fields: Vec<(String, bool, Option<Expr>)> = declaration
             .fields
             .iter()
             .filter_map(|item| match item {
@@ -587,10 +587,8 @@ impl<'a> AliasResolver<'a> {
         // args only — never sibling field values, so field-to-field
         // dependencies (and the evaluation-order question they'd raise)
         // never come up.
-        let default_scope: HashMap<String, Value> = self
-            .find_struct_declaration(symbol)?
+        let default_scope: HashMap<String, Value> = declaration
             .generic_params
-            .clone()
             .iter()
             .zip(&args)
             .filter_map(|(param, arg)| match (param, arg) {
@@ -730,9 +728,8 @@ impl<'a> AliasResolver<'a> {
         // Same default-eval scope choice as `eval_call_value`: the struct's
         // own bound generic const args only, never sibling field values.
         let default_scope: HashMap<String, Value> = self
-            .find_struct_declaration(symbol)?
+            .find_struct_declaration_rc(symbol)?
             .generic_params
-            .clone()
             .iter()
             .zip(&args)
             .filter_map(|(param, arg)| match (param, arg) {
@@ -823,7 +820,7 @@ impl<'a> AliasResolver<'a> {
                     let discriminant = match value {
                         Value::Int(value) => value,
                         Value::Enum { symbol, variant, payload: None, .. } => {
-                            let declaration = self.find_enum_declaration(symbol)?;
+                            let declaration = self.find_enum_declaration_rc(symbol)?;
                             let index = declaration
                                 .variants
                                 .iter()
@@ -1122,7 +1119,7 @@ impl<'a> AliasResolver<'a> {
                 (*symbol, args, &self.find_struct_declaration(*symbol)?.generic_params)
             }
             ResolvedType::Enum { symbol, args } => {
-                (*symbol, args, &self.find_enum_declaration(*symbol)?.generic_params)
+                (*symbol, args, &self.find_enum_declaration_rc(*symbol)?.generic_params)
             }
             ResolvedType::Alias { underlying, .. } => return self.type_argument_value(underlying),
             ResolvedType::Builtin(_) | ResolvedType::TypeParameter { .. } | ResolvedType::MacroType { .. } => {
@@ -1349,7 +1346,10 @@ impl<'a> AliasResolver<'a> {
                 // values this expansion goes on to emit matters, and that
                 // count is unaffected by which placeholder is used (see
                 // the module doc on why that invariant holds today).
-                LabelMode::Tolerant => Ok(Value::Int(Int::from(0))),
+                LabelMode::Tolerant => {
+                    self.used_forward_label_placeholder = true;
+                    Ok(Value::Int(Int::from(0)))
+                }
 
                 // The real pass: every top-level label's position was
                 // already recorded by a completed discovery pass, so

@@ -55,6 +55,7 @@
 //! has no file of its own for a relative import to resolve against, and by
 //! the time macro expansion happens the whole program is already flattened.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -620,10 +621,13 @@ impl<'a> AliasResolver<'a> {
         body: &[Statement],
         initial_scope: &HashMap<String, Value>,
     ) -> Result<MacroExpansion, ResolveError> {
-        // Owned and mutable, unlike `initial_scope` — a bare (non-`pub`)
-        // `const` extends this for the rest of the body, the same way a
-        // `let` would; nothing outside this expansion ever sees it.
-        let mut scope = initial_scope.clone();
+        // Borrowed until a bare (non-`pub`) `const` actually extends it
+        // (the same role a `let` would play) — most macro bodies in a call
+        // chain never declare one, so this avoids an unconditional
+        // `HashMap` clone on every single nested call; `Cow::to_mut` pays
+        // for the clone only the first time this body's own scope is
+        // actually mutated.
+        let mut scope: Cow<'_, HashMap<String, Value>> = Cow::Borrowed(initial_scope);
 
         let mut emitted = Vec::new();
         let mut generated = Vec::new();
@@ -736,7 +740,13 @@ impl<'a> AliasResolver<'a> {
 
                         if let Some((chosen_body, bindings)) = chosen {
                             let mut arm_scope = scope.clone();
-                            arm_scope.extend(bindings);
+                            // `Cow::clone` on a still-`Borrowed` `scope` is
+                            // just a reference copy; only actually clone the
+                            // underlying map (via `to_mut`) when this arm's
+                            // pattern bound something to insert.
+                            if !bindings.is_empty() {
+                                arm_scope.to_mut().extend(bindings);
+                            }
                             let nested = self.walk_macro_body(chosen_body, &arm_scope)?;
                             emitted.extend(nested.emitted);
                             generated.extend(nested.generated);
@@ -780,7 +790,7 @@ impl<'a> AliasResolver<'a> {
 
                         for (_, value) in bindings {
                             let mut iter_scope = scope.clone();
-                            iter_scope.insert(var_name.clone(), value);
+                            iter_scope.to_mut().insert(var_name.clone(), value);
 
                             let nested = self.walk_macro_body(for_body, &iter_scope)?;
                             emitted.extend(nested.emitted);
@@ -843,7 +853,7 @@ impl<'a> AliasResolver<'a> {
                     };
 
                     let name = self.resolve_spliced_name(&decl.name, &scope)?;
-                    scope.insert(name, value);
+                    scope.to_mut().insert(name, value);
                 }
 
                 // Only the declaration's own name is spliced (see the

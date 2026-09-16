@@ -120,6 +120,27 @@ pub struct AliasResolver<'a> {
     // need `&mut self` to touch.
     pub(super) macro_decl_cache: RefCell<HashMap<SymbolId, Rc<crate::ast::MacroDeclaration>>>,
 
+    // Same idea as `macro_decl_cache`, for the other three declaration
+    // kinds `find_struct_declaration`/`find_enum_declaration`/
+    // `find_alias_declaration` scan for: several call sites need an owned
+    // copy (to stop borrowing `self` before a later `&mut self` call, e.g.
+    // `instantiate_struct_fields_named`'s `unroll_struct_body`) and used to
+    // pay for cloning the whole declaration (fields included) every time,
+    // on every one of N unrolled struct-constructing macro calls.
+    pub(super) struct_decl_cache: RefCell<HashMap<SymbolId, Rc<crate::ast::StructDeclaration>>>,
+    pub(super) enum_decl_cache: RefCell<HashMap<SymbolId, Rc<crate::ast::EnumDeclaration>>>,
+    pub(super) alias_decl_cache: RefCell<HashMap<SymbolId, Rc<crate::ast::TypeAliasDeclaration>>>,
+
+    // Set once `resolve_label_value` (`super::values`) ever actually
+    // substitutes a placeholder for a not-yet-recorded label position.
+    // `main::resolve_and_expand`'s two-pass driver checks this after the
+    // `Tolerant` discovery pass: per that pass's own invariant (a
+    // placeholder changes a *value*, never how many values get emitted —
+    // see `resolve_label_value`'s doc), if this never went `true`, every
+    // value discovery computed is already the final one, and the whole
+    // second (`Strict`) pass is redundant.
+    pub(super) used_forward_label_placeholder: bool,
+
     // Which module the code *currently being evaluated* lexically lives
     // in — not the caller's module, the callee's: entering a macro body,
     // resolving a top-level const's value, checking a struct's own
@@ -188,6 +209,10 @@ impl<'a> AliasResolver<'a> {
             generated_symbols: SymbolTable::with_base(symbols.len()),
             generated: Vec::new(),
             macro_decl_cache: RefCell::new(HashMap::new()),
+            struct_decl_cache: RefCell::new(HashMap::new()),
+            enum_decl_cache: RefCell::new(HashMap::new()),
+            alias_decl_cache: RefCell::new(HashMap::new()),
+            used_forward_label_placeholder: false,
             current_module: entry_module,
         }
     }
@@ -245,6 +270,13 @@ impl<'a> AliasResolver<'a> {
         self.label_positions
     }
 
+    /// Whether `resolve_label_value` ever actually substituted a
+    /// placeholder for a not-yet-recorded label position during this
+    /// resolver's walk — see `used_forward_label_placeholder`'s own doc.
+    pub fn used_forward_label_placeholder(&self) -> bool {
+        self.used_forward_label_placeholder
+    }
+
     pub fn resolve_all(
         &mut self
     ) -> Result<HashMap<SymbolId, ResolvedType>, ResolveError> {
@@ -298,7 +330,7 @@ impl<'a> AliasResolver<'a> {
         self.states.insert(id, AliasState::Visiting);
         self.stack.push(id);
 
-        let declaration = self.find_alias_declaration(id)?.clone();
+        let declaration = self.find_alias_declaration_rc(id)?;
 
         let result = self.resolve_type_expr(&declaration.ty).and_then(|underlying| {
             self.wrap_if_invariant(id, &declaration, underlying)
@@ -510,7 +542,7 @@ impl<'a> AliasResolver<'a> {
             }
 
             ResolvedType::Enum { symbol, .. } => {
-                let expected = self.find_enum_declaration(symbol)?.generic_params.len();
+                let expected = self.find_enum_declaration_rc(symbol)?.generic_params.len();
                 if args.len() != expected {
                     return Err(ResolveError::InvalidGenericArity {
                         name: self.get_symbol(symbol).name.clone(),
@@ -607,7 +639,7 @@ impl<'a> AliasResolver<'a> {
             if let Expr::Identifier { name, .. } = object.as_ref() {
                 if let Some(id) = self.lookup_symbol(name) {
                     if self.get_symbol(id).kind == SymbolKind::Enum {
-                        let declaration = self.find_enum_declaration(id)?;
+                        let declaration = self.find_enum_declaration_rc(id)?;
                         if let Some((index, variant)) = declaration
                             .variants
                             .iter()
@@ -799,6 +831,48 @@ impl<'a> AliasResolver<'a> {
         }
         let declaration = Rc::new(self.find_macro_declaration(id)?.clone());
         self.macro_decl_cache.borrow_mut().insert(id, Rc::clone(&declaration));
+        Ok(declaration)
+    }
+
+    /// `find_alias_declaration`, memoized behind `Rc` — see
+    /// `find_macro_declaration_rc`'s doc for why.
+    pub(super) fn find_alias_declaration_rc(
+        &self,
+        id: SymbolId,
+    ) -> Result<Rc<crate::ast::TypeAliasDeclaration>, ResolveError> {
+        if let Some(cached) = self.alias_decl_cache.borrow().get(&id) {
+            return Ok(Rc::clone(cached));
+        }
+        let declaration = Rc::new(self.find_alias_declaration(id)?.clone());
+        self.alias_decl_cache.borrow_mut().insert(id, Rc::clone(&declaration));
+        Ok(declaration)
+    }
+
+    /// `find_struct_declaration`, memoized behind `Rc` — see
+    /// `find_macro_declaration_rc`'s doc for why.
+    pub(super) fn find_struct_declaration_rc(
+        &self,
+        id: SymbolId,
+    ) -> Result<Rc<crate::ast::StructDeclaration>, ResolveError> {
+        if let Some(cached) = self.struct_decl_cache.borrow().get(&id) {
+            return Ok(Rc::clone(cached));
+        }
+        let declaration = Rc::new(self.find_struct_declaration(id)?.clone());
+        self.struct_decl_cache.borrow_mut().insert(id, Rc::clone(&declaration));
+        Ok(declaration)
+    }
+
+    /// `find_enum_declaration`, memoized behind `Rc` — see
+    /// `find_macro_declaration_rc`'s doc for why.
+    pub(super) fn find_enum_declaration_rc(
+        &self,
+        id: SymbolId,
+    ) -> Result<Rc<crate::ast::EnumDeclaration>, ResolveError> {
+        if let Some(cached) = self.enum_decl_cache.borrow().get(&id) {
+            return Ok(Rc::clone(cached));
+        }
+        let declaration = Rc::new(self.find_enum_declaration(id)?.clone());
+        self.enum_decl_cache.borrow_mut().insert(id, Rc::clone(&declaration));
         Ok(declaration)
     }
 

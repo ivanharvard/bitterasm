@@ -47,6 +47,27 @@
 #     instead of an AST clone -- roughly a 35-40% wall-time cut on this
 #     benchmark, not a change in its growth shape.
 #
+# A third, compile-only table follows both of the above:
+#
+#   - sum_squares_unrolled_nolabel_100000.basm: the exact same unrolled sum
+#     as sum_squares_unrolled_100000.basm, but with the surrounding WASM
+#     module/section-header structure stripped out entirely -- no
+#     `deferred_uleb128 span(...)` pairs, so no top-level labels, and in
+#     particular no *forward*-referenced ones. Isolates the cost of the
+#     `@for`-unrolled macro expansion itself from `main::resolve_and_expand`'s
+#     two-pass label-position-discovery machinery: that machinery only
+#     needs a real second pass when some label actually IS
+#     forward-referenced, which every section span in the *other* file's
+#     WASM header is (each section's length has to be written before its
+#     body, whose end position isn't known yet). Since this file has none,
+#     it's the case `AliasResolver::used_forward_label_placeholder` (see
+#     `main::resolve_and_expand`) lets skip that second pass entirely --
+#     roughly a 1.8x wall-time cut over the same shape *with* a forward
+#     reference, confirmed by A/B-ing this exact file against the old
+#     always-two-pass behavior. Not runnable (no module header or export
+#     to hand `wasmtime --invoke`), so this table only measures `bitterasm
+#     compile` -- no encode/run/python3/c++ columns.
+#
 # Every number reported (time and memory alike) is the median of several
 # repeated runs, not a single sample -- the first exec of a freshly built
 # binary in a run pays for disk/page-cache warm-up and dynamic-linker work
@@ -220,6 +241,20 @@ header_row() {
         "" "N" "bt compile" "bt encode" "bt run" "bt total/peak" "python3" "c++ (-O2)"
 }
 
+# Compile-only row for a .basm file with no runnable WASM module (see
+# sum_squares_unrolled_nolabel_100000.basm's own comment) -- just
+# `bitterasm compile`'s own time/memory, median of $2 reps, no
+# encode/run/cross-check columns.
+run_compile_only_row() {
+    local basm_file="$1" reps="$2"
+    local em_file="$work_dir/compile_only.em"
+
+    measure_median "$reps" "$repo_root/target/release/bitterasm" compile "$basm_file" -o "$em_file"
+
+    printf 'time     %-10s %11ss\n' "-" "$ROW_TIME"
+    printf 'mem      %-10s %12s\n' "-" "$(human_bytes "$ROW_MEM")"
+}
+
 echo
 echo "== runtime loop (sum_squares_N.basm), median of 5 runs =="
 header_row
@@ -233,3 +268,8 @@ header_row
 for n in 1000 10000 100000; do
     run_row "$bench_dir/sum_squares_unrolled_${n}.basm" "sum_squares_unrolled_${n}" "$n" 3
 done
+
+echo
+echo "== same, N=100000, no WASM header/labels (isolates the two-pass skip), median of 3 runs =="
+printf '%-9s %-10s %12s\n' "" "-" "bt compile"
+run_compile_only_row "$bench_dir/sum_squares_unrolled_nolabel_100000.basm" 3

@@ -48,7 +48,7 @@ impl<'a> AliasResolver<'a> {
         variant_name: &str,
         span: Span,
     ) -> Result<Option<ResolvedType>, ResolveError> {
-        let declaration = self.find_enum_declaration(id)?;
+        let declaration = self.find_enum_declaration_rc(id)?;
         let scope = generic_arg_scope(&declaration.generic_params, args);
         let variant = declaration
             .variants
@@ -144,13 +144,12 @@ impl<'a> AliasResolver<'a> {
         id: SymbolId,
         args: &[ResolvedGenericArg],
     ) -> Result<Vec<(String, ResolvedType, bool, bool, Option<Expr>)>, ResolveError> {
-        let declaration = self.find_struct_declaration(id)?;
+        let declaration = self.find_struct_declaration_rc(id)?;
         let scope = generic_arg_scope(&declaration.generic_params, args);
-        let items = declaration.fields.clone();
 
         let previous = std::mem::replace(&mut self.generic_scope, scope);
 
-        let result = match self.unroll_struct_body(&items) {
+        let result = match self.unroll_struct_body(&declaration.fields) {
             Ok(fields) => fields
                 .into_iter()
                 .map(|field| {
@@ -281,13 +280,12 @@ impl<'a> AliasResolver<'a> {
             });
         };
 
-        let declaration = self.find_struct_declaration(*symbol)?;
-        let items = declaration.fields.clone();
+        let declaration = self.find_struct_declaration_rc(*symbol)?;
         let scope = generic_arg_scope(&declaration.generic_params, args);
 
         let previous = std::mem::replace(&mut self.generic_scope, scope);
 
-        let result = match self.unroll_struct_body(&items) {
+        let result = match self.unroll_struct_body(&declaration.fields) {
             Ok(fields) => match fields.into_iter().find(|field| field.name == field_name) {
                 Some(field) => self.resolve_type_expr(&field.ty),
 
@@ -311,11 +309,11 @@ impl<'a> AliasResolver<'a> {
         id: SymbolId,
         scope: HashMap<String, GenericBinding>,
     ) -> Result<Vec<ResolvedType>, ResolveError> {
-        let items = self.find_struct_declaration(id)?.fields.clone();
+        let declaration = self.find_struct_declaration_rc(id)?;
 
         let previous = std::mem::replace(&mut self.generic_scope, scope);
 
-        let result = match self.unroll_struct_body(&items) {
+        let result = match self.unroll_struct_body(&declaration.fields) {
             Ok(fields) => fields.iter().map(|field| self.resolve_type_expr(&field.ty)).collect(),
             Err(error) => Err(error),
         };
