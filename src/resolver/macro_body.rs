@@ -279,7 +279,19 @@ impl<'a> AliasResolver<'a> {
                     expansion.generated.extend(hook_result.generated);
                 }
 
-                let body_result = self.walk_macro_body(&declaration.body, &scope)?;
+                // Resolved fresh each iteration, against this iteration's
+                // own `self.generic_scope` — an `emits` facet naming one
+                // of `declaration`'s own generic params (`emits Array<T,
+                // N>`) means the same thing a value parameter's declared
+                // type would. Empty (the common case: no `emits` facet at
+                // all) leaves every `@emit` in this body unconstrained,
+                // same as before this facet existed.
+                let allowed_emits = crate::facets::extract_types(&declaration.facets, "emits")
+                    .iter()
+                    .map(|ty| self.resolve_type_expr(ty))
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                let body_result = self.walk_macro_body(&declaration.body, &scope, &allowed_emits)?;
                 expansion.emitted.extend(body_result.emitted);
                 expansion.generated.extend(body_result.generated);
                 if let Some(next_arguments) = self.pending_tail_call.take() {
@@ -620,6 +632,7 @@ impl<'a> AliasResolver<'a> {
         &mut self,
         body: &[Statement],
         initial_scope: &HashMap<String, Value>,
+        allowed_emits: &[ResolvedType],
     ) -> Result<MacroExpansion, ResolveError> {
         // Borrowed until a bare (non-`pub`) `const` actually extends it
         // (the same role a `let` would play) — most macro bodies in a call
@@ -637,7 +650,23 @@ impl<'a> AliasResolver<'a> {
                 Statement::Meta(meta) => match meta.name.as_str() {
                     "emit" => match meta.args.as_slice() {
                         [expr] => {
-                            emitted.push(self.eval_value(expr, &scope)?);
+                            let value = self.eval_value(expr, &scope)?;
+
+                            if !allowed_emits.is_empty() {
+                                let actual = self.value_type(&value)?;
+                                if !allowed_emits.iter().any(|ty| ty == &actual) {
+                                    return Err(ResolveError::EmittedTypeNotDeclared {
+                                        actual: describe_type(&actual, self.symbols),
+                                        declared: allowed_emits
+                                            .iter()
+                                            .map(|ty| describe_type(ty, self.symbols))
+                                            .collect(),
+                                        span: expr.span(),
+                                    });
+                                }
+                            }
+
+                            emitted.push(value);
                             // Advances the shared, whole-program-persistent
                             // counter a label's position is recorded
                             // against — see `AliasResolver::values_emitted`.
@@ -701,7 +730,7 @@ impl<'a> AliasResolver<'a> {
                         };
 
                         if let Some(chosen_body) = chosen {
-                            let nested = self.walk_macro_body(chosen_body, &scope)?;
+                            let nested = self.walk_macro_body(chosen_body, &scope, allowed_emits)?;
                             emitted.extend(nested.emitted);
                             generated.extend(nested.generated);
 
@@ -747,7 +776,7 @@ impl<'a> AliasResolver<'a> {
                             if !bindings.is_empty() {
                                 arm_scope.to_mut().extend(bindings);
                             }
-                            let nested = self.walk_macro_body(chosen_body, &arm_scope)?;
+                            let nested = self.walk_macro_body(chosen_body, &arm_scope, allowed_emits)?;
                             emitted.extend(nested.emitted);
                             generated.extend(nested.generated);
                             if nested.returned.is_some() || self.pending_tail_call.is_some() {
@@ -792,7 +821,7 @@ impl<'a> AliasResolver<'a> {
                             let mut iter_scope = scope.clone();
                             iter_scope.to_mut().insert(var_name.clone(), value);
 
-                            let nested = self.walk_macro_body(for_body, &iter_scope)?;
+                            let nested = self.walk_macro_body(for_body, &iter_scope, allowed_emits)?;
                             emitted.extend(nested.emitted);
                             generated.extend(nested.generated);
 
@@ -1576,6 +1605,89 @@ mod tests {
         match resolver.run_macro_body(symbol, declaration, vec![], &mut Vec::new()) {
             Err(ResolveError::GenericMacroAsValue { name, .. }) => assert_eq!(name, "identity"),
             other => panic!("expected a generic-macro-as-value error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn emits_facet_allows_every_value_matching_the_declared_type() {
+        let program = parse_fixture("emits_facet.basm");
+
+        let declaration = find_macro(&program, "emits_only_ints");
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
+        let symbol = symbols.lookup("emits_only_ints").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let result = resolver
+            .run_macro_body(symbol, declaration, vec![], &mut Vec::new())
+            .unwrap();
+
+        assert_eq!(result.emitted, vec![Value::Int(Int::from(1)), Value::Int(Int::from(2))]);
+    }
+
+    #[test]
+    fn emits_facet_rejects_an_emitted_value_of_an_undeclared_type() {
+        let program = parse_fixture("emits_facet.basm");
+
+        let declaration = find_macro(&program, "emits_wrong_type");
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
+        let symbol = symbols.lookup("emits_wrong_type").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        match resolver.run_macro_body(symbol, declaration, vec![], &mut Vec::new()) {
+            Err(ResolveError::EmittedTypeNotDeclared { actual, declared, .. }) => {
+                assert_eq!(actual, "Wrapper");
+                assert_eq!(declared, vec!["int".to_string()]);
+            }
+            other => panic!("expected an emitted-type-not-declared error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_macro_with_no_emits_facet_stays_unconstrained() {
+        let program = parse_fixture("emits_facet.basm");
+
+        let declaration = find_macro(&program, "emits_unconstrained");
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
+        let symbol = symbols.lookup("emits_unconstrained").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let result = resolver
+            .run_macro_body(symbol, declaration, vec![], &mut Vec::new())
+            .unwrap();
+
+        assert_eq!(result.emitted.len(), 2);
+    }
+
+    #[test]
+    fn emits_facet_is_checked_against_a_generic_param_once_bound() {
+        let program = parse_fixture("emits_facet.basm");
+
+        let declaration = find_macro(&program, "emits_generic_mismatch");
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
+        let symbol = symbols.lookup("emits_generic_mismatch").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        // `T` binds to `Wrapper` from the argument; `emits int` then rejects
+        // the `@emit value` it guards, the same way it would if the body had
+        // spelled `Wrapper` out directly.
+        let wrapper_symbol = symbols.lookup("Wrapper").unwrap();
+        let argument = Value::Struct {
+            symbol: wrapper_symbol,
+            args: vec![],
+            fields: vec![("value".to_string(), Value::Int(Int::from(1)))],
+            nominal: None,
+        };
+
+        match resolver.run_macro_body(symbol, declaration, vec![argument], &mut Vec::new()) {
+            Err(ResolveError::EmittedTypeNotDeclared { actual, declared, .. }) => {
+                assert_eq!(actual, "Wrapper");
+                assert_eq!(declared, vec!["int".to_string()]);
+            }
+            other => panic!("expected an emitted-type-not-declared error, got {other:?}"),
         }
     }
 

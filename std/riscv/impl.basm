@@ -152,7 +152,9 @@ pub macro add(
     rd: Reg,
     rs1: Reg,
     rs2: Reg
-) -> LittleEndian<RType, 32> {
+)
+    | emits LittleEndian<RType, 32>
+{
     @emit LittleEndian<RType, 32> { value: RType(
         funct7 = Funct7(0b0000000),
         rs2 = rs2,
@@ -166,7 +168,9 @@ pub macro sub(
     rd: Reg,
     rs1: Reg,
     rs2: Reg
-) -> LittleEndian<RType, 32> {
+)
+    | emits LittleEndian<RType, 32>
+{
     @emit LittleEndian<RType, 32> { value: RType(
         funct7 = Funct7(0b0100000),
         rs2 = rs2,
@@ -180,7 +184,9 @@ pub macro sll(
     rd: Reg,
     rs1: Reg,
     rs2: Reg
-) -> LittleEndian<RType, 32> {
+)
+    | emits LittleEndian<RType, 32>
+{
     @emit LittleEndian<RType, 32> { value: RType(
         funct7 = Funct7(0b0000000),
         rs2 = rs2,
@@ -194,7 +200,9 @@ pub macro slt(
     rd: Reg,
     rs1: Reg,
     rs2: Reg
-) -> LittleEndian<RType, 32> {
+)
+    | emits LittleEndian<RType, 32>
+{
     @emit LittleEndian<RType, 32> { value: RType(
         funct7 = Funct7(0b0000000),
         rs2 = rs2,
@@ -208,7 +216,9 @@ pub macro sltu(
     rd: Reg,
     rs1: Reg,
     rs2: Reg
-) -> LittleEndian<RType, 32> {
+)
+    | emits LittleEndian<RType, 32>
+{
     @emit LittleEndian<RType, 32> { value: RType(
         funct7 = Funct7(0b0000000),
         rs2 = rs2,
@@ -222,7 +232,9 @@ pub macro xor(
     rd: Reg,
     rs1: Reg,
     rs2: Reg
-) -> LittleEndian<RType, 32> {
+)
+    | emits LittleEndian<RType, 32>
+{
     @emit LittleEndian<RType, 32> { value: RType(
         funct7 = Funct7(0b0000000),
         rs2 = rs2,
@@ -236,7 +248,9 @@ pub macro srl(
     rd: Reg,
     rs1: Reg,
     rs2: Reg
-) -> LittleEndian<RType, 32> {
+)
+    | emits LittleEndian<RType, 32>
+{
     @emit LittleEndian<RType, 32> { value: RType(
         funct7 = Funct7(0b0000000),
         rs2 = rs2,
@@ -250,7 +264,9 @@ pub macro sra(
     rd: Reg,
     rs1: Reg,
     rs2: Reg
-) -> LittleEndian<RType, 32> {
+)
+    | emits LittleEndian<RType, 32>
+{
     @emit LittleEndian<RType, 32> { value: RType(
         funct7 = Funct7(0b0100000),
         rs2 = rs2,
@@ -264,7 +280,9 @@ pub macro or(
     rd: Reg,
     rs1: Reg,
     rs2: Reg
-) -> LittleEndian<RType, 32> {
+)
+    | emits LittleEndian<RType, 32>
+{
     @emit LittleEndian<RType, 32> { value: RType(
         funct7 = Funct7(0b0000000),
         rs2 = rs2,
@@ -278,7 +296,9 @@ pub macro and(
     rd: Reg,
     rs1: Reg,
     rs2: Reg
-) -> LittleEndian<RType, 32> {
+)
+    | emits LittleEndian<RType, 32>
+{
     @emit LittleEndian<RType, 32> { value: RType(
         funct7 = Funct7(0b0000000),
         rs2 = rs2,
@@ -296,7 +316,9 @@ pub macro addi(
     rd: Reg,
     rs1: Reg,
     imm: int
-) -> LittleEndian<IType, 32> {
+)
+    | emits LittleEndian<IType, 32>
+{
     @emit LittleEndian<IType, 32> { value: IType(
         imm = Imm12(imm & 0xFFF),
         rs1 = rs1,
@@ -310,7 +332,9 @@ pub macro slti(
     rd: Reg,
     rs1: Reg,
     imm: int
-) -> LittleEndian<IType, 32> {
+)
+    | emits LittleEndian<IType, 32>
+{
     @emit LittleEndian<IType, 32> { value: IType(
         imm = Imm12(imm & 0xFFF),
         rs1 = rs1,
@@ -324,7 +348,9 @@ pub macro sltiu(
     rd: Reg,
     rs1: Reg,
     imm: int
-) -> LittleEndian<IType, 32> {
+)
+    | emits LittleEndian<IType, 32>
+{
     @emit LittleEndian<IType, 32> { value: IType(
         imm = Imm12(imm & 0xFFF),
         rs1 = rs1,
@@ -338,7 +364,9 @@ pub macro xori(
     rd: Reg,
     rs1: Reg,
     imm: int
-) -> LittleEndian<IType, 32> {
+)
+    | emits LittleEndian<IType, 32>
+{
     @emit LittleEndian<IType, 32> { value: IType(
         imm = Imm12(imm & 0xFFF),
         rs1 = rs1,
@@ -352,7 +380,9 @@ pub macro ori(
     rd: Reg,
     rs1: Reg,
     imm: int
-) -> LittleEndian<IType, 32> {
+)
+    | emits LittleEndian<IType, 32>
+{
     @emit LittleEndian<IType, 32> { value: IType(
         imm = Imm12(imm & 0xFFF),
         rs1 = rs1,
@@ -366,7 +396,9 @@ pub macro andi(
     rd: Reg,
     rs1: Reg,
     imm: int
-) -> LittleEndian<IType, 32> {
+)
+    | emits LittleEndian<IType, 32>
+{
     @emit LittleEndian<IType, 32> { value: IType(
         imm = Imm12(imm & 0xFFF),
         rs1 = rs1,
@@ -387,7 +419,9 @@ pub macro slli(
     rd: Reg,
     rs1: Reg,
     shamt: int
-) -> LittleEndian<IType, 32> {
+)
+    | emits LittleEndian<IType, 32>
+{
     @emit LittleEndian<IType, 32> { value: IType(
         imm = Imm12(shamt & 0b11111),
         rs1 = rs1,
@@ -401,7 +435,9 @@ pub macro srli(
     rd: Reg,
     rs1: Reg,
     shamt: int
-) -> LittleEndian<IType, 32> {
+)
+    | emits LittleEndian<IType, 32>
+{
     @emit LittleEndian<IType, 32> { value: IType(
         imm = Imm12(shamt & 0b11111),
         rs1 = rs1,
@@ -415,7 +451,9 @@ pub macro srai(
     rd: Reg,
     rs1: Reg,
     shamt: int
-) -> LittleEndian<IType, 32> {
+)
+    | emits LittleEndian<IType, 32>
+{
     @emit LittleEndian<IType, 32> { value: IType(
         imm = Imm12((0b0100000 << 5) | (shamt & 0b11111)),
         rs1 = rs1,
@@ -428,7 +466,9 @@ pub macro jalr(
     rd: Reg,
     rs1: Reg,
     offset: int
-) -> LittleEndian<IType, 32> {
+)
+    | emits LittleEndian<IType, 32>
+{
     @emit LittleEndian<IType, 32> { value: IType(
         imm = Imm12(offset & 0xFFF),
         rs1 = rs1,
@@ -438,7 +478,9 @@ pub macro jalr(
     ) }
 }
 
-pub macro ecall() -> LittleEndian<IType, 32> {
+pub macro ecall()
+    | emits LittleEndian<IType, 32>
+{
     @emit LittleEndian<IType, 32> { value: IType(
         imm = Imm12(0),
         rs1 = x0,
@@ -448,7 +490,9 @@ pub macro ecall() -> LittleEndian<IType, 32> {
     ) }
 }
 
-pub macro ebreak() -> LittleEndian<IType, 32> {
+pub macro ebreak()
+    | emits LittleEndian<IType, 32>
+{
     @emit LittleEndian<IType, 32> { value: IType(
         imm = Imm12(1),
         rs1 = x0,
@@ -466,7 +510,8 @@ pub macro ebreak() -> LittleEndian<IType, 32> {
 # in native.basm, not here, so an alternate dialect could assign its own
 # spelling to these same macros without touching, or duplicating, this file.
 
-pub macro lb(rd: Reg, offset: int, rs1: Reg) -> LittleEndian<IType, 32>
+pub macro lb(rd: Reg, offset: int, rs1: Reg)
+    | emits LittleEndian<IType, 32>
 {
     @emit LittleEndian<IType, 32> { value: IType(
         imm = Imm12(offset & 0xFFF),
@@ -477,7 +522,8 @@ pub macro lb(rd: Reg, offset: int, rs1: Reg) -> LittleEndian<IType, 32>
     ) }
 }
 
-pub macro lh(rd: Reg, offset: int, rs1: Reg) -> LittleEndian<IType, 32>
+pub macro lh(rd: Reg, offset: int, rs1: Reg)
+    | emits LittleEndian<IType, 32>
 {
     @emit LittleEndian<IType, 32> { value: IType(
         imm = Imm12(offset & 0xFFF),
@@ -488,7 +534,8 @@ pub macro lh(rd: Reg, offset: int, rs1: Reg) -> LittleEndian<IType, 32>
     ) }
 }
 
-pub macro lw(rd: Reg, offset: int, rs1: Reg) -> LittleEndian<IType, 32>
+pub macro lw(rd: Reg, offset: int, rs1: Reg)
+    | emits LittleEndian<IType, 32>
 {
     @emit LittleEndian<IType, 32> { value: IType(
         imm = Imm12(offset & 0xFFF),
@@ -499,7 +546,8 @@ pub macro lw(rd: Reg, offset: int, rs1: Reg) -> LittleEndian<IType, 32>
     ) }
 }
 
-pub macro lbu(rd: Reg, offset: int, rs1: Reg) -> LittleEndian<IType, 32>
+pub macro lbu(rd: Reg, offset: int, rs1: Reg)
+    | emits LittleEndian<IType, 32>
 {
     @emit LittleEndian<IType, 32> { value: IType(
         imm = Imm12(offset & 0xFFF),
@@ -510,7 +558,8 @@ pub macro lbu(rd: Reg, offset: int, rs1: Reg) -> LittleEndian<IType, 32>
     ) }
 }
 
-pub macro lhu(rd: Reg, offset: int, rs1: Reg) -> LittleEndian<IType, 32>
+pub macro lhu(rd: Reg, offset: int, rs1: Reg)
+    | emits LittleEndian<IType, 32>
 {
     @emit LittleEndian<IType, 32> { value: IType(
         imm = Imm12(offset & 0xFFF),
@@ -525,7 +574,8 @@ pub macro lhu(rd: Reg, offset: int, rs1: Reg) -> LittleEndian<IType, 32>
 # S-type: stores
 # =================
 
-pub macro sb(rs2: Reg, offset: int, rs1: Reg) -> LittleEndian<SType, 32>
+pub macro sb(rs2: Reg, offset: int, rs1: Reg)
+    | emits LittleEndian<SType, 32>
 {
     @emit LittleEndian<SType, 32> { value: SType(
         imm_hi = Imm7((offset >> 5) & 0b1111111),
@@ -536,7 +586,8 @@ pub macro sb(rs2: Reg, offset: int, rs1: Reg) -> LittleEndian<SType, 32>
     ) }
 }
 
-pub macro sh(rs2: Reg, offset: int, rs1: Reg) -> LittleEndian<SType, 32>
+pub macro sh(rs2: Reg, offset: int, rs1: Reg)
+    | emits LittleEndian<SType, 32>
 {
     @emit LittleEndian<SType, 32> { value: SType(
         imm_hi = Imm7((offset >> 5) & 0b1111111),
@@ -547,7 +598,8 @@ pub macro sh(rs2: Reg, offset: int, rs1: Reg) -> LittleEndian<SType, 32>
     ) }
 }
 
-pub macro sw(rs2: Reg, offset: int, rs1: Reg) -> LittleEndian<SType, 32>
+pub macro sw(rs2: Reg, offset: int, rs1: Reg)
+    | emits LittleEndian<SType, 32>
 {
     @emit LittleEndian<SType, 32> { value: SType(
         imm_hi = Imm7((offset >> 5) & 0b1111111),
@@ -571,7 +623,8 @@ pub macro sw(rs2: Reg, offset: int, rs1: Reg) -> LittleEndian<SType, 32>
 # from. The scrambled field order below is RV32I's, not a choice made
 # here — see the BType declaration's own doc comment.
 
-pub macro beq(rs1: Reg, rs2: Reg, target: int) -> LittleEndian<BType, 32>
+pub macro beq(rs1: Reg, rs2: Reg, target: int)
+    | emits LittleEndian<BType, 32>
 {
     const offset = mul(sub(target, here()), 4)
     @emit LittleEndian<BType, 32> { value: BType(
@@ -583,7 +636,8 @@ pub macro beq(rs1: Reg, rs2: Reg, target: int) -> LittleEndian<BType, 32>
     ) }
 }
 
-pub macro bne(rs1: Reg, rs2: Reg, target: int) -> LittleEndian<BType, 32>
+pub macro bne(rs1: Reg, rs2: Reg, target: int)
+    | emits LittleEndian<BType, 32>
 {
     const offset = mul(sub(target, here()), 4)
     @emit LittleEndian<BType, 32> { value: BType(
@@ -595,7 +649,8 @@ pub macro bne(rs1: Reg, rs2: Reg, target: int) -> LittleEndian<BType, 32>
     ) }
 }
 
-pub macro blt(rs1: Reg, rs2: Reg, target: int) -> LittleEndian<BType, 32>
+pub macro blt(rs1: Reg, rs2: Reg, target: int)
+    | emits LittleEndian<BType, 32>
 {
     const offset = mul(sub(target, here()), 4)
     @emit LittleEndian<BType, 32> { value: BType(
@@ -607,7 +662,8 @@ pub macro blt(rs1: Reg, rs2: Reg, target: int) -> LittleEndian<BType, 32>
     ) }
 }
 
-pub macro bge(rs1: Reg, rs2: Reg, target: int) -> LittleEndian<BType, 32>
+pub macro bge(rs1: Reg, rs2: Reg, target: int)
+    | emits LittleEndian<BType, 32>
 {
     const offset = mul(sub(target, here()), 4)
     @emit LittleEndian<BType, 32> { value: BType(
@@ -619,7 +675,8 @@ pub macro bge(rs1: Reg, rs2: Reg, target: int) -> LittleEndian<BType, 32>
     ) }
 }
 
-pub macro bltu(rs1: Reg, rs2: Reg, target: int) -> LittleEndian<BType, 32>
+pub macro bltu(rs1: Reg, rs2: Reg, target: int)
+    | emits LittleEndian<BType, 32>
 {
     const offset = mul(sub(target, here()), 4)
     @emit LittleEndian<BType, 32> { value: BType(
@@ -631,7 +688,8 @@ pub macro bltu(rs1: Reg, rs2: Reg, target: int) -> LittleEndian<BType, 32>
     ) }
 }
 
-pub macro bgeu(rs1: Reg, rs2: Reg, target: int) -> LittleEndian<BType, 32>
+pub macro bgeu(rs1: Reg, rs2: Reg, target: int)
+    | emits LittleEndian<BType, 32>
 {
     const offset = mul(sub(target, here()), 4)
     @emit LittleEndian<BType, 32> { value: BType(
@@ -650,14 +708,18 @@ pub macro bgeu(rs1: Reg, rs2: Reg, target: int) -> LittleEndian<BType, 32>
 pub macro lui(
     rd: Reg,
     imm: int
-) -> LittleEndian<UType, 32> {
+)
+    | emits LittleEndian<UType, 32>
+{
     @emit LittleEndian<UType, 32> { value: UType(imm = Imm20(imm & 0xFFFFF), rd = rd, opcode = Opcode(0b0110111)) }
 }
 
 pub macro auipc(
     rd: Reg,
     imm: int
-) -> LittleEndian<UType, 32> {
+)
+    | emits LittleEndian<UType, 32>
+{
     @emit LittleEndian<UType, 32> { value: UType(imm = Imm20(imm & 0xFFFFF), rd = rd, opcode = Opcode(0b0010111)) }
 }
 
@@ -667,7 +729,8 @@ pub macro auipc(
 # Same `target`/`here()` story as BType above, and same scrambling story as
 # BType — see JType's own doc comment.
 
-pub macro jal(rd: Reg, target: int) -> LittleEndian<JType, 32>
+pub macro jal(rd: Reg, target: int)
+    | emits LittleEndian<JType, 32>
 {
     const offset = mul(sub(target, here()), 4)
     @emit LittleEndian<JType, 32> { value: JType(

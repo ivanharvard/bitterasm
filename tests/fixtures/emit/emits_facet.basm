@@ -1,0 +1,28 @@
+struct Wrapper {
+    value: int
+}
+
+macro emits_only_ints()
+    | emits int
+{
+    @emit 1
+    @emit 2
+}
+
+macro emits_wrong_type()
+    | emits int
+{
+    @emit Wrapper { value: 1 }
+}
+
+macro emits_unconstrained()
+{
+    @emit 1
+    @emit Wrapper { value: 2 }
+}
+
+macro emits_generic_mismatch<T>(value: T)
+    | emits int
+{
+    @emit value
+}

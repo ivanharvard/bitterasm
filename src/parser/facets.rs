@@ -132,11 +132,15 @@ impl Parser {
                 FacetPayload::Pattern(tokens)
             }
 
+            // e.g. `emits <T>` — an ordinary type expression, the same
+            // grammar a macro's own `-> Type` return annotation uses.
+            PayloadShape::Type => FacetPayload::Type(self.parse_type_expr()?),
+
             // `pub` and `return` are intercepted above, before reaching
             // this identifier-based path, since they're spelled with
             // dedicated tokens rather than a plain identifier — their
-            // shapes never actually reach this match.
-            PayloadShape::Bare | PayloadShape::Type => unreachable!(
+            // shape never actually reaches this match.
+            PayloadShape::Bare => unreachable!(
                 "facet `{name}` has a dedicated-token payload shape but was parsed via the identifier path"
             ),
         }};

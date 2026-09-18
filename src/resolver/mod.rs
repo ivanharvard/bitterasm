@@ -365,6 +365,16 @@ pub enum ResolveError {
         span: Span,
     },
 
+    // A macro declared one or more `emits` facets (see
+    // `crate::facets::emits`) and one of its `@emit`s produced a value
+    // whose type isn't any of them. A macro with no `emits` facet at all
+    // is unconstrained and never raises this.
+    EmittedTypeNotDeclared {
+        actual: String,
+        declared: Vec<String>,
+        span: Span,
+    },
+
     // `as`'s target, after unwrapping every nominal alias layer, is a
     // struct that isn't already the source value's own shape and doesn't
     // have exactly one field to auto-wrap the source value into — there's
@@ -445,7 +455,8 @@ impl ResolveError {
             | Self::AmbiguousMacroValue { span, .. } | Self::GenericMacroAsValue { span, .. }
             | Self::AssertionFailed { span, .. }
             | Self::InvalidAssertMessage { span } | Self::TypeMismatch { span, .. }
-            | Self::InvariantViolated { span, .. } | Self::CannotCoerce { span, .. }
+            | Self::InvariantViolated { span, .. } | Self::EmittedTypeNotDeclared { span, .. }
+            | Self::CannotCoerce { span, .. }
             | Self::AmbiguousConversion { span, .. } | Self::AmbiguousInvariantBinder { span, .. }
             | Self::Internal { span, .. } | Self::ForLoopTooLarge { span }
             | Self::ComputedNameNotAllowed { span } | Self::TopLevelForRequiresRange { span } => *span,

@@ -1286,6 +1286,26 @@ fn lint_facets_reject_unknown_lints() {
 }
 
 #[test]
+fn parses_repeated_emits_facets_on_a_macro() {
+    let source = "macro slli(rd: Reg) | emits LittleEndian<IType, 32> | emits LittleEndian<RType, 32> {\n    @emit rd\n}\n";
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    let Statement::Macro(decl) = &program.statements[0] else {
+        panic!("expected macro declaration");
+    };
+    assert_eq!(decl.facets.len(), 2);
+    for facet in &decl.facets {
+        assert_eq!(facet.name, "emits");
+        assert!(matches!(&facet.payload, crate::ast::FacetPayload::Type(_)));
+    }
+
+    assert_eq!(
+        crate::facets::extract_types(&decl.facets, "emits").len(),
+        2
+    );
+}
+
+#[test]
 fn pub_and_return_type_are_macro_signature_fields_not_facets() {
     let source = "pub macro encode(value: int) -> bits<8>\n    | syntax { encode $value$ }\n{\n}\n";
     let program = parse(lex(source).unwrap()).unwrap();

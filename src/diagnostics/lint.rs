@@ -196,7 +196,11 @@ fn collect_program_statement_references(statement: &Statement, names: &mut HashS
             declaration.body.iter().for_each(|item| collect_program_statement_references(item, names));
             for facet in &declaration.facets {
                 if !is_lint_facet(&facet.name) {
-                    if let FacetPayload::Expr(expr) = &facet.payload { collect_expr_identifiers(expr, names); }
+                    match &facet.payload {
+                        FacetPayload::Expr(expr) => collect_expr_identifiers(expr, names),
+                        FacetPayload::Type(ty) => collect_type_references(ty, names),
+                        _ => {}
+                    }
                 }
             }
         }

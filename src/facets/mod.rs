@@ -29,6 +29,7 @@ mod before;
 mod invariant;
 mod from;
 mod to;
+mod emits;
 mod allow;
 mod expect;
 mod warn;
@@ -37,6 +38,7 @@ mod forbid;
 pub(crate) mod syntax;
 
 use crate::ast::{Expr, Facet, FacetPayload};
+use crate::types::TypeExpr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeclKind {
@@ -80,6 +82,7 @@ pub fn payload_shape(name: &str) -> Option<PayloadShape> {
         "invariant" => Some(invariant::PAYLOAD),
         "from" => Some(from::PAYLOAD),
         "to" => Some(to::PAYLOAD),
+        "emits" => Some(emits::PAYLOAD),
         "before" => Some(before::PAYLOAD),
         "after" => Some(after::PAYLOAD),
         "syntax" => Some(syntax::PAYLOAD),
@@ -102,6 +105,7 @@ pub fn check(name: &str, decl_kind: DeclKind, count: usize) -> Option<Result<(),
         "invariant" => Some(invariant::check(decl_kind, count)),
         "from" => Some(from::check(decl_kind, count)),
         "to" => Some(to::check(decl_kind, count)),
+        "emits" => Some(emits::check(decl_kind, count)),
         "before" => Some(before::check(decl_kind, count)),
         "after" => Some(after::check(decl_kind, count)),
         "syntax" => Some(syntax::check(decl_kind, count)),
@@ -125,6 +129,16 @@ pub fn extract_exprs(facets: &[Facet], name: &str) -> Vec<Expr> {
         .iter()
         .filter_map(|facet| match (&facet.name[..], &facet.payload) {
             (facet_name, FacetPayload::Expr(expr)) if facet_name == name => Some(expr.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+pub fn extract_types(facets: &[Facet], name: &str) -> Vec<TypeExpr> {
+    facets
+        .iter()
+        .filter_map(|facet| match (&facet.name[..], &facet.payload) {
+            (facet_name, FacetPayload::Type(ty)) if facet_name == name => Some(ty.clone()),
             _ => None,
         })
         .collect()
