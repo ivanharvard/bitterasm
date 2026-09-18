@@ -1,0 +1,26 @@
+from std.wasm.module import *
+from std.wasm.impl import *
+from std.bitter.deferred import *
+
+# Same unrolled sum-of-squares workload as sum_squares_unrolled_100000.basm,
+# but with the surrounding WASM module/section structure stripped out —
+# no `deferred_uleb128 span(...)` pairs, so no top-level labels at all, and
+# in particular no *forward*-referenced ones. Exists purely to isolate the
+# cost of the `@for`-unrolled macro-expansion work itself from the
+# two-pass label-position-discovery machinery `main::resolve_and_expand`
+# only needs when a label actually IS forward-referenced (as the section
+# spans in the other file are).
+macro wrap_i32(v: int) -> int {
+    const masked = v & 0xFFFFFFFF
+    @if masked >= 0x80000000 {
+        @return masked - 0x100000000
+    } @else {
+        @return masked
+    }
+}
+
+i32_const(0)
+@for i in 0..100000 {
+    i32_const(wrap_i32(i * i))
+    i32_add
+}

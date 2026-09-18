@@ -264,23 +264,12 @@ fn resolve_and_expand(path: &Path) -> Result<Expansion, CompileError> {
     // A label reference can be a *forward* reference — a label whose
     // `foo:` line appears later in the program than the invocation that
     // names it — so a label's position can't always be known the first
-    // time it's read. Two passes over the same program solve this: pass 1
-    // runs the real expansion machinery in `LabelMode::Tolerant`, so an
-    // as-yet-unrecorded (forward-referenced) label silently gets a
-    // placeholder position instead of erroring, just to discover where
-    // every top-level label actually ends up; pass 2 reruns the same
-    // expansion for real, in `LabelMode::Strict`, now that every position
-    // is known. This is only sound because a wrong placeholder changes
-    // what gets emitted at some points during pass 1, never how *many*
-    // values get emitted — which requires that an `@if`/`@for` inside a
-    // macro body never makes its own condition/range depend on a label's
-    // position (both `@if`/`@for` exist now, but nothing checks this
-    // restriction; it's on the author of an `@if`/`@for`-using macro to
-    // not violate it, the same way today's language already trusts a
-    // macro not to have an infinite `@for`). Top-level `@for`/`@if`
-    // (`resolver::unroll_top_level`) doesn't have this problem at all — it
-    // runs before either pass, over plain top-level consts only, with no
-    // notion of labels yet.
+    // time it's read. This first pass runs the real expansion machinery in
+    // `LabelMode::Tolerant`, so an as-yet-unrecorded (forward-referenced)
+    // label silently gets a placeholder position instead of erroring —
+    // both to discover where every top-level label actually ends up, and,
+    // for the common case where no forward reference ever actually occurs,
+    // to serve as the final answer outright (see below).
     let mut discovery = resolver::AliasResolver::new(
         &program,
         &symbols,
@@ -290,9 +279,52 @@ fn resolve_and_expand(path: &Path) -> Result<Expansion, CompileError> {
         entry_module,
     );
 
+    // Every struct/alias in the program is resolved up front, whether or
+    // not any invocation actually reaches it — a broken declaration fails
+    // the whole command, the same way a real compiler wouldn't skip type
+    // checking an unreachable function.
     resolve_structs_and_aliases(&mut discovery)?;
-    walk_top_level(&program, &symbols, &mut discovery, None)?;
 
+    // Expand every top-level invocation (`mov r1, 7`, or a macro calling
+    // another macro) in program order, against an empty scope — nothing at
+    // the top level is a bound parameter.
+    let mut emitted = Vec::new();
+    let mut generated = Vec::new();
+    walk_top_level(&program, &symbols, &mut discovery, Some((&mut emitted, &mut generated)))?;
+
+    // A wrong placeholder only ever changes what gets emitted at some
+    // point, never how *many* values get emitted (see
+    // `resolver::values::AliasResolver::resolve_label_value`'s doc) — so if
+    // no placeholder was ever actually substituted, nothing this pass
+    // computed depended on an unknown label position in the first place,
+    // and it's already the exact final answer. Most programs have no
+    // labels at all (or none referenced before their own declaration), so
+    // this skips a full second walk of the entire program for them.
+    if !discovery.used_forward_label_placeholder() {
+        return Ok(Expansion { symbols, emitted, generated });
+    }
+
+    // This pass's output turned out to be unusable after all (see below) —
+    // drop it now rather than let `let`-shadowing keep it alive alongside
+    // the real pass's own `emitted`/`generated` until the end of the
+    // function, which would hold two full-program-sized copies in memory
+    // at once for no reason.
+    drop(emitted);
+    drop(generated);
+
+    // At least one label was read before its own position was known —
+    // rerun the same expansion for real, in `LabelMode::Strict`, now that
+    // every position is known from the pass above. This is only sound
+    // because of the same "placeholder never changes *how many* values get
+    // emitted" invariant, which requires that an `@if`/`@for` inside a
+    // macro body never makes its own condition/range depend on a label's
+    // position (both `@if`/`@for` exist now, but nothing checks this
+    // restriction; it's on the author of an `@if`/`@for`-using macro to
+    // not violate it, the same way today's language already trusts a
+    // macro not to have an infinite `@for`). Top-level `@for`/`@if`
+    // (`resolver::unroll_top_level`) doesn't have this problem at all — it
+    // runs before either pass, over plain top-level consts only, with no
+    // notion of labels yet.
     let label_positions = discovery.into_label_positions();
 
     let mut alias_resolver = resolver::AliasResolver::new(
@@ -304,15 +336,8 @@ fn resolve_and_expand(path: &Path) -> Result<Expansion, CompileError> {
         entry_module,
     );
 
-    // Every struct/alias in the program is resolved up front, whether or
-    // not any invocation actually reaches it — a broken declaration fails
-    // the whole command, the same way a real compiler wouldn't skip type
-    // checking an unreachable function.
     resolve_structs_and_aliases(&mut alias_resolver)?;
 
-    // Expand every top-level invocation (`mov r1, 7`, or a macro calling
-    // another macro) in program order, against an empty scope — nothing at
-    // the top level is a bound parameter.
     let mut emitted = Vec::new();
     let mut generated = Vec::new();
 
