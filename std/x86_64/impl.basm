@@ -1,0 +1,94 @@
+# x86-64 base instruction set (core GPR-only integer subset).
+#
+# See std/x86_64/PROGRESS.md for scope, phase plan, and design decisions already
+# made — read it before extending this file.
+
+from std.binary import *
+from std.bitter.deferred import *
+from std.bitter.byte_order import *
+
+# =================
+# registers
+# =================
+# 16 general-purpose registers. Unlike RISC-V's `Reg = bits<5>` (which plugs
+# directly into a format struct's fixed bit position), an x86-64 register's 4-bit
+# number is split across two different bytes of an instruction — 3 bits embedded in
+# a ModRM/SIB field or in the low 3 bits of certain opcodes, plus 1 extension bit
+# folded into the REX prefix — so what every macro actually needs is arithmetic on
+# the raw number, not a packer-ready `bits<N>`, until the moment a modrm/sib/rex/
+# opcode byte is actually built. `Reg` is therefore a plain `int` alias, the same
+# pattern `std/unsigned.basm`'s `uint` already uses.
+pub type Reg = int
+
+@for i in 0..16 {
+    pub const r`i`: Reg = i
+}
+
+# Standard ABI names for the low 8 registers, aliased to the `rN` registers they
+# name. r8-r15 have no separate ABI name and keep their numeric spelling.
+pub const rax = r0
+pub const rcx = r1
+pub const rdx = r2
+pub const rbx = r3
+pub const rsp = r4
+pub const rbp = r5
+pub const rsi = r6
+pub const rdi = r7
+
+# The 3 low bits of a register number — the field width every ModRM `reg`/`rm`,
+# SIB `index`/`base`, and register-in-opcode encoding actually carries.
+pub macro reg_field(r: Reg) -> int {
+    @return r & 0b111
+}
+
+# The register number's 4th bit — folded into the REX prefix (R/X/B) whenever the
+# register is r8-r15, since the 3-bit fields above can't carry it.
+pub macro reg_ext(r: Reg) -> int {
+    @return (r >> 3) & 1
+}
+
+# =================
+# byte building blocks
+# =================
+
+pub type Byte = bits<8>
+
+# A fixed-length run of bytes, meant to be `bitter`-packed directly. Deliberately
+# its own copy rather than imported from `std.wasm.leb128`'s identical-looking
+# `Bytes<N>` — a cross-domain dependency between an x86-64 package and a WASM one —
+# the same duplication `std/riscv/impl.basm`'s own field-width aliases already
+# embrace for self-documentation (see its own comment on `Funct7`/`Imm7`).
+pub struct Bytes<const N: int>
+    | invariant N >= 0
+{
+    @for i in 0..N {
+        pub __el`i`: Byte,
+    }
+}
+
+# REX prefix byte: `0100WRXB`. `w` selects 64-bit operand size; `r`/`x`/`b` are the
+# extension bits for, respectively, ModRM.reg, SIB.index, and ModRM.rm/SIB.base/an
+# opcode-embedded register. Every argument is a plain 0/1 `int`, not a `bits<1>` —
+# see `reg_ext` above for why x86 fields stay plain `int` until the final byte.
+pub macro rex_byte(w: int, r: int, x: int, b: int) -> Byte {
+    @return Byte(0b0100_0000 | (w << 3) | (r << 2) | (x << 1) | b)
+}
+
+# ModRM byte: `mod` (2 bits), `reg` (3 bits, a register or an opcode-extension
+# digit depending on the instruction), `rm` (3 bits, a register or the start of a
+# memory addressing form).
+pub macro modrm_byte(mod: int, reg: int, rm: int) -> Byte {
+    @return Byte((mod << 6) | (reg << 3) | rm)
+}
+
+# SIB byte: `scale` (2 bits, log2 of the index's multiplier), `index` (3 bits),
+# `base` (3 bits). Only present when a ModRM byte's `rm` field is `0b100`.
+pub macro sib_byte(scale: int, index: int, base: int) -> Byte {
+    @return Byte((scale << 6) | (index << 3) | base)
+}
+
+# Little-endian byte `index` (0 = least significant) of `value`, for any width —
+# reused for every immediate and displacement, whatever their byte count.
+pub macro byte_of(value: int, index: int) -> Byte {
+    @return Byte((value >> (8 * index)) & 0xFF)
+}

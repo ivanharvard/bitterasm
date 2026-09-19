@@ -1,0 +1,19 @@
+# Throwaway smoke test for std/x86_64/impl.basm's Phase 1 primitives. Delete once
+# Phase 2 has real instructions exercising the same code paths (see
+# std/x86_64/PROGRESS.md).
+
+from std.x86_64.impl import *
+
+macro check() {
+    @assert rex_byte(1, 0, 0, 1) == Byte(0b01001001), "REX.W+B"
+    @assert modrm_byte(0b11, 0b000, 0b001) == Byte(0xC1), "modrm mod=11 reg=0 rm=1"
+    @assert sib_byte(0b10, 0b001, 0b101) == Byte(0b10001101), "sib scale=2 idx=1 base=5"
+    @assert reg_field(9) == 1, "r9 low3"
+    @assert reg_ext(9) == 1, "r9 ext bit"
+    @assert reg_field(3) == 3, "r3 low3"
+    @assert reg_ext(3) == 0, "r3 ext bit"
+    @assert byte_of(0x12345678, 0) == Byte(0x78), "byte 0 of imm32"
+    @assert byte_of(0x12345678, 3) == Byte(0x12), "byte 3 of imm32"
+}
+
+check
