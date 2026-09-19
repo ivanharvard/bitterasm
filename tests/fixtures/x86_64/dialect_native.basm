@@ -1,0 +1,55 @@
+# Phase 6: std/x86_64/native.basm's Intel-syntax dialect, exercising every family
+# of syntax sugar it adds — mov's load/store bracket forms (all four addressing
+# shapes), the register-only ALU/shift/test sugar, lea's bracket forms, and the
+# reg,CL shift form. tests/x86_64_dialects.rs compiles this and
+# dialect_default.basm (the exact same instructions spelled with impl.basm's own
+# default positional syntax) and asserts byte-for-byte identical output — see
+# std/x86_64/PROGRESS.md's Phase 6 section.
+
+from std.x86_64.native import *
+
+mov rax, rbx
+mov rax, [rbx]
+mov rax, [rbx+8]
+mov rax, [rbx+rcx*4+0x10]
+mov rax, [rip+0x20]
+mov [rbx], rax
+mov [rbx+8], rax
+mov [rbx+rcx*4+0x10], rax
+mov [rip+0x20], rax
+
+add rax, rbx
+addi rax, 5
+or rax, rbx
+ori rax, 5
+and rax, rbx
+andi rax, 5
+sub rax, rbx
+subi rax, 5
+xor rax, rbx
+xori rax, 5
+cmp rax, rbx
+cmpi rax, 5
+test rax, rbx
+testi rax, 5
+movi rax, 100
+
+lea rax, [rbx+8]
+lea rax, [rbx+rcx*4+0x10]
+
+shl rax, 4
+shl rax, cl
+shr rax, 4
+shr rax, cl
+sar rax, 4
+sar rax, cl
+
+push rax
+pop rax
+
+target:
+call target
+jmp target
+je target
+jne target
+ret

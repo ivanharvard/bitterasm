@@ -12,7 +12,7 @@ which design decisions are already settled — not any prior chat conversation.
 - [x] Phase 3 — Memory operands: ModRM/SIB addressing engine
 - [x] Phase 4 — Control flow: jmp/jcc/call/ret
 - [x] Phase 5 — Remaining core subset: shl/shr/sar, lea, push/pop
-- [ ] Phase 6 — Native (Intel-syntax) dialect
+- [x] Phase 6 — Native (Intel-syntax) dialect
 - [ ] Phase 7 — Independent-oracle cross-check (GNU binutils)
 
 Work through phases in order, one at a time. Each phase's section below has enough
@@ -454,14 +454,117 @@ shift_lea_stack.basm` (new, 12 cases); `tests/x86_64_encoding.rs` (extended with
 `shift_lea_stack` alone: 12/12 emitted values, 33 bytes, matching hand-computed
 expected output exactly). This completes v1's instruction coverage.
 
-### Phase 6 — Native (Intel-syntax) dialect
+### Phase 6 — Native (Intel-syntax) dialect ✅
 **Deliverable:** `std/x86_64/native.basm`, giving every impl.basm macro real Intel
 mnemonic syntax (`mov rax, rbx`, `add rax, 5`, `mov rax, [rbx+rcx*4+0x10]`), mirroring
 RISC-V's `native.basm` sugar-injection approach.
-**Files:** `std/x86_64/native.basm` (new); `tests/fixtures/x86_64/dialect_native.basm`
-(new); `tests/x86_64_dialects.rs` (new, byte-exact against impl.basm's own default
-positional syntax, mirroring `tests/riscv_dialects.rs`).
-**Verification:** `cargo test --test x86_64_dialects`.
+**Resolved (three real findings, in the order they had to be worked through):**
+- **Operand size:** every mnemonic hardcodes `w=1` (64-bit), dropping `impl.basm`'s
+  explicit trailing `w` parameter from the surface syntax entirely. There is no
+  32-bit register name family in this package (`rax`/`rbx`/... are the *only*
+  spellings — unlike real x86-64, nothing here reads a 32-bit operand size off a
+  different register name the way `eax` vs `rax` would), so a 32-bit form has no
+  natural spelling to give it in a dialect. 32-bit forms stay fully reachable by
+  writing `w` explicitly (`mov rax, rbx, 0`) — this file only *adds* syntax, it
+  never removes `impl.basm`'s own default positional syntax.
+- **`@emit`-only macros can't be called as expressions — delegate with a bare
+  statement instead:** every `impl.basm` instruction macro (Phase 2 onward)
+  `@emit`s, never `@return`s, so `@emit mov(rd, rs, 1)` inside a new wrapper's body
+  is a hard error ("expected a value expression") — there's no value to emit, only
+  a side effect to trigger. The fix is a bare, parenthesis-free statement instead:
+  `mov rd, rs, 1` (no `@emit`, no parens — parenthesized call syntax is invalid at
+  statement level, confirmed empirically the same way Phase 2 first hit it).
+- **Claiming a name for one shape breaks every other shape's default syntax,
+  including a wrapper's own internal delegation** — the deepest finding, and the
+  reason nearly every mnemonic below has *two* registered patterns, not one: once
+  any syntax exists for a name (`crate::parser::statements::parse_invocation_statement`'s
+  "claimed" check), default positional syntax is gone for *every* arity of that
+  name, not just the one the new syntax covers. A first draft that dropped `w` via
+  a reduced-arity `mov` wrapper, with no restatement alongside it, broke that same
+  wrapper's own internal `mov rd, rs, 1` delegation call — 3 operands no longer
+  parses once `mov` only has a 2-operand pattern registered. Fixed by giving nearly
+  every `w`-parameterized mnemonic a second, standalone `syntax NAME(a, b, c) =
+  { NAME $a$, $b$, $c$ }` pattern that just restates the real underlying macro's
+  own full signature verbatim (byte-for-byte what default syntax already produced)
+  — needed purely so 3-argument calls (including this file's own delegating ones)
+  keep parsing at all. Also confirmed empirically: the standalone restatement has
+  to be declared *before* the inline-faceted reduced-arity macro in the same file,
+  or the *first* attempt at combining them fails with a spurious parse error on the
+  delegating call.
+- **`mov`'s bracket-memory syntax needed a real compiler fix, not a workaround —
+  see the two commits immediately before this phase's own instruction work
+  ("Prefer the more literal-specific pattern..." and "add mov's load
+  direction..."):** a `syntax` capture is an unbounded generic expression, stopped
+  only by the next literal token in its *own* pattern, so `[$base$+$disp$]`'s
+  `disp` capture happily swallows an indexed form's entire `$index$*$scale$+$disp$`
+  right-hand side as one ordinary, well-typed expression — confirmed this hits
+  *every* pair of the four addressing shapes (`[base]`/`[base+disp]`,
+  `[base+disp]`/`[base+index*scale+disp]`, `[base+disp]`/`[rip+disp]`), including
+  `PROGRESS.md`'s own flagship `mov rax, [rbx+rcx*4+0x10]` example, which was a hard
+  "ambiguous syntax" error before the fix. Type resolution can't rescue this the
+  way it does for two genuinely type-differentiated overloads sharing one pattern
+  shape (`identical_syntax_overloads_defer_to_type_resolution`'s own case): both
+  readings here are equally well-typed, they disagree on the source text's
+  *structure*, not on which declared type accepts a shared, already-fixed operand
+  list — and structure has to be settled before types even exist, since the parser
+  can't hold multiple candidate shapes open while it waits for a later pass.
+  Fixed in `src/parser/invocation_syntax.rs`: prefer whichever successful match
+  used the *most* literal (non-capture) tokens, instead of erroring, whenever more
+  than one candidate parses the same text; two genuinely equally-specific patterns
+  (like RISC-V's own `$a$ + $b$` vs. `$b$ + $a$`) are untouched and still hit the
+  original ambiguity error (verified against both pre-existing tests that depend on
+  that, plus a new one for the rescued case, plus the full existing test suite
+  staying green). This also retroactively resolves Phase 5's own `shl_cl`/`shr_cl`/
+  `sar_cl` "no natural collision-free spelling" compromise — real `shl rax, cl`
+  syntax (a literal `cl` token vs. a generic `$imm$` capture) is the same category
+  of ambiguity, now handled the same way. `mov`'s load direction (`0x8B`) didn't
+  exist before this phase either — Phase 3 deliberately covered only the store
+  direction — added as its own small, real-overloading addition to `impl.basm`
+  (distinguished from the store overload by its first parameter's type, `Reg` vs.
+  `MemOperand`, no naming trick needed), verified byte-exact by extending Phase 3's
+  own `regmem.basm`/`regmem_encodes_correctly`.
+- **Two more `std.bitter.deferred` naming collisions, same root cause as Phase 5's
+  `shl_cl`/`shr_cl`/`sar_cl`:** the ALU `sub` and shift `shr` reg,imm reduced-arity
+  wrappers (`sub(rd: Reg, rs: Reg)`, `shr(rd: Reg, imm: int)`) each resolve to
+  `(int, int)`, colliding with `std.bitter.deferred`'s own `sub(int, int)`/
+  `shr(int, int)` (always transitively in scope — see Phase 5's note on why naming
+  an import doesn't limit what's spliced). Fixed the same way: unique internal
+  names (`sub2`, `shr_imm`) with an unanchored `syntax` pattern still spelling the
+  real mnemonic (`sub`, `shr`) at the call site.
+- **reg,reg vs. reg,imm still separate mnemonics:** `movi`/`addi`/.../`testi` keep
+  `impl.basm`'s own `i`-suffixed names rather than merging into `mov`/`add`/... —
+  same `Reg`-is-a-plain-`int` reasoning Phase 2 already resolved, restated here
+  since real Intel syntax spells both forms identically and a reader might
+  reasonably expect this dialect to paper over that; it can't, for the same reason
+  Phase 2 couldn't. Memory-operand forms don't have this problem (a bracketed
+  operand is lexically distinct from a bare one), which is why `mov`'s many memory
+  shapes safely share its name while its reg,imm sibling can't share `mov`'s own.
+- **Scope kept deliberately narrower than "every instruction" for bracket sugar:**
+  full register *and* memory-operand (all four addressing shapes, both directions)
+  syntax is built for `mov` (the phase's own flagship example) and `lea` (address
+  syntax is its entire purpose). The other six ALU ops and `test` get full
+  register-only sugar (2-argument reduced plus 3-argument restatement) but no
+  dedicated memory-bracket forms — the exact same mechanical pattern `mov`'s store
+  direction demonstrates would apply unchanged; `impl.basm`'s own `Mem(...)`/
+  `MemIndexed(...)`/`MemRipRelative(...)` constructor calls remain directly usable
+  as any of their second operands regardless (ordinary expressions, needing no
+  dialect support to already work), so this is a trivial, mechanical extension left
+  undone rather than a real capability gap, the same reduced-scope-now precedent
+  used repeatedly already in this file (`span`'s missing `(Deferred, Deferred)`,
+  `shr`/`band`'s int-only args).
+**Files:** `src/parser/invocation_syntax.rs` (literal-specificity tie-breaking,
+separate commit); `std/x86_64/impl.basm` (`mov`'s load direction, separate commit);
+`std/x86_64/native.basm` (new); `tests/fixtures/x86_64/dialect_native.basm` (new,
+exercises every family of syntax sugar the dialect adds) and `tests/fixtures/x86_64/
+dialect_default.basm` (new, the identical instructions in `impl.basm`'s own default
+syntax); `tests/x86_64_dialects.rs` (new — adapted from `tests/riscv_dialects.rs`'s
+two-dialect comparison to a dialect-vs-default one, since x86-64 only has one
+dialect so far).
+**Verification:** `cargo test --test x86_64_dialects` passes (39/39 emitted values,
+176 bytes, byte-identical between the two fixtures). 18 representative instructions
+additionally spot-checked by hand against the Intel SDM before the fixture was
+written. Full existing suite (`cargo test --lib`, every other `tests/*.rs`) still
+green.
 
 ### Phase 7 — Independent-oracle cross-check (GNU binutils)
 **Deliverable:** `tests/x86_64/` mirroring `tests/riscv/`'s harness (`run_tests.py`,
