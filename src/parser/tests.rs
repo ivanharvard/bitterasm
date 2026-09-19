@@ -1167,6 +1167,34 @@ fn syntax_overloads_select_distinct_surface_patterns() {
 }
 
 #[test]
+fn syntax_overloads_prefer_the_more_literal_specific_pattern() {
+    // `mem[$base$]`'s `base` capture is bounded only by `]`, so it can
+    // *also* successfully parse `x+5` as one combined expression — the same
+    // way `[$base$+$disp$]` would swallow an indexed addressing mode's whole
+    // right-hand side whole. Both patterns fully match `mem[x+5]`; the one
+    // with strictly more literal tokens (`mem`, `[`, `+`, `]` vs. `mem`,
+    // `[`, `]`) should win rather than erroring as ambiguous.
+    let source = "macro load(base: int) | syntax { mem[$base$] } {\n}\n\
+                  macro load(base: int, disp: int) | syntax { mem[$base$+$disp$] } {\n}\n\n\
+                  mem[x]\nmem[x+5]\n";
+
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    let Statement::Invocation(bare) = &program.statements[2] else {
+        panic!("expected bare invocation");
+    };
+    assert_eq!(bare.operands.len(), 1);
+    assert!(matches!(&bare.operands[0], Expr::Identifier { name, .. } if name == "x"));
+
+    let Statement::Invocation(displaced) = &program.statements[3] else {
+        panic!("expected displaced invocation");
+    };
+    assert_eq!(displaced.operands.len(), 2);
+    assert!(matches!(&displaced.operands[0], Expr::Identifier { name, .. } if name == "x"));
+    assert!(matches!(&displaced.operands[1], Expr::Integer { raw, .. } if raw == "5"));
+}
+
+#[test]
 fn identical_syntax_overloads_defer_to_type_resolution() {
     let source = "macro print(value: int) | syntax { print $value$ } {\n}\n\
                   struct Text { value: int }\n\

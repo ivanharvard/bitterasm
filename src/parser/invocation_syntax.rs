@@ -36,7 +36,7 @@ impl Parser {
     ) -> Result<SyntaxMatch, ParseError> {
         let start_pos = self.pos;
         let start_span = self.current().span;
-        let mut matches: Vec<(Invocation, usize)> = Vec::new();
+        let mut matches: Vec<(Invocation, usize, usize)> = Vec::new();
         let mut best_error: Option<(usize, ParseError)> = None;
 
         for (name, pattern) in candidates {
@@ -44,8 +44,9 @@ impl Parser {
             match self.parse_invocation_via_syntax(name, pattern) {
                 Ok(invocation) => {
                     let end_pos = self.pos;
-                    if !matches.iter().any(|(known, _)| known == &invocation) {
-                        matches.push((invocation, end_pos));
+                    let specificity = literal_token_count(pattern);
+                    if !matches.iter().any(|(known, _, _)| known == &invocation) {
+                        matches.push((invocation, end_pos, specificity));
                     }
                 }
                 Err(error) => {
@@ -58,15 +59,35 @@ impl Parser {
         }
 
         self.pos = start_pos;
+
+        // More than one distinct parse succeeded — before calling that an
+        // unresolvable ambiguity, prefer whichever pattern(s) committed to the
+        // most literal (non-capture) structure. A capture accepts *any*
+        // expression, so a pattern with fewer literals around its captures can
+        // always also parse whatever a more literal-heavy sibling would have
+        // split up more specifically — e.g. `[$base$+$disp$]`'s `disp` capture
+        // happily swallows `$index$*$scale$+$disp$`'s entire right-hand side
+        // as one expression, since `rcx*4+0x10` is a perfectly ordinary,
+        // well-typed arithmetic expression on its own. Preferring more literal
+        // tokens only ever discards a "could also parse it more vaguely"
+        // reading in favor of a "specifically recognized this shape" one — two
+        // patterns with genuinely *equal* specificity (like `$a$ + $b$` vs.
+        // `$b$ + $a$`) are never affected by this and still hit the ambiguity
+        // error below exactly as before.
+        if matches.len() > 1 {
+            let max_specificity = matches.iter().map(|(_, _, specificity)| *specificity).max().unwrap();
+            matches.retain(|(_, _, specificity)| *specificity == max_specificity);
+        }
+
         match matches.len() {
             1 => {
-                let (invocation, end_pos) = matches.pop().unwrap();
+                let (invocation, end_pos, _) = matches.pop().unwrap();
                 self.pos = end_pos;
                 Ok(SyntaxMatch::Matched(invocation))
             }
             0 => Ok(SyntaxMatch::NoMatch { best_error: best_error.map(|(_, error)| error) }),
             _ => {
-                let mut names: Vec<&str> = matches.iter().map(|(invocation, _)| invocation.name.as_str()).collect();
+                let mut names: Vec<&str> = matches.iter().map(|(invocation, _, _)| invocation.name.as_str()).collect();
                 names.sort_unstable();
                 names.dedup();
 
@@ -155,4 +176,18 @@ impl Parser {
             span: Span::new(start, end),
         })
     }
+}
+
+// Total literal (non-capture) token count across a pattern's segments — see
+// `parse_invocation_via_syntax_candidates`'s own comment on why this is the
+// tie-breaker between multiple successful parses of the same call site.
+fn literal_token_count(pattern: &SyntaxPattern) -> usize {
+    pattern
+        .segments
+        .iter()
+        .map(|segment| match segment {
+            PatternSegment::Literal(tokens) => tokens.len(),
+            PatternSegment::Capture(_) => 0,
+        })
+        .sum()
 }
