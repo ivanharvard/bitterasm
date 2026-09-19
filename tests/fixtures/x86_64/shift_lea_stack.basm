@@ -1,0 +1,24 @@
+# Phase 5: shl/shr/sar (reg,imm8 and reg,CL forms), lea, push/pop. See
+# tests/x86_64_encoding.rs for hand-computed expected bytes.
+
+from std.x86_64.impl import *
+
+# --- shl/shr/sar reg,imm8 ---
+shl rax, 4, 0
+shr rcx, 1, 0
+sar r10, 3, 1
+
+# --- shl/shr/sar reg,CL ---
+shl_cl rbx, 0
+shr_cl r8, 1
+sar_cl rdx, 0
+
+# --- lea ---
+lea rax, Mem(rbx, 8), 0
+lea r9, MemRipRelative(0x20), 1
+
+# --- push/pop ---
+push rax
+push r15
+pop rbx
+pop r12

@@ -1,8 +1,9 @@
 // Hand-verified ground truth for `std/x86_64/impl.basm`'s register-direct
 // (Phase 2: `mov`, the six ALU ops, `test`, ModRM `mod=11` only),
 // memory-operand (Phase 3: the same instructions' `MemOperand` overloads,
-// full ModRM/SIB addressing), and control-flow (Phase 4: `jmp`/`jcc`/
-// `call`/`ret`, `rel32` relative to the next instruction) forms: every
+// full ModRM/SIB addressing), control-flow (Phase 4: `jmp`/`jcc`/`call`/
+// `ret`, `rel32` relative to the next instruction), and the remaining core
+// subset (Phase 5: `shl`/`shr`/`sar`, `lea`, `push`/`pop`) forms: every
 // case's expected bytes are computed by hand against the Intel SDM's own
 // opcode/ModRM/SIB/REX encoding tables, the same "no independent oracle
 // exists yet at this phase" standard `tests/pdp10_encoding.rs` already
@@ -229,4 +230,42 @@ fn control_flow_encodes_correctly() {
     ];
 
     assert_case_encodes_to("control_flow", expected);
+}
+
+#[test]
+fn shift_lea_stack_encodes_correctly() {
+    #[rustfmt::skip]
+    let expected: &[u8] = &[
+        // shl rax, 4, 0 — opcode=0xC1, ModRM(mod=11, digit=4 "SHL", rm=rax=0)=0xE0, imm8=4
+        0xC1, 0xE0, 0x04,
+        // shr rcx, 1, 0 — ModRM(mod=11, digit=5 "SHR", rm=rcx=1)=0xE9, imm8=1
+        0xC1, 0xE9, 0x01,
+        // sar r10, 3, 1 — w=1 + extended rm: REX(W=1,R=0,X=0,B=ext(r10)=1)=0x49,
+        // opcode=0xC1, ModRM(mod=11, digit=7 "SAR", rm=r10&7=2)=0xFA, imm8=3
+        0x49, 0xC1, 0xFA, 0x03,
+        // shl_cl rbx, 0 — opcode=0xD3 (no immediate — count comes from CL),
+        // ModRM(mod=11, digit=4, rm=rbx=3)=0xE3
+        0xD3, 0xE3,
+        // shr_cl r8, 1 — w=1 + extended rm: REX(W=1,R=0,X=0,B=ext(r8)=1)=0x49,
+        // opcode=0xD3, ModRM(mod=11, digit=5, rm=r8&7=0)=0xE8
+        0x49, 0xD3, 0xE8,
+        // sar_cl rdx, 0 — opcode=0xD3, ModRM(mod=11, digit=7, rm=rdx=2)=0xFA
+        0xD3, 0xFA,
+        // lea rax, Mem(rbx, 8), 0 — opcode=0x8D, ModRM(mod=01, reg=rax=0, rm=rbx=3)=0x43, disp8=8
+        0x8D, 0x43, 0x08,
+        // lea r9, MemRipRelative(0x20), 1 — w=1 + extended reg field:
+        // REX(W=1,R=ext(r9)=1,X=0,B=0)=0x4C, opcode=0x8D,
+        // ModRM(mod=00, reg=r9&7=1, rm=101 "RIP-relative")=0x0D, disp32 LE of 0x20
+        0x4C, 0x8D, 0x0D, 0x20, 0x00, 0x00, 0x00,
+        // push rax — opcode=0x50+rax(0)=0x50, no REX
+        0x50,
+        // push r15 — REX.B needed: REX(W=0,R=0,X=0,B=ext(r15)=1)=0x41, opcode=0x50+(r15&7=7)=0x57
+        0x41, 0x57,
+        // pop rbx — opcode=0x58+rbx(3)=0x5B, no REX
+        0x5B,
+        // pop r12 — REX.B needed: REX=0x41, opcode=0x58+(r12&7=4)=0x5C
+        0x41, 0x5C,
+    ];
+
+    assert_case_encodes_to("shift_lea_stack", expected);
 }

@@ -11,7 +11,7 @@ which design decisions are already settled — not any prior chat conversation.
 - [x] Phase 2 — Register-direct instructions: mov, ALU ops, test
 - [x] Phase 3 — Memory operands: ModRM/SIB addressing engine
 - [x] Phase 4 — Control flow: jmp/jcc/call/ret
-- [ ] Phase 5 — Remaining core subset: shl/shr/sar, lea, push/pop
+- [x] Phase 5 — Remaining core subset: shl/shr/sar, lea, push/pop
 - [ ] Phase 6 — Native (Intel-syntax) dialect
 - [ ] Phase 7 — Independent-oracle cross-check (GNU binutils)
 
@@ -404,14 +404,55 @@ confirm the forward `jmp`'s `+3` and both backward branches' negative offsets,
 byte spot-checked directly against actual compiler output (not just design intent)
 against the Intel SDM's table.
 
-### Phase 5 — Remaining core subset: shl/shr/sar, lea, push/pop
+### Phase 5 — Remaining core subset: shl/shr/sar, lea, push/pop ✅
 **Deliverable:** `shl/shr/sar` (reg,imm8 via `0xC1 /digit`, and reg,cl via `0xD3
 /digit`), `lea` (reg,mem — reuses Phase 3's `MemOperand` machinery, never
 dereferences), `push`/`pop` (reg forms, reusing the "register number in low 3 opcode
 bits + REX.B" pattern `mov reg,imm32` established in Phase 2).
-**Files:** `std/x86_64/impl.basm` (extend); extend `tests/x86_64_encoding.rs`.
-**Verification:** `cargo test --test x86_64_encoding`. This completes v1's instruction
-coverage.
+**Resolved:**
+- **Naming collision found and fixed (real gotcha, not hypothetical):** the reg,CL
+  shift forms have no natural count parameter (CL is the only register the
+  encoding permits there, so the macro signature is just `(rd, w)`, no separate
+  register argument). Naming that form `shr(rd: Reg, w: int)` resolves to `(int,
+  int)` — identical to `std.bitter.deferred`'s own `shr(a: int, b: int)`. An
+  attempt to dodge this by importing only specific names from `std.bitter.deferred`
+  (`from ... import sub, span, here, Deferred, Positioned`, leaving `shr` out) did
+  **not** work: confirmed empirically that `bitterasm check` still reports
+  `AmbiguousMacroOverload` for a bare `shr rbx, 0` call. Root cause, found in
+  `src/loader.rs`'s `collect_declarations`: importing *any* name from a module
+  recursively splices that module's *entire* transitive declaration set into the
+  flattened program — a named import list is only a typo check against what's
+  declared, not a visibility filter on what gets spliced. So `std.bitter.deferred`'s
+  `shr` is unavoidably in scope for anything that imports `std.x86_64.impl`, no
+  matter how `impl.basm` itself imports it. Fixed by naming the reg,CL forms
+  `shl_cl`/`shr_cl`/`sar_cl` instead of overloading the plain mnemonic by arity —
+  `shl_cl`/`sar_cl` don't actually collide with anything (`std.bitter.deferred` has
+  no `shl`/`sar`), but use the same suffix anyway so all three mnemonics stay
+  parallel rather than two overloading and one not. Reverted the import-list
+  workaround (`from std.bitter.deferred import *` again) since it didn't help and
+  the comment claiming it did would've been actively misleading to a future reader.
+- `reg_imm_instr` (Phase 2) gained an explicit `imm_len` parameter (was hardcoded to
+  `4`) so it could serve `shl`/`shr`/`sar`'s imm8 form (`imm_len=1`) and their `_cl`
+  forms (`imm_len=0`, no immediate at all — the `imm` value passed is simply never
+  read) alongside the existing ALU/`test` imm32 forms — all 7 existing call sites
+  updated to pass `4` explicitly.
+- `lea` reuses `mem_reg_instr` (Phase 3) with its two roles swapped from every other
+  caller: `mem_reg_instr`'s `MemOperand` parameter is normally the actual
+  destination (`mov [mem], rs` stores into it), but for `lea rd, mem` the
+  destination is always the register `rd` (placed in ModRM.reg, same slot every
+  other caller's `Reg` argument fills) while `mem` is the address *expression* —
+  opcode `0x8D` (vs. `0x8B`, which this file doesn't implement — see Phase 3's own
+  note on why the mov/ALU `MemOperand` overloads only ever cover the store
+  direction) is the only thing distinguishing "compute this address" from "load
+  from this address."
+**Files:** `std/x86_64/impl.basm` (extended: `reg_imm_instr`'s `imm_len`
+generalization plus its 7 existing callers updated; `shl`/`shr`/`sar` +
+`shl_cl`/`shr_cl`/`sar_cl`; `lea`; `push`/`pop`); `tests/fixtures/x86_64/
+shift_lea_stack.basm` (new, 12 cases); `tests/x86_64_encoding.rs` (extended with
+`shift_lea_stack_encodes_correctly`).
+**Verification:** `cargo test --test x86_64_encoding` passes (all four tests;
+`shift_lea_stack` alone: 12/12 emitted values, 33 bytes, matching hand-computed
+expected output exactly). This completes v1's instruction coverage.
 
 ### Phase 6 — Native (Intel-syntax) dialect
 **Deliverable:** `std/x86_64/native.basm`, giving every impl.basm macro real Intel

@@ -158,14 +158,16 @@ macro reg_reg_instr(opcode: int, rd: Reg, rs: Reg, w: int) -> Bytes<...> {
     @return instr(need_rex, rex, Byte(opcode), 1, modrm, 0, 0)
 }
 
-# Shared by every reg,imm32 instruction below (the six ALU ops via opcode
-# `0x81`, and `test` via opcode `0xF7`): ModRM.reg carries a per-mnemonic
-# opcode-extension `digit` instead of a real register (ModRM.rm = `rd`).
-macro reg_imm_instr(opcode: int, digit: int, rd: Reg, imm: int, w: int) -> Bytes<...> {
+# Shared by every reg,imm instruction below (the six ALU ops and `test` via
+# imm32; Phase 5's `shl`/`shr`/`sar` via imm8, and their reg,CL forms with no
+# immediate at all — `imm_len` varies per caller, not hardcoded, for exactly that
+# reason): ModRM.reg carries a per-mnemonic opcode-extension `digit` instead of a
+# real register (ModRM.rm = `rd`).
+macro reg_imm_instr(opcode: int, digit: int, rd: Reg, imm: int, imm_len: int, w: int) -> Bytes<...> {
     const need_rex = w == 1 || reg_ext(rd) == 1
     const rex = rex_byte(w, 0, 0, reg_ext(rd))
     const modrm = modrm_byte(0b11, digit, reg_field(rd))
-    @return instr(need_rex, rex, Byte(opcode), 1, modrm, imm, 4)
+    @return instr(need_rex, rex, Byte(opcode), 1, modrm, imm, imm_len)
 }
 
 # =================
@@ -226,18 +228,18 @@ pub macro cmp(rd: Reg, rs: Reg, w: int) -> Bytes<...> { @emit reg_reg_instr(0x39
 # `src/resolver/macro_body.rs`) — overloading only works once the two
 # forms resolve to genuinely distinct types, which is exactly what Phase
 # 3's `MemOperand` will be for reg,mem vs. reg,reg.
-pub macro addi(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0x81, 0, rd, imm, w) }
-pub macro ori(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0x81, 1, rd, imm, w) }
-pub macro andi(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0x81, 4, rd, imm, w) }
-pub macro subi(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0x81, 5, rd, imm, w) }
-pub macro xori(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0x81, 6, rd, imm, w) }
-pub macro cmpi(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0x81, 7, rd, imm, w) }
+pub macro addi(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0x81, 0, rd, imm, 4, w) }
+pub macro ori(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0x81, 1, rd, imm, 4, w) }
+pub macro andi(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0x81, 4, rd, imm, 4, w) }
+pub macro subi(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0x81, 5, rd, imm, 4, w) }
+pub macro xori(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0x81, 6, rd, imm, 4, w) }
+pub macro cmpi(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0x81, 7, rd, imm, 4, w) }
 
 # =================
 # test
 # =================
 pub macro test(rd: Reg, rs: Reg, w: int) -> Bytes<...> { @emit reg_reg_instr(0x85, rd, rs, w) }
-pub macro testi(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0xF7, 0, rd, imm, w) }
+pub macro testi(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0xF7, 0, rd, imm, 4, w) }
 
 # =================
 # memory operands (Phase 3)
@@ -603,4 +605,77 @@ pub macro jnp(target: int) -> Rel32Instr2 { @emit jcc_instr(0xB, target) }
 
 pub macro ret() -> Byte {
     @emit Byte(0xC3)
+}
+
+# =================
+# shl/shr/sar (Phase 5)
+# =================
+# `0xC1 /digit` (reg, imm8) and `0xD3 /digit` (reg, CL — the shift count comes from
+# the CL register at runtime; there's no encoding for any other register in that
+# role, so its own macro signature has no count parameter at all, just `(rd, w)`,
+# not `(rd, cl_placeholder, w)`). Both reuse `reg_imm_instr` — the reg,CL form
+# simply passes `imm_len = 0`, so `instr`'s own `@for` loop never touches the unused
+# `imm` value.
+#
+# The reg,CL form gets its own `_cl`-suffixed name rather than an arity overload of
+# the plain mnemonic (`shl(rd, w)` alongside `shl(rd, imm, w)`, the way Phase 2's
+# `mov`/ALU reg,reg vs reg,imm forms considered and rejected overloading for a
+# similar reason): `shr(rd: Reg, w: int)` would resolve to `(int, int)` — identical
+# to `std.bitter.deferred`'s own `shr(a: int, b: int)`, already `pub` and always in
+# scope (every module's imports are recursively spliced into one flat program by
+# `src/loader.rs`'s `collect_declarations`, regardless of whether an import list
+# names specific symbols or uses `*` — naming imports doesn't limit what's spliced,
+# only what a typo check validates, confirmed empirically after an early draft
+# tried exactly that and still hit `AmbiguousMacroOverload`) — an ambiguous overload
+# the resolver would reject. `shl_cl`/`sar_cl` don't actually collide with anything
+# (`std.bitter.deferred` has no `shl`/`sar` at all), but use the same `_cl` suffix
+# anyway so all three mnemonics stay parallel instead of two arity-overloading and
+# one not.
+pub macro shl(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0xC1, 4, rd, imm, 1, w) }
+pub macro shl_cl(rd: Reg, w: int) -> Bytes<...> { @emit reg_imm_instr(0xD3, 4, rd, 0, 0, w) }
+
+pub macro shr(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0xC1, 5, rd, imm, 1, w) }
+pub macro shr_cl(rd: Reg, w: int) -> Bytes<...> { @emit reg_imm_instr(0xD3, 5, rd, 0, 0, w) }
+
+pub macro sar(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0xC1, 7, rd, imm, 1, w) }
+pub macro sar_cl(rd: Reg, w: int) -> Bytes<...> { @emit reg_imm_instr(0xD3, 7, rd, 0, 0, w) }
+
+# =================
+# lea (Phase 5)
+# =================
+# `0x8D /r` — reuses `mem_reg_instr` (Phase 3), but with the two roles swapped from
+# every one of that helper's other callers: there, its `MemOperand` parameter is
+# always the actual destination (`mov [mem], rs` stores into it) and its `Reg`
+# parameter is the "other" operand placed in ModRM.reg. `lea`'s destination is
+# always a register — `rd` — placed in ModRM.reg exactly the same way, while the
+# `MemOperand` argument is the address *expression* to compute (never dereferenced;
+# nothing about the encoding itself expresses that, only the opcode `0x8D` chosen
+# instead of `0x8B`'s "load" — this file has no `0x8B` form at all, see Phase 3's
+# own note on why the mov/ALU `MemOperand` overloads only ever cover the store
+# direction).
+pub macro lea(rd: Reg, src: MemOperand, w: int) -> Bytes<...> { @emit mem_reg_instr(0x8D, src, rd, w) }
+
+# =================
+# push/pop (Phase 5)
+# =================
+# `0x50+reg`/`0x58+reg` — the same "register number folded into the opcode's own
+# low 3 bits, extension bit in REX.B" pattern `movi`'s register form (Phase 2)
+# established, reusing `instr` directly (`has_modrm=0`, `imm_len=0`: just an
+# optional REX byte followed by the one opcode byte). No `w` parameter: unlike
+# every other instruction in this file, `push`/`pop` have no 32-bit register form
+# to select in 64-bit mode at all (the default, and only, operand size for a GPR
+# push/pop here is 64 bits — REX.W would be redundant, so this file never emits
+# it).
+pub macro push(rd: Reg) -> Bytes<...> {
+    const need_rex = reg_ext(rd) == 1
+    const rex = rex_byte(0, 0, 0, reg_ext(rd))
+    const opcode = Byte(0x50 + reg_field(rd))
+    @emit instr(need_rex, rex, opcode, 0, Byte(0), 0, 0)
+}
+
+pub macro pop(rd: Reg) -> Bytes<...> {
+    const need_rex = reg_ext(rd) == 1
+    const rex = rex_byte(0, 0, 0, reg_ext(rd))
+    const opcode = Byte(0x58 + reg_field(rd))
+    @emit instr(need_rex, rex, opcode, 0, Byte(0), 0, 0)
 }
