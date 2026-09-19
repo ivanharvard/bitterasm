@@ -10,7 +10,7 @@ which design decisions are already settled — not any prior chat conversation.
 - [x] Phase 1 — Encoding primitives
 - [x] Phase 2 — Register-direct instructions: mov, ALU ops, test
 - [x] Phase 3 — Memory operands: ModRM/SIB addressing engine
-- [ ] Phase 4 — Control flow: jmp/jcc/call/ret
+- [x] Phase 4 — Control flow: jmp/jcc/call/ret
 - [ ] Phase 5 — Remaining core subset: shl/shr/sar, lea, push/pop
 - [ ] Phase 6 — Native (Intel-syntax) dialect
 - [ ] Phase 7 — Independent-oracle cross-check (GNU binutils)
@@ -309,7 +309,7 @@ exactly as recommended.
 `tests/x86_64_encoding.rs` with all four addressing forms.
 **Verification:** `cargo test --test x86_64_encoding`.
 
-### Phase 4 — Control flow: jmp/jcc/call/ret
+### Phase 4 — Control flow: jmp/jcc/call/ret ✅
 **Deliverable:** `jmp rel32` (`0xE9`), the ~16 `jcc rel32` forms (`0x0F 0x8_`, one
 named macro per condition code — `je/jne/jl/jle/jg/jge/jb/jbe/ja/jae/js/jns/jo/jno/
 jp/jnp`, matching real mnemonics, same style as RISC-V's separately-named
@@ -369,19 +369,40 @@ themselves not yet written):**
   `--test wasm_encoding`, `--test wasm_module` (including its independent-WASM-
   engine run), `--test riscv_dialects` (which exercises a real backward RV32I
   branch through the unrelated fixed-multiplier path) all still pass.
-- The actual `jmp`/`jcc`/`call`/`ret` instructions are **not yet implemented** —
-  this was purely the infrastructure prerequisite the open question above asked to
-  resolve before writing any of them.
-
-**Files (prerequisite, already done):** `bitter/src/pack.rs` (`resolve_span`
-generalized, two new tests, one existing test rewritten from
-`span_rejects_a_from_greater_than_to` to
+- **The instructions themselves:** `rel32_offset(target, own_length)` is exactly
+  `sub(span(here(), target), own_length)`. Two format structs — `Rel32Instr`
+  (`opcode: Byte` + the `rel32` field) for `jmp`/`call` (1 opcode byte,
+  `own_length=5`) and `Rel32Instr2` (two opcode bytes) for the `jcc` family
+  (`own_length=6`) — with `rel32: LittleEndian<Positioned<32>, 32>` in both: unlike
+  Phase 2/3's immediates (always a plain, already-known `int` at macro-expansion
+  time, splittable into little-endian `Byte`s directly via `byte_of`), `rel32_offset`
+  stays a `Deferred` until `bitter` resolves it, so there's no concrete value yet
+  for `byte_of` to split — `LittleEndian<T, width>` wraps the *whole* resolved
+  32-bit value once `bitter` knows it and byte-reverses only that, leaving the
+  preceding opcode byte(s) — already individual, order-fixed bytes — untouched
+  (unlike RISC-V, which byte-reverses its one indivisible 32-bit word as a whole).
+  All 16 `Jcc` condition codes (`tttn`, Intel SDM's own encoding, shared with the
+  short `Jcc rel8`/`SETcc`/`CMOVcc` families this file doesn't implement) route
+  through one internal `jcc_instr(condition, target)` helper.
+**Files:** `bitter/src/pack.rs` (`resolve_span` generalized, two new tests, one
+existing test rewritten from `span_rejects_a_from_greater_than_to` to
 `span_returns_a_negative_distance_when_from_is_after_to`); `std/bitter/deferred.basm`
 (`span`'s two new overloads, doc comment rewritten); `tests/fixtures/bitter/
-deferred_dispatch.basm` (extended with `span` dispatch assertions).
-**Files (instructions themselves, still to do):** `std/x86_64/impl.basm` (extend);
-extend `tests/x86_64_encoding.rs` with a forward and a backward branch.
-**Verification:** `cargo test --test x86_64_encoding`.
+deferred_dispatch.basm` (extended with `span` dispatch assertions); `std/x86_64/
+impl.basm` (extended: `rel32_offset`, `Rel32Instr`/`Rel32Instr2`, `jmp`/`call`/
+`jcc_instr`/all 16 `Jcc` mnemonics/`ret`); `tests/fixtures/x86_64/control_flow.basm`
+(new — deliberately non-uniform instruction byte lengths between labels, one
+forward branch and two backward branches, so both direction and real per-entry
+byte-width-awareness are exercised, not just uniform-width arithmetic that would've
+worked even with RISC-V's old fixed-multiplier trick); `tests/x86_64_encoding.rs`
+(extended with `control_flow_encodes_correctly`).
+**Verification:** `cargo test --test x86_64_encoding` passes (all three tests: the
+existing `regdirect`/`regmem` plus the new `control_flow`, 8/8 emitted values, 30
+bytes, matching hand-computed expected output exactly — hand-verified byte offsets
+confirm the forward `jmp`'s `+3` and both backward branches' negative offsets,
+`je`'s `-24` and `call`'s `-14`). Every remaining `Jcc` mnemonic's condition-code
+byte spot-checked directly against actual compiler output (not just design intent)
+against the Intel SDM's table.
 
 ### Phase 5 — Remaining core subset: shl/shr/sar, lea, push/pop
 **Deliverable:** `shl/shr/sar` (reg,imm8 via `0xC1 /digit`, and reg,cl via `0xD3

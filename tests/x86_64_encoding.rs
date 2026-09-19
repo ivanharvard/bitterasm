@@ -1,13 +1,14 @@
 // Hand-verified ground truth for `std/x86_64/impl.basm`'s register-direct
-// (Phase 2: `mov`, the six ALU ops, `test`, ModRM `mod=11` only) and
+// (Phase 2: `mov`, the six ALU ops, `test`, ModRM `mod=11` only),
 // memory-operand (Phase 3: the same instructions' `MemOperand` overloads,
-// full ModRM/SIB addressing) forms: every case's expected bytes are
-// computed by hand against the Intel SDM's own opcode/ModRM/SIB/REX
-// encoding tables, the same "no independent oracle exists yet at this
-// phase" standard `tests/pdp10_encoding.rs` already holds itself to
-// (Phase 7 adds a real GNU binutils cross-check). Driven through the
-// actual `bitterasm compile` + `bitter encode` CLI binaries, not the
-// library directly — same reasoning as `tests/pdp10_encoding.rs`.
+// full ModRM/SIB addressing), and control-flow (Phase 4: `jmp`/`jcc`/
+// `call`/`ret`, `rel32` relative to the next instruction) forms: every
+// case's expected bytes are computed by hand against the Intel SDM's own
+// opcode/ModRM/SIB/REX encoding tables, the same "no independent oracle
+// exists yet at this phase" standard `tests/pdp10_encoding.rs` already
+// holds itself to (Phase 7 adds a real GNU binutils cross-check). Driven
+// through the actual `bitterasm compile` + `bitter encode` CLI binaries,
+// not the library directly — same reasoning as `tests/pdp10_encoding.rs`.
 //
 // Each fixture's cases are compiled and packed as a single program, so
 // each test below compares the whole concatenated byte stream against one
@@ -197,4 +198,35 @@ fn regmem_encodes_correctly() {
     ];
 
     assert_case_encodes_to("regmem", expected);
+}
+
+#[test]
+fn control_flow_encodes_correctly() {
+    // Byte offsets of each entry in `control_flow.basm`, computed from each
+    // instruction's own encoded length (used below to hand-verify every
+    // rel32): 0 (mov, 2B) -> 2 (movi, 5B) -> 7 (jmp, 5B) -> 12 (add, 3B) ->
+    // 15 (mov, 3B, this is `target:`) -> 18 (je, 6B) -> 24 (call, 5B) -> 29 (ret, 1B) -> 30 (end).
+    #[rustfmt::skip]
+    let expected: &[u8] = &[
+        // mov rax, rbx, 0 — 89 D8 (see regdirect_encodes_correctly)
+        0x89, 0xD8,
+        // movi rax, 0x12345678, 0 — B8 78 56 34 12 (see regdirect_encodes_correctly)
+        0xB8, 0x78, 0x56, 0x34, 0x12,
+        // jmp target — opcode=0xE9, rel32 = target_addr(15) - next_instr_addr(7+5=12) = 3
+        0xE9, 0x03, 0x00, 0x00, 0x00,
+        // add rcx, rdx, 1 — w=1: REX(W=1,R=0,X=0,B=0)=0x48, opcode=0x01,
+        // ModRM(mod=11, reg=rdx=2, rm=rcx=1)=0xD1
+        0x48, 0x01, 0xD1,
+        // mov r8, r9, 0 — 45 89 C8 (see regdirect_encodes_correctly; this is `target:`, byte offset 15)
+        0x45, 0x89, 0xC8,
+        // je start — opcode=0x0F 0x84 (tttn=0100=E/Z), rel32 = target_addr(0) -
+        // next_instr_addr(18+6=24) = -24 = 0xFFFFFFE8 LE
+        0x0F, 0x84, 0xE8, 0xFF, 0xFF, 0xFF,
+        // call target — opcode=0xE8, rel32 = target_addr(15) - next_instr_addr(24+5=29) = -14 = 0xFFFFFFF2 LE
+        0xE8, 0xF2, 0xFF, 0xFF, 0xFF,
+        // ret — 0xC3
+        0xC3,
+    ];
+
+    assert_case_encodes_to("control_flow", expected);
 }

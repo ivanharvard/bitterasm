@@ -499,3 +499,108 @@ pub macro subi(dst: MemOperand, imm: int, w: int) -> Bytes<...> { @emit mem_imm_
 pub macro xori(dst: MemOperand, imm: int, w: int) -> Bytes<...> { @emit mem_imm_instr(0x81, 6, dst, imm, w) }
 pub macro cmpi(dst: MemOperand, imm: int, w: int) -> Bytes<...> { @emit mem_imm_instr(0x81, 7, dst, imm, w) }
 pub macro testi(dst: MemOperand, imm: int, w: int) -> Bytes<...> { @emit mem_imm_instr(0xF7, 0, dst, imm, w) }
+
+# =================
+# control flow: jmp/jcc/call/ret (Phase 4)
+# =================
+# Near-only (`rel32`), no automatic short/near relaxation — `std/x86_64/PROGRESS.md`'s
+# own "Decided scope" section commits to this; a real assembler's `rel8` vs `rel32`
+# choice is deliberately not this language's job to make automatically.
+#
+# `target` is a label's already-resolved entry position, exactly like
+# `std/riscv/impl.basm`'s branch instructions take theirs — `beq x1, x2, start`'s
+# `start` and this file's `jmp target`'s `target` mean the same thing.
+#
+# x86's `rel32` is relative to the address of the *next* instruction, not this
+# instruction's own start the way RISC-V's `here()`-based offset is — see
+# `std/x86_64/PROGRESS.md`'s Phase 4 section for the investigation this required:
+# `here()` only ever resolves to an entry *index*, never a byte address (so RISC-V's
+# own fixed-width `mul(sub(target, here()), 4)` trick can't generalize to x86's
+# variable-length instructions), and `span` — the one primitive that does track real
+# per-entry byte widths — needed generalizing to accept a `Deferred` endpoint and to
+# resolve bidirectionally before it could serve here at all (`std/bitter/
+# deferred.basm`). `rel32_offset` below is exactly `span(here(), target)` (the real
+# byte distance from this instruction's own start to the target's), corrected by
+# this instruction's own fixed length to land on the *next* instruction instead.
+macro rel32_offset(target: int, own_length: int) -> Deferred {
+    @return sub(span(here(), target), own_length)
+}
+
+# opcode + rel32 (`jmp`/`call`: one opcode byte; `jcc`: two). The `rel32` field is
+# wrapped in `LittleEndian<Positioned<32>, 32>` rather than folded into a `Bytes<N>`
+# alongside the opcode byte(s) the way Phase 2/3's immediates were: those were
+# always already-known plain `int`s at macro-expansion time, so `byte_of` could
+# split them into individual little-endian `Byte`s directly, but `rel32_offset`
+# stays a `Deferred` until `bitter` resolves it — there's no concrete `int` for
+# `byte_of` to split yet. `LittleEndian<T, width>` is the primitive for exactly
+# this: wrap the *whole* resolved 32-bit value once `bitter` knows it, then
+# byte-reverse just that value — not the surrounding opcode byte(s), which are
+# already individual, order-fixed bytes needing no such treatment (the same
+# distinction RISC-V's own single indivisible 32-bit word never has to draw).
+pub struct Rel32Instr {
+    pub opcode: Byte,
+    pub rel32: LittleEndian<Positioned<32>, 32>,
+}
+
+pub struct Rel32Instr2 {
+    pub opcode1: Byte,
+    pub opcode2: Byte,
+    pub rel32: LittleEndian<Positioned<32>, 32>,
+}
+
+# `jmp rel32` is always 5 bytes (1 opcode + 4 disp) — `own_length` below is that
+# fixed size, known here at macro-expansion time since there's no variable-length
+# encoding in this instruction at all (unlike, say, Phase 3's memory operands).
+pub macro jmp(target: int) -> Rel32Instr {
+    @emit Rel32Instr(
+        opcode = Byte(0xE9),
+        rel32 = LittleEndian<Positioned<32>, 32> { value: Positioned<32> { value: rel32_offset(target, 5) } }
+    )
+}
+
+# `call rel32` — same shape as `jmp`, different opcode, still 5 bytes total.
+pub macro call(target: int) -> Rel32Instr {
+    @emit Rel32Instr(
+        opcode = Byte(0xE8),
+        rel32 = LittleEndian<Positioned<32>, 32> { value: Positioned<32> { value: rel32_offset(target, 5) } }
+    )
+}
+
+# Shared by every `jcc` mnemonic below: `0x0F 0x8_`, where the low nibble is the
+# Intel SDM's own 4-bit condition code (`tttn`) — the same code shared by the short
+# `Jcc rel8`, `SETcc`, and `CMOVcc` families this file doesn't implement, not
+# something invented here. 6 bytes total (2 opcode + 4 disp), one byte longer than
+# `jmp`/`call`'s `own_length`.
+macro jcc_instr(condition: int, target: int) -> Rel32Instr2 {
+    @return Rel32Instr2(
+        opcode1 = Byte(0x0F),
+        opcode2 = Byte(0x80 | condition),
+        rel32 = LittleEndian<Positioned<32>, 32> { value: Positioned<32> { value: rel32_offset(target, 6) } }
+    )
+}
+
+# All 16 near-`Jcc` mnemonics this file's scope commits to, named for their most
+# common reading (`je` over its `jz` synonym, etc.) — condition codes straight out
+# of the Intel SDM's own `Jcc` opcode table, cross-checked pairwise (`je`/`jne`,
+# `jb`/`jae`, `ja`/`jbe`, `jl`/`jge`, `jle`/`jg`, `js`/`jns`, `jo`/`jno`, `jp`/`jnp`
+# are each other's exact bit-complement — `tttn` vs `tttn⊕1`).
+pub macro je(target: int) -> Rel32Instr2 { @emit jcc_instr(0x4, target) }
+pub macro jne(target: int) -> Rel32Instr2 { @emit jcc_instr(0x5, target) }
+pub macro jb(target: int) -> Rel32Instr2 { @emit jcc_instr(0x2, target) }
+pub macro jae(target: int) -> Rel32Instr2 { @emit jcc_instr(0x3, target) }
+pub macro ja(target: int) -> Rel32Instr2 { @emit jcc_instr(0x7, target) }
+pub macro jbe(target: int) -> Rel32Instr2 { @emit jcc_instr(0x6, target) }
+pub macro jl(target: int) -> Rel32Instr2 { @emit jcc_instr(0xC, target) }
+pub macro jge(target: int) -> Rel32Instr2 { @emit jcc_instr(0xD, target) }
+pub macro jle(target: int) -> Rel32Instr2 { @emit jcc_instr(0xE, target) }
+pub macro jg(target: int) -> Rel32Instr2 { @emit jcc_instr(0xF, target) }
+pub macro js(target: int) -> Rel32Instr2 { @emit jcc_instr(0x8, target) }
+pub macro jns(target: int) -> Rel32Instr2 { @emit jcc_instr(0x9, target) }
+pub macro jo(target: int) -> Rel32Instr2 { @emit jcc_instr(0x0, target) }
+pub macro jno(target: int) -> Rel32Instr2 { @emit jcc_instr(0x1, target) }
+pub macro jp(target: int) -> Rel32Instr2 { @emit jcc_instr(0xA, target) }
+pub macro jnp(target: int) -> Rel32Instr2 { @emit jcc_instr(0xB, target) }
+
+pub macro ret() -> Byte {
+    @emit Byte(0xC3)
+}
