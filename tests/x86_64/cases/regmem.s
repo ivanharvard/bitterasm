@@ -1,0 +1,10 @@
+mov rax, [rbx]
+mov rax, [rbx+8]
+mov rax, [rbx+rcx*4+0x10]
+mov rax, [rip+0x20]
+mov [rbx], rax
+mov [rbx+8], rax
+mov [rbx+rcx*4+0x10], rax
+mov [rip+0x20], rax
+lea rax, [rbx+8]
+lea rax, [rbx+rcx*4+0x10]

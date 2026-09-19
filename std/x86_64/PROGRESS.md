@@ -13,7 +13,7 @@ which design decisions are already settled — not any prior chat conversation.
 - [x] Phase 4 — Control flow: jmp/jcc/call/ret
 - [x] Phase 5 — Remaining core subset: shl/shr/sar, lea, push/pop
 - [x] Phase 6 — Native (Intel-syntax) dialect
-- [ ] Phase 7 — Independent-oracle cross-check (GNU binutils)
+- [x] Phase 7 — Independent-oracle cross-check (GNU binutils)
 
 Work through phases in order, one at a time. Each phase's section below has enough
 context to pick up cold — deliverable, files, open questions, and how to verify. When
@@ -566,12 +566,57 @@ additionally spot-checked by hand against the Intel SDM before the fixture was
 written. Full existing suite (`cargo test --lib`, every other `tests/*.rs`) still
 green.
 
-### Phase 7 — Independent-oracle cross-check (GNU binutils)
+### Phase 7 — Independent-oracle cross-check (GNU binutils) ✅
 **Deliverable:** `tests/x86_64/` mirroring `tests/riscv/`'s harness (`run_tests.py`,
 `docker/Dockerfile` + `assemble.sh`, paired `cases/<name>.s` / `<name>.basm`
 fixtures) — likely *simpler* than RISC-V's version since GNU binutils' `as`/`objdump`
 target x86-64 natively (no cross-toolchain package needed, and a system `as` may
 already suffice without Docker — check before assuming Docker is required).
-**Files:** `tests/x86_64/` (new: `run_tests.py`, `docker/`, `cases/`).
-**Verification:** running the harness catches any Intel-SDM transcription mistakes
-made while hand-verifying Phases 2-5's expected bytes.
+**Resolved:**
+- **Docker was required after all** — this session's own machine is Apple Silicon
+  (`arm64`), not x86-64, and macOS's system `as`/`ld` are Apple's own
+  clang-based toolchain, not GNU binutils, and have no `objcopy` at all. Built
+  with `--platform linux/amd64` (both the image build and every container run)
+  so the oracle is genuine x86-64 GNU binutils regardless of host architecture —
+  confirmed working via Docker's own emulation.
+- **GNU `as` auto-relaxes `jmp`/`Jcc` to the short (`rel8`) encoding whenever a
+  target is close enough — confirmed empirically before writing any real test
+  case** (`jmp target` two lines above `target:` assembled to `eb 00`, not
+  `e9 00 00 00 00`). This project's own encoder is deliberately near-only
+  (`rel32`) by explicit design (`PROGRESS.md`'s own "Decided scope" — no
+  automatic short/near relaxation). Rather than fight this with an assembler
+  flag (x86 GNU `as` has none for this — unlike RISC-V's `ld --relax`, which
+  this project's own RISC-V harness already has to reason about, x86-64 has no
+  post-link jump-shrinking pass to disable either), every test case keeps every
+  jump/Jcc/call target more than 127 bytes from the instruction referencing it
+  (`control_flow.s`'s own comment explains the exact padding), which makes the
+  short encoding unreachable on the oracle's side too — both sides are then
+  forced into genuine `rel32` agreement, not a coincidence.
+- **reg,imm forms (`movi`/`addi`/etc.) can't be shared-file tested with this
+  oracle at all — a real, structural limitation of the dialect surfaced by
+  trying, not a gap in the harness:** real Intel syntax spells reg,reg and
+  reg,imm forms of the same mnemonic identically (`mov`); this project's own
+  dialect can't (Phase 2/6's own `Reg`-is-a-plain-`int` reasoning), so it keeps
+  them under separate names GNU `as` doesn't recognize at all. Worse, a bare
+  `mov rax, 100` doesn't even fail to parse under this dialect — it silently
+  matches the reg,reg `mov` pattern, since a plain `int` literal satisfies
+  `Reg`'s own type with no complaint, encoding `100` as if it were register
+  number 100. Found while drafting this harness's own test cases; fixed
+  separately (see the commit immediately before this phase's own harness
+  files) with an `assert_valid_reg` guard in `native.basm`'s reg,reg wrappers,
+  and reg,imm forms are excluded from this harness's shared `.s` files
+  entirely — they're already byte-verified by hand against the Intel SDM in
+  `tests/x86_64_encoding.rs`, so this isn't a real coverage gap, just a
+  boundary of what a *shared* text file can safely mean to two different
+  assemblers at once.
+**Files:** `tests/x86_64/run_tests.py` (new); `tests/x86_64/docker/Dockerfile`
++ `assemble.sh` (new); `tests/x86_64/cases/regdirect.s` (Phase 2 register-direct
+ALU/shift/push/pop coverage), `regmem.s` (Phase 3, all four addressing shapes,
+load and store, plus `lea`), `control_flow.s` (Phase 4, `jmp`/`jcc`/`call`/`ret`
+with deliberately far-apart labels).
+**Verification:** `python3 tests/x86_64/run_tests.py` — all 132 instructions
+across the three case files match GNU binutils' own x86-64 assembler exactly,
+byte-for-byte, run through the real `bitterasm compile` + `bitter encode` CLI
+pipeline against a real, independently-built Docker oracle (not a mock or a
+hand-transcribed table). No Intel-SDM transcription mistakes from Phases 2-5's
+hand-verification surfaced.
