@@ -38,3 +38,4 @@ pub mod facets;
 pub mod eval;
 pub mod formatter;
 pub mod diagnostics;
+pub mod verbose;

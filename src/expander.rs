@@ -15,6 +15,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
+use std::path::Path;
 
 use crate::ast::{
     CallArgument, ConstDeclaration, ConstructItem, Expr, Facet, FacetPayload, Invocation,
@@ -24,6 +25,7 @@ use crate::ast::{
 use crate::printer;
 use crate::token::Span;
 use crate::types::{GenericParameter, StructBodyItem, StructField, TypeArgument, TypeExpr};
+use crate::verbose::VerboseReporter;
 
 /// Macro declarations available to expand an invocation against, by name —
 /// built once from a fully import-resolved [`Program`] (see
@@ -59,12 +61,17 @@ impl<'a> MacroTable<'a> {
 /// multi-file program) for those spans to mean anything against it.
 /// Everything outside an expanded invocation's span, including statements
 /// never touched at all, is copied through byte-for-byte.
+///
+/// `path` is used only to label `progress`'s status lines (`"path:line"`)
+/// — pass whatever `source` was actually read from.
 pub fn expand_source(
     source: &str,
     program: &Program,
     table: &MacroTable,
     depth: usize,
     range: Option<Range<usize>>,
+    path: &Path,
+    progress: Option<&VerboseReporter>,
 ) -> String {
     let mut edits: Vec<(Span, String)> = Vec::new();
 
@@ -82,7 +89,13 @@ pub fn expand_source(
             continue;
         }
 
+        if let Some(reporter) = progress {
+            reporter.start(describe_invocation(source, path, invocation));
+        }
         let expanded = expand_invocation(table, invocation, depth);
+        if let Some(reporter) = progress {
+            reporter.finish_ok();
+        }
         edits.push((trim_trailing_newline(source, invocation.span), printer::print_statements(&expanded, 0)));
     }
 
@@ -98,6 +111,26 @@ pub fn expand_source(
     }
 
     result
+}
+
+// One-indexed line number of the byte offset `at` within `source`.
+fn line_of(source: &str, at: usize) -> usize {
+    source.as_bytes()[..at.min(source.len())].iter().filter(|&&byte| byte == b'\n').count() + 1
+}
+
+// `"path:line"`, or `"path:start-end"` for an invocation spanning more than
+// one line — `--verbose`'s label for `invocation`.
+fn describe_invocation(source: &str, path: &Path, invocation: &Invocation) -> String {
+    let start_line = line_of(source, invocation.span.start);
+    let end_line = line_of(source, invocation.span.end.saturating_sub(1).max(invocation.span.start));
+
+    let location = if start_line == end_line {
+        format!("{}:{start_line}", path.display())
+    } else {
+        format!("{}:{start_line}-{end_line}", path.display())
+    };
+
+    format!("{location} {}(...)", invocation.name)
 }
 
 // `Invocation.span` runs through its trailing newline (`statement_end`
@@ -624,7 +657,9 @@ mod tests {
         let program = parse(source);
         let table = MacroTable::from_program(&program);
 
-        let result = expand_source(source, &program, &table, usize::MAX, None);
+        let result = expand_source(
+            source, &program, &table, usize::MAX, None, Path::new("test.basm"), None,
+        );
 
         assert!(result.contains("foo"));
         assert!(result.contains("bar"));
@@ -642,7 +677,9 @@ mod tests {
         let second_call_start = source.rfind("double(2)").unwrap();
         let range = second_call_start..source.len();
 
-        let result = expand_source(source, &program, &table, usize::MAX, Some(range));
+        let result = expand_source(
+            source, &program, &table, usize::MAX, Some(range), Path::new("test.basm"), None,
+        );
 
         assert!(result.contains("double(1)"));
         assert!(result.contains("@emit (2 * 2)"));

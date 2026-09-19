@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -7,7 +8,9 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use bitterasm::ast::Statement;
 use bitterasm::expander::MacroTable;
+use bitterasm::loader::ModuleOrigins;
 use bitterasm::resolver::{SymbolTable, Value};
+use bitterasm::verbose::VerboseReporter;
 use bitterasm::{emit, eval, expander, formatter, lexer, loader, parser, resolver};
 use bitterasm::diagnostics::{
     self, Diagnostic, DiagnosticFormat, LintConfig, LintLevel, LintName,
@@ -37,6 +40,12 @@ enum Command {
         /// Defaults to `path` with its extension swapped to `.em`.
         #[arg(short, long)]
         output: Option<PathBuf>,
+
+        /// Print an animated, per-invocation status line to stderr as each
+        /// top-level invocation is expanded, with its elapsed time and
+        /// memory usage once it finishes.
+        #[arg(long)]
+        verbose: bool,
 
         #[command(flatten)]
         diagnostics: DiagnosticCliOptions,
@@ -75,6 +84,12 @@ enum Command {
         /// Defaults to printing to stdout.
         #[arg(short, long)]
         output: Option<PathBuf>,
+
+        /// Print an animated, per-invocation status line to stderr as each
+        /// top-level invocation is expanded, with its elapsed time and
+        /// memory usage once it finishes.
+        #[arg(long)]
+        verbose: bool,
     },
 
     /// Format .basm files in place according to bitterasm.toml.
@@ -97,12 +112,14 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Compile { path, output, diagnostics } => compile(&path, output, diagnostics),
+        Command::Compile { path, output, verbose, diagnostics } => {
+            compile(&path, output, verbose, diagnostics)
+        }
 
         Command::Check { path, diagnostics } => check(&path, diagnostics),
 
-        Command::Expand { path, depth, lines, chars, output } => {
-            expand(&path, depth, lines, chars, output)
+        Command::Expand { path, depth, lines, chars, output, verbose } => {
+            expand(&path, depth, lines, chars, output, verbose)
         }
 
         Command::Format { paths, check, config } => format_files(paths, check, config),
@@ -242,9 +259,44 @@ impl From<resolver::ResolveError> for CompileError {
     fn from(error: resolver::ResolveError) -> Self { Self::Resolve(error) }
 }
 
-fn resolve_and_expand(path: &Path) -> Result<Expansion, CompileError> {
+/// Labels `--verbose`'s status lines for `compile`, which (unlike `expand`)
+/// walks a loader-flattened, potentially multi-file program — a top-level
+/// invocation's span means nothing until it's matched back to whichever
+/// file's module id `origins` attributes it to. `sources`/`ids` are a
+/// build-as-you-go cache: most invocations in a compilation come from the
+/// same handful of modules (often just the entry file), so this reads a
+/// given module's source off disk at most once no matter how many
+/// invocations it's asked about.
+struct VerboseCompileContext<'a> {
+    reporter: &'a VerboseReporter,
+    origins: &'a ModuleOrigins,
+    cache: RefCell<(SourceMap, HashMap<usize, SourceId>)>,
+}
+
+impl<'a> VerboseCompileContext<'a> {
+    fn new(reporter: &'a VerboseReporter, origins: &'a ModuleOrigins) -> Self {
+        Self { reporter, origins, cache: RefCell::new((SourceMap::default(), HashMap::new())) }
+    }
+
+    fn start(&self, module: usize, span: bitterasm::token::Span, name: &str) {
+        let mut cache = self.cache.borrow_mut();
+        let (sources, ids) = &mut *cache;
+        let path = self.origins.path(module);
+        let source_id = *ids.entry(module).or_insert_with(|| {
+            let text = std::fs::read_to_string(path).unwrap_or_default();
+            sources.add(path, text)
+        });
+        let line = sources.get(source_id).map_or(0, |file| file.line_column(span.start).0);
+        drop(cache);
+
+        self.reporter.start(format!("{}:{line} {name}(...)", path.display()));
+    }
+}
+
+fn resolve_and_expand(path: &Path, verbose: Option<&VerboseReporter>) -> Result<Expansion, CompileError> {
     let (program, origins) = loader::load_program_with_modules(path)?;
     let entry_module = origins.entry_module();
+    let verbose_ctx = verbose.map(|reporter| VerboseCompileContext::new(reporter, &origins));
 
     // Unrolls every top-level `@for`/`@if` into concrete statements before
     // anything else (symbol collection included) ever sees them — see
@@ -290,7 +342,14 @@ fn resolve_and_expand(path: &Path) -> Result<Expansion, CompileError> {
     // the top level is a bound parameter.
     let mut emitted = Vec::new();
     let mut generated = Vec::new();
-    walk_top_level(&program, &symbols, &mut discovery, Some((&mut emitted, &mut generated)))?;
+    walk_top_level(
+        &program,
+        &symbols,
+        &mut discovery,
+        Some((&mut emitted, &mut generated)),
+        &statement_modules,
+        verbose_ctx.as_ref(),
+    )?;
 
     // A wrong placeholder only ever changes what gets emitted at some
     // point, never how *many* values get emitted (see
@@ -327,6 +386,14 @@ fn resolve_and_expand(path: &Path) -> Result<Expansion, CompileError> {
     // notion of labels yet.
     let label_positions = discovery.into_label_positions();
 
+    // Reported once, outside the per-invocation lines above: this second
+    // pass re-expands the exact same program, so repeating a full
+    // "expanding ..." line per invocation for it too would just be the
+    // first pass's output twice over.
+    if verbose.is_some() {
+        eprintln!("re-expanding: a forward-referenced label needs resolved positions");
+    }
+
     let mut alias_resolver = resolver::AliasResolver::new(
         &program,
         &symbols,
@@ -341,7 +408,14 @@ fn resolve_and_expand(path: &Path) -> Result<Expansion, CompileError> {
     let mut emitted = Vec::new();
     let mut generated = Vec::new();
 
-    walk_top_level(&program, &symbols, &mut alias_resolver, Some((&mut emitted, &mut generated)))?;
+    walk_top_level(
+        &program,
+        &symbols,
+        &mut alias_resolver,
+        Some((&mut emitted, &mut generated)),
+        &statement_modules,
+        None,
+    )?;
 
     Ok(Expansion { symbols, emitted, generated })
 }
@@ -386,11 +460,26 @@ fn walk_top_level(
     symbols: &SymbolTable,
     alias_resolver: &mut resolver::AliasResolver,
     mut collect: Option<(&mut Vec<Value>, &mut Vec<Statement>)>,
+    statement_modules: &[usize],
+    verbose: Option<&VerboseCompileContext>,
 ) -> Result<(), resolver::ResolveError> {
-    for statement in &program.statements {
+    for (index, statement) in program.statements.iter().enumerate() {
         match statement {
             Statement::Invocation(invocation) => {
-                let expansion = alias_resolver.expand_invocation(invocation, &HashMap::new())?;
+                if let Some(ctx) = verbose {
+                    ctx.start(statement_modules[index], invocation.span, &invocation.name);
+                }
+
+                let result = alias_resolver.expand_invocation(invocation, &HashMap::new());
+
+                if let Some(ctx) = verbose {
+                    match &result {
+                        Ok(_) => ctx.reporter.finish_ok(),
+                        Err(_) => ctx.reporter.finish_err(),
+                    }
+                }
+
+                let expansion = result?;
                 if let Some((emitted, generated)) = collect.as_mut() {
                     emitted.extend(expansion.emitted);
                     generated.extend(expansion.generated);
@@ -481,7 +570,7 @@ fn emit_diagnostics(diagnostics: &[Diagnostic], run: &DiagnosticRun) -> bool {
     diagnostics.iter().any(|diagnostic| diagnostic.severity == Severity::Error)
 }
 
-fn analyze(path: &Path, options: DiagnosticCliOptions) -> (Expansion, DiagnosticRun) {
+fn analyze(path: &Path, options: DiagnosticCliOptions, verbose: Option<&VerboseReporter>) -> (Expansion, DiagnosticRun) {
     let mut diagnostic_run = match prepare_diagnostics(path, &options) {
         Ok(run) => run,
         Err(error) => {
@@ -517,7 +606,7 @@ fn analyze(path: &Path, options: DiagnosticCliOptions) -> (Expansion, Diagnostic
         }
     }
 
-    let expansion = match resolve_and_expand(path) {
+    let expansion = match resolve_and_expand(path, verbose) {
         Ok(expansion) => expansion,
         Err(CompileError::Load(error)) => {
             let diagnostic = diagnostics::load_error(error, &mut diagnostic_run.sources);
@@ -554,12 +643,13 @@ fn analyze(path: &Path, options: DiagnosticCliOptions) -> (Expansion, Diagnostic
 }
 
 fn check(path: &Path, options: DiagnosticCliOptions) {
-    let _ = analyze(path, options);
+    let _ = analyze(path, options, None);
     println!("checked {}", path.display());
 }
 
-fn compile(path: &Path, output: Option<PathBuf>, options: DiagnosticCliOptions) {
-    let (expansion, _) = analyze(path, options);
+fn compile(path: &Path, output: Option<PathBuf>, verbose: bool, options: DiagnosticCliOptions) {
+    let reporter = verbose.then(VerboseReporter::new);
+    let (expansion, _) = analyze(path, options, reporter.as_ref());
 
     let emitted: Vec<emit::EmittedValue> = expansion
         .emitted
@@ -596,6 +686,7 @@ fn expand(
     lines: Option<String>,
     chars: Option<String>,
     output: Option<PathBuf>,
+    verbose: bool,
 ) {
     let source = match std::fs::read_to_string(path) {
         Ok(source) => source,
@@ -687,7 +778,8 @@ fn expand(
         (Some(_), Some(_)) => unreachable!("clap's conflicts_with rules out --lines and --chars together"),
     };
 
-    let expanded = expander::expand_source(&source, &program, &table, depth, range);
+    let reporter = verbose.then(VerboseReporter::new);
+    let expanded = expander::expand_source(&source, &program, &table, depth, range, path, reporter.as_ref());
 
     match output {
         Some(output_path) => {
