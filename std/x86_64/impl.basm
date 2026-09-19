@@ -484,6 +484,18 @@ macro mem_imm_instr(opcode: int, digit: int, dst: MemOperand, imm: int, w: int) 
 # explain. Every ALU/`test`/`mov` overload here keeps the destination-first
 # argument order Phase 2 already established.
 pub macro mov(dst: MemOperand, rs: Reg, w: int) -> Bytes<...> { @emit mem_reg_instr(0x89, dst, rs, w) }
+
+# `mov`'s load direction (`0x8B`, "r, r/m" — reg field is the destination this
+# time, `mem_reg_instr`'s `rs` parameter slot filled by `rd` instead of the memory
+# operand's "other" register): added later than the rest of this section, once
+# Phase 6's native (Intel-syntax) dialect needed a real `mov rd, [mem]` to exist at
+# all — Phase 3 deliberately covered only the store direction (see this section's
+# own comment above). Distinguishable from the store overload by its first
+# parameter's type (`Reg` vs. `MemOperand`), the same real-overloading reasoning as
+# every other overload here — no naming trick needed, unlike Phase 5's `_cl` shift
+# forms.
+pub macro mov(rd: Reg, src: MemOperand, w: int) -> Bytes<...> { @emit mem_reg_instr(0x8B, src, rd, w) }
+
 pub macro add(dst: MemOperand, rs: Reg, w: int) -> Bytes<...> { @emit mem_reg_instr(0x01, dst, rs, w) }
 pub macro or(dst: MemOperand, rs: Reg, w: int) -> Bytes<...> { @emit mem_reg_instr(0x09, dst, rs, w) }
 pub macro and(dst: MemOperand, rs: Reg, w: int) -> Bytes<...> { @emit mem_reg_instr(0x21, dst, rs, w) }

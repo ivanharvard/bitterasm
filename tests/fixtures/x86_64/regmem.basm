@@ -32,3 +32,8 @@ add Mem(rax, 0), rcx, 1     # ALU reg,mem, w=1 (REX.W)
 addi Mem(rax, 0), 0x7F, 0   # ALU imm,mem (0x81 /0)
 movi Mem(rbx, 4), 0x2A, 0   # mov mem,imm (0xC7 /0, distinct from 0xB8+reg)
 testi Mem(rax, 0), 0xFF, 0  # test mem,imm (0xF7 /0)
+
+# --- mov's load direction (0x8B), added in Phase 6 for the native dialect's
+# `mov rd, [mem]` bracket syntax — see std/x86_64/PROGRESS.md's Phase 6 section ---
+mov rax, Mem(rbx, 8), 0
+mov r9, MemIndexed(rax, rcx, 4, 0x100), 1

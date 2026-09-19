@@ -196,6 +196,14 @@ fn regmem_encodes_correctly() {
         0xC7, 0x43, 0x04, 0x2A, 0x00, 0x00, 0x00,
         // testi Mem(rax, 0), 0xFF, 0 — opcode=0xF7, ModRM(mod=00, digit=0, rm=0)=0x00, imm32 LE
         0xF7, 0x00, 0xFF, 0x00, 0x00, 0x00,
+        // mov rax, Mem(rbx, 8), 0 — load direction (0x8B), added in Phase 6:
+        // ModRM(mod=01, reg=rax=0, rm=rbx=3)=0x43, disp8=8
+        0x8B, 0x43, 0x08,
+        // mov r9, MemIndexed(rax, rcx, 4, 0x100), 1 — w=1 + extended reg field:
+        // REX(W=1,R=ext(r9)=1,X=0,B=0)=0x4C, opcode=0x8B,
+        // ModRM(mod=10, reg=r9&7=1, rm=100)=0x8C, SIB(scale=10, index=rcx&7=1, base=rax&7=0)=0x88,
+        // disp32 LE of 0x100 (256 doesn't fit in disp8)
+        0x4C, 0x8B, 0x8C, 0x88, 0x00, 0x01, 0x00, 0x00,
     ];
 
     assert_case_encodes_to("regmem", expected);
