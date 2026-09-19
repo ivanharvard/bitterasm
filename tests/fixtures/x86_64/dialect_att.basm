@@ -1,0 +1,51 @@
+# AT&T-style spelling of the same instructions as dialect_default.basm, in the
+# same order. tests/x86_64_dialects.rs compiles this alongside the Intel dialect
+# and default syntax and asserts byte-for-byte identical output.
+
+from std.x86_64.att import *
+
+mov %rbx, %rax
+mov (%rbx), %rax
+mov 8(%rbx), %rax
+mov 0x10(%rbx,%rcx,4), %rax
+mov 0x20(%rip), %rax
+mov %rax, (%rbx)
+mov %rax, 8(%rbx)
+mov %rax, 0x10(%rbx,%rcx,4)
+mov %rax, 0x20(%rip)
+
+add %rbx, %rax
+add $5, %rax
+or %rbx, %rax
+or $5, %rax
+and %rbx, %rax
+and $5, %rax
+sub %rbx, %rax
+sub $5, %rax
+xor %rbx, %rax
+xor $5, %rax
+cmp %rbx, %rax
+cmp $5, %rax
+test %rbx, %rax
+test $5, %rax
+mov $100, %rax
+
+lea 8(%rbx), %rax
+lea 0x10(%rbx,%rcx,4), %rax
+
+shl $4, %rax
+shl %cl, %rax
+shr $4, %rax
+shr %cl, %rax
+sar $4, %rax
+sar %cl, %rax
+
+push %rax
+pop %rax
+
+target:
+call target
+jmp target
+je target
+jne target
+ret

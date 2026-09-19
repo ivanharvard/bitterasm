@@ -21,17 +21,16 @@
 //! thread patterns across file imports — so it's `pub(crate)`, not a bare
 //! private `mod`.
 //!
-//! Two accepted v1 limitations: a pattern can't describe a call-site
-//! literal `$` (any `$` starts or ends a capture), and within one file a
-//! custom-syntax call site that textually precedes its own declaration can
-//! fail to parse — the same-file prepass tolerates its own parse errors by
-//! discarding them and moving on, so it usually still reaches (and
-//! registers) a later declaration even after misreading an earlier,
-//! not-yet-known custom-shaped call site under default rules; it only hard
-//! stops when that default misreading itself can't consume the line (e.g. a
-//! pattern separator, like `:`, that isn't a valid continuation of any
-//! default expression — separators that happen to *look* like one, e.g.
-//! `<-`, silently "work" regardless of ordering, for the wrong reason).
+//! One accepted v1 limitation: within one file a custom-syntax call site
+//! that textually precedes its own declaration can fail to parse — the
+//! same-file prepass tolerates its own parse errors by discarding them and
+//! moving on, so it usually still reaches (and registers) a later
+//! declaration even after misreading an earlier, not-yet-known
+//! custom-shaped call site under default rules; it only hard stops when
+//! that default misreading itself can't consume the line (e.g. a pattern
+//! separator, like `:`, that isn't a valid continuation of any default
+//! expression — separators that happen to *look* like one, e.g. `<-`,
+//! silently "work" regardless of ordering, for the wrong reason).
 
 use crate::token::TokenKind;
 
@@ -83,10 +82,7 @@ pub struct SyntaxPattern {
 /// distinction still matters for: whether the parser can dispatch on it by
 /// a call site's leading token alone, or has to try it unconditionally
 /// alongside every other unanchored pattern (see that function's doc).
-pub fn parse_pattern(
-    tokens: Vec<TokenKind>,
-    params: &[String],
-) -> Result<SyntaxPattern, String> {
+pub fn parse_pattern(tokens: Vec<TokenKind>, params: &[String]) -> Result<SyntaxPattern, String> {
     let segments = split_into_segments(tokens)?;
 
     validate_captures(&segments, params)?;
@@ -123,7 +119,7 @@ fn split_into_segments(tokens: Vec<TokenKind>) -> Result<Vec<PatternSegment>, St
 
     while let Some(token) = iter.next() {
         if token != TokenKind::Dollar {
-            literal.push(token);
+            literal.push(unescape_literal_token(token)?);
             continue;
         }
 
@@ -134,22 +130,16 @@ fn split_into_segments(tokens: Vec<TokenKind>) -> Result<Vec<PatternSegment>, St
         let name = match iter.next() {
             Some(TokenKind::Identifier(name)) => name,
 
-            _ => {
-                return Err(
-                    "a `$...$` capture must contain exactly one identifier".to_string(),
-                )
-            }
+            _ => return Err("a `$...$` capture must contain exactly one identifier".to_string()),
         };
 
         match iter.next() {
             Some(TokenKind::Dollar) => {}
 
             _ => {
-                return Err(
-                    "a `$...$` capture must contain exactly one identifier \
+                return Err("a `$...$` capture must contain exactly one identifier \
                      (unterminated capture: missing closing `$`)"
-                        .to_string(),
-                )
+                    .to_string())
             }
         }
 
@@ -161,6 +151,15 @@ fn split_into_segments(tokens: Vec<TokenKind>) -> Result<Vec<PatternSegment>, St
     }
 
     Ok(segments)
+}
+
+fn unescape_literal_token(token: TokenKind) -> Result<TokenKind, String> {
+    match token {
+        TokenKind::Escaped('$') => Ok(TokenKind::Dollar),
+        TokenKind::Escaped('`') => Ok(TokenKind::Backtick),
+        TokenKind::Escaped(ch) => Err(format!("unknown escaped syntax-pattern literal `\\{ch}`")),
+        other => Ok(other),
+    }
 }
 
 fn validate_captures(segments: &[PatternSegment], params: &[String]) -> Result<(), String> {
@@ -182,7 +181,11 @@ fn validate_captures(segments: &[PatternSegment], params: &[String]) -> Result<(
         let count = captures.iter().filter(|name| **name == param).count();
 
         match count {
-            0 => return Err(format!("parameter `{param}` is never captured (`${param}$`)")),
+            0 => {
+                return Err(format!(
+                    "parameter `{param}` is never captured (`${param}$`)"
+                ))
+            }
             1 => {}
             _ => return Err(format!("parameter `{param}` is captured more than once")),
         }
@@ -202,4 +205,36 @@ fn validate_no_empty_gaps(segments: &[PatternSegment]) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn escaped_dollar_in_pattern_is_a_literal_token_not_a_capture_delimiter() {
+        let params = vec!["imm".to_string()];
+        let pattern = parse_pattern(
+            vec![
+                TokenKind::Identifier("mov".to_string()),
+                TokenKind::Escaped('$'),
+                TokenKind::Dollar,
+                TokenKind::Identifier("imm".to_string()),
+                TokenKind::Dollar,
+            ],
+            &params,
+        )
+        .expect("escaped dollar should parse as a literal pattern token");
+
+        assert_eq!(
+            pattern.segments,
+            vec![
+                PatternSegment::Literal(vec![
+                    TokenKind::Identifier("mov".to_string()),
+                    TokenKind::Dollar,
+                ]),
+                PatternSegment::Capture("imm".to_string()),
+            ],
+        );
+    }
 }

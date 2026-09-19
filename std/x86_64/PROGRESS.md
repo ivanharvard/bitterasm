@@ -14,6 +14,7 @@ which design decisions are already settled — not any prior chat conversation.
 - [x] Phase 5 — Remaining core subset: shl/shr/sar, lea, push/pop
 - [x] Phase 6 — Intel-syntax dialect
 - [x] Phase 7 — Independent-oracle cross-check (GNU binutils)
+- [x] Phase 8 — AT&T-syntax dialect
 
 Work through phases in order, one at a time. Each phase's section below has enough
 context to pick up cold — deliverable, files, open questions, and how to verify. When
@@ -34,8 +35,8 @@ see README.md's "Abstraction does not imply optimization").
 
 **Explicitly out of scope for v1** (don't add without discussing first — these were
 deliberately deferred, not overlooked): 8-bit/16-bit registers, `0x66` operand-size
-prefix, AT&T-syntax dialect, explicit short (`rel8`) jump/call variants, SSE/AVX,
-string/BCD instructions, far pointers.
+prefix, explicit short (`rel8`) jump/call variants, SSE/AVX, string/BCD
+instructions, far pointers.
 
 ## Established convention (already followed by `std/riscv/`, `std/pdp10/`)
 
@@ -620,3 +621,30 @@ byte-for-byte, run through the real `bitterasm compile` + `bitter encode` CLI
 pipeline against a real, independently-built Docker oracle (not a mock or a
 hand-transcribed table). No Intel-SDM transcription mistakes from Phases 2-5's
 hand-verification surfaced.
+
+### Phase 8 — AT&T-syntax dialect ✅
+**Deliverable:** `std/x86_64/att.basm`, a pure syntax layer over `impl.basm` using
+AT&T-style source-first operand order, `%reg` register operands, `$imm` immediate
+operands, and `disp(%base,%index,scale)` memory operands. Like `intel.basm`, reduced
+surface forms hardcode `w = 1` because this package only defines 64-bit register
+names.
+**Resolved:**
+- **Literal `$` in syntax patterns needed the existing escape token to be wired into
+  pattern parsing:** `\$` already lexed as `TokenKind::Escaped('$')`, but
+  `syntax` pattern parsing still treated it as an ordinary literal token that could
+  never match a call-site `TokenKind::Dollar`. `src/facets/syntax.rs` now translates
+  escaped `$`/`` ` `` back to literal `Dollar`/`Backtick` tokens inside pattern
+  literal segments, which lets AT&T immediates be written normally at call sites
+  (`add $5, %rax`) while still keeping `$imm$` captures unambiguous in dialect
+  definitions (`syntax { add \$$imm$, %$rd$ }`).
+- **Immediate forms can use real AT&T mnemonics even though `impl.basm` keeps
+  i-suffixed macro names internally:** the `$imm` literal makes reg,imm call sites
+  lexically distinct from `%reg,%reg` forms, so `att.basm` registers unanchored
+  patterns like `add \$$imm$, %$rd$` on the underlying `addi` macro rather than
+  exposing `addi` as surface syntax.
+**Files:** `src/facets/syntax.rs` (escaped literal pattern support);
+`std/x86_64/att.basm` (new); `tests/fixtures/x86_64/dialect_att.basm` (new, same
+39 instructions as the default and Intel dialect fixtures); `tests/x86_64_dialects.rs`
+(now compares Intel, AT&T, and default syntax).
+**Verification:** `cargo test --test x86_64_dialects` passes (39/39 emitted values
+for each of Intel, AT&T, and default syntax, byte-identical).
