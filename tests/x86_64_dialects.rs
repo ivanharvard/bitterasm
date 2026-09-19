@@ -1,4 +1,4 @@
-// Cross-checks `std/x86_64/native.basm` (Phase 6's Intel-syntax dialect) against
+// Cross-checks `std/x86_64/intel.basm` (Phase 6's Intel-syntax dialect) against
 // `std/x86_64/impl.basm`'s own default positional syntax: two fixtures invoking
 // the same instructions, in the same order, with the same operands — one spelled
 // with real Intel mnemonic/bracket syntax, the other with impl.basm's own
@@ -15,17 +15,17 @@ use std::path::Path;
 use std::process::Command;
 
 #[test]
-fn native_dialect_and_default_syntax_compile_to_identical_output() {
+fn intel_dialect_and_default_syntax_compile_to_identical_output() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let bitterasm = env!("CARGO_BIN_EXE_bitterasm");
 
-    let native = Path::new(manifest_dir).join("tests/fixtures/x86_64/dialect_native.basm");
+    let intel = Path::new(manifest_dir).join("tests/fixtures/x86_64/dialect_intel.basm");
     let default = Path::new(manifest_dir).join("tests/fixtures/x86_64/dialect_default.basm");
 
-    let native_out = std::env::temp_dir().join("bitterasm-x86_64-dialect-native.em");
+    let intel_out = std::env::temp_dir().join("bitterasm-x86_64-dialect-intel.em");
     let default_out = std::env::temp_dir().join("bitterasm-x86_64-dialect-default.em");
 
-    for (source, out) in [(&native, &native_out), (&default, &default_out)] {
+    for (source, out) in [(&intel, &intel_out), (&default, &default_out)] {
         let status = Command::new(bitterasm)
             .current_dir(manifest_dir)
             .args(["compile", &source.display().to_string(), "-o", &out.display().to_string()])
@@ -35,14 +35,14 @@ fn native_dialect_and_default_syntax_compile_to_identical_output() {
         assert!(status.success(), "bitterasm compile failed for {}", source.display());
     }
 
-    let native_bytes = std::fs::read(&native_out).expect("native .em should exist");
+    let intel_bytes = std::fs::read(&intel_out).expect("intel .em should exist");
     let default_bytes = std::fs::read(&default_out).expect("default .em should exist");
 
     assert_eq!(
-        native_bytes, default_bytes,
-        "native dialect and default syntax produced different emitted output for the same instructions"
+        intel_bytes, default_bytes,
+        "intel dialect and default syntax produced different emitted output for the same instructions"
     );
 
-    std::fs::remove_file(&native_out).ok();
+    std::fs::remove_file(&intel_out).ok();
     std::fs::remove_file(&default_out).ok();
 }

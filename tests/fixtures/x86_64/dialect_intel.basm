@@ -1,4 +1,4 @@
-# Phase 6: std/x86_64/native.basm's Intel-syntax dialect, exercising every family
+# Phase 6: std/x86_64/intel.basm's Intel-syntax dialect, exercising every family
 # of syntax sugar it adds — mov's load/store bracket forms (all four addressing
 # shapes), the register-only ALU/shift/test sugar, lea's bracket forms, and the
 # reg,CL shift form. tests/x86_64_dialects.rs compiles this and
@@ -6,7 +6,7 @@
 # default positional syntax) and asserts byte-for-byte identical output — see
 # std/x86_64/PROGRESS.md's Phase 6 section.
 
-from std.x86_64.native import *
+from std.x86_64.intel import *
 
 mov rax, rbx
 mov rax, [rbx]

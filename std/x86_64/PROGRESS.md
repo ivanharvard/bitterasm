@@ -12,7 +12,7 @@ which design decisions are already settled — not any prior chat conversation.
 - [x] Phase 3 — Memory operands: ModRM/SIB addressing engine
 - [x] Phase 4 — Control flow: jmp/jcc/call/ret
 - [x] Phase 5 — Remaining core subset: shl/shr/sar, lea, push/pop
-- [x] Phase 6 — Native (Intel-syntax) dialect
+- [x] Phase 6 — Intel-syntax dialect
 - [x] Phase 7 — Independent-oracle cross-check (GNU binutils)
 
 Work through phases in order, one at a time. Each phase's section below has enough
@@ -454,8 +454,8 @@ shift_lea_stack.basm` (new, 12 cases); `tests/x86_64_encoding.rs` (extended with
 `shift_lea_stack` alone: 12/12 emitted values, 33 bytes, matching hand-computed
 expected output exactly). This completes v1's instruction coverage.
 
-### Phase 6 — Native (Intel-syntax) dialect ✅
-**Deliverable:** `std/x86_64/native.basm`, giving every impl.basm macro real Intel
+### Phase 6 — Intel-syntax dialect ✅
+**Deliverable:** `std/x86_64/intel.basm`, giving every impl.basm macro real Intel
 mnemonic syntax (`mov rax, rbx`, `add rax, 5`, `mov rax, [rbx+rcx*4+0x10]`), mirroring
 RISC-V's `native.basm` sugar-injection approach.
 **Resolved (three real findings, in the order they had to be worked through):**
@@ -554,7 +554,7 @@ RISC-V's `native.basm` sugar-injection approach.
   `shr`/`band`'s int-only args).
 **Files:** `src/parser/invocation_syntax.rs` (literal-specificity tie-breaking,
 separate commit); `std/x86_64/impl.basm` (`mov`'s load direction, separate commit);
-`std/x86_64/native.basm` (new); `tests/fixtures/x86_64/dialect_native.basm` (new,
+`std/x86_64/intel.basm` (new); `tests/fixtures/x86_64/dialect_intel.basm` (new,
 exercises every family of syntax sugar the dialect adds) and `tests/fixtures/x86_64/
 dialect_default.basm` (new, the identical instructions in `impl.basm`'s own default
 syntax); `tests/x86_64_dialects.rs` (new — adapted from `tests/riscv_dialects.rs`'s
@@ -603,7 +603,7 @@ already suffice without Docker — check before assuming Docker is required).
   `Reg`'s own type with no complaint, encoding `100` as if it were register
   number 100. Found while drafting this harness's own test cases; fixed
   separately (see the commit immediately before this phase's own harness
-  files) with an `assert_valid_reg` guard in `native.basm`'s reg,reg wrappers,
+  files) with an `assert_valid_reg` guard in `intel.basm`'s reg,reg wrappers,
   and reg,imm forms are excluded from this harness's shared `.s` files
   entirely — they're already byte-verified by hand against the Intel SDM in
   `tests/x86_64_encoding.rs`, so this isn't a real coverage gap, just a

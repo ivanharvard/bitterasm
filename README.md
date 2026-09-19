@@ -32,7 +32,7 @@ Every one of those is defined in ordinary BitterASM code — as libraries, archi
 
 **Evaluators own the output contract, not the language.** BitterASM source describes behavior; an evaluator decides what running that behavior produces. A binary evaluator turns assembly into machine code. A different evaluator could target something else entirely. Language semantics (`Int`, `struct`, `type`, `macro`, pattern matching, imports, generics) mean the same thing everywhere — only the output effect changes.
 
-**Imports compose modules; they don't grant magic.** `from x86_64.native import *` works because that package defines `mov` and `rax` — not because the language has special knowledge of x86. Importing a binary library doesn't secretly switch the language into "binary mode"; binary is just one ordinary abstraction among many.
+**Imports compose modules; they don't grant magic.** `from x86_64.intel import *` works because that package defines `mov` and `rax` — not because the language has special knowledge of x86. Importing a binary library doesn't secretly switch the language into "binary mode"; binary is just one ordinary abstraction among many.
 
 ## Why bother
 

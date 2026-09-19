@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cross-checks std/x86_64/native.basm — through the real bitterasm -> bitter
+"""Cross-checks std/x86_64/intel.basm — through the real bitterasm -> bitter
 pipeline — against a single independent oracle: GNU binutils' x86-64
 assembler, run inside a Docker container (tests/x86_64/docker/), an existing,
 independently-maintained "official" encoder this project didn't write and
@@ -15,7 +15,7 @@ For each tests/x86_64/cases/*.s file (plain x86-64 Intel-syntax assembly
 text — '#' comments, one instruction per line, real `label:` lines allowed)
 this:
 
-1. Builds a derived .basm by prepending `from std.x86_64.native import *` to
+1. Builds a derived .basm by prepending `from std.x86_64.intel import *` to
    the file's own text, unchanged otherwise — the .s file itself stays
    valid, ordinary-looking Intel-syntax assembly, and a `label:` line is
    valid BitterASM syntax too, so it needs no translation either way.
@@ -42,7 +42,7 @@ counterpart in real Intel syntax, which spells both forms identically. GNU
 as doesn't recognize `movi`/`addi` as instructions at all, and a bare
 `mov rax, 100` silently means something different under this dialect (a
 reg,reg `mov` misreading `100` as a register number — see
-std/x86_64/native.basm's `assert_valid_reg`) than it does to a real
+std/x86_64/intel.basm's `assert_valid_reg`) than it does to a real
 assembler, so reg,imm forms are outside what a shared `.s` file can safely
 express and are excluded from this harness entirely; they're already
 byte-verified by hand against the Intel SDM in tests/x86_64_encoding.rs.
@@ -88,7 +88,7 @@ def build_oracle_image() -> None:
 
 def compile_case(source_path: pathlib.Path, workdir: pathlib.Path) -> pathlib.Path:
     basm_path = workdir / (source_path.stem + ".basm")
-    basm_path.write_text("from std.x86_64.native import *\n\n" + source_path.read_text())
+    basm_path.write_text("from std.x86_64.intel import *\n\n" + source_path.read_text())
     em_path = workdir / (basm_path.stem + ".em")
 
     # cwd=REPO_ROOT matters: an absolute `from ... import *` is resolved
