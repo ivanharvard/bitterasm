@@ -86,6 +86,27 @@
 
 from .impl import *
 
+# `Reg` is a plain `int` alias with no invariant of its own (`impl.basm`'s own
+# Phase 1 note), so a reg,reg wrapper's second parameter accepts *any* `int`
+# without complaint — including a bare immediate a caller meant for
+# `movi`/`addi`/etc. instead. `mov rax, 100` parses cleanly as this file's own
+# reg,reg `mov`, treating `100` as if it were register number 100 —
+# `reg_field`/`reg_ext` then mask/shift it into nonsense bits instead of
+# erroring (confirmed empirically while building Phase 7's oracle harness,
+# where a shared `.s`/`.basm` test file can't spell an immediate `mov`/`add`/...
+# at all — see `std/x86_64/PROGRESS.md`'s Phase 7 section). This doesn't catch
+# every mistake (5 is also `rbp`'s own number, so `add rax, 5` meant as an
+# immediate silently becomes `add rax, rbp` instead), but it does catch the
+# common case of an out-of-range value, which a real immediate very often is.
+# `pub`, empirically required: called only from this same file's own
+# `| syntax {...}`-faceted macro bodies below, but a non-`pub` declaration's
+# within-file references didn't resolve correctly once imported from elsewhere
+# (`unknown macro` from a file that only ever imports this one) — not
+# investigated further, `pub` costs nothing here.
+pub macro assert_valid_reg(r: Reg) {
+    @assert r >= 0 && r <= 15, "not a valid register (0-15) — use the `i`-suffixed mnemonic for an immediate"
+}
+
 # =================
 # mov
 # =================
@@ -93,6 +114,7 @@ from .impl import *
 syntax mov(a, b, c) = { mov $a$, $b$, $c$ }
 
 pub macro mov(rd: Reg, rs: Reg) | syntax { mov $rd$, $rs$ } {
+    assert_valid_reg rs
     mov rd, rs, 1
 }
 
@@ -149,13 +171,22 @@ pub macro mov_store_rip(disp: int, rs: Reg) | syntax { mov [rip+$disp$], $rs$ } 
 # `add Mem(rax, 4), rbx, 1` still works verbatim with this file imported.
 
 syntax add(a, b, c) = { add $a$, $b$, $c$ }
-pub macro add(rd: Reg, rs: Reg) | syntax { add $rd$, $rs$ } { add rd, rs, 1 }
+pub macro add(rd: Reg, rs: Reg) | syntax { add $rd$, $rs$ } {
+    assert_valid_reg rs
+    add rd, rs, 1
+}
 
 syntax or(a, b, c) = { or $a$, $b$, $c$ }
-pub macro or(rd: Reg, rs: Reg) | syntax { or $rd$, $rs$ } { or rd, rs, 1 }
+pub macro or(rd: Reg, rs: Reg) | syntax { or $rd$, $rs$ } {
+    assert_valid_reg rs
+    or rd, rs, 1
+}
 
 syntax and(a, b, c) = { and $a$, $b$, $c$ }
-pub macro and(rd: Reg, rs: Reg) | syntax { and $rd$, $rs$ } { and rd, rs, 1 }
+pub macro and(rd: Reg, rs: Reg) | syntax { and $rd$, $rs$ } {
+    assert_valid_reg rs
+    and rd, rs, 1
+}
 
 syntax sub(a, b, c) = { sub $a$, $b$, $c$ }
 
@@ -167,16 +198,28 @@ syntax sub(a, b, c) = { sub $a$, $b$, $c$ }
 # ran into this for the exact same reason). Unanchored (its pattern's own
 # leading token is the real mnemonic `sub`, not `sub2`), so `sub2` itself is
 # never "claimed" or user-facing at all.
-pub macro sub2(rd: Reg, rs: Reg) | syntax { sub $rd$, $rs$ } { sub rd, rs, 1 }
+pub macro sub2(rd: Reg, rs: Reg) | syntax { sub $rd$, $rs$ } {
+    assert_valid_reg rs
+    sub rd, rs, 1
+}
 
 syntax xor(a, b, c) = { xor $a$, $b$, $c$ }
-pub macro xor(rd: Reg, rs: Reg) | syntax { xor $rd$, $rs$ } { xor rd, rs, 1 }
+pub macro xor(rd: Reg, rs: Reg) | syntax { xor $rd$, $rs$ } {
+    assert_valid_reg rs
+    xor rd, rs, 1
+}
 
 syntax cmp(a, b, c) = { cmp $a$, $b$, $c$ }
-pub macro cmp(rd: Reg, rs: Reg) | syntax { cmp $rd$, $rs$ } { cmp rd, rs, 1 }
+pub macro cmp(rd: Reg, rs: Reg) | syntax { cmp $rd$, $rs$ } {
+    assert_valid_reg rs
+    cmp rd, rs, 1
+}
 
 syntax test(a, b, c) = { test $a$, $b$, $c$ }
-pub macro test(rd: Reg, rs: Reg) | syntax { test $rd$, $rs$ } { test rd, rs, 1 }
+pub macro test(rd: Reg, rs: Reg) | syntax { test $rd$, $rs$ } {
+    assert_valid_reg rs
+    test rd, rs, 1
+}
 
 # reg,imm forms — same treatment, `impl.basm`'s own `i`-suffixed names kept (see
 # this file's own header comment on why).
