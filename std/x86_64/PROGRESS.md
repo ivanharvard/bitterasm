@@ -9,7 +9,7 @@ which design decisions are already settled — not any prior chat conversation.
 - [x] Phase 0 — Scaffold + progress tracker
 - [x] Phase 1 — Encoding primitives
 - [x] Phase 2 — Register-direct instructions: mov, ALU ops, test
-- [ ] Phase 3 — Memory operands: ModRM/SIB addressing engine
+- [x] Phase 3 — Memory operands: ModRM/SIB addressing engine
 - [ ] Phase 4 — Control flow: jmp/jcc/call/ret
 - [ ] Phase 5 — Remaining core subset: shl/shr/sar, lea, push/pop
 - [ ] Phase 6 — Native (Intel-syntax) dialect
@@ -215,7 +215,73 @@ the Intel SDM — same convention as `tests/pdp10_encoding.rs` since no oracle e
 yet at this phase).
 **Verification:** `cargo test --test x86_64_encoding`.
 
-### Phase 3 — Memory operands: ModRM/SIB addressing engine
+### Phase 3 — Memory operands: ModRM/SIB addressing engine ✅
+**Resolved:**
+- **disp8 vs disp32:** chosen automatically from the literal displacement's own
+  magnitude (`fits_disp8`: `-128 <= disp <= 127`), exactly the recommendation this
+  phase's own original plan below already made — pure encoding-size selection, no
+  relaxation, no conflict with the no-relaxation decision.
+- **`MemOperand` shape:** one `enum MemOperand { Base: MemBase, Indexed: MemSib,
+  RipRelative: MemRip }`, each variant wrapping its own named field struct (an enum
+  variant carries exactly one typed payload — `src/ast.rs`'s
+  `EnumVariantDeclaration` — so a multi-field variant needs a struct the same way
+  `std/bitter/deferred.basm`'s `Deferred.Node: BinOp` already does), built only
+  through the three constructor macros `Mem`/`MemIndexed`/`MemRipRelative` the
+  original plan asked for. Every reg/mem-accepting overload only ever needs to know
+  about the one `MemOperand` type; `addr_mode` is the sole place that ever
+  `@match`es on which variant a value actually is.
+- **`MemIndexed` guards:** `@assert`s `scale` is 1/2/4/8 and that `index`'s low 3
+  bits aren't `0b100` (SIB.index=100 always means "no index," so rsp/r12 can never
+  be a real index register) — both confirmed to actually fire (not silently inert,
+  per Phase 1's own `@assert`-evaluation gotcha) by deliberately triggering each
+  against a throwaway `.basm` file and seeing `bitterasm check` reject it.
+- **The two ModRM/SIB special cases, handled in `addr_mode`:** a base register with
+  low3=`0b100` (rsp/r12) always routes through a SIB byte with `index=0b100`
+  ("none"), since ModRM.rm=`100` can never mean a real base register. A base
+  register with low3=`0b101` (rbp/r13) *and* a literal zero displacement is
+  promoted from `mod=00` to `mod=01 disp8=0`, since `mod=00,rm=101` means
+  RIP-relative (or, inside a SIB byte, `mod=00,SIB.base=101` means "no base,
+  disp32") rather than "no displacement" the way every other register's `mod=00`
+  does — a non-zero displacement never hits this ambiguity on its own account
+  (`mod` is already 01/10), so the forcing only applies in the `disp==0` case. Both
+  confirmed byte-exact in `regmem.basm`'s `Mem(rsp, 0)`/`Mem(r12, 0)` (SIB forcing)
+  and `Mem(rbp, 0)`/`Mem(r13, 0)`/`MemIndexed(rbp, ...)` (disp8=0 forcing) cases.
+- **No bare `[disp32]` absolute addressing:** deliberately not built — this file's
+  own "Decided scope" section only commits to `[base]`, `[base+disp]`,
+  `[base+index*scale+disp]`, and RIP-relative; a base-less, index-less absolute form
+  would need a fourth constructor nothing asks for.
+- **The overload, and why `mov`'s memory-immediate form needed a genuinely
+  different opcode:** every reg/mem instruction from Phase 2 (`mov`, the six ALU
+  ops, `test`, and their `i`-suffixed reg,imm siblings) gained a `MemOperand`
+  overload of its first (destination) parameter, real macro overloading this time
+  (unlike Phase 2's `Reg`-vs-`int` case) since `MemOperand` is a genuinely distinct
+  resolved type from `Reg`/`int`. `movi`'s register form folds the destination into
+  opcode `0xB8+reg`, but there's no register to fold in when the destination is
+  memory — its `MemOperand` overload uses the completely different `0xC7 /0`
+  opcode instead, landing on the same reg,imm shape every ALU `i`-form already
+  uses.
+- **Two new general assembly helpers** (`mem_instr`/`mem_instr_byte`) generalize
+  Phase 2's `instr`/`instr_byte` with two more optional sections (SIB, displacement)
+  inserted between ModRM and the immediate, same "compute length, build one
+  `Bytes<N>` via `@for`" idiom. Register-direct instructions are untouched and still
+  go through Phase 2's original `instr` directly.
+**Files:** `std/x86_64/impl.basm` (extended: `MemBase`/`MemSib`/`MemRip`/
+`MemOperand`, `Mem`/`MemIndexed`/`MemRipRelative`, `scale_code`, `fits_disp8`,
+`AddrMode`/`addr_mode`, `mem_instr`/`mem_instr_byte`, `mem_reg_instr`/
+`mem_imm_instr`, and the `MemOperand` overloads of every Phase 2 instruction
+macro); `tests/fixtures/x86_64/regmem.basm` (new, 16 cases: every `addr_mode`
+branch — plain/disp8/disp32, both SIB-forcing registers, both disp8=0-forcing
+registers, all three `MemIndexed` disp sizes plus its own forced-disp8=0 case, and
+RIP-relative — plus 4 cases confirming `mem_reg_instr`/`mem_imm_instr` wiring for
+`add`/`addi`/`movi`/`testi`); `tests/x86_64_encoding.rs` (extended with
+`regmem_encodes_correctly`, same hand-computed-against-one-vector convention as
+Phase 2's test).
+**Verification:** `cargo test --test x86_64_encoding` passes (both
+`regdirect_encodes_correctly` and `regmem_encodes_correctly`; 16/16 emitted values,
+71 bytes, matching hand-computed expected output exactly).
+
+<!-- original phase description below, kept for reference -->
+
 **Deliverable:** a `MemOperand`-family of constructors and the addressing-mode
 selection logic every reg/mem-accepting instruction needs — the hardest, most
 open-ended phase.
@@ -236,7 +302,9 @@ open-ended phase.
 literal displacement's magnitude (mirroring `uleb128_length`'s magnitude-based group
 count) — recommended, since this is pure encoding-size selection with no semantic
 difference (unlike jump relaxation), so it doesn't conflict with the no-relaxation
-decision. Record the actual choice/mechanism here once implemented.
+decision.
+**Resolved as:** see "Resolved" block above — automatic magnitude-based selection,
+exactly as recommended.
 **Files:** `std/x86_64/impl.basm` (extend); extend `tests/fixtures/x86_64/` and
 `tests/x86_64_encoding.rs` with all four addressing forms.
 **Verification:** `cargo test --test x86_64_encoding`.

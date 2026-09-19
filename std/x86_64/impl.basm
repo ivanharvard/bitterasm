@@ -238,3 +238,264 @@ pub macro cmpi(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0x
 # =================
 pub macro test(rd: Reg, rs: Reg, w: int) -> Bytes<...> { @emit reg_reg_instr(0x85, rd, rs, w) }
 pub macro testi(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0xF7, 0, rd, imm, w) }
+
+# =================
+# memory operands (Phase 3)
+# =================
+# Three named constructors, not one giant optional-everything struct — `Mem`
+# (`[base]`/`[base+disp]`), `MemIndexed` (`[base+index*scale+disp]`), and
+# `MemRipRelative` (`[rip+disp]`), matching the three memory forms `PROGRESS.md`'s
+# "Decided scope" actually commits to (no bare `[disp32]` absolute addressing — that
+# would need a fourth, index-less "no base" constructor nothing here asks for). Each
+# wraps its own field struct in one `MemOperand` enum variant so every reg/mem-
+# accepting instruction below only ever needs to overload on the one `MemOperand`
+# type, never on which constructor built it — `addr_mode` below is the only place
+# that ever inspects which variant a given value actually is.
+pub struct MemBase {
+    pub base: Reg,
+    pub disp: int,
+}
+
+pub struct MemSib {
+    pub base: Reg,
+    pub index: Reg,
+    pub scale: int,
+    pub disp: int,
+}
+
+pub struct MemRip {
+    pub disp: int,
+}
+
+pub enum MemOperand {
+    Base: MemBase,
+    Indexed: MemSib,
+    RipRelative: MemRip,
+}
+
+pub macro Mem(base: Reg, disp: int) -> MemOperand {
+    @return MemOperand.Base(MemBase(base = base, disp = disp))
+}
+
+pub macro MemIndexed(base: Reg, index: Reg, scale: int, disp: int) -> MemOperand {
+    @assert scale == 1 || scale == 2 || scale == 4 || scale == 8, "SIB scale must be 1, 2, 4, or 8"
+    @assert reg_field(index) != 0b100, "rsp/r12 cannot be used as a SIB index register (that encoding means \"no index\")"
+    @return MemOperand.Indexed(MemSib(base = base, index = index, scale = scale, disp = disp))
+}
+
+pub macro MemRipRelative(disp: int) -> MemOperand {
+    @return MemOperand.RipRelative(MemRip(disp = disp))
+}
+
+# SIB.scale is the *log2* of the actual multiplier — `MemIndexed` takes the real
+# multiplier (1/2/4/8) since that's what every Intel-syntax `[base+index*N+disp]`
+# writes literally, and `@assert`s it's one of those four up front so this never
+# sees anything else.
+macro scale_code(scale: int) -> int {
+    @if scale == 1 { @return 0b00 }
+    @if scale == 2 { @return 0b01 }
+    @if scale == 4 { @return 0b10 }
+    @return 0b11
+}
+
+# disp8 vs disp32 is chosen automatically from the displacement's own magnitude —
+# pure encoding-size selection with no semantic difference (unlike the branch-
+# relaxation this repo deliberately keeps manual, see PROGRESS.md's "Decided
+# scope"), the same `uleb128_length`-style "let the value's own magnitude pick the
+# encoding" reasoning `std/wasm/leb128.basm` already uses.
+macro fits_disp8(disp: int) -> int {
+    @return disp >= -128 && disp <= 127
+}
+
+# Every field `addr_mode` below needs to hand back to its caller in one shot: the
+# ModRM `mod`/`rm` pair, whether a SIB byte follows (and its value), the
+# displacement's value and byte count (0, 1, or 4), and the REX.X/REX.B extension
+# bits a memory operand's index/base registers may need — a macro can only ever
+# `@return` one value, so these all travel together as one struct instead of one
+# macro per field.
+struct AddrMode {
+    pub mode: int,
+    pub rm: int,
+    pub has_sib: int,
+    pub sib: Byte,
+    pub disp: int,
+    pub disp_len: int,
+    pub rex_x: int,
+    pub rex_b: int,
+}
+
+# The actual addressing-mode selection logic — `mod`/`rm`/SIB selection exactly as
+# `PROGRESS.md`'s Phase 3 plan lays out:
+# - `mod=11` register-direct doesn't appear here at all (Phase 2's `reg_reg_instr`/
+#   `reg_imm_instr` already cover it; `MemOperand` only ever models a true memory
+#   operand).
+# - A base register whose low 3 bits are `0b100` (`rsp`/`r12`) can never be ModRM's
+#   `rm` directly — `rm=100` always means "read a SIB byte instead" — so `Mem` with
+#   such a base is *always* routed through a SIB byte with `index=0b100` ("no
+#   index"), never through the plain non-SIB path below.
+# - A base register whose low 3 bits are `0b101` (`rbp`/`r13`) combined with
+#   `mod=00` doesn't mean "no displacement" the way every other register does — it
+#   means RIP-relative (no base register at all) or, inside a SIB byte, "no base,
+#   disp32 only". The only way to address `[rbp]`/`[r13]` (or a SIB base of
+#   `rbp`/`r13`) with a *literal* zero displacement is therefore to force `mod=01`
+#   with an explicit `disp8=0` — never `mod=00`. A non-zero displacement never hits
+#   this ambiguity in the first place (`mod` is already `01`/`10` on its own
+#   account), so the forcing only ever applies in the `disp==0` case.
+macro addr_mode(mem: MemOperand) -> AddrMode {
+    @match mem {
+        Base(fields) => {
+            const base_low3 = reg_field(fields.base)
+            @if base_low3 == 0b100 {
+                const sib = sib_byte(0b00, 0b100, base_low3)
+                @if fields.disp == 0 {
+                    @return AddrMode(mode = 0b00, rm = 0b100, has_sib = 1, sib = sib, disp = 0, disp_len = 0, rex_x = 0, rex_b = reg_ext(fields.base))
+                }
+                @if fits_disp8(fields.disp) {
+                    @return AddrMode(mode = 0b01, rm = 0b100, has_sib = 1, sib = sib, disp = fields.disp, disp_len = 1, rex_x = 0, rex_b = reg_ext(fields.base))
+                }
+                @return AddrMode(mode = 0b10, rm = 0b100, has_sib = 1, sib = sib, disp = fields.disp, disp_len = 4, rex_x = 0, rex_b = reg_ext(fields.base))
+            }
+            @if base_low3 == 0b101 && fields.disp == 0 {
+                @return AddrMode(mode = 0b01, rm = 0b101, has_sib = 0, sib = Byte(0), disp = 0, disp_len = 1, rex_x = 0, rex_b = reg_ext(fields.base))
+            }
+            @if fields.disp == 0 {
+                @return AddrMode(mode = 0b00, rm = base_low3, has_sib = 0, sib = Byte(0), disp = 0, disp_len = 0, rex_x = 0, rex_b = reg_ext(fields.base))
+            }
+            @if fits_disp8(fields.disp) {
+                @return AddrMode(mode = 0b01, rm = base_low3, has_sib = 0, sib = Byte(0), disp = fields.disp, disp_len = 1, rex_x = 0, rex_b = reg_ext(fields.base))
+            }
+            @return AddrMode(mode = 0b10, rm = base_low3, has_sib = 0, sib = Byte(0), disp = fields.disp, disp_len = 4, rex_x = 0, rex_b = reg_ext(fields.base))
+        },
+        Indexed(fields) => {
+            const base_low3 = reg_field(fields.base)
+            const sib = sib_byte(scale_code(fields.scale), reg_field(fields.index), base_low3)
+            @if base_low3 == 0b101 && fields.disp == 0 {
+                @return AddrMode(mode = 0b01, rm = 0b100, has_sib = 1, sib = sib, disp = 0, disp_len = 1, rex_x = reg_ext(fields.index), rex_b = reg_ext(fields.base))
+            }
+            @if fields.disp == 0 {
+                @return AddrMode(mode = 0b00, rm = 0b100, has_sib = 1, sib = sib, disp = 0, disp_len = 0, rex_x = reg_ext(fields.index), rex_b = reg_ext(fields.base))
+            }
+            @if fits_disp8(fields.disp) {
+                @return AddrMode(mode = 0b01, rm = 0b100, has_sib = 1, sib = sib, disp = fields.disp, disp_len = 1, rex_x = reg_ext(fields.index), rex_b = reg_ext(fields.base))
+            }
+            @return AddrMode(mode = 0b10, rm = 0b100, has_sib = 1, sib = sib, disp = fields.disp, disp_len = 4, rex_x = reg_ext(fields.index), rex_b = reg_ext(fields.base))
+        },
+        RipRelative(fields) => {
+            @return AddrMode(mode = 0b00, rm = 0b101, has_sib = 0, sib = Byte(0), disp = fields.disp, disp_len = 4, rex_x = 0, rex_b = 0)
+        }
+    }
+}
+
+# Generalizes Phase 2's `instr`/`instr_byte` with two more optional sections
+# (SIB, displacement) inserted between ModRM and the immediate — the full
+# `[rex?][opcode][modrm][sib?][disp?][imm?]` shape a memory operand needs. Register-
+# direct instructions never call this (they still go through Phase 2's `instr`
+# directly); it's only reached via `mem_reg_instr`/`mem_imm_instr` below.
+macro mem_instr_byte(
+    need_rex: int,
+    rex: Byte,
+    opcode: Byte,
+    modrm: Byte,
+    has_sib: int,
+    sib: Byte,
+    disp: int,
+    disp_len: int,
+    imm: int,
+    index: int
+) -> Byte {
+    @if index < need_rex {
+        @return rex
+    }
+    const after_rex = index - need_rex
+    @if after_rex == 0 {
+        @return opcode
+    }
+    const after_opcode = after_rex - 1
+    @if after_opcode == 0 {
+        @return modrm
+    }
+    const after_modrm = after_opcode - 1
+    @if has_sib != 0 && after_modrm == 0 {
+        @return sib
+    }
+    const after_sib = after_modrm - has_sib
+    @if after_sib < disp_len {
+        @return byte_of(disp, after_sib)
+    }
+    @return byte_of(imm, after_sib - disp_len)
+}
+
+macro mem_instr(
+    need_rex: int,
+    rex: Byte,
+    opcode: Byte,
+    modrm: Byte,
+    has_sib: int,
+    sib: Byte,
+    disp: int,
+    disp_len: int,
+    imm: int,
+    imm_len: int
+) -> Bytes<...> {
+    const n = need_rex + 1 + 1 + has_sib + disp_len + imm_len
+    @return Bytes<n> {
+        @for i in 0..n {
+            __el`i`: mem_instr_byte(need_rex, rex, opcode, modrm, has_sib, sib, disp, disp_len, imm, i),
+        }
+    }
+}
+
+# Shared by every reg,mem instruction below (the memory-destination overloads of
+# `mov` and the six ALU ops, plus `test`): ModRM.reg = `rs`, ModRM.rm (+ SIB +
+# disp) = `dst`, mirroring `reg_reg_instr`'s same "r/m, r" direction convention —
+# `dst` is the r/m operand here exactly as `rd` was there.
+macro mem_reg_instr(opcode: int, dst: MemOperand, rs: Reg, w: int) -> Bytes<...> {
+    const addr = addr_mode(dst)
+    const need_rex = w == 1 || reg_ext(rs) == 1 || addr.rex_x == 1 || addr.rex_b == 1
+    const rex = rex_byte(w, reg_ext(rs), addr.rex_x, addr.rex_b)
+    const modrm = modrm_byte(addr.mode, reg_field(rs), addr.rm)
+    @return mem_instr(need_rex, rex, Byte(opcode), modrm, addr.has_sib, addr.sib, addr.disp, addr.disp_len, 0, 0)
+}
+
+# Shared by every reg,imm instruction's memory-destination overload below (the six
+# ALU ops via `0x81`, `test` via `0xF7`, and `mov` via `0xC7` — `movi`'s memory form
+# can't reuse `0xB8+reg` the way its register form does, since there's no register
+# to fold into the opcode's low bits when the destination is memory; `0xC7 /0` is a
+# completely different opcode that happens to share this file's reg,imm shape
+# instead). ModRM.reg carries the per-mnemonic `digit`, same as `reg_imm_instr`.
+macro mem_imm_instr(opcode: int, digit: int, dst: MemOperand, imm: int, w: int) -> Bytes<...> {
+    const addr = addr_mode(dst)
+    const need_rex = w == 1 || addr.rex_x == 1 || addr.rex_b == 1
+    const rex = rex_byte(w, 0, addr.rex_x, addr.rex_b)
+    const modrm = modrm_byte(addr.mode, digit, addr.rm)
+    @return mem_instr(need_rex, rex, Byte(opcode), modrm, addr.has_sib, addr.sib, addr.disp, addr.disp_len, imm, 4)
+}
+
+# =================
+# mov/ALU ops/test: memory-operand overloads
+# =================
+# Real macro overloading (dispatch on resolved argument type — see
+# `src/resolver/macro_body.rs`'s `resolve_macro_overload`), unlike Phase 2's reg,imm
+# forms: `MemOperand` is a genuinely distinct type from `Reg`/`int`, so the resolver
+# can tell a `mov(rd: Reg, rs: Reg, w)` call apart from a `mov(dst: MemOperand, rs:
+# Reg, w)` one with no ambiguity, unlike the `Reg` vs. `int` case Phase 2's own notes
+# explain. Every ALU/`test`/`mov` overload here keeps the destination-first
+# argument order Phase 2 already established.
+pub macro mov(dst: MemOperand, rs: Reg, w: int) -> Bytes<...> { @emit mem_reg_instr(0x89, dst, rs, w) }
+pub macro add(dst: MemOperand, rs: Reg, w: int) -> Bytes<...> { @emit mem_reg_instr(0x01, dst, rs, w) }
+pub macro or(dst: MemOperand, rs: Reg, w: int) -> Bytes<...> { @emit mem_reg_instr(0x09, dst, rs, w) }
+pub macro and(dst: MemOperand, rs: Reg, w: int) -> Bytes<...> { @emit mem_reg_instr(0x21, dst, rs, w) }
+pub macro sub(dst: MemOperand, rs: Reg, w: int) -> Bytes<...> { @emit mem_reg_instr(0x29, dst, rs, w) }
+pub macro xor(dst: MemOperand, rs: Reg, w: int) -> Bytes<...> { @emit mem_reg_instr(0x31, dst, rs, w) }
+pub macro cmp(dst: MemOperand, rs: Reg, w: int) -> Bytes<...> { @emit mem_reg_instr(0x39, dst, rs, w) }
+pub macro test(dst: MemOperand, rs: Reg, w: int) -> Bytes<...> { @emit mem_reg_instr(0x85, dst, rs, w) }
+
+# `0xC7 /0`, not `0xB8+reg` — see `mem_imm_instr`'s own comment above.
+pub macro movi(dst: MemOperand, imm: int, w: int) -> Bytes<...> { @emit mem_imm_instr(0xC7, 0, dst, imm, w) }
+pub macro addi(dst: MemOperand, imm: int, w: int) -> Bytes<...> { @emit mem_imm_instr(0x81, 0, dst, imm, w) }
+pub macro ori(dst: MemOperand, imm: int, w: int) -> Bytes<...> { @emit mem_imm_instr(0x81, 1, dst, imm, w) }
+pub macro andi(dst: MemOperand, imm: int, w: int) -> Bytes<...> { @emit mem_imm_instr(0x81, 4, dst, imm, w) }
+pub macro subi(dst: MemOperand, imm: int, w: int) -> Bytes<...> { @emit mem_imm_instr(0x81, 5, dst, imm, w) }
+pub macro xori(dst: MemOperand, imm: int, w: int) -> Bytes<...> { @emit mem_imm_instr(0x81, 6, dst, imm, w) }
+pub macro cmpi(dst: MemOperand, imm: int, w: int) -> Bytes<...> { @emit mem_imm_instr(0x81, 7, dst, imm, w) }
+pub macro testi(dst: MemOperand, imm: int, w: int) -> Bytes<...> { @emit mem_imm_instr(0xF7, 0, dst, imm, w) }

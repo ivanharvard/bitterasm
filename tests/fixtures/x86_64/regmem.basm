@@ -1,0 +1,34 @@
+# Phase 3 memory operands: every ModRM/SIB addressing-mode branch `addr_mode`
+# (std/x86_64/impl.basm) can take, plus a handful of cases confirming
+# mem_reg_instr/mem_imm_instr wiring for mnemonics beyond mov. See
+# std/x86_64/PROGRESS.md.
+
+from std.x86_64.impl import *
+
+# --- Mem: no SIB, no forced promotion ---
+mov Mem(rax, 0), rbx, 0     # mod=00, no disp
+mov Mem(rax, 8), rbx, 0     # mod=01, disp8
+mov Mem(rax, 1000), rbx, 0  # mod=10, disp32
+
+# --- Mem: base forces a SIB byte (rsp/r12 low3=100) ---
+mov Mem(rsp, 0), rbx, 0  # SIB, no REX
+mov Mem(r12, 0), rbx, 0  # SIB, REX.B (extended base)
+
+# --- Mem: base forces disp8=0 (rbp/r13 low3=101, mod=00 means RIP-relative) ---
+mov Mem(rbp, 0), rbx, 0  # forced mod=01 disp8=0, no REX
+mov Mem(r13, 0), rbx, 0  # forced mod=01 disp8=0, REX.B (extended base)
+
+# --- MemIndexed: base+index*scale+disp ---
+mov MemIndexed(rax, rcx, 4, 0), rbx, 0        # mod=00, no disp
+mov MemIndexed(rbp, rcx, 4, 0), rbx, 0        # base=rbp forces disp8=0 even indexed
+mov MemIndexed(rax, rcx, 4, 100), rbx, 0      # mod=01, disp8
+mov MemIndexed(rax, rcx, 4, 100000), rbx, 0   # mod=10, disp32
+
+# --- MemRipRelative ---
+mov MemRipRelative(0x100), rbx, 0
+
+# --- other mnemonics wired through mem_reg_instr/mem_imm_instr ---
+add Mem(rax, 0), rcx, 1     # ALU reg,mem, w=1 (REX.W)
+addi Mem(rax, 0), 0x7F, 0   # ALU imm,mem (0x81 /0)
+movi Mem(rbx, 4), 0x2A, 0   # mov mem,imm (0xC7 /0, distinct from 0xB8+reg)
+testi Mem(rax, 0), 0xFF, 0  # test mem,imm (0xF7 /0)
