@@ -322,8 +322,65 @@ resolution actually works in `bitter/src/pack.rs` before implementing — if `he
 only ever yields the current instruction's start address, the macro itself must add
 its own (compile-time-known, since jmp/call/jcc are fixed-length) byte length to
 correct for this. Do not guess. Record what you find and the resolution here.
-**Files:** `std/x86_64/impl.basm` (extend); extend `tests/x86_64_encoding.rs` with a
-forward and a backward branch.
+
+**Investigated (prerequisite shared-infra change already made, instructions
+themselves not yet written):**
+- `here()`/`Deferred.Here` resolves to `here_index` — which top-level *entry* is
+  currently being packed (0, 1, 2, ...) — never a byte address. RISC-V's
+  `beq`/`bne`/... compute `mul(sub(target, here()), 4)`: entry-index delta × 4 =
+  byte delta, correct *only* because every RV32I instruction is exactly 4 bytes
+  (`std/riscv/impl.basm`'s own comment above `beq` says so explicitly). x86
+  instructions are variable-length, so this exact trick doesn't generalize — no
+  fixed multiplier converts an entry-index delta into the right byte delta.
+- `bitter` *does* separately track every entry's real packed byte width
+  (`byte_widths`, computed once up front in `pack_stream`) and had exactly one
+  primitive built on it: `span(start: int, end: int)` (`std/bitter/deferred.basm`),
+  used by `std/wasm/module.basm` for section-length prefixes. Two things blocked
+  reusing it as-is for `rel32`: its public signature only accepted plain `int`
+  endpoints (not `Deferred`, so `here()` couldn't be passed directly), and its
+  resolution (`resolve_span` in `bitter/src/pack.rs`) hard-errored whenever
+  `from > to` — deliberately, since its only caller always wants a non-negative
+  length and treats a backward range as a bug. A relative branch needs both
+  directions to work.
+- **Resolved as:** generalized `span` itself rather than adding a parallel
+  primitive. `resolve_span` (`bitter/src/pack.rs`) is now signed and bidirectional
+  — `+Σbyte_widths[from..to]` if `from≤to`, else `-Σbyte_widths[to..from]` — with
+  no error case for the reversed direction. `span` gained two overloads in
+  `std/bitter/deferred.basm`: `(Deferred, int)` and `(int, Deferred)`, alongside
+  the original `(int, int)` (not `(Deferred, Deferred)` — nothing needs it, and
+  it's actually unsound to expose generally: two independently-captured `here()`
+  values combined and read back from a *third* entry would both silently resolve
+  to that third entry's own position instead of erroring, the same
+  no-identity-of-its-own trap `deferred.basm`'s doc comment already warned about
+  for the original signature — `span(here(), target)` stays sound only because the
+  `here()` call and the `Positioned<N>` field it lands in are always the same
+  entry). `jmp`/`jcc`/`call` will compute their `rel32` as `sub(span(here(),
+  target), own_fixed_length)` — `own_fixed_length` is the compile-time-known
+  correction for "relative to the *next* instruction" (5 for `jmp`/`call`, 6 for
+  `jcc`) the open question above asked for, applied on top of a byte-accurate (not
+  entry-index-accurate) span instead of on top of RISC-V's fixed multiplier.
+  Verified via new Rust unit tests in `bitter/src/pack.rs` (a backward `span`
+  returning a negative distance instead of erroring; a `here()` endpoint resolved
+  bidirectionally against non-uniform per-entry byte widths — the exact shape a
+  variable-length ISA's backward branch needs) and an extended
+  `tests/fixtures/bitter/deferred_dispatch.basm` (`bitterasm check`-only,
+  proving the new overloads dispatch to the right `Deferred` tree shape). Every
+  existing `span`/`Deferred` consumer re-verified unaffected: `cargo test --lib`,
+  `--test wasm_encoding`, `--test wasm_module` (including its independent-WASM-
+  engine run), `--test riscv_dialects` (which exercises a real backward RV32I
+  branch through the unrelated fixed-multiplier path) all still pass.
+- The actual `jmp`/`jcc`/`call`/`ret` instructions are **not yet implemented** —
+  this was purely the infrastructure prerequisite the open question above asked to
+  resolve before writing any of them.
+
+**Files (prerequisite, already done):** `bitter/src/pack.rs` (`resolve_span`
+generalized, two new tests, one existing test rewritten from
+`span_rejects_a_from_greater_than_to` to
+`span_returns_a_negative_distance_when_from_is_after_to`); `std/bitter/deferred.basm`
+(`span`'s two new overloads, doc comment rewritten); `tests/fixtures/bitter/
+deferred_dispatch.basm` (extended with `span` dispatch assertions).
+**Files (instructions themselves, still to do):** `std/x86_64/impl.basm` (extend);
+extend `tests/x86_64_encoding.rs` with a forward and a backward branch.
 **Verification:** `cargo test --test x86_64_encoding`.
 
 ### Phase 5 — Remaining core subset: shl/shr/sar, lea, push/pop

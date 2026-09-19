@@ -3,10 +3,11 @@ from std.bitter.deferred import *
 # Proves the overload-dispatch mechanism genuinely produces a `Deferred`
 # residual for a non-Int operand — something no real RV32I branch/jump
 # macro can ever exercise on its own, since `here()` is *always* `Deferred`
-# there (see std/bitter/deferred.basm's own header). `x` stands in for "some
-# value the compiler doesn't concretely know" — in real use that's always
-# `here()`; here it's constructed directly so every overload, not just the
-# one `here()` happens to need, gets exercised.
+# there (see std/bitter/deferred.basm's own header). Covers `sub`/`mul`/
+# `shr`/`band` and `span`. `x` stands in for "some value the compiler
+# doesn't concretely know" — in real use that's always `here()`; here it's
+# constructed directly so every overload, not just the one `here()` happens
+# to need, gets exercised.
 
 macro verify() {
     # both operands concrete: folds all the way to a plain Int, exactly
@@ -34,6 +35,18 @@ macro verify() {
 
     # here() itself: always opaque, never a concrete Int — the whole point.
     @assert sub(5, here()) == Deferred.Node(BinOp(op = Op.Sub, left = Deferred.Leaf(5), right = Deferred.Here))
+
+    # span: unlike sub/mul/shr/band, there's no (int, int) -> int fold —
+    # "how much lies between these two entries" is never knowable until
+    # `bitter` sees every entry's own packed width, so even two already-
+    # concrete label positions still build a Deferred.Node. (Deferred, int)
+    # and (int, Deferred) are what let `span(here(), target)` work at all —
+    # exactly x86's `jmp`/`jcc`/`call rel32` use case (see
+    # std/bitter/deferred.basm's own doc comment on `span`).
+    @assert span(0, 2) == Deferred.Node(BinOp(op = Op.Span, left = Deferred.Leaf(0), right = Deferred.Leaf(2)))
+    @assert span(x, 2) == Deferred.Node(BinOp(op = Op.Span, left = x, right = Deferred.Leaf(2)))
+    @assert span(0, x) == Deferred.Node(BinOp(op = Op.Span, left = Deferred.Leaf(0), right = x))
+    @assert span(here(), 5) == Deferred.Node(BinOp(op = Op.Span, left = Deferred.Here, right = Deferred.Leaf(5)))
 
     # nesting: once any operand in a chain is Deferred, every later call in
     # the same expression keeps building the tree rather than collapsing

@@ -90,25 +90,46 @@ pub macro band(a: Deferred, b: int) -> Deferred {
 # It's this file's vocabulary for that relationship, the same way `here()`
 # is its vocabulary for "which position am I" — neither says anything
 # about bytes or addresses itself, only the evaluator that resolves them
-# does.
+# does. Signed and bidirectional: `end` may come before `start` in the
+# emitted-value stream (a negative result), not just after or at it —
+# unlike a plain byte count, this can express a relative branch's target
+# lying in either direction, over instructions whose packed width isn't
+# known until `bitter` resolves it (see `std/x86_64/impl.basm`'s
+# `jmp`/`jcc`/`call`, which lean on exactly this for `rel32`).
 #
-# Both endpoints are plain `int`s, not `Deferred`, and in particular not
-# `here()`: a bare `Deferred.Here` carries no identity of its own — it
-# always resolves to "whichever entry ends up containing me," regardless
-# of where in the source the `here()` call that produced it was written.
-# Two separate `here()` calls later combined into one *other* entry (e.g.
-# a length-prefix emitted before the span it measures) would therefore
-# both resolve to that other entry's own position, not to the positions
-# where each was captured — useless for marking two distinct points.
-# Labels don't have this problem: `name:` already resolves to a fixed,
-# nameable position via bitterasm's own two-pass resolver, independent of
-# where its value later gets used, exactly what two distinct endpoints
-# here need. So `span`'s callers are expected to pass two label names
-# (already plain `int`s by the time a macro body sees them, exactly like
-# `std/riscv`'s branch instructions take a label as their `target: int`),
-# not `here()`.
+# Either endpoint may be `here()`: `(int, int)`, `(Deferred, int)`, and
+# `(int, Deferred)` are all provided below. Not `(Deferred, Deferred)` —
+# nothing needs it yet, a trivial symmetric addition later if something
+# does, the same reduced-overload-set precedent `shr`/`band` below already
+# set.
+#
+# `here()` is only a *sound* endpoint here when it's read back from *this
+# same* entry's own fields — a bare `Deferred.Here` carries no identity of
+# its own, it always resolves to "whichever entry ends up containing the
+# value being resolved," not "the entry where `here()` was textually
+# called." `span(here(), target)` inside one instruction's own
+# `Positioned<N>` field is sound because that field and the `here()` call
+# are always the same entry. Capturing a `here()` in one entry's fields and
+# reading it back from a *different* entry (e.g. a length-prefix emitted
+# before the body whose `here()` it tried to capture) would silently
+# resolve to the wrong entry's position instead of erroring — always pass
+# `here()` straight into the same instruction's own `span` call, never
+# store it and reuse it from elsewhere. Labels don't have this problem:
+# `name:` already resolves to a fixed, nameable position via bitterasm's
+# own two-pass resolver, independent of where its value later gets used —
+# exactly what `span`'s non-`here()` endpoints ordinarily are (a label
+# name, already a plain `int` by the time a macro body sees it, exactly
+# like `std/riscv`'s branch instructions take one as their `target: int`).
 pub macro span(start: int, end: int) -> Deferred {
     @return Deferred.Node(BinOp(op = Op.Span, left = Deferred.Leaf(start), right = Deferred.Leaf(end)))
+}
+
+pub macro span(start: Deferred, end: int) -> Deferred {
+    @return Deferred.Node(BinOp(op = Op.Span, left = start, right = Deferred.Leaf(end)))
+}
+
+pub macro span(start: int, end: Deferred) -> Deferred {
+    @return Deferred.Node(BinOp(op = Op.Span, left = Deferred.Leaf(start), right = end))
 }
 
 # Pairs a `Deferred` value with the bit width it's meant to occupy once

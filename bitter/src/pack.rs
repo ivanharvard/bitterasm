@@ -300,23 +300,30 @@ fn resolve_deferred(deferred: &EmittedValue, here_index: usize, byte_widths: &[u
     }
 }
 
-// `std.bitter.deferred`'s `span(from, to)`: the total packed byte width of
-// every top-level emitted entry in the half-open range `[from, to)`. `from`
-// and `to` are ordinarily each a label's resolved position (see
-// `std/bitter/deferred.basm`'s doc comment on `span` for why `here()`
-// itself can't serve as an endpoint here), which bitterasm's own resolver
-// has already reduced to a plain `int` well before `bitter` ever sees the
-// `.em` file — so unlike `Here`, neither endpoint depends on which entry
-// this `Span` node happens to be embedded in.
+// `std.bitter.deferred`'s `span(from, to)`: the signed byte distance from
+// entry `from` to entry `to` — positive if `to` comes later in the
+// emitted-value stream, negative if earlier, zero if equal — computed from
+// each entry's own structurally-known packed byte width (`byte_widths`,
+// computed once by `pack_stream` before any entry is resolved), not a
+// fixed per-entry size. `from`/`to` are ordinarily each a label's resolved
+// position, but either may instead have come from a `Deferred.Here`
+// marker (`resolve_deferred` already recurses into `field("left")`/
+// `field("right")` before this function ever runs, so a `Here` node
+// resolves to `here_index` — this entry's own position — same as it would
+// anywhere else). That's what lets `span(here(), target)` compute a
+// relative branch's actual byte offset over variable-length instructions,
+// bidirectionally, the same job RISC-V's own `mul(sub(target, here()), 4)`
+// does for its fixed-width ones (see `std/bitter/deferred.basm`'s own doc
+// comment on `span` for when `here()` is and isn't a sound endpoint here).
 fn resolve_span(from: &BigInt, to: &BigInt, byte_widths: &[usize]) -> Result<BigInt, String> {
     let from = span_index(from, byte_widths.len())?;
     let to = span_index(to, byte_widths.len())?;
 
-    if from > to {
-        return Err(format!("`span`'s `from` ({from}) must not be greater than its `to` ({to})"));
+    if from <= to {
+        Ok(BigInt::from(byte_widths[from..to].iter().sum::<usize>()))
+    } else {
+        Ok(-BigInt::from(byte_widths[to..from].iter().sum::<usize>()))
     }
-
-    Ok(BigInt::from(byte_widths[from..to].iter().sum::<usize>()))
 }
 
 fn span_index(value: &BigInt, entry_count: usize) -> Result<usize, String> {
@@ -639,9 +646,9 @@ mod tests {
         // reports the packed size of the first two (indices [0, 2)) — a
         // stand-in for a length-prefix entry measuring a body emitted
         // after it, entirely independent of which entry embeds the `Span`
-        // itself (unlike `Here`, which always means "whichever entry
-        // contains me" — see `resolve_span`'s doc comment for why `span`'s
-        // endpoints have to come from something other than `here()`).
+        // itself (unlike a bare `Here`, which always means "whichever
+        // entry contains me" — see `span_resolves_a_here_endpoint_...`
+        // below for when a `Span` endpoint deliberately *is* `here()`).
         let values = [
             bits("8", "170"),
             bits("16", "4660"),
@@ -659,10 +666,16 @@ mod tests {
     }
 
     #[test]
-    fn span_rejects_a_from_greater_than_to() {
-        let values = [bits("8", "170"), positioned("8", deferred_span("1", "0"))];
-        let error = pack_stream(&values).unwrap_err();
-        assert!(error.contains("must not be greater than"), "{error}");
+    fn span_returns_a_negative_distance_when_from_is_after_to() {
+        // Entry 0 is 1 byte, entry 1 is 2 bytes; `span(1, 0)` (from the
+        // *second* entry back to the first) is the negation of `span(0,
+        // 1)` — `-1`, masked to 8 bits as two's complement (0xFF).
+        // Signed and bidirectional, not an error, is what lets
+        // `span(here(), target)` express a backward branch — see
+        // `std/bitter/deferred.basm`'s own doc comment on `span`.
+        let values = [bits("8", "170"), bits("16", "4660"), positioned("8", deferred_span("1", "0"))];
+        let bytes = pack_stream(&values).unwrap();
+        assert_eq!(bytes, vec![0xAA, 0x12, 0x34, 0xFF]);
     }
 
     #[test]
@@ -670,6 +683,25 @@ mod tests {
         let values = [bits("8", "170"), positioned("8", deferred_span("0", "5"))];
         let error = pack_stream(&values).unwrap_err();
         assert!(error.contains("past the end"), "{error}");
+    }
+
+    #[test]
+    fn span_resolves_a_here_endpoint_against_the_embedding_entry_bidirectionally() {
+        // Three entries of non-uniform width (1, 3, 1 bytes). Entry 2's
+        // own field spans `here()` (= 2, its own index) back to entry 0 —
+        // the exact shape a backward relative branch needs: `here()` as
+        // one endpoint, real (non-uniform) per-entry byte widths, and a
+        // negative result, none of which a fixed-multiplier `mul(sub(...),
+        // N)` (as RISC-V's fixed-width branches use) could produce
+        // correctly. Expected: -(entry 0's 1 byte + entry 1's 3 bytes) =
+        // -4, masked to 8 bits (0xFC).
+        let values = [
+            bits("8", "1"),
+            bits("24", "2"),
+            positioned("8", deferred_node("Span", deferred_here(), deferred_leaf("0"))),
+        ];
+        let bytes = pack_stream(&values).unwrap();
+        assert_eq!(bytes, vec![0x01, 0x00, 0x00, 0x02, 0xFC]);
     }
 
     #[test]
