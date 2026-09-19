@@ -8,7 +8,7 @@ which design decisions are already settled — not any prior chat conversation.
 
 - [x] Phase 0 — Scaffold + progress tracker
 - [x] Phase 1 — Encoding primitives
-- [ ] Phase 2 — Register-direct instructions: mov, ALU ops, test
+- [x] Phase 2 — Register-direct instructions: mov, ALU ops, test
 - [ ] Phase 3 — Memory operands: ModRM/SIB addressing engine
 - [ ] Phase 4 — Control flow: jmp/jcc/call/ret
 - [ ] Phase 5 — Remaining core subset: shl/shr/sar, lea, push/pop
@@ -124,7 +124,71 @@ checking known byte values, e.g. `rex_byte(1,0,0,1) == Byte(0b01001001)`,
 `modrm_byte(0b11, 0b000, 0b001) == Byte(0xC1)`; run via `bitterasm check`. Delete the
 scratch file once Phase 2 has real instructions exercising the same code paths.
 
-### Phase 2 — Register-direct instructions: mov, ALU ops, test
+### Phase 2 — Register-direct instructions: mov, ALU ops, test ✅
+**Resolved:**
+- **Direction convention:** every reg,reg opcode is the "r/m, r" form (`0x89`-style
+  — ModRM.rm is the destination, ModRM.reg is the source). With `mod=11`
+  register-direct addressing this is purely a byte-encoding choice, not a semantic
+  one (`0x8B`, "r, r/m", would decode identically) — `0x89` was picked so `mov`'s own
+  opcode byte matches its mnemonic's conventional Intel-manual table entry. Every
+  macro keeps `(rd, rs, ...)` argument order, destination first, so Phase 6's
+  Intel-syntax dialect can read `mov rd, rs` directly off the positional order.
+- **Operand size:** an explicit trailing `w: int` parameter (0 = 32-bit, 1 = 64-bit,
+  forcing REX.W) on every instruction macro, exactly as this phase's own original
+  plan below already specified ("an `@if` branch on `w`") — not two macro families,
+  not overloading (see next point for why overloading doesn't apply here anyway). A
+  REX byte is only actually emitted when `w`, or an extended (r8-r15) register,
+  actually needs one — confirmed byte-exact both ways in `regdirect.basm`'s `mov r8,
+  r9, 0` (REX for extended regs, `w=0`) vs `mov rax, rbx, 1` (REX for `w=1` only)
+  cases.
+- **reg,imm forms use separate names, not macro overloading:** `movi`/`addi`/`ori`/
+  `andi`/`subi`/`xori`/`cmpi`/`testi`, following `std/riscv/impl.basm`'s own
+  established `i`-suffix convention (`addi`/`andi`/...), rather than overloading
+  `mov`/`add`/... by parameter type. Macro overloading is a real, already-implemented
+  language feature (dispatches on resolved argument type or arity — see
+  `src/resolver/macro_body.rs`'s `resolve_macro_overload` and its
+  `macro_overloads_dispatch_by_resolved_argument_type` test) but it can't distinguish
+  these two forms here: `Reg` is a plain `int` alias (see Phase 1's own resolution
+  above), so `mov(rd: Reg, rs: Reg, w: int)` and `mov(rd: Reg, imm: int, w: int)`
+  both resolve to identical `(int, int, int)` parameter types and would be rejected
+  as ambiguous (confirmed against that same test file's
+  `identical_macro_overloads_are_ambiguous_at_the_call_site`). Overloading only
+  becomes usable once two forms resolve to genuinely distinct types — exactly what
+  Phase 3's `MemOperand` will be for reg,mem vs. reg,reg (real macro overloading is
+  still on the table for that phase, per its own deliverable below).
+- **Shared internal helpers:** `reg_reg_instr(opcode, rd, rs, w)` (mov, the six ALU
+  ops, and `test` all share this — one more instruction than the phase's original
+  plan asked to factor, since `mov`/`test` turned out to have the exact same
+  rex?+opcode+modrm shape as the ALU ops) and `reg_imm_instr(opcode, digit, rd, imm,
+  w)` (the six ALU reg,imm forms and `testi`, which only differ in opcode byte:
+  `0x81` vs `0xF7`). Both bottom out in one general `instr(need_rex, rex, opcode,
+  has_modrm, modrm, imm, imm_len)` that builds a single `Bytes<N>` via the
+  `uleb128_padded`-style "compute length, then `@for i in 0..n`" idiom this file's
+  own header already pointed at, with a per-index `instr_byte` helper picking
+  REX-vs-opcode-vs-ModRM-vs-immediate the same guard-chain way
+  `std/string.basm`'s UTF-8 decoding classifies a byte.
+- **`@emit` vs `@return`:** every public instruction macro's body is `@emit
+  reg_reg_instr(...)` (or `reg_imm_instr`/`instr`), not `@return` — `@return` alone
+  produces nothing when the macro is invoked as a bare top-level statement (confirmed
+  empirically: an early draft using `@return` throughout compiled clean but emitted 0
+  bytes). `-> Bytes<...>` return-type annotations stay on these macros anyway, purely
+  as documentation — `std/wasm/impl.basm`'s `unreachable`/`br`/etc. already do the
+  same (declare a return type, `@emit` in the body). The internal helpers above
+  (`reg_reg_instr`, `reg_imm_instr`, `instr`, `instr_byte`) are ordinary `@return`-based
+  value-computing functions, called only from other macros' expression position, never
+  invoked as bare statements.
+**Files:** `std/x86_64/impl.basm` (extended); `tests/fixtures/x86_64/regdirect.basm`
+(new, 21 cases covering every mnemonic, the REX/no-REX split, and both operand
+sizes); `tests/x86_64_encoding.rs` (new, byte-exact against one hand-computed
+expected vector for the whole fixture — no independent oracle exists yet at this
+phase, matching `tests/pdp10_encoding.rs`'s own standard). Phase 1's
+`tests/fixtures/x86_64/scratch_primitives.basm` scratch fixture is deleted, per its
+own note, now that `regdirect.basm` exercises the same primitives for real.
+**Verification:** `cargo test --test x86_64_encoding` passes (21/21 emitted values,
+89 bytes, matching hand-computed expected output exactly).
+
+<!-- original phase description below, kept for reference -->
+
 **Deliverable:** first real, byte-verified instructions, register-direct addressing
 only (ModRM `mod=11`), both operand sizes, extended registers r8-r15.
 - `mov` (reg,reg via `0x89`; reg,imm32 via `0xB8+reg` with an imm32 or imm64 depending
@@ -143,6 +207,8 @@ convention per instruction (e.g. `0x89` vs `0x8B` for `mov` reg,reg both encode 
 same op with reg/rm swapped) — impl.basm's positional argument order should match
 whichever direction is chosen, the same way RISC-V's impl.basm picks one canonical
 order that dialects later re-syntax, not re-derive. Record the choice here once made.
+**Resolved as:** see "Resolved" block above — `0x89`-style "r/m, r" direction,
+`(rd, rs, ...)` destination-first argument order.
 **Files:** `std/x86_64/impl.basm` (extend); `tests/fixtures/x86_64/regdirect.basm`
 (new); `tests/x86_64_encoding.rs` (new, byte-exact, hand-computed expected bytes from
 the Intel SDM — same convention as `tests/pdp10_encoding.rs` since no oracle exists

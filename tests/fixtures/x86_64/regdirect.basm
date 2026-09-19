@@ -1,0 +1,37 @@
+# Phase 2 register-direct instructions (ModRM mod=11): mov, the six ALU
+# ops, and test. `tests/x86_64_encoding.rs` compiles this file, packs it
+# with `bitter`, and checks the resulting bytes against hand-computed
+# expected values from the Intel SDM — see std/x86_64/PROGRESS.md.
+
+from std.x86_64.impl import *
+
+# --- mov reg,reg ---
+mov rax, rbx, 0   # no REX needed
+mov r8, r9, 0     # REX needed for both extended registers
+mov rax, rbx, 1   # REX.W needed for 64-bit operand size
+
+# --- mov reg,imm ---
+movi rax, 0x12345678, 0  # imm32, no REX
+movi r15, 0x1, 1         # imm64 (REX.W changes immediate width, not just size)
+
+# --- ALU reg,reg ---
+add rcx, rdx, 0
+or rax, rbx, 0
+and rbx, rcx, 0
+sub rdx, rax, 0
+xor rsi, rdi, 0
+cmp rbp, rsp, 0
+add r12, r13, 1   # REX.W + both extended registers
+
+# --- ALU reg,imm ---
+addi rax, 0x11223344, 0
+ori rbx, 0x11223344, 0
+andi rcx, 0x11223344, 0
+subi rdx, 0x11223344, 0
+xori rsi, 0x11223344, 0
+cmpi rdi, 0x11223344, 0
+subi r10, 0x5, 1  # REX.W + extended register
+
+# --- test ---
+test rax, rcx, 0
+testi rax, 0xFF, 0

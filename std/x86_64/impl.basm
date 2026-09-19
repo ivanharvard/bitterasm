@@ -92,3 +92,149 @@ pub macro sib_byte(scale: int, index: int, base: int) -> Byte {
 pub macro byte_of(value: int, index: int) -> Byte {
     @return Byte((value >> (8 * index)) & 0xFF)
 }
+
+# =================
+# instruction assembly (Phase 2: register-direct only, mod=11)
+# =================
+# Every register-direct instruction in this phase has the same shape: an
+# optional REX byte, exactly one opcode byte, an optional ModRM byte, and a
+# trailing little-endian immediate of 0, 4, or 8 bytes. `instr_byte` below
+# picks byte `index` out of that shape as a guard-chain of early `@return`s
+# (the same style `std/string.basm`'s UTF-8 decoding already uses for a
+# multi-way byte classification); `instr` sizes and builds the whole
+# `Bytes<N>` from it via `@for`, the "compute the needed byte count, then
+# build one fully concrete `Bytes<N>`" idiom this file's own header already
+# points at (`std/wasm/leb128.basm`'s `uleb128_padded`).
+macro instr_byte(
+    need_rex: int,
+    rex: Byte,
+    opcode: Byte,
+    has_modrm: int,
+    modrm: Byte,
+    imm: int,
+    index: int
+) -> Byte {
+    @if index < need_rex {
+        @return rex
+    }
+    const after_rex = index - need_rex
+    @if after_rex == 0 {
+        @return opcode
+    }
+    const after_opcode = after_rex - 1
+    @if has_modrm != 0 && after_opcode == 0 {
+        @return modrm
+    }
+    @return byte_of(imm, after_opcode - has_modrm)
+}
+
+macro instr(
+    need_rex: int,
+    rex: Byte,
+    opcode: Byte,
+    has_modrm: int,
+    modrm: Byte,
+    imm: int,
+    imm_len: int
+) -> Bytes<...> {
+    const n = need_rex + 1 + has_modrm + imm_len
+    @return Bytes<n> {
+        @for i in 0..n {
+            __el`i`: instr_byte(need_rex, rex, opcode, has_modrm, modrm, imm, i),
+        }
+    }
+}
+
+# Shared by every reg,reg instruction below (`mov`, the six ALU ops, and
+# `test`): opcode + ModRM `mod=11`, ModRM.rm = `rd`, ModRM.reg = `rs` (the
+# "r/m, r" direction — see the direction-convention note above `mov`).
+# `w` selects operand size (0 = 32-bit, 1 = 64-bit, forcing REX.W); a REX
+# byte is only actually emitted when it's needed for `w` or an extended
+# (r8-r15) register, never unconditionally.
+macro reg_reg_instr(opcode: int, rd: Reg, rs: Reg, w: int) -> Bytes<...> {
+    const need_rex = w == 1 || reg_ext(rd) == 1 || reg_ext(rs) == 1
+    const rex = rex_byte(w, reg_ext(rs), 0, reg_ext(rd))
+    const modrm = modrm_byte(0b11, reg_field(rs), reg_field(rd))
+    @return instr(need_rex, rex, Byte(opcode), 1, modrm, 0, 0)
+}
+
+# Shared by every reg,imm32 instruction below (the six ALU ops via opcode
+# `0x81`, and `test` via opcode `0xF7`): ModRM.reg carries a per-mnemonic
+# opcode-extension `digit` instead of a real register (ModRM.rm = `rd`).
+macro reg_imm_instr(opcode: int, digit: int, rd: Reg, imm: int, w: int) -> Bytes<...> {
+    const need_rex = w == 1 || reg_ext(rd) == 1
+    const rex = rex_byte(w, 0, 0, reg_ext(rd))
+    const modrm = modrm_byte(0b11, digit, reg_field(rd))
+    @return instr(need_rex, rex, Byte(opcode), 1, modrm, imm, 4)
+}
+
+# =================
+# mov
+# =================
+# Direction convention (the open question `std/x86_64/PROGRESS.md`'s Phase
+# 2 section leaves for whoever implements it): every reg,reg opcode in this
+# file is the "r/m, r" form (`0x89`-style — ModRM.rm is the destination,
+# ModRM.reg is the source). With `mod=11` register-direct addressing this
+# is purely a byte-encoding choice, not a semantic one (`0x8B`, "r, r/m",
+# would decode identically) — `0x89` was picked so `mov`'s own opcode byte
+# matches its mnemonic's conventional Intel-manual encoding table entry.
+# Every macro below keeps `(rd, rs, ...)` argument order, destination
+# first, so Phase 6's Intel-syntax dialect can read `mov rd, rs` directly
+# off the positional order with no reshuffling.
+pub macro mov(rd: Reg, rs: Reg, w: int) -> Bytes<...> {
+    @emit reg_reg_instr(0x89, rd, rs, w)
+}
+
+# `mov reg, imm` (`0xB8+reg`) folds the destination register into the
+# opcode's own low 3 bits instead of a ModRM byte, so it can't share
+# `reg_imm_instr`'s shape. Its immediate is width-dependent in a way no
+# other instruction here is: with `REX.W` set, `0xB8+reg` takes a full
+# 8-byte imm64 (not a sign-extended imm32 like every other `w=1` form in
+# this file) — confirmed against the Intel SDM's own `MOV` opcode table.
+pub macro movi(rd: Reg, imm: int, w: int) -> Bytes<...> {
+    const need_rex = w == 1 || reg_ext(rd) == 1
+    const rex = rex_byte(w, 0, 0, reg_ext(rd))
+    const opcode = Byte(0xB8 + reg_field(rd))
+    const imm_len = 4 + 4 * w
+    @emit instr(need_rex, rex, opcode, 0, Byte(0), imm, imm_len)
+}
+
+# =================
+# ALU ops: add, or, and, sub, xor, cmp
+# =================
+# reg,reg (opcode+ModRM `mod=11`) and reg,imm32 (`0x81 /digit`) forms of
+# each, as thin wrappers around `reg_reg_instr`/`reg_imm_instr` above —
+# x86's ALU family shares one encoding shape per form, differing only by a
+# fixed opcode byte (reg,reg) or a 3-bit ModRM.reg digit (reg,imm), so the
+# six mnemonics below are never more than that one differing constant.
+
+pub macro add(rd: Reg, rs: Reg, w: int) -> Bytes<...> { @emit reg_reg_instr(0x01, rd, rs, w) }
+pub macro or(rd: Reg, rs: Reg, w: int) -> Bytes<...> { @emit reg_reg_instr(0x09, rd, rs, w) }
+pub macro and(rd: Reg, rs: Reg, w: int) -> Bytes<...> { @emit reg_reg_instr(0x21, rd, rs, w) }
+pub macro sub(rd: Reg, rs: Reg, w: int) -> Bytes<...> { @emit reg_reg_instr(0x29, rd, rs, w) }
+pub macro xor(rd: Reg, rs: Reg, w: int) -> Bytes<...> { @emit reg_reg_instr(0x31, rd, rs, w) }
+pub macro cmp(rd: Reg, rs: Reg, w: int) -> Bytes<...> { @emit reg_reg_instr(0x39, rd, rs, w) }
+
+# reg,imm32 forms. Named with the `std/riscv/impl.basm`-established `i`
+# suffix (`addi`/`andi`/...) rather than overloading `add`/`and`/... by
+# parameter type: `Reg` is a plain `int` alias here (see the comment above
+# its declaration), so a reg,reg and a reg,imm overload would both resolve
+# to identical `(int, int, int)` parameter types and be rejected as
+# ambiguous by the resolver's overload dispatch (confirmed against
+# `macro_overloads_dispatch_by_resolved_argument_type`'s sibling test
+# `identical_macro_overloads_are_ambiguous_at_the_call_site` in
+# `src/resolver/macro_body.rs`) — overloading only works once the two
+# forms resolve to genuinely distinct types, which is exactly what Phase
+# 3's `MemOperand` will be for reg,mem vs. reg,reg.
+pub macro addi(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0x81, 0, rd, imm, w) }
+pub macro ori(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0x81, 1, rd, imm, w) }
+pub macro andi(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0x81, 4, rd, imm, w) }
+pub macro subi(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0x81, 5, rd, imm, w) }
+pub macro xori(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0x81, 6, rd, imm, w) }
+pub macro cmpi(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0x81, 7, rd, imm, w) }
+
+# =================
+# test
+# =================
+pub macro test(rd: Reg, rs: Reg, w: int) -> Bytes<...> { @emit reg_reg_instr(0x85, rd, rs, w) }
+pub macro testi(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0xF7, 0, rd, imm, w) }
