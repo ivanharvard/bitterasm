@@ -10,10 +10,14 @@
 # place a string literal in.
 #
 # Build and run (from the repository root):
-# bitterasm compile examples/x86_64/hello.basm -o /tmp/hello.em
-# bitter encode /tmp/hello.em -o /tmp/hello.bin
-# python3 examples/x86_64/elf_wrap.py /tmp/hello.bin /tmp/hello
-# chmod +x /tmp/hello && /tmp/hello
+# bitter build examples/x86_64/hello.basm -o /tmp/hello
+# /tmp/hello
+#
+# `bitter build` compiles, encodes, and wraps the result in a native
+# executable (ELF/PE/Mach-O, picked for whatever OS `bitter` itself is
+# running on — pass --format to override) in one step; `bitter exec` does
+# just the wrapping step on an already-encoded .bin, for the equivalent of
+# `bitterasm compile` + `bitter encode` + `bitter exec` run separately.
 
 from std.x86_64.intel import *
 
