@@ -270,6 +270,16 @@ impl<'a> AliasResolver<'a> {
         self.label_positions
     }
 
+    /// Consumes the resolver and returns the original symbol table plus any
+    /// declarations synthesized during resolution. This is mainly for
+    /// emission: generated literal/range structs carry generated `SymbolId`s
+    /// that need names during reification.
+    pub fn into_symbols_with_generated(self) -> SymbolTable {
+        let mut symbols = (*self.symbols).clone();
+        symbols.extend_from(&self.generated_symbols);
+        symbols
+    }
+
     /// Whether `resolve_label_value` ever actually substituted a
     /// placeholder for a not-yet-recorded label position during this
     /// resolver's walk — see `used_forward_label_placeholder`'s own doc.

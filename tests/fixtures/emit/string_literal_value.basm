@@ -5,3 +5,6 @@ macro make() {
 macro make_multi() {
     @emit "AB"
 }
+
+make
+make_multi

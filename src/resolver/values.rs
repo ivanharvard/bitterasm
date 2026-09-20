@@ -325,17 +325,12 @@ impl<'a> AliasResolver<'a> {
                 self.convert_to(value, &target, *span)
             }
 
-            // A string literal is just a (possibly large) `Int` — its bytes
-            // packed big-endian into one arbitrary-precision integer, the
-            // same way a char literal already desugars to its codepoint at
-            // lex time (`lexer::lex_char`). Nothing about *length* survives
-            // this: `"\0A"` and `"A"` pack to the identical value, which is
-            // exactly why interpreting a packed int as "a string of length
-            // N" always requires an explicit `N` (`as String<N>`) rather
-            // than ever being inferred back out of the number itself.
-            Expr::String { value, .. } => {
-                Ok(Value::Int(Int::from_bytes_be(num_bigint::Sign::Plus, value.as_bytes())))
-            }
+            // A string literal materializes to a generated struct of
+            // Unicode scalar values, mirroring range literals' generated
+            // structs while preserving architecture-independent character
+            // identity. `std.string.string_from_struct` can explicitly pack
+            // it into UTF-8 bytes when that representation is wanted.
+            Expr::String { value, span } => self.eval_string_value(value, *span),
 
             // Transparent here too — `@emit`'s argument is already always
             // evaluated, so a splice around it changes nothing.
@@ -2142,7 +2137,7 @@ mod tests {
     }
 
     #[test]
-    fn string_literal_evaluates_to_its_packed_bytes_as_an_int() {
+    fn string_literal_evaluates_to_a_generated_struct_of_codepoints() {
         let program = parse_fixture("string_literal_value.basm");
 
         let declaration = find_macro(&program, "make");
@@ -2152,12 +2147,21 @@ mod tests {
 
         let value = resolver.eval_value(emit_expr(declaration), &HashMap::new()).unwrap();
 
-        // "A" is one byte, 0x41 = 65.
-        assert_eq!(value, Value::Int(Int::from(65)));
+        let Value::Struct { fields, .. } = value else {
+            panic!("expected a generated string struct");
+        };
+
+        assert_eq!(
+            fields,
+            vec![
+                ("__el0".to_string(), Value::Int(Int::from(65))),
+                ("len".to_string(), Value::Int(Int::from(1))),
+            ]
+        );
     }
 
     #[test]
-    fn multi_byte_string_literal_packs_big_endian() {
+    fn multi_character_string_literal_keeps_one_int_per_character() {
         let program = parse_fixture("string_literal_value.basm");
 
         let declaration = find_macro(&program, "make_multi");
@@ -2167,8 +2171,18 @@ mod tests {
 
         let value = resolver.eval_value(emit_expr(declaration), &HashMap::new()).unwrap();
 
-        // "AB" is bytes [0x41, 0x42] big-endian == 0x4142 == 16706.
-        assert_eq!(value, Value::Int(Int::from(16706)));
+        let Value::Struct { fields, .. } = value else {
+            panic!("expected a generated string struct");
+        };
+
+        assert_eq!(
+            fields,
+            vec![
+                ("__el0".to_string(), Value::Int(Int::from(65))),
+                ("__el1".to_string(), Value::Int(Int::from(66))),
+                ("len".to_string(), Value::Int(Int::from(2))),
+            ]
+        );
     }
 
     #[test]

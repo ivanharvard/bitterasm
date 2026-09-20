@@ -165,7 +165,7 @@ impl Parser {
             // (invariant-bearing) `type` alias.
             //
             //  3 as int16_t
-            //  "Abc" as String<3>
+            //  string_from_struct("Abc") as String<3>
             if self.check(&TokenKind::As) {
                 let binding_power = 100;
 

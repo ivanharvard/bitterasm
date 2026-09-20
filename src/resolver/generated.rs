@@ -1,8 +1,9 @@
 //! Declarations discovered mid-resolution rather than present in the
 //! program from the start: a macro's `generated` output (`pub struct`/
 //! `pub const`/`pub type`/`pub macro`/label bubbled up from a nested
-//! expansion), or a `start..end` range's synthesized private struct (see
-//! [`AliasResolver::eval_range_value`]). Both go through
+//! expansion), a `start..end` range's synthesized private struct (see
+//! [`AliasResolver::eval_range_value`]), or a string literal's synthesized
+//! private struct (see [`AliasResolver::eval_string_value`]). All go through
 //! [`AliasResolver::register_generated`], which is what lets a symbol
 //! discovered *after* [`super::collect_symbols`] already ran still be
 //! looked up correctly by every later reference to it, without giving
@@ -192,6 +193,81 @@ impl<'a> AliasResolver<'a> {
         }
 
         let name = format!("__range#{}", self.generated_symbols.len());
+
+        let decl = Statement::Struct(StructDeclaration {
+            name: vec![crate::ast::NamePart::Literal(name.clone())],
+            is_pub: false,
+            generic_params: Vec::new(),
+            facets: Vec::new(),
+            fields: struct_fields,
+            span,
+        });
+
+        self.register_generated(&decl)?;
+
+        let symbol = self
+            .lookup_symbol(&name)
+            .expect("register_generated just inserted this name");
+
+        Ok(Value::Struct {
+            symbol,
+            args: Vec::new(),
+            fields: values,
+            nominal: None,
+        })
+    }
+
+    /// `"text"` sugar: synthesizes a private struct with one public `int`
+    /// field per Unicode scalar value, plus a public `skip len` field for
+    /// indexed std-library conversions. The iterable surface stays just
+    /// the characters, matching `std.array.Array`'s own hidden length
+    /// bookkeeping.
+    pub(super) fn eval_string_value(
+        &mut self,
+        value: &str,
+        span: Span,
+    ) -> Result<Value, ResolveError> {
+        let mut struct_fields = Vec::new();
+        let mut values = Vec::new();
+
+        for (index, ch) in value.chars().enumerate() {
+            if index as u64 >= MAX_FOR_ITERATIONS {
+                return Err(ResolveError::ForLoopTooLarge { span });
+            }
+
+            let field_name = format!("__el{index}");
+
+            struct_fields.push(StructBodyItem::Field(crate::types::StructField {
+                name: vec![crate::ast::NamePart::Literal(field_name.clone())],
+                ty: crate::types::TypeExpr::Named {
+                    path: vec!["int".to_string()],
+                    span,
+                },
+                is_pub: true,
+                is_skip: false,
+                default: None,
+                span,
+            }));
+
+            values.push((field_name, Value::Int(Int::from(ch as u32))));
+        }
+
+        let len = values.len();
+
+        struct_fields.push(StructBodyItem::Field(crate::types::StructField {
+            name: vec![crate::ast::NamePart::Literal("len".to_string())],
+            ty: crate::types::TypeExpr::Named {
+                path: vec!["int".to_string()],
+                span,
+            },
+            is_pub: true,
+            is_skip: true,
+            default: None,
+            span,
+        }));
+        values.push(("len".to_string(), Value::Int(Int::from(len))));
+
+        let name = format!("__string#{}", self.generated_symbols.len());
 
         let decl = Statement::Struct(StructDeclaration {
             name: vec![crate::ast::NamePart::Literal(name.clone())],

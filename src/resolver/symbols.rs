@@ -50,7 +50,7 @@ pub struct Symbol {
 /// // Re-inserting the same name fails rather than shadowing it.
 /// assert!(table.insert("Reg".to_string(), SymbolKind::Struct, span, 0).is_err());
 /// ```
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct SymbolTable {
     symbols: Vec<Symbol>,
     by_name: HashMap<String, Vec<SymbolId>>,
@@ -132,6 +132,18 @@ impl SymbolTable {
 
     pub fn iter(&self) -> impl Iterator<Item = &Symbol> {
         self.symbols.iter()
+    }
+
+    pub fn extend_from(&mut self, other: &SymbolTable) {
+        for symbol in &other.symbols {
+            debug_assert_eq!(
+                symbol.id.0,
+                self.base + self.symbols.len(),
+                "generated symbols must be appended in their original id order",
+            );
+            self.symbols.push(symbol.clone());
+            self.by_name.entry(symbol.name.clone()).or_default().push(symbol.id);
+        }
     }
 }
 

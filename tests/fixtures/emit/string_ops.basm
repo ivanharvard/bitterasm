@@ -1,24 +1,25 @@
-from std.string import String, AsciiString, Utf8String, ascii_upper, ascii_lower, ascii_title, utf8_codepoint_count, utf8_is_ascii
+from std.string import AsciiString, Utf8String, string_from_struct, ascii_upper, ascii_lower, ascii_title, utf8_codepoint_count, utf8_is_ascii
+from std.array import array_from_struct
 from std.binary import Endian
 
 macro verify(_unused: int) {
-    const raw = String<3> {
-        value: "abc",
-        len: 3,
-    }
+    const chars = array_from_struct("abc")
+    @assert chars.len == 3
+    @assert chars.__el0 == 'a'
+    @assert chars.__el1 == 'b'
+    @assert chars.__el2 == 'c'
+
+    const raw = string_from_struct("abc")
     const ascii = raw as AsciiString<3, Endian.Big>
-    @assert ascii_upper(ascii).value == "ABC"
-    @assert ascii_lower(ascii_upper(ascii)).value == "abc"
-    @assert ascii_title(ascii).value == "Abc"
+    @assert ascii_upper(ascii).value == string_from_struct("ABC").value
+    @assert ascii_lower(ascii_upper(ascii)).value == string_from_struct("abc").value
+    @assert ascii_title(ascii).value == string_from_struct("Abc").value
 
     const utf8 = raw as Utf8String<3, Endian.Big>
     @assert utf8_codepoint_count(utf8) == 3
     @assert utf8_is_ascii(utf8)
 
-    const euro_raw = String<3> {
-        value: 0xE282AC,
-        len: 3,
-    }
+    const euro_raw = string_from_struct("€")
     const euro = euro_raw as Utf8String<3, Endian.Big>
     @assert utf8_codepoint_count(euro) == 1
     @assert !utf8_is_ascii(euro)

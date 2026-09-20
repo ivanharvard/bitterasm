@@ -360,6 +360,7 @@ fn resolve_and_expand(path: &Path, verbose: Option<&VerboseReporter>) -> Result<
     // labels at all (or none referenced before their own declaration), so
     // this skips a full second walk of the entire program for them.
     if !discovery.used_forward_label_placeholder() {
+        let symbols = discovery.into_symbols_with_generated();
         return Ok(Expansion { symbols, emitted, generated });
     }
 
@@ -417,6 +418,7 @@ fn resolve_and_expand(path: &Path, verbose: Option<&VerboseReporter>) -> Result<
         None,
     )?;
 
+    let symbols = alias_resolver.into_symbols_with_generated();
     Ok(Expansion { symbols, emitted, generated })
 }
 

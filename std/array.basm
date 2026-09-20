@@ -83,3 +83,13 @@ pub macro mapped<T, U, F: Fn(T) -> U>(arr: Array<T, ...>, f: F) -> Array<U, ...>
         }
     }
 }
+
+pub macro array_from_struct<S>(source: S)
+{
+    const len = source.len
+    @return Array<int, len> {
+        @for i in 0..len {
+            __el`i`: source.__el`i`,
+        }
+    }
+}

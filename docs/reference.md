@@ -49,6 +49,21 @@ leaving it exactly as constructible and readable (`arr.len`) as any other
 `pub` field. `skip` on a non-`pub` field is legal but has no effect: such a
 field is already excluded from `@for`.
 
+## Character and string literals
+
+A character literal, such as `'a'`, evaluates to the Unicode scalar value
+for that character as an `int`. This is architecture-independent: `'€'`
+is `0x20AC`, not a target-machine byte sequence.
+
+A string literal, such as `"abc"`, evaluates to a generated struct with one
+public `int` element per character (`__el0`, `__el1`, ...), plus a public
+`skip len` field. Iterating it with `@for` visits only the character
+elements, while indexed helper code can still read `.len`.
+
+`std.array.array_from_struct("abc")` converts that generated struct into
+`Array<int, 3>`. `std.string.string_from_struct("abc")` UTF-8 encodes it
+into the packed `String<N>` representation used by `std.string`.
+
 ## `in`: membership as a boolean
 
 `value in source` tests the same relation `@for var in source` walks

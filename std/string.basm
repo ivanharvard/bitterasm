@@ -56,6 +56,84 @@ pub macro byte_at(
     @return (value >> ((len - index - 1) * BITS_PER_BYTE)) & 0xFF
 }
 
+macro utf8_codepoint_byte_len(codepoint: int) -> int {
+    @assert codepoint >= 0, "UTF-8 code point cannot be negative"
+    @assert codepoint <= 0x10FFFF, "UTF-8 code point exceeds U+10FFFF"
+    @assert codepoint < 0xD800 || codepoint > 0xDFFF, "UTF-8 cannot encode a surrogate"
+    @if codepoint <= 0x7F {
+        @return 1
+    }
+    @if codepoint <= 0x7FF {
+        @return 2
+    }
+    @if codepoint <= 0xFFFF {
+        @return 3
+    }
+    @return 4
+}
+
+macro utf8_struct_byte_len_at<S>(
+    source: S,
+    index: int
+) -> int {
+    @if index == source.len {
+        @return 0
+    }
+    const head = utf8_codepoint_byte_len(source.__el`index`)
+    const tail = utf8_struct_byte_len_at(source, index + 1)
+    @return head + tail
+}
+
+pub macro utf8_struct_byte_len<S>(source: S) -> int {
+    @return utf8_struct_byte_len_at(source, 0)
+}
+
+macro utf8_codepoint_packed(codepoint: int) -> int {
+    const len = utf8_codepoint_byte_len(codepoint)
+    @if len == 1 {
+        @return codepoint
+    }
+    @if len == 2 {
+        const b0 = 0xC0 | (codepoint >> 6)
+        const b1 = 0x80 | (codepoint & 0x3F)
+        @return (b0 << 8) | b1
+    }
+    @if len == 3 {
+        const b0 = 0xE0 | (codepoint >> 12)
+        const b1 = 0x80 | ((codepoint >> 6) & 0x3F)
+        const b2 = 0x80 | (codepoint & 0x3F)
+        @return (b0 << 16) | (b1 << 8) | b2
+    }
+    const b0 = 0xF0 | (codepoint >> 18)
+    const b1 = 0x80 | ((codepoint >> 12) & 0x3F)
+    const b2 = 0x80 | ((codepoint >> 6) & 0x3F)
+    const b3 = 0x80 | (codepoint & 0x3F)
+    @return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
+}
+
+macro utf8_struct_value_at<S>(
+    source: S,
+    index: int
+) -> int {
+    @if index == source.len {
+        @return 0
+    }
+    const codepoint = source.__el`index`
+    const rest_len = utf8_struct_byte_len_at(source, index + 1)
+    const packed = utf8_codepoint_packed(codepoint)
+    const rest = utf8_struct_value_at(source, index + 1)
+    @return (packed << (rest_len * BITS_PER_BYTE)) | rest
+}
+
+pub macro string_from_struct<S>(source: S)
+{
+    const byte_len = utf8_struct_byte_len(source)
+    @return String<byte_len> {
+        value: utf8_struct_value_at(source, 0),
+        len: byte_len,
+    }
+}
+
 macro validate_ascii_at(
     value: int,
     len: int,
@@ -218,9 +296,7 @@ macro ascii_case_value(
         @return 0
     }
     const byte = ascii_case_byte(byte_at(value, len, index, endian), upper)
-    @return (
-        byte << byte_shift(index, len, endian)
-    ) | ascii_case_value(value, len, index + 1, endian, upper)
+    @return (byte << byte_shift(index, len, endian)) | ascii_case_value(value, len, index + 1, endian, upper)
 }
 
 pub macro ascii_upper(s: AsciiString) -> AsciiString {
