@@ -9,7 +9,7 @@
 from .impl import *
 
 pub macro assert_valid_reg(r: Reg) {
-    @assert r >= 0 && r <= 15, "not a valid register (0-15)"
+    @assert r.value >= 0 && r.value <= 15, "not a valid register (0-15)"
 }
 
 # =================

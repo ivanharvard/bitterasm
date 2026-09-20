@@ -81,15 +81,13 @@ Created this file and `std/x86_64/impl.basm` (skeleton: header + imports only) a
 `tests/fixtures/x86_64/`.
 
 ### Phase 1 — Encoding primitives (no instructions yet) ✅
-**Resolved:** `Reg` ended up as `pub type Reg = int` (plain alias, like
-`std/unsigned.basm`'s `uint`), not `bits<4>` as originally sketched. Reason: a
-`bits<N>` struct's `value` field is declared without `pub` in `std/binary.basm`, so
-it can't be read back out from any other module (`PrivateFieldAccess`) — and
-extracting a register's low 3 bits / extension bit is exactly what `reg_field`/
-`reg_ext` need to do. `rex_byte`/`modrm_byte`/`sib_byte` take plain `int` arguments
-for the same reason, doing all bit arithmetic (`<<`/`|`/`&`) in `int` and wrapping
-the result in `Byte(...)` only once, at the very end — the same idiom RISC-V's
-`slli`/`srai` already use for their own shift-immediate encoding.
+**Resolved:** `Reg` is `pub type Reg = bits<4>`. `bits<N>` exposes its checked
+backing integer as a `pub skip` field, so `reg_field`/`reg_ext` can read
+`r.value` to split the low 3 bits from the REX extension bit without making
+registers interchangeable with arbitrary `int` immediates. The `skip` keeps the
+backing field out of structural `@for` iteration. `rex_byte`/`modrm_byte`/
+`sib_byte` still do their assembly arithmetic in `int` and wrap the final result
+in `Byte(...)`.
 **Gotcha for future verification-by-`@assert` scratch files:** `bitterasm check`
 does *not* evaluate a macro's body — including its `@assert`s — unless that macro is
 actually invoked somewhere in the file (top-level `name` or `name()`, no `@emit`
@@ -148,15 +146,9 @@ scratch file once Phase 2 has real instructions exercising the same code paths.
   `mov`/`add`/... by parameter type. Macro overloading is a real, already-implemented
   language feature (dispatches on resolved argument type or arity — see
   `src/resolver/macro_body.rs`'s `resolve_macro_overload` and its
-  `macro_overloads_dispatch_by_resolved_argument_type` test) but it can't distinguish
-  these two forms here: `Reg` is a plain `int` alias (see Phase 1's own resolution
-  above), so `mov(rd: Reg, rs: Reg, w: int)` and `mov(rd: Reg, imm: int, w: int)`
-  both resolve to identical `(int, int, int)` parameter types and would be rejected
-  as ambiguous (confirmed against that same test file's
-  `identical_macro_overloads_are_ambiguous_at_the_call_site`). Overloading only
-  becomes usable once two forms resolve to genuinely distinct types — exactly what
-  Phase 3's `MemOperand` will be for reg,mem vs. reg,reg (real macro overloading is
-  still on the table for that phase, per its own deliverable below).
+  `macro_overloads_dispatch_by_resolved_argument_type` test). These names were
+  originally necessary when `Reg` aliased `int`; now that `Reg = bits<4>`, they
+  remain only for API compatibility and could be consolidated later.
 - **Shared internal helpers:** `reg_reg_instr(opcode, rd, rs, w)` (mov, the six ALU
   ops, and `test` all share this — one more instruction than the phase's original
   plan asked to factor, since `mov`/`test` turned out to have the exact same
@@ -255,8 +247,8 @@ yet at this phase).
   different opcode:** every reg/mem instruction from Phase 2 (`mov`, the six ALU
   ops, `test`, and their `i`-suffixed reg,imm siblings) gained a `MemOperand`
   overload of its first (destination) parameter, real macro overloading this time
-  (unlike Phase 2's `Reg`-vs-`int` case) since `MemOperand` is a genuinely distinct
-  resolved type from `Reg`/`int`. `movi`'s register form folds the destination into
+  since `MemOperand` is a genuinely distinct resolved type from both `Reg` and
+  `int`. `movi`'s register form folds the destination into
   opcode `0xB8+reg`, but there's no register to fold in when the destination is
   memory — its `MemOperand` overload uses the completely different `0xC7 /0`
   opcode instead, landing on the same reg,imm shape every ALU `i`-form already
@@ -532,14 +524,12 @@ RISC-V's `native.basm` sugar-injection approach.
   an import doesn't limit what's spliced). Fixed the same way: unique internal
   names (`sub2`, `shr_imm`) with an unanchored `syntax` pattern still spelling the
   real mnemonic (`sub`, `shr`) at the call site.
-- **reg,reg vs. reg,imm still separate mnemonics:** `movi`/`addi`/.../`testi` keep
-  `impl.basm`'s own `i`-suffixed names rather than merging into `mov`/`add`/... —
-  same `Reg`-is-a-plain-`int` reasoning Phase 2 already resolved, restated here
-  since real Intel syntax spells both forms identically and a reader might
-  reasonably expect this dialect to paper over that; it can't, for the same reason
-  Phase 2 couldn't. Memory-operand forms don't have this problem (a bracketed
-  operand is lexically distinct from a bare one), which is why `mov`'s many memory
-  shapes safely share its name while its reg,imm sibling can't share `mov`'s own.
+- **reg,reg vs. reg,imm still use separate mnemonics:** `movi`/`addi`/.../`testi`
+  retain `impl.basm`'s existing `i`-suffixed API. The original type-system reason
+  no longer applies now that `Reg = bits<4>`; merging the names is a possible
+  future compatibility-breaking cleanup. Memory operands remain lexically
+  distinct because they use brackets, so `mov`'s many memory shapes safely share
+  its name.
 - **Scope kept deliberately narrower than "every instruction" for bracket sugar:**
   full register *and* memory-operand (all four addressing shapes, both directions)
   syntax is built for `mov` (the phase's own flagship example) and `lea` (address
@@ -597,16 +587,10 @@ already suffice without Docker — check before assuming Docker is required).
   oracle at all — a real, structural limitation of the dialect surfaced by
   trying, not a gap in the harness:** real Intel syntax spells reg,reg and
   reg,imm forms of the same mnemonic identically (`mov`); this project's own
-  dialect can't (Phase 2/6's own `Reg`-is-a-plain-`int` reasoning), so it keeps
-  them under separate names GNU `as` doesn't recognize at all. Worse, a bare
-  `mov rax, 100` doesn't even fail to parse under this dialect — it silently
-  matches the reg,reg `mov` pattern, since a plain `int` literal satisfies
-  `Reg`'s own type with no complaint, encoding `100` as if it were register
-  number 100. Found while drafting this harness's own test cases; fixed
-  separately (see the commit immediately before this phase's own harness
-  files) with an `assert_valid_reg` guard in `intel.basm`'s reg,reg wrappers,
-  and reg,imm forms are excluded from this harness's shared `.s` files
-  entirely — they're already byte-verified by hand against the Intel SDM in
+  dialect keeps them under separate compatibility names GNU `as` doesn't
+  recognize. `Reg = bits<4>` now prevents an immediate from silently matching a
+  register operand, but reg,imm forms remain excluded from this harness's shared
+  `.s` files entirely — they're already byte-verified by hand against the Intel SDM in
   `tests/x86_64_encoding.rs`, so this isn't a real coverage gap, just a
   boundary of what a *shared* text file can safely mean to two different
   assemblers at once.

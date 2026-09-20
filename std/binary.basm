@@ -1,7 +1,7 @@
 pub struct bits<const width: int>
     | invariant fits_inside_width(width, value)
 {
-    value: int
+    pub skip value: int
 }
 
 pub const BITS_PER_BYTE: int = 8

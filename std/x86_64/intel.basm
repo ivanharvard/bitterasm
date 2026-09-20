@@ -99,16 +99,13 @@
 # it, for the full reasoning and the new tests covering it.
 #
 # =================
-# reg,reg vs. reg,imm: still separate mnemonics, not overloaded
+# reg,reg vs. reg,imm: compatibility mnemonics
 # =================
 # `movi`/`addi`/.../`testi` keep `impl.basm`'s own `i`-suffixed names rather
 # than
-# merging into `mov`/`add`/... the way real Intel syntax spells both forms
-# identically: `Reg` is a plain `int` alias (`impl.basm`'s own Phase 1 note), so
-# `mov(rd, rs)` and `mov(rd, imm)` would both resolve to identical `(int, int)`
-# argument types once parsed — indistinguishable to the resolver regardless of
-# which literal syntax pattern produced the call, since overload resolution runs
-# on the parsed invocation's argument *types*, not on which pattern matched it.
+# merging into `mov`/`add`/... to preserve the package's existing API. `Reg` is
+# now a distinct `bits<4>` type, so the resolver can distinguish register and
+# immediate operands; the separate names are no longer a type-system necessity.
 # (Memory-operand forms don't have this problem — see the section above: a
 # bracketed operand is lexically distinct from a bare one, so `mov`'s many
 # memory
@@ -116,25 +113,16 @@
 
 from .impl import *
 
-# `Reg` is a plain `int` alias with no invariant of its own (`impl.basm`'s own
-# Phase 1 note), so a reg,reg wrapper's second parameter accepts *any* `int`
-# without complaint — including a bare immediate a caller meant for
-# `movi`/`addi`/etc. instead. `mov rax, 100` parses cleanly as this file's own
-# reg,reg `mov`, treating `100` as if it were register number 100 —
-# `reg_field`/`reg_ext` then mask/shift it into nonsense bits instead of
-# erroring (confirmed empirically while building Phase 7's oracle harness,
-# where a shared `.s`/`.basm` test file can't spell an immediate `mov`/`add`/...
-# at all — see `std/x86_64/PROGRESS.md`'s Phase 7 section). This doesn't catch
-# every mistake (5 is also `rbp`'s own number, so `add rax, 5` meant as an
-# immediate silently becomes `add rax, rbp` instead), but it does catch the
-# common case of an out-of-range value, which a real immediate very often is.
+# `Reg`'s `bits<4>` invariant already guarantees this range. Keep the explicit
+# assertion at the dialect boundary for a direct diagnostic if that invariant
+# changes or another register representation is introduced later.
 # `pub`, empirically required: called only from this same file's own
 # `| syntax {...}`-faceted macro bodies below, but a non-`pub` declaration's
 # within-file references didn't resolve correctly once imported from elsewhere
 # (`unknown macro` from a file that only ever imports this one) — not
 # investigated further, `pub` costs nothing here.
 pub macro assert_valid_reg(r: Reg) {
-    @assert r >= 0 && r <= 15, "not a valid register (0-15) — use the `i`-suffixed mnemonic for an immediate"
+    @assert r.value >= 0 && r.value <= 15, "not a valid register (0-15) — use the `i`-suffixed mnemonic for an immediate"
 }
 
 # =================
@@ -243,14 +231,8 @@ pub macro and(rd: Reg, rs: Reg)
 
 syntax sub(a, b, c) = { sub $a$, $b$, $c$ }
 
-# Named `sub2`, not `sub`: a real `sub(rd: Reg, rs: Reg)` (both `Reg` = `int`)
-# would resolve to `(int, int)` — identical to `std.bitter.deferred`'s own
-# `sub(a: int, b: int)`, always in scope (see this file's own header comment
-# on why naming an import doesn't limit what's transitively spliced in,
-# `std/x86_64/impl.basm`'s Phase 5 note on `shl_cl`/`shr_cl`/`sar_cl` first
-# ran into this for the exact same reason). Unanchored (its pattern's own
-# leading token is the real mnemonic `sub`, not `sub2`), so `sub2` itself is
-# never "claimed" or user-facing at all.
+# `sub2` is retained as the internal name for compatibility. Its unanchored
+# syntax pattern still exposes the real `sub` mnemonic at the call site.
 pub macro sub2(rd: Reg, rs: Reg)
     | syntax { sub $rd$, $rs$ } {
         assert_valid_reg rs

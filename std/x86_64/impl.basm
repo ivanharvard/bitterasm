@@ -10,21 +10,12 @@ from std.bitter.byte_order import *
 # =================
 # registers
 # =================
-# 16 general-purpose registers. Unlike RISC-V's `Reg = bits<5>` (which plugs
-# directly into a format struct's fixed bit position), an x86-64 register's
-# 4-bit
-# number is split across two different bytes of an instruction — 3 bits embedded
-# in
-# a ModRM/SIB field or in the low 3 bits of certain opcodes, plus 1 extension
-# bit
-# folded into the REX prefix — so what every macro actually needs is arithmetic
-# on
-# the raw number, not a packer-ready `bits<N>`, until the moment a
-# modrm/sib/rex/
-# opcode byte is actually built. `Reg` is therefore a plain `int` alias, the
-# same
-# pattern `std/unsigned.basm`'s `uint` already uses.
-pub type Reg = int
+# 16 general-purpose registers. An x86-64 register's 4-bit number is split
+# across two different bytes: 3 bits in a ModRM/SIB field or opcode, plus 1
+# extension bit in the REX prefix. The public, skipped backing value of
+# `bits<4>` lets the helpers below extract those pieces while preserving `Reg`
+# as a distinct, width-checked type.
+pub type Reg = bits<4>
 
 @for i in 0..16 {
     pub const r`i`: Reg = i
@@ -44,14 +35,14 @@ pub const rdi = r7
 # The 3 low bits of a register number — the field width every ModRM `reg`/`rm`,
 # SIB `index`/`base`, and register-in-opcode encoding actually carries.
 pub macro reg_field(r: Reg) -> int {
-    @return r & 0b111
+    @return r.value & 0b111
 }
 
 # The register number's 4th bit — folded into the REX prefix (R/X/B) whenever
 # the
 # register is r8-r15, since the 3-bit fields above can't carry it.
 pub macro reg_ext(r: Reg) -> int {
-    @return (r >> 3) & 1
+    @return (r.value >> 3) & 1
 }
 
 # =================
@@ -300,17 +291,10 @@ pub macro cmp(
     w: int
 ) -> Bytes<...> { @emit reg_reg_instr(0x39, rd, rs, w) }
 
-# reg,imm32 forms. Named with the `std/riscv/impl.basm`-established `i`
-# suffix (`addi`/`andi`/...) rather than overloading `add`/`and`/... by
-# parameter type: `Reg` is a plain `int` alias here (see the comment above
-# its declaration), so a reg,reg and a reg,imm overload would both resolve
-# to identical `(int, int, int)` parameter types and be rejected as
-# ambiguous by the resolver's overload dispatch (confirmed against
-# `macro_overloads_dispatch_by_resolved_argument_type`'s sibling test
-# `identical_macro_overloads_are_ambiguous_at_the_call_site` in
-# `src/resolver/macro_body.rs`) — overloading only works once the two
-# forms resolve to genuinely distinct types, which is exactly what Phase
-# 3's `MemOperand` will be for reg,mem vs. reg,reg.
+# reg,imm32 forms retain the `std/riscv/impl.basm`-established `i` suffix
+# (`addi`/`andi`/...) for API compatibility. Since `Reg` is now a distinct
+# `bits<4>` type, these could be overloaded with their reg,reg counterparts in
+# a future API cleanup.
 pub macro addi(
     rd: Reg,
     imm: int,
@@ -782,15 +766,11 @@ macro mem_imm_instr(
 # mov/ALU ops/test: memory-operand overloads
 # =================
 # Real macro overloading (dispatch on resolved argument type — see
-# `src/resolver/macro_body.rs`'s `resolve_macro_overload`), unlike Phase 2's
-# reg,imm
-# forms: `MemOperand` is a genuinely distinct type from `Reg`/`int`, so the
-# resolver
+# `src/resolver/macro_body.rs`'s `resolve_macro_overload`). `MemOperand` is a
+# genuinely distinct type from both `Reg` and `int`, so the resolver
 # can tell a `mov(rd: Reg, rs: Reg, w)` call apart from a `mov(dst: MemOperand,
 # rs:
-# Reg, w)` one with no ambiguity, unlike the `Reg` vs. `int` case Phase 2's own
-# notes
-# explain. Every ALU/`test`/`mov` overload here keeps the destination-first
+# Reg, w)` one with no ambiguity. Every ALU/`test`/`mov` overload here keeps the destination-first
 # argument order Phase 2 already established.
 pub macro mov(
     dst: MemOperand,
