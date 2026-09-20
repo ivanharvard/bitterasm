@@ -77,7 +77,8 @@ byte(0x00)
 export_body_end:
 
 # =================
-# Code section: one function body -- unrolled wrapping sum of i*i, i in 0..100000
+# Code section: one function body -- unrolled wrapping sum of i*i, i in
+# 0..100000
 # =================
 # Both spans below are sized with n=4 (room for a ULEB128 value up to
 # ~268M), not n=1 like the fixed-size sections above: unlike those, this

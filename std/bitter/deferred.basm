@@ -20,19 +20,39 @@ pub macro here() -> Deferred {
 # sub
 # ---------------------------------------------------------------
 
-pub macro sub(a: int, b: int) -> int {
+pub macro sub(
+    a: int,
+    b: int
+) -> int {
     @return a - b
 }
 
-pub macro sub(a: Deferred, b: int) -> Deferred {
-    @return Deferred.Node(BinOp(op = Op.Sub, left = a, right = Deferred.Leaf(b)))
+pub macro sub(
+    a: Deferred,
+    b: int
+) -> Deferred {
+    @return Deferred.Node(BinOp(
+            op = Op.Sub,
+            left = a,
+            right = Deferred.Leaf(b)
+        ))
 }
 
-pub macro sub(a: int, b: Deferred) -> Deferred {
-    @return Deferred.Node(BinOp(op = Op.Sub, left = Deferred.Leaf(a), right = b))
+pub macro sub(
+    a: int,
+    b: Deferred
+) -> Deferred {
+    @return Deferred.Node(BinOp(
+            op = Op.Sub,
+            left = Deferred.Leaf(a),
+            right = b
+        ))
 }
 
-pub macro sub(a: Deferred, b: Deferred) -> Deferred {
+pub macro sub(
+    a: Deferred,
+    b: Deferred
+) -> Deferred {
     @return Deferred.Node(BinOp(op = Op.Sub, left = a, right = b))
 }
 
@@ -40,19 +60,39 @@ pub macro sub(a: Deferred, b: Deferred) -> Deferred {
 # mul
 # ---------------------------------------------------------------
 
-pub macro mul(a: int, b: int) -> int {
+pub macro mul(
+    a: int,
+    b: int
+) -> int {
     @return a * b
 }
 
-pub macro mul(a: Deferred, b: int) -> Deferred {
-    @return Deferred.Node(BinOp(op = Op.Mul, left = a, right = Deferred.Leaf(b)))
+pub macro mul(
+    a: Deferred,
+    b: int
+) -> Deferred {
+    @return Deferred.Node(BinOp(
+            op = Op.Mul,
+            left = a,
+            right = Deferred.Leaf(b)
+        ))
 }
 
-pub macro mul(a: int, b: Deferred) -> Deferred {
-    @return Deferred.Node(BinOp(op = Op.Mul, left = Deferred.Leaf(a), right = b))
+pub macro mul(
+    a: int,
+    b: Deferred
+) -> Deferred {
+    @return Deferred.Node(BinOp(
+            op = Op.Mul,
+            left = Deferred.Leaf(a),
+            right = b
+        ))
 }
 
-pub macro mul(a: Deferred, b: Deferred) -> Deferred {
+pub macro mul(
+    a: Deferred,
+    b: Deferred
+) -> Deferred {
     @return Deferred.Node(BinOp(op = Op.Mul, left = a, right = b))
 }
 
@@ -62,24 +102,44 @@ pub macro mul(a: Deferred, b: Deferred) -> Deferred {
 # trivial, symmetric addition later if something needs them.
 # ---------------------------------------------------------------
 
-pub macro shr(a: int, b: int) -> int {
+pub macro shr(
+    a: int,
+    b: int
+) -> int {
     @return a >> b
 }
 
-pub macro shr(a: Deferred, b: int) -> Deferred {
-    @return Deferred.Node(BinOp(op = Op.Shr, left = a, right = Deferred.Leaf(b)))
+pub macro shr(
+    a: Deferred,
+    b: int
+) -> Deferred {
+    @return Deferred.Node(BinOp(
+            op = Op.Shr,
+            left = a,
+            right = Deferred.Leaf(b)
+        ))
 }
 
 # ---------------------------------------------------------------
 # band — same reduced shape as shr, same reasoning.
 # ---------------------------------------------------------------
 
-pub macro band(a: int, b: int) -> int {
+pub macro band(
+    a: int,
+    b: int
+) -> int {
     @return a & b
 }
 
-pub macro band(a: Deferred, b: int) -> Deferred {
-    @return Deferred.Node(BinOp(op = Op.Band, left = a, right = Deferred.Leaf(b)))
+pub macro band(
+    a: Deferred,
+    b: int
+) -> Deferred {
+    @return Deferred.Node(BinOp(
+            op = Op.Band,
+            left = a,
+            right = Deferred.Leaf(b)
+        ))
 }
 
 # ---------------------------------------------------------------
@@ -120,16 +180,37 @@ pub macro band(a: Deferred, b: int) -> Deferred {
 # exactly what `span`'s non-`here()` endpoints ordinarily are (a label
 # name, already a plain `int` by the time a macro body sees it, exactly
 # like `std/riscv`'s branch instructions take one as their `target: int`).
-pub macro span(start: int, end: int) -> Deferred {
-    @return Deferred.Node(BinOp(op = Op.Span, left = Deferred.Leaf(start), right = Deferred.Leaf(end)))
+pub macro span(
+    start: int,
+    end: int
+) -> Deferred {
+    @return Deferred.Node(BinOp(
+            op = Op.Span,
+            left = Deferred.Leaf(start),
+            right = Deferred.Leaf(end)
+        ))
 }
 
-pub macro span(start: Deferred, end: int) -> Deferred {
-    @return Deferred.Node(BinOp(op = Op.Span, left = start, right = Deferred.Leaf(end)))
+pub macro span(
+    start: Deferred,
+    end: int
+) -> Deferred {
+    @return Deferred.Node(BinOp(
+            op = Op.Span,
+            left = start,
+            right = Deferred.Leaf(end)
+        ))
 }
 
-pub macro span(start: int, end: Deferred) -> Deferred {
-    @return Deferred.Node(BinOp(op = Op.Span, left = Deferred.Leaf(start), right = end))
+pub macro span(
+    start: int,
+    end: Deferred
+) -> Deferred {
+    @return Deferred.Node(BinOp(
+            op = Op.Span,
+            left = Deferred.Leaf(start),
+            right = end
+        ))
 }
 
 # Pairs a `Deferred` value with the bit width it's meant to occupy once

@@ -18,135 +18,171 @@ pub macro assert_valid_reg(r: Reg) {
 
 syntax mov(a, b, c) = { mov $a$, $b$, $c$ }
 
-pub macro mov(rs: Reg, rd: Reg) | syntax { mov %$rs$, %$rd$ } {
-    assert_valid_reg rs
-    mov rd, rs, 1
-}
+pub macro mov(rs: Reg, rd: Reg)
+    | syntax { mov %$rs$, %$rd$ } {
+        assert_valid_reg rs
+        mov rd, rs, 1
+    }
 
 # --- load direction: reg <- mem (source first in AT&T) ---
 
-pub macro mov_load_base(rd: Reg, base: Reg) | syntax { mov (%$base$), %$rd$ } {
-    mov rd, Mem(base, 0), 1
-}
+pub macro mov_load_base(rd: Reg, base: Reg)
+    | syntax { mov (%$base$), %$rd$ } {
+        mov rd, Mem(base, 0), 1
+    }
 
-pub macro mov_load_base_disp(rd: Reg, disp: int, base: Reg) | syntax { mov $disp$(%$base$), %$rd$ } {
-    mov rd, Mem(base, disp), 1
-}
+pub macro mov_load_base_disp(rd: Reg, disp: int, base: Reg)
+    | syntax { mov $disp$(%$base$), %$rd$ } {
+        mov rd, Mem(base, disp), 1
+    }
 
-pub macro mov_load_indexed(rd: Reg, disp: int, base: Reg, index: Reg, scale: int)
+pub macro mov_load_indexed(
+    rd: Reg,
+    disp: int,
+    base: Reg,
+    index: Reg,
+    scale: int
+)
     | syntax { mov $disp$(%$base$,%$index$,$scale$), %$rd$ }
 {
     mov rd, MemIndexed(base, index, scale, disp), 1
 }
 
-pub macro mov_load_rip(rd: Reg, disp: int) | syntax { mov $disp$(%rip), %$rd$ } {
-    mov rd, MemRipRelative(disp), 1
-}
+pub macro mov_load_rip(rd: Reg, disp: int)
+    | syntax { mov $disp$(%rip), %$rd$ } {
+        mov rd, MemRipRelative(disp), 1
+    }
 
 # --- store direction: mem <- reg (source first in AT&T) ---
 
-pub macro mov_store_base(rs: Reg, base: Reg) | syntax { mov %$rs$, (%$base$) } {
-    mov Mem(base, 0), rs, 1
-}
+pub macro mov_store_base(rs: Reg, base: Reg)
+    | syntax { mov %$rs$, (%$base$) } {
+        mov Mem(base, 0), rs, 1
+    }
 
-pub macro mov_store_base_disp(rs: Reg, disp: int, base: Reg) | syntax { mov %$rs$, $disp$(%$base$) } {
-    mov Mem(base, disp), rs, 1
-}
+pub macro mov_store_base_disp(rs: Reg, disp: int, base: Reg)
+    | syntax { mov %$rs$, $disp$(%$base$) } {
+        mov Mem(base, disp), rs, 1
+    }
 
-pub macro mov_store_indexed(rs: Reg, disp: int, base: Reg, index: Reg, scale: int)
+pub macro mov_store_indexed(
+    rs: Reg,
+    disp: int,
+    base: Reg,
+    index: Reg,
+    scale: int
+)
     | syntax { mov %$rs$, $disp$(%$base$,%$index$,$scale$) }
 {
     mov MemIndexed(base, index, scale, disp), rs, 1
 }
 
-pub macro mov_store_rip(rs: Reg, disp: int) | syntax { mov %$rs$, $disp$(%rip) } {
-    mov MemRipRelative(disp), rs, 1
-}
+pub macro mov_store_rip(rs: Reg, disp: int)
+    | syntax { mov %$rs$, $disp$(%rip) } {
+        mov MemRipRelative(disp), rs, 1
+    }
 
 # =================
 # ALU ops: add, or, and, sub, xor, cmp, test
 # =================
 
 syntax add(a, b, c) = { add $a$, $b$, $c$ }
-pub macro add(rs: Reg, rd: Reg) | syntax { add %$rs$, %$rd$ } {
-    assert_valid_reg rs
-    add rd, rs, 1
-}
+pub macro add(rs: Reg, rd: Reg)
+    | syntax { add %$rs$, %$rd$ } {
+        assert_valid_reg rs
+        add rd, rs, 1
+    }
 
 syntax or(a, b, c) = { or $a$, $b$, $c$ }
-pub macro or(rs: Reg, rd: Reg) | syntax { or %$rs$, %$rd$ } {
-    assert_valid_reg rs
-    or rd, rs, 1
-}
+pub macro or(rs: Reg, rd: Reg)
+    | syntax { or %$rs$, %$rd$ } {
+        assert_valid_reg rs
+        or rd, rs, 1
+    }
 
 syntax and(a, b, c) = { and $a$, $b$, $c$ }
-pub macro and(rs: Reg, rd: Reg) | syntax { and %$rs$, %$rd$ } {
-    assert_valid_reg rs
-    and rd, rs, 1
-}
+pub macro and(rs: Reg, rd: Reg)
+    | syntax { and %$rs$, %$rd$ } {
+        assert_valid_reg rs
+        and rd, rs, 1
+    }
 
 syntax sub(a, b, c) = { sub $a$, $b$, $c$ }
-pub macro sub2(rs: Reg, rd: Reg) | syntax { sub %$rs$, %$rd$ } {
-    assert_valid_reg rs
-    sub rd, rs, 1
-}
+pub macro sub2(rs: Reg, rd: Reg)
+    | syntax { sub %$rs$, %$rd$ } {
+        assert_valid_reg rs
+        sub rd, rs, 1
+    }
 
 syntax xor(a, b, c) = { xor $a$, $b$, $c$ }
-pub macro xor(rs: Reg, rd: Reg) | syntax { xor %$rs$, %$rd$ } {
-    assert_valid_reg rs
-    xor rd, rs, 1
-}
+pub macro xor(rs: Reg, rd: Reg)
+    | syntax { xor %$rs$, %$rd$ } {
+        assert_valid_reg rs
+        xor rd, rs, 1
+    }
 
 syntax cmp(a, b, c) = { cmp $a$, $b$, $c$ }
-pub macro cmp(rs: Reg, rd: Reg) | syntax { cmp %$rs$, %$rd$ } {
-    assert_valid_reg rs
-    cmp rd, rs, 1
-}
+pub macro cmp(rs: Reg, rd: Reg)
+    | syntax { cmp %$rs$, %$rd$ } {
+        assert_valid_reg rs
+        cmp rd, rs, 1
+    }
 
 syntax test(a, b, c) = { test $a$, $b$, $c$ }
-pub macro test(rs: Reg, rd: Reg) | syntax { test %$rs$, %$rd$ } {
-    assert_valid_reg rs
-    test rd, rs, 1
-}
+pub macro test(rs: Reg, rd: Reg)
+    | syntax { test %$rs$, %$rd$ } {
+        assert_valid_reg rs
+        test rd, rs, 1
+    }
 
 # Immediate forms keep dispatching to `impl.basm`'s i-suffixed macros, but the
 # call-site syntax uses ordinary AT&T `$imm, %dst` spelling.
 
 syntax movi(a, b, c) = { movi $a$, $b$, $c$ }
-pub macro movi(imm: int, rd: Reg) | syntax { mov \$$imm$, %$rd$ } { movi rd, imm, 1 }
+pub macro movi(imm: int, rd: Reg)
+    | syntax { mov \$$imm$, %$rd$ } { movi rd, imm, 1 }
 
 syntax addi(a, b, c) = { addi $a$, $b$, $c$ }
-pub macro addi(imm: int, rd: Reg) | syntax { add \$$imm$, %$rd$ } { addi rd, imm, 1 }
+pub macro addi(imm: int, rd: Reg)
+    | syntax { add \$$imm$, %$rd$ } { addi rd, imm, 1 }
 
 syntax ori(a, b, c) = { ori $a$, $b$, $c$ }
-pub macro ori(imm: int, rd: Reg) | syntax { or \$$imm$, %$rd$ } { ori rd, imm, 1 }
+pub macro ori(imm: int, rd: Reg)
+    | syntax { or \$$imm$, %$rd$ } { ori rd, imm, 1 }
 
 syntax andi(a, b, c) = { andi $a$, $b$, $c$ }
-pub macro andi(imm: int, rd: Reg) | syntax { and \$$imm$, %$rd$ } { andi rd, imm, 1 }
+pub macro andi(imm: int, rd: Reg)
+    | syntax { and \$$imm$, %$rd$ } { andi rd, imm, 1 }
 
 syntax subi(a, b, c) = { subi $a$, $b$, $c$ }
-pub macro subi(imm: int, rd: Reg) | syntax { sub \$$imm$, %$rd$ } { subi rd, imm, 1 }
+pub macro subi(imm: int, rd: Reg)
+    | syntax { sub \$$imm$, %$rd$ } { subi rd, imm, 1 }
 
 syntax xori(a, b, c) = { xori $a$, $b$, $c$ }
-pub macro xori(imm: int, rd: Reg) | syntax { xor \$$imm$, %$rd$ } { xori rd, imm, 1 }
+pub macro xori(imm: int, rd: Reg)
+    | syntax { xor \$$imm$, %$rd$ } { xori rd, imm, 1 }
 
 syntax cmpi(a, b, c) = { cmpi $a$, $b$, $c$ }
-pub macro cmpi(imm: int, rd: Reg) | syntax { cmp \$$imm$, %$rd$ } { cmpi rd, imm, 1 }
+pub macro cmpi(imm: int, rd: Reg)
+    | syntax { cmp \$$imm$, %$rd$ } { cmpi rd, imm, 1 }
 
 syntax testi(a, b, c) = { testi $a$, $b$, $c$ }
-pub macro testi(imm: int, rd: Reg) | syntax { test \$$imm$, %$rd$ } { testi rd, imm, 1 }
+pub macro testi(imm: int, rd: Reg)
+    | syntax { test \$$imm$, %$rd$ } { testi rd, imm, 1 }
 
 # =================
 # lea
 # =================
 
-pub macro lea_base(rd: Reg, base: Reg) | syntax { lea (%$base$), %$rd$ } {
-    lea rd, Mem(base, 0), 1
-}
+pub macro lea_base(rd: Reg, base: Reg)
+    | syntax { lea (%$base$), %$rd$ } {
+        lea rd, Mem(base, 0), 1
+    }
 
-pub macro lea_base_disp(rd: Reg, disp: int, base: Reg) | syntax { lea $disp$(%$base$), %$rd$ } {
-    lea rd, Mem(base, disp), 1
-}
+pub macro lea_base_disp(rd: Reg, disp: int, base: Reg)
+    | syntax { lea $disp$(%$base$), %$rd$ } {
+        lea rd, Mem(base, disp), 1
+    }
 
 pub macro lea_indexed(rd: Reg, disp: int, base: Reg, index: Reg, scale: int)
     | syntax { lea $disp$(%$base$,%$index$,$scale$), %$rd$ }
@@ -154,25 +190,32 @@ pub macro lea_indexed(rd: Reg, disp: int, base: Reg, index: Reg, scale: int)
     lea rd, MemIndexed(base, index, scale, disp), 1
 }
 
-pub macro lea_rip(rd: Reg, disp: int) | syntax { lea $disp$(%rip), %$rd$ } {
-    lea rd, MemRipRelative(disp), 1
-}
+pub macro lea_rip(rd: Reg, disp: int)
+    | syntax { lea $disp$(%rip), %$rd$ } {
+        lea rd, MemRipRelative(disp), 1
+    }
 
 # =================
 # shl/shr/sar
 # =================
 
 syntax shl(a, b, c) = { shl $a$, $b$, $c$ }
-pub macro shl(imm: int, rd: Reg) | syntax { shl \$$imm$, %$rd$ } { shl rd, imm, 1 }
-pub macro shl_cl(rd: Reg) | syntax { shl %cl, %$rd$ } { shl_cl rd, 1 }
+pub macro shl(imm: int, rd: Reg)
+    | syntax { shl \$$imm$, %$rd$ } { shl rd, imm, 1 }
+pub macro shl_cl(rd: Reg)
+    | syntax { shl %cl, %$rd$ } { shl_cl rd, 1 }
 
 syntax shr(a, b, c) = { shr $a$, $b$, $c$ }
-pub macro shr_imm(imm: int, rd: Reg) | syntax { shr \$$imm$, %$rd$ } { shr rd, imm, 1 }
-pub macro shr_cl(rd: Reg) | syntax { shr %cl, %$rd$ } { shr_cl rd, 1 }
+pub macro shr_imm(imm: int, rd: Reg)
+    | syntax { shr \$$imm$, %$rd$ } { shr rd, imm, 1 }
+pub macro shr_cl(rd: Reg)
+    | syntax { shr %cl, %$rd$ } { shr_cl rd, 1 }
 
 syntax sar(a, b, c) = { sar $a$, $b$, $c$ }
-pub macro sar(imm: int, rd: Reg) | syntax { sar \$$imm$, %$rd$ } { sar rd, imm, 1 }
-pub macro sar_cl(rd: Reg) | syntax { sar %cl, %$rd$ } { sar_cl rd, 1 }
+pub macro sar(imm: int, rd: Reg)
+    | syntax { sar \$$imm$, %$rd$ } { sar rd, imm, 1 }
+pub macro sar_cl(rd: Reg)
+    | syntax { sar %cl, %$rd$ } { sar_cl rd, 1 }
 
 # =================
 # push/pop, control flow, ret

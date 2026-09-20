@@ -22,19 +22,37 @@ macro verify() {
     # one operand deferred: dispatch picks the Deferred-producing overload
     # and builds the expected one-level node, instead of erroring or
     # silently discarding the operand's real shape.
-    @assert sub(x, 3) == Deferred.Node(BinOp(op = Op.Sub, left = x, right = Deferred.Leaf(3)))
-    @assert mul(x, 4) == Deferred.Node(BinOp(op = Op.Mul, left = x, right = Deferred.Leaf(4)))
-    @assert shr(x, 2) == Deferred.Node(BinOp(op = Op.Shr, left = x, right = Deferred.Leaf(2)))
-    @assert band(x, 1) == Deferred.Node(BinOp(op = Op.Band, left = x, right = Deferred.Leaf(1)))
+    @assert sub(
+        x,
+        3
+    ) == Deferred.Node(BinOp(op = Op.Sub, left = x, right = Deferred.Leaf(3)))
+    @assert mul(
+        x,
+        4
+    ) == Deferred.Node(BinOp(op = Op.Mul, left = x, right = Deferred.Leaf(4)))
+    @assert shr(
+        x,
+        2
+    ) == Deferred.Node(BinOp(op = Op.Shr, left = x, right = Deferred.Leaf(2)))
+    @assert band(
+        x,
+        1
+    ) == Deferred.Node(BinOp(op = Op.Band, left = x, right = Deferred.Leaf(1)))
 
     # operand order and both-sides-deferred also dispatch correctly, not
     # just the "left operand happens to be deferred" case the real RV32I
     # migration actually produces.
-    @assert sub(3, x) == Deferred.Node(BinOp(op = Op.Sub, left = Deferred.Leaf(3), right = x))
+    @assert sub(
+        3,
+        x
+    ) == Deferred.Node(BinOp(op = Op.Sub, left = Deferred.Leaf(3), right = x))
     @assert sub(x, x) == Deferred.Node(BinOp(op = Op.Sub, left = x, right = x))
 
     # here() itself: always opaque, never a concrete Int — the whole point.
-    @assert sub(5, here()) == Deferred.Node(BinOp(op = Op.Sub, left = Deferred.Leaf(5), right = Deferred.Here))
+    @assert sub(
+        5,
+        here()
+    ) == Deferred.Node(BinOp(op = Op.Sub, left = Deferred.Leaf(5), right = Deferred.Here))
 
     # span: unlike sub/mul/shr/band, there's no (int, int) -> int fold —
     # "how much lies between these two entries" is never knowable until
@@ -43,10 +61,22 @@ macro verify() {
     # and (int, Deferred) are what let `span(here(), target)` work at all —
     # exactly x86's `jmp`/`jcc`/`call rel32` use case (see
     # std/bitter/deferred.basm's own doc comment on `span`).
-    @assert span(0, 2) == Deferred.Node(BinOp(op = Op.Span, left = Deferred.Leaf(0), right = Deferred.Leaf(2)))
-    @assert span(x, 2) == Deferred.Node(BinOp(op = Op.Span, left = x, right = Deferred.Leaf(2)))
-    @assert span(0, x) == Deferred.Node(BinOp(op = Op.Span, left = Deferred.Leaf(0), right = x))
-    @assert span(here(), 5) == Deferred.Node(BinOp(op = Op.Span, left = Deferred.Here, right = Deferred.Leaf(5)))
+    @assert span(
+        0,
+        2
+    ) == Deferred.Node(BinOp(op = Op.Span, left = Deferred.Leaf(0), right = Deferred.Leaf(2)))
+    @assert span(
+        x,
+        2
+    ) == Deferred.Node(BinOp(op = Op.Span, left = x, right = Deferred.Leaf(2)))
+    @assert span(
+        0,
+        x
+    ) == Deferred.Node(BinOp(op = Op.Span, left = Deferred.Leaf(0), right = x))
+    @assert span(
+        here(),
+        5
+    ) == Deferred.Node(BinOp(op = Op.Span, left = Deferred.Here, right = Deferred.Leaf(5)))
 
     # nesting: once any operand in a chain is Deferred, every later call in
     # the same expression keeps building the tree rather than collapsing
@@ -54,17 +84,17 @@ macro verify() {
     # (`mul(sub(target, here()), 4)` then `band(shr(offset, N), M)`).
     const chained = band(shr(mul(sub(x, 5), 4), 12), 1)
     @assert chained == Deferred.Node(BinOp(
-        op = Op.Band,
-        left = Deferred.Node(BinOp(
-            op = Op.Shr,
+            op = Op.Band,
             left = Deferred.Node(BinOp(
-                op = Op.Mul,
-                left = Deferred.Node(BinOp(op = Op.Sub, left = x, right = Deferred.Leaf(5))),
-                right = Deferred.Leaf(4)
+                    op = Op.Shr,
+                    left = Deferred.Node(BinOp(
+                            op = Op.Mul,
+                            left = Deferred.Node(BinOp(op = Op.Sub, left = x, right = Deferred.Leaf(5))),
+                            right = Deferred.Leaf(4)
+                    )),
+                    right = Deferred.Leaf(12)
             )),
-            right = Deferred.Leaf(12)
-        )),
-        right = Deferred.Leaf(1)
+            right = Deferred.Leaf(1)
     ))
 
     const p = Positioned<1> { value: chained }

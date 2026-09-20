@@ -20,7 +20,12 @@ mov Mem(r13, 0), rbx, 0  # forced mod=01 disp8=0, REX.B (extended base)
 
 # --- MemIndexed: base+index*scale+disp ---
 mov MemIndexed(rax, rcx, 4, 0), rbx, 0        # mod=00, no disp
-mov MemIndexed(rbp, rcx, 4, 0), rbx, 0        # base=rbp forces disp8=0 even indexed
+mov MemIndexed(
+    rbp,
+    rcx,
+    4,
+    0
+), rbx, 0        # base=rbp forces disp8=0 even indexed
 mov MemIndexed(rax, rcx, 4, 100), rbx, 0      # mod=01, disp8
 mov MemIndexed(rax, rcx, 4, 100000), rbx, 0   # mod=10, disp32
 
@@ -34,6 +39,7 @@ movi Mem(rbx, 4), 0x2A, 0   # mov mem,imm (0xC7 /0, distinct from 0xB8+reg)
 testi Mem(rax, 0), 0xFF, 0  # test mem,imm (0xF7 /0)
 
 # --- mov's load direction (0x8B), added in Phase 6 for the Intel dialect's
-# `mov rd, [mem]` bracket syntax — see std/x86_64/PROGRESS.md's Phase 6 section ---
+# `mov rd, [mem]` bracket syntax — see std/x86_64/PROGRESS.md's Phase 6 section
+# ---
 mov rax, Mem(rbx, 8), 0
 mov r9, MemIndexed(rax, rcx, 4, 0x100), 1

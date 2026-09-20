@@ -6,7 +6,9 @@ macro double(x: int) -> int {
     @return x * 2
 }
 
-macro apply<F: Fn(int) -> int>(x: int, f: F) -> int {
+macro apply<F: Fn(
+    int
+) -> int>(x: int, f: F) -> int {
     @return f(x)
 }
 
@@ -26,7 +28,11 @@ macro verify_generic_macro_rejected() {
 macro overloaded(x: int) -> int {
     @return x
 }
-macro overloaded(x: int, y: int) -> int {
+
+macro overloaded(
+    x: int,
+    y: int
+) -> int {
     @return x + y
 }
 

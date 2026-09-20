@@ -11,12 +11,18 @@ from std.bitter.byte_order import *
 # registers
 # =================
 # 16 general-purpose registers. Unlike RISC-V's `Reg = bits<5>` (which plugs
-# directly into a format struct's fixed bit position), an x86-64 register's 4-bit
-# number is split across two different bytes of an instruction — 3 bits embedded in
-# a ModRM/SIB field or in the low 3 bits of certain opcodes, plus 1 extension bit
-# folded into the REX prefix — so what every macro actually needs is arithmetic on
-# the raw number, not a packer-ready `bits<N>`, until the moment a modrm/sib/rex/
-# opcode byte is actually built. `Reg` is therefore a plain `int` alias, the same
+# directly into a format struct's fixed bit position), an x86-64 register's
+# 4-bit
+# number is split across two different bytes of an instruction — 3 bits embedded
+# in
+# a ModRM/SIB field or in the low 3 bits of certain opcodes, plus 1 extension
+# bit
+# folded into the REX prefix — so what every macro actually needs is arithmetic
+# on
+# the raw number, not a packer-ready `bits<N>`, until the moment a
+# modrm/sib/rex/
+# opcode byte is actually built. `Reg` is therefore a plain `int` alias, the
+# same
 # pattern `std/unsigned.basm`'s `uint` already uses.
 pub type Reg = int
 
@@ -41,7 +47,8 @@ pub macro reg_field(r: Reg) -> int {
     @return r & 0b111
 }
 
-# The register number's 4th bit — folded into the REX prefix (R/X/B) whenever the
+# The register number's 4th bit — folded into the REX prefix (R/X/B) whenever
+# the
 # register is r8-r15, since the 3-bit fields above can't carry it.
 pub macro reg_ext(r: Reg) -> int {
     @return (r >> 3) & 1
@@ -53,9 +60,11 @@ pub macro reg_ext(r: Reg) -> int {
 
 pub type Byte = bits<8>
 
-# A fixed-length run of bytes, meant to be `bitter`-packed directly. Deliberately
+# A fixed-length run of bytes, meant to be `bitter`-packed directly.
+# Deliberately
 # its own copy rather than imported from `std.wasm.leb128`'s identical-looking
-# `Bytes<N>` — a cross-domain dependency between an x86-64 package and a WASM one —
+# `Bytes<N>` — a cross-domain dependency between an x86-64 package and a WASM
+# one —
 # the same duplication `std/riscv/impl.basm`'s own field-width aliases already
 # embrace for self-documentation (see its own comment on `Funct7`/`Imm7`).
 pub struct Bytes<const N: int>
@@ -66,30 +75,50 @@ pub struct Bytes<const N: int>
     }
 }
 
-# REX prefix byte: `0100WRXB`. `w` selects 64-bit operand size; `r`/`x`/`b` are the
-# extension bits for, respectively, ModRM.reg, SIB.index, and ModRM.rm/SIB.base/an
-# opcode-embedded register. Every argument is a plain 0/1 `int`, not a `bits<1>` —
+# REX prefix byte: `0100WRXB`. `w` selects 64-bit operand size; `r`/`x`/`b` are
+# the
+# extension bits for, respectively, ModRM.reg, SIB.index, and
+# ModRM.rm/SIB.base/an
+# opcode-embedded register. Every argument is a plain 0/1 `int`, not a `bits<1>`
+# —
 # see `reg_ext` above for why x86 fields stay plain `int` until the final byte.
-pub macro rex_byte(w: int, r: int, x: int, b: int) -> Byte {
+pub macro rex_byte(
+    w: int,
+    r: int,
+    x: int,
+    b: int
+) -> Byte {
     @return Byte(0b0100_0000 | (w << 3) | (r << 2) | (x << 1) | b)
 }
 
 # ModRM byte: `mod` (2 bits), `reg` (3 bits, a register or an opcode-extension
-# digit depending on the instruction), `rm` (3 bits, a register or the start of a
+# digit depending on the instruction), `rm` (3 bits, a register or the start of
+# a
 # memory addressing form).
-pub macro modrm_byte(mod: int, reg: int, rm: int) -> Byte {
+pub macro modrm_byte(
+    mod: int,
+    reg: int,
+    rm: int
+) -> Byte {
     @return Byte((mod << 6) | (reg << 3) | rm)
 }
 
 # SIB byte: `scale` (2 bits, log2 of the index's multiplier), `index` (3 bits),
 # `base` (3 bits). Only present when a ModRM byte's `rm` field is `0b100`.
-pub macro sib_byte(scale: int, index: int, base: int) -> Byte {
+pub macro sib_byte(
+    scale: int,
+    index: int,
+    base: int
+) -> Byte {
     @return Byte((scale << 6) | (index << 3) | base)
 }
 
 # Little-endian byte `index` (0 = least significant) of `value`, for any width —
 # reused for every immediate and displacement, whatever their byte count.
-pub macro byte_of(value: int, index: int) -> Byte {
+pub macro byte_of(
+    value: int,
+    index: int
+) -> Byte {
     @return Byte((value >> (8 * index)) & 0xFF)
 }
 
@@ -140,7 +169,15 @@ macro instr(
     const n = need_rex + 1 + has_modrm + imm_len
     @return Bytes<n> {
         @for i in 0..n {
-            __el`i`: instr_byte(need_rex, rex, opcode, has_modrm, modrm, imm, i),
+            __el`i`: instr_byte(
+                need_rex,
+                rex,
+                opcode,
+                has_modrm,
+                modrm,
+                imm,
+                i
+            ),
         }
     }
 }
@@ -151,7 +188,12 @@ macro instr(
 # `w` selects operand size (0 = 32-bit, 1 = 64-bit, forcing REX.W); a REX
 # byte is only actually emitted when it's needed for `w` or an extended
 # (r8-r15) register, never unconditionally.
-macro reg_reg_instr(opcode: int, rd: Reg, rs: Reg, w: int) -> Bytes<...> {
+macro reg_reg_instr(
+    opcode: int,
+    rd: Reg,
+    rs: Reg,
+    w: int
+) -> Bytes<...> {
     const need_rex = w == 1 || reg_ext(rd) == 1 || reg_ext(rs) == 1
     const rex = rex_byte(w, reg_ext(rs), 0, reg_ext(rd))
     const modrm = modrm_byte(0b11, reg_field(rs), reg_field(rd))
@@ -160,10 +202,19 @@ macro reg_reg_instr(opcode: int, rd: Reg, rs: Reg, w: int) -> Bytes<...> {
 
 # Shared by every reg,imm instruction below (the six ALU ops and `test` via
 # imm32; Phase 5's `shl`/`shr`/`sar` via imm8, and their reg,CL forms with no
-# immediate at all — `imm_len` varies per caller, not hardcoded, for exactly that
-# reason): ModRM.reg carries a per-mnemonic opcode-extension `digit` instead of a
+# immediate at all — `imm_len` varies per caller, not hardcoded, for exactly
+# that
+# reason): ModRM.reg carries a per-mnemonic opcode-extension `digit` instead of
+# a
 # real register (ModRM.rm = `rd`).
-macro reg_imm_instr(opcode: int, digit: int, rd: Reg, imm: int, imm_len: int, w: int) -> Bytes<...> {
+macro reg_imm_instr(
+    opcode: int,
+    digit: int,
+    rd: Reg,
+    imm: int,
+    imm_len: int,
+    w: int
+) -> Bytes<...> {
     const need_rex = w == 1 || reg_ext(rd) == 1
     const rex = rex_byte(w, 0, 0, reg_ext(rd))
     const modrm = modrm_byte(0b11, digit, reg_field(rd))
@@ -183,7 +234,11 @@ macro reg_imm_instr(opcode: int, digit: int, rd: Reg, imm: int, imm_len: int, w:
 # Every macro below keeps `(rd, rs, ...)` argument order, destination
 # first, so Phase 6's Intel-syntax dialect can read `mov rd, rs` directly
 # off the positional order with no reshuffling.
-pub macro mov(rd: Reg, rs: Reg, w: int) -> Bytes<...> {
+pub macro mov(
+    rd: Reg,
+    rs: Reg,
+    w: int
+) -> Bytes<...> {
     @emit reg_reg_instr(0x89, rd, rs, w)
 }
 
@@ -193,7 +248,11 @@ pub macro mov(rd: Reg, rs: Reg, w: int) -> Bytes<...> {
 # other instruction here is: with `REX.W` set, `0xB8+reg` takes a full
 # 8-byte imm64 (not a sign-extended imm32 like every other `w=1` form in
 # this file) — confirmed against the Intel SDM's own `MOV` opcode table.
-pub macro movi(rd: Reg, imm: int, w: int) -> Bytes<...> {
+pub macro movi(
+    rd: Reg,
+    imm: int,
+    w: int
+) -> Bytes<...> {
     const need_rex = w == 1 || reg_ext(rd) == 1
     const rex = rex_byte(w, 0, 0, reg_ext(rd))
     const opcode = Byte(0xB8 + reg_field(rd))
@@ -210,12 +269,36 @@ pub macro movi(rd: Reg, imm: int, w: int) -> Bytes<...> {
 # fixed opcode byte (reg,reg) or a 3-bit ModRM.reg digit (reg,imm), so the
 # six mnemonics below are never more than that one differing constant.
 
-pub macro add(rd: Reg, rs: Reg, w: int) -> Bytes<...> { @emit reg_reg_instr(0x01, rd, rs, w) }
-pub macro or(rd: Reg, rs: Reg, w: int) -> Bytes<...> { @emit reg_reg_instr(0x09, rd, rs, w) }
-pub macro and(rd: Reg, rs: Reg, w: int) -> Bytes<...> { @emit reg_reg_instr(0x21, rd, rs, w) }
-pub macro sub(rd: Reg, rs: Reg, w: int) -> Bytes<...> { @emit reg_reg_instr(0x29, rd, rs, w) }
-pub macro xor(rd: Reg, rs: Reg, w: int) -> Bytes<...> { @emit reg_reg_instr(0x31, rd, rs, w) }
-pub macro cmp(rd: Reg, rs: Reg, w: int) -> Bytes<...> { @emit reg_reg_instr(0x39, rd, rs, w) }
+pub macro add(
+    rd: Reg,
+    rs: Reg,
+    w: int
+) -> Bytes<...> { @emit reg_reg_instr(0x01, rd, rs, w) }
+pub macro or(
+    rd: Reg,
+    rs: Reg,
+    w: int
+) -> Bytes<...> { @emit reg_reg_instr(0x09, rd, rs, w) }
+pub macro and(
+    rd: Reg,
+    rs: Reg,
+    w: int
+) -> Bytes<...> { @emit reg_reg_instr(0x21, rd, rs, w) }
+pub macro sub(
+    rd: Reg,
+    rs: Reg,
+    w: int
+) -> Bytes<...> { @emit reg_reg_instr(0x29, rd, rs, w) }
+pub macro xor(
+    rd: Reg,
+    rs: Reg,
+    w: int
+) -> Bytes<...> { @emit reg_reg_instr(0x31, rd, rs, w) }
+pub macro cmp(
+    rd: Reg,
+    rs: Reg,
+    w: int
+) -> Bytes<...> { @emit reg_reg_instr(0x39, rd, rs, w) }
 
 # reg,imm32 forms. Named with the `std/riscv/impl.basm`-established `i`
 # suffix (`addi`/`andi`/...) rather than overloading `add`/`and`/... by
@@ -228,30 +311,67 @@ pub macro cmp(rd: Reg, rs: Reg, w: int) -> Bytes<...> { @emit reg_reg_instr(0x39
 # `src/resolver/macro_body.rs`) — overloading only works once the two
 # forms resolve to genuinely distinct types, which is exactly what Phase
 # 3's `MemOperand` will be for reg,mem vs. reg,reg.
-pub macro addi(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0x81, 0, rd, imm, 4, w) }
-pub macro ori(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0x81, 1, rd, imm, 4, w) }
-pub macro andi(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0x81, 4, rd, imm, 4, w) }
-pub macro subi(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0x81, 5, rd, imm, 4, w) }
-pub macro xori(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0x81, 6, rd, imm, 4, w) }
-pub macro cmpi(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0x81, 7, rd, imm, 4, w) }
+pub macro addi(
+    rd: Reg,
+    imm: int,
+    w: int
+) -> Bytes<...> { @emit reg_imm_instr(0x81, 0, rd, imm, 4, w) }
+pub macro ori(
+    rd: Reg,
+    imm: int,
+    w: int
+) -> Bytes<...> { @emit reg_imm_instr(0x81, 1, rd, imm, 4, w) }
+pub macro andi(
+    rd: Reg,
+    imm: int,
+    w: int
+) -> Bytes<...> { @emit reg_imm_instr(0x81, 4, rd, imm, 4, w) }
+pub macro subi(
+    rd: Reg,
+    imm: int,
+    w: int
+) -> Bytes<...> { @emit reg_imm_instr(0x81, 5, rd, imm, 4, w) }
+pub macro xori(
+    rd: Reg,
+    imm: int,
+    w: int
+) -> Bytes<...> { @emit reg_imm_instr(0x81, 6, rd, imm, 4, w) }
+pub macro cmpi(
+    rd: Reg,
+    imm: int,
+    w: int
+) -> Bytes<...> { @emit reg_imm_instr(0x81, 7, rd, imm, 4, w) }
 
 # =================
 # test
 # =================
-pub macro test(rd: Reg, rs: Reg, w: int) -> Bytes<...> { @emit reg_reg_instr(0x85, rd, rs, w) }
-pub macro testi(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0xF7, 0, rd, imm, 4, w) }
+pub macro test(
+    rd: Reg,
+    rs: Reg,
+    w: int
+) -> Bytes<...> { @emit reg_reg_instr(0x85, rd, rs, w) }
+pub macro testi(
+    rd: Reg,
+    imm: int,
+    w: int
+) -> Bytes<...> { @emit reg_imm_instr(0xF7, 0, rd, imm, 4, w) }
 
 # =================
 # memory operands (Phase 3)
 # =================
 # Three named constructors, not one giant optional-everything struct — `Mem`
 # (`[base]`/`[base+disp]`), `MemIndexed` (`[base+index*scale+disp]`), and
-# `MemRipRelative` (`[rip+disp]`), matching the three memory forms `PROGRESS.md`'s
-# "Decided scope" actually commits to (no bare `[disp32]` absolute addressing — that
-# would need a fourth, index-less "no base" constructor nothing here asks for). Each
+# `MemRipRelative` (`[rip+disp]`), matching the three memory forms
+# `PROGRESS.md`'s
+# "Decided scope" actually commits to (no bare `[disp32]` absolute addressing —
+# that
+# would need a fourth, index-less "no base" constructor nothing here asks for).
+# Each
 # wraps its own field struct in one `MemOperand` enum variant so every reg/mem-
-# accepting instruction below only ever needs to overload on the one `MemOperand`
-# type, never on which constructor built it — `addr_mode` below is the only place
+# accepting instruction below only ever needs to overload on the one
+# `MemOperand`
+# type, never on which constructor built it — `addr_mode` below is the only
+# place
 # that ever inspects which variant a given value actually is.
 pub struct MemBase {
     pub base: Reg,
@@ -275,14 +395,27 @@ pub enum MemOperand {
     RipRelative: MemRip,
 }
 
-pub macro Mem(base: Reg, disp: int) -> MemOperand {
+pub macro Mem(
+    base: Reg,
+    disp: int
+) -> MemOperand {
     @return MemOperand.Base(MemBase(base = base, disp = disp))
 }
 
-pub macro MemIndexed(base: Reg, index: Reg, scale: int, disp: int) -> MemOperand {
+pub macro MemIndexed(
+    base: Reg,
+    index: Reg,
+    scale: int,
+    disp: int
+) -> MemOperand {
     @assert scale == 1 || scale == 2 || scale == 4 || scale == 8, "SIB scale must be 1, 2, 4, or 8"
     @assert reg_field(index) != 0b100, "rsp/r12 cannot be used as a SIB index register (that encoding means \"no index\")"
-    @return MemOperand.Indexed(MemSib(base = base, index = index, scale = scale, disp = disp))
+    @return MemOperand.Indexed(MemSib(
+            base = base,
+            index = index,
+            scale = scale,
+            disp = disp
+        ))
 }
 
 pub macro MemRipRelative(disp: int) -> MemOperand {
@@ -290,7 +423,8 @@ pub macro MemRipRelative(disp: int) -> MemOperand {
 }
 
 # SIB.scale is the *log2* of the actual multiplier — `MemIndexed` takes the real
-# multiplier (1/2/4/8) since that's what every Intel-syntax `[base+index*N+disp]`
+# multiplier (1/2/4/8) since that's what every Intel-syntax
+# `[base+index*N+disp]`
 # writes literally, and `@assert`s it's one of those four up front so this never
 # sees anything else.
 macro scale_code(scale: int) -> int {
@@ -300,18 +434,22 @@ macro scale_code(scale: int) -> int {
     @return 0b11
 }
 
-# disp8 vs disp32 is chosen automatically from the displacement's own magnitude —
+# disp8 vs disp32 is chosen automatically from the displacement's own magnitude
+# —
 # pure encoding-size selection with no semantic difference (unlike the branch-
 # relaxation this repo deliberately keeps manual, see PROGRESS.md's "Decided
-# scope"), the same `uleb128_length`-style "let the value's own magnitude pick the
+# scope"), the same `uleb128_length`-style "let the value's own magnitude pick
+# the
 # encoding" reasoning `std/wasm/leb128.basm` already uses.
 macro fits_disp8(disp: int) -> int {
     @return disp >= -128 && disp <= 127
 }
 
-# Every field `addr_mode` below needs to hand back to its caller in one shot: the
+# Every field `addr_mode` below needs to hand back to its caller in one shot:
+# the
 # ModRM `mod`/`rm` pair, whether a SIB byte follows (and its value), the
-# displacement's value and byte count (0, 1, or 4), and the REX.X/REX.B extension
+# displacement's value and byte count (0, 1, or 4), and the REX.X/REX.B
+# extension
 # bits a memory operand's index/base registers may need — a macro can only ever
 # `@return` one value, so these all travel together as one struct instead of one
 # macro per field.
@@ -326,23 +464,28 @@ struct AddrMode {
     pub rex_b: int,
 }
 
-# The actual addressing-mode selection logic — `mod`/`rm`/SIB selection exactly as
+# The actual addressing-mode selection logic — `mod`/`rm`/SIB selection exactly
+# as
 # `PROGRESS.md`'s Phase 3 plan lays out:
-# - `mod=11` register-direct doesn't appear here at all (Phase 2's `reg_reg_instr`/
-#   `reg_imm_instr` already cover it; `MemOperand` only ever models a true memory
-#   operand).
-# - A base register whose low 3 bits are `0b100` (`rsp`/`r12`) can never be ModRM's
-#   `rm` directly — `rm=100` always means "read a SIB byte instead" — so `Mem` with
-#   such a base is *always* routed through a SIB byte with `index=0b100` ("no
-#   index"), never through the plain non-SIB path below.
+# - `mod=11` register-direct doesn't appear here at all (Phase 2's
+# `reg_reg_instr`/
+# `reg_imm_instr` already cover it; `MemOperand` only ever models a true memory
+# operand).
+# - A base register whose low 3 bits are `0b100` (`rsp`/`r12`) can never be
+# ModRM's
+# `rm` directly — `rm=100` always means "read a SIB byte instead" — so `Mem`
+# with
+# such a base is *always* routed through a SIB byte with `index=0b100` ("no
+# index"), never through the plain non-SIB path below.
 # - A base register whose low 3 bits are `0b101` (`rbp`/`r13`) combined with
-#   `mod=00` doesn't mean "no displacement" the way every other register does — it
-#   means RIP-relative (no base register at all) or, inside a SIB byte, "no base,
-#   disp32 only". The only way to address `[rbp]`/`[r13]` (or a SIB base of
-#   `rbp`/`r13`) with a *literal* zero displacement is therefore to force `mod=01`
-#   with an explicit `disp8=0` — never `mod=00`. A non-zero displacement never hits
-#   this ambiguity in the first place (`mod` is already `01`/`10` on its own
-#   account), so the forcing only ever applies in the `disp==0` case.
+# `mod=00` doesn't mean "no displacement" the way every other register does — it
+# means RIP-relative (no base register at all) or, inside a SIB byte, "no base,
+# disp32 only". The only way to address `[rbp]`/`[r13]` (or a SIB base of
+# `rbp`/`r13`) with a *literal* zero displacement is therefore to force `mod=01`
+# with an explicit `disp8=0` — never `mod=00`. A non-zero displacement never
+# hits
+# this ambiguity in the first place (`mod` is already `01`/`10` on its own
+# account), so the forcing only ever applies in the `disp==0` case.
 macro addr_mode(mem: MemOperand) -> AddrMode {
     @match mem {
         Base(fields) => {
@@ -350,47 +493,160 @@ macro addr_mode(mem: MemOperand) -> AddrMode {
             @if base_low3 == 0b100 {
                 const sib = sib_byte(0b00, 0b100, base_low3)
                 @if fields.disp == 0 {
-                    @return AddrMode(mode = 0b00, rm = 0b100, has_sib = 1, sib = sib, disp = 0, disp_len = 0, rex_x = 0, rex_b = reg_ext(fields.base))
+                    @return AddrMode(
+                        mode = 0b00,
+                        rm = 0b100,
+                        has_sib = 1,
+                        sib = sib,
+                        disp = 0,
+                        disp_len = 0,
+                        rex_x = 0,
+                        rex_b = reg_ext(fields.base)
+                    )
                 }
                 @if fits_disp8(fields.disp) {
-                    @return AddrMode(mode = 0b01, rm = 0b100, has_sib = 1, sib = sib, disp = fields.disp, disp_len = 1, rex_x = 0, rex_b = reg_ext(fields.base))
+                    @return AddrMode(
+                        mode = 0b01,
+                        rm = 0b100,
+                        has_sib = 1,
+                        sib = sib,
+                        disp = fields.disp,
+                        disp_len = 1,
+                        rex_x = 0,
+                        rex_b = reg_ext(fields.base)
+                    )
                 }
-                @return AddrMode(mode = 0b10, rm = 0b100, has_sib = 1, sib = sib, disp = fields.disp, disp_len = 4, rex_x = 0, rex_b = reg_ext(fields.base))
+                @return AddrMode(
+                    mode = 0b10,
+                    rm = 0b100,
+                    has_sib = 1,
+                    sib = sib,
+                    disp = fields.disp,
+                    disp_len = 4,
+                    rex_x = 0,
+                    rex_b = reg_ext(fields.base)
+                )
             }
             @if base_low3 == 0b101 && fields.disp == 0 {
-                @return AddrMode(mode = 0b01, rm = 0b101, has_sib = 0, sib = Byte(0), disp = 0, disp_len = 1, rex_x = 0, rex_b = reg_ext(fields.base))
+                @return AddrMode(
+                    mode = 0b01,
+                    rm = 0b101,
+                    has_sib = 0,
+                    sib = Byte(0),
+                    disp = 0,
+                    disp_len = 1,
+                    rex_x = 0,
+                    rex_b = reg_ext(fields.base)
+                )
             }
             @if fields.disp == 0 {
-                @return AddrMode(mode = 0b00, rm = base_low3, has_sib = 0, sib = Byte(0), disp = 0, disp_len = 0, rex_x = 0, rex_b = reg_ext(fields.base))
+                @return AddrMode(
+                    mode = 0b00,
+                    rm = base_low3,
+                    has_sib = 0,
+                    sib = Byte(0),
+                    disp = 0,
+                    disp_len = 0,
+                    rex_x = 0,
+                    rex_b = reg_ext(fields.base)
+                )
             }
             @if fits_disp8(fields.disp) {
-                @return AddrMode(mode = 0b01, rm = base_low3, has_sib = 0, sib = Byte(0), disp = fields.disp, disp_len = 1, rex_x = 0, rex_b = reg_ext(fields.base))
+                @return AddrMode(
+                    mode = 0b01,
+                    rm = base_low3,
+                    has_sib = 0,
+                    sib = Byte(0),
+                    disp = fields.disp,
+                    disp_len = 1,
+                    rex_x = 0,
+                    rex_b = reg_ext(fields.base)
+                )
             }
-            @return AddrMode(mode = 0b10, rm = base_low3, has_sib = 0, sib = Byte(0), disp = fields.disp, disp_len = 4, rex_x = 0, rex_b = reg_ext(fields.base))
+            @return AddrMode(
+                mode = 0b10,
+                rm = base_low3,
+                has_sib = 0,
+                sib = Byte(0),
+                disp = fields.disp,
+                disp_len = 4,
+                rex_x = 0,
+                rex_b = reg_ext(fields.base)
+            )
         },
         Indexed(fields) => {
             const base_low3 = reg_field(fields.base)
-            const sib = sib_byte(scale_code(fields.scale), reg_field(fields.index), base_low3)
+            const sib = sib_byte(
+                scale_code(fields.scale),
+                reg_field(fields.index),
+                base_low3
+            )
             @if base_low3 == 0b101 && fields.disp == 0 {
-                @return AddrMode(mode = 0b01, rm = 0b100, has_sib = 1, sib = sib, disp = 0, disp_len = 1, rex_x = reg_ext(fields.index), rex_b = reg_ext(fields.base))
+                @return AddrMode(
+                    mode = 0b01,
+                    rm = 0b100,
+                    has_sib = 1,
+                    sib = sib,
+                    disp = 0,
+                    disp_len = 1,
+                    rex_x = reg_ext(fields.index),
+                    rex_b = reg_ext(fields.base)
+                )
             }
             @if fields.disp == 0 {
-                @return AddrMode(mode = 0b00, rm = 0b100, has_sib = 1, sib = sib, disp = 0, disp_len = 0, rex_x = reg_ext(fields.index), rex_b = reg_ext(fields.base))
+                @return AddrMode(
+                    mode = 0b00,
+                    rm = 0b100,
+                    has_sib = 1,
+                    sib = sib,
+                    disp = 0,
+                    disp_len = 0,
+                    rex_x = reg_ext(fields.index),
+                    rex_b = reg_ext(fields.base)
+                )
             }
             @if fits_disp8(fields.disp) {
-                @return AddrMode(mode = 0b01, rm = 0b100, has_sib = 1, sib = sib, disp = fields.disp, disp_len = 1, rex_x = reg_ext(fields.index), rex_b = reg_ext(fields.base))
+                @return AddrMode(
+                    mode = 0b01,
+                    rm = 0b100,
+                    has_sib = 1,
+                    sib = sib,
+                    disp = fields.disp,
+                    disp_len = 1,
+                    rex_x = reg_ext(fields.index),
+                    rex_b = reg_ext(fields.base)
+                )
             }
-            @return AddrMode(mode = 0b10, rm = 0b100, has_sib = 1, sib = sib, disp = fields.disp, disp_len = 4, rex_x = reg_ext(fields.index), rex_b = reg_ext(fields.base))
+            @return AddrMode(
+                mode = 0b10,
+                rm = 0b100,
+                has_sib = 1,
+                sib = sib,
+                disp = fields.disp,
+                disp_len = 4,
+                rex_x = reg_ext(fields.index),
+                rex_b = reg_ext(fields.base)
+            )
         },
         RipRelative(fields) => {
-            @return AddrMode(mode = 0b00, rm = 0b101, has_sib = 0, sib = Byte(0), disp = fields.disp, disp_len = 4, rex_x = 0, rex_b = 0)
+            @return AddrMode(
+                mode = 0b00,
+                rm = 0b101,
+                has_sib = 0,
+                sib = Byte(0),
+                disp = fields.disp,
+                disp_len = 4,
+                rex_x = 0,
+                rex_b = 0
+            )
         }
     }
 }
 
 # Generalizes Phase 2's `instr`/`instr_byte` with two more optional sections
 # (SIB, displacement) inserted between ModRM and the immediate — the full
-# `[rex?][opcode][modrm][sib?][disp?][imm?]` shape a memory operand needs. Register-
+# `[rex?][opcode][modrm][sib?][disp?][imm?]` shape a memory operand needs.
+# Register-
 # direct instructions never call this (they still go through Phase 2's `instr`
 # directly); it's only reached via `mem_reg_instr`/`mem_imm_instr` below.
 macro mem_instr_byte(
@@ -442,106 +698,245 @@ macro mem_instr(
     const n = need_rex + 1 + 1 + has_sib + disp_len + imm_len
     @return Bytes<n> {
         @for i in 0..n {
-            __el`i`: mem_instr_byte(need_rex, rex, opcode, modrm, has_sib, sib, disp, disp_len, imm, i),
+            __el`i`: mem_instr_byte(
+                need_rex,
+                rex,
+                opcode,
+                modrm,
+                has_sib,
+                sib,
+                disp,
+                disp_len,
+                imm,
+                i
+            ),
         }
     }
 }
 
 # Shared by every reg,mem instruction below (the memory-destination overloads of
 # `mov` and the six ALU ops, plus `test`): ModRM.reg = `rs`, ModRM.rm (+ SIB +
-# disp) = `dst`, mirroring `reg_reg_instr`'s same "r/m, r" direction convention —
+# disp) = `dst`, mirroring `reg_reg_instr`'s same "r/m, r" direction convention
+# —
 # `dst` is the r/m operand here exactly as `rd` was there.
-macro mem_reg_instr(opcode: int, dst: MemOperand, rs: Reg, w: int) -> Bytes<...> {
+macro mem_reg_instr(
+    opcode: int,
+    dst: MemOperand,
+    rs: Reg,
+    w: int
+) -> Bytes<...> {
     const addr = addr_mode(dst)
     const need_rex = w == 1 || reg_ext(rs) == 1 || addr.rex_x == 1 || addr.rex_b == 1
     const rex = rex_byte(w, reg_ext(rs), addr.rex_x, addr.rex_b)
     const modrm = modrm_byte(addr.mode, reg_field(rs), addr.rm)
-    @return mem_instr(need_rex, rex, Byte(opcode), modrm, addr.has_sib, addr.sib, addr.disp, addr.disp_len, 0, 0)
+    @return mem_instr(
+        need_rex,
+        rex,
+        Byte(opcode),
+        modrm,
+        addr.has_sib,
+        addr.sib,
+        addr.disp,
+        addr.disp_len,
+        0,
+        0
+    )
 }
 
-# Shared by every reg,imm instruction's memory-destination overload below (the six
-# ALU ops via `0x81`, `test` via `0xF7`, and `mov` via `0xC7` — `movi`'s memory form
-# can't reuse `0xB8+reg` the way its register form does, since there's no register
-# to fold into the opcode's low bits when the destination is memory; `0xC7 /0` is a
+# Shared by every reg,imm instruction's memory-destination overload below (the
+# six
+# ALU ops via `0x81`, `test` via `0xF7`, and `mov` via `0xC7` — `movi`'s memory
+# form
+# can't reuse `0xB8+reg` the way its register form does, since there's no
+# register
+# to fold into the opcode's low bits when the destination is memory; `0xC7 /0`
+# is a
 # completely different opcode that happens to share this file's reg,imm shape
 # instead). ModRM.reg carries the per-mnemonic `digit`, same as `reg_imm_instr`.
-macro mem_imm_instr(opcode: int, digit: int, dst: MemOperand, imm: int, w: int) -> Bytes<...> {
+macro mem_imm_instr(
+    opcode: int,
+    digit: int,
+    dst: MemOperand,
+    imm: int,
+    w: int
+) -> Bytes<...> {
     const addr = addr_mode(dst)
     const need_rex = w == 1 || addr.rex_x == 1 || addr.rex_b == 1
     const rex = rex_byte(w, 0, addr.rex_x, addr.rex_b)
     const modrm = modrm_byte(addr.mode, digit, addr.rm)
-    @return mem_instr(need_rex, rex, Byte(opcode), modrm, addr.has_sib, addr.sib, addr.disp, addr.disp_len, imm, 4)
+    @return mem_instr(
+        need_rex,
+        rex,
+        Byte(opcode),
+        modrm,
+        addr.has_sib,
+        addr.sib,
+        addr.disp,
+        addr.disp_len,
+        imm,
+        4
+    )
 }
 
 # =================
 # mov/ALU ops/test: memory-operand overloads
 # =================
 # Real macro overloading (dispatch on resolved argument type — see
-# `src/resolver/macro_body.rs`'s `resolve_macro_overload`), unlike Phase 2's reg,imm
-# forms: `MemOperand` is a genuinely distinct type from `Reg`/`int`, so the resolver
-# can tell a `mov(rd: Reg, rs: Reg, w)` call apart from a `mov(dst: MemOperand, rs:
-# Reg, w)` one with no ambiguity, unlike the `Reg` vs. `int` case Phase 2's own notes
+# `src/resolver/macro_body.rs`'s `resolve_macro_overload`), unlike Phase 2's
+# reg,imm
+# forms: `MemOperand` is a genuinely distinct type from `Reg`/`int`, so the
+# resolver
+# can tell a `mov(rd: Reg, rs: Reg, w)` call apart from a `mov(dst: MemOperand,
+# rs:
+# Reg, w)` one with no ambiguity, unlike the `Reg` vs. `int` case Phase 2's own
+# notes
 # explain. Every ALU/`test`/`mov` overload here keeps the destination-first
 # argument order Phase 2 already established.
-pub macro mov(dst: MemOperand, rs: Reg, w: int) -> Bytes<...> { @emit mem_reg_instr(0x89, dst, rs, w) }
+pub macro mov(
+    dst: MemOperand,
+    rs: Reg,
+    w: int
+) -> Bytes<...> { @emit mem_reg_instr(0x89, dst, rs, w) }
 
 # `mov`'s load direction (`0x8B`, "r, r/m" — reg field is the destination this
-# time, `mem_reg_instr`'s `rs` parameter slot filled by `rd` instead of the memory
+# time, `mem_reg_instr`'s `rs` parameter slot filled by `rd` instead of the
+# memory
 # operand's "other" register): added later than the rest of this section, once
-# Phase 6's native (Intel-syntax) dialect needed a real `mov rd, [mem]` to exist at
-# all — Phase 3 deliberately covered only the store direction (see this section's
+# Phase 6's native (Intel-syntax) dialect needed a real `mov rd, [mem]` to exist
+# at
+# all — Phase 3 deliberately covered only the store direction (see this
+# section's
 # own comment above). Distinguishable from the store overload by its first
-# parameter's type (`Reg` vs. `MemOperand`), the same real-overloading reasoning as
-# every other overload here — no naming trick needed, unlike Phase 5's `_cl` shift
+# parameter's type (`Reg` vs. `MemOperand`), the same real-overloading reasoning
+# as
+# every other overload here — no naming trick needed, unlike Phase 5's `_cl`
+# shift
 # forms.
-pub macro mov(rd: Reg, src: MemOperand, w: int) -> Bytes<...> { @emit mem_reg_instr(0x8B, src, rd, w) }
+pub macro mov(
+    rd: Reg,
+    src: MemOperand,
+    w: int
+) -> Bytes<...> { @emit mem_reg_instr(0x8B, src, rd, w) }
 
-pub macro add(dst: MemOperand, rs: Reg, w: int) -> Bytes<...> { @emit mem_reg_instr(0x01, dst, rs, w) }
-pub macro or(dst: MemOperand, rs: Reg, w: int) -> Bytes<...> { @emit mem_reg_instr(0x09, dst, rs, w) }
-pub macro and(dst: MemOperand, rs: Reg, w: int) -> Bytes<...> { @emit mem_reg_instr(0x21, dst, rs, w) }
-pub macro sub(dst: MemOperand, rs: Reg, w: int) -> Bytes<...> { @emit mem_reg_instr(0x29, dst, rs, w) }
-pub macro xor(dst: MemOperand, rs: Reg, w: int) -> Bytes<...> { @emit mem_reg_instr(0x31, dst, rs, w) }
-pub macro cmp(dst: MemOperand, rs: Reg, w: int) -> Bytes<...> { @emit mem_reg_instr(0x39, dst, rs, w) }
-pub macro test(dst: MemOperand, rs: Reg, w: int) -> Bytes<...> { @emit mem_reg_instr(0x85, dst, rs, w) }
+pub macro add(
+    dst: MemOperand,
+    rs: Reg,
+    w: int
+) -> Bytes<...> { @emit mem_reg_instr(0x01, dst, rs, w) }
+pub macro or(
+    dst: MemOperand,
+    rs: Reg,
+    w: int
+) -> Bytes<...> { @emit mem_reg_instr(0x09, dst, rs, w) }
+pub macro and(
+    dst: MemOperand,
+    rs: Reg,
+    w: int
+) -> Bytes<...> { @emit mem_reg_instr(0x21, dst, rs, w) }
+pub macro sub(
+    dst: MemOperand,
+    rs: Reg,
+    w: int
+) -> Bytes<...> { @emit mem_reg_instr(0x29, dst, rs, w) }
+pub macro xor(
+    dst: MemOperand,
+    rs: Reg,
+    w: int
+) -> Bytes<...> { @emit mem_reg_instr(0x31, dst, rs, w) }
+pub macro cmp(
+    dst: MemOperand,
+    rs: Reg,
+    w: int
+) -> Bytes<...> { @emit mem_reg_instr(0x39, dst, rs, w) }
+pub macro test(
+    dst: MemOperand,
+    rs: Reg,
+    w: int
+) -> Bytes<...> { @emit mem_reg_instr(0x85, dst, rs, w) }
 
 # `0xC7 /0`, not `0xB8+reg` — see `mem_imm_instr`'s own comment above.
-pub macro movi(dst: MemOperand, imm: int, w: int) -> Bytes<...> { @emit mem_imm_instr(0xC7, 0, dst, imm, w) }
-pub macro addi(dst: MemOperand, imm: int, w: int) -> Bytes<...> { @emit mem_imm_instr(0x81, 0, dst, imm, w) }
-pub macro ori(dst: MemOperand, imm: int, w: int) -> Bytes<...> { @emit mem_imm_instr(0x81, 1, dst, imm, w) }
-pub macro andi(dst: MemOperand, imm: int, w: int) -> Bytes<...> { @emit mem_imm_instr(0x81, 4, dst, imm, w) }
-pub macro subi(dst: MemOperand, imm: int, w: int) -> Bytes<...> { @emit mem_imm_instr(0x81, 5, dst, imm, w) }
-pub macro xori(dst: MemOperand, imm: int, w: int) -> Bytes<...> { @emit mem_imm_instr(0x81, 6, dst, imm, w) }
-pub macro cmpi(dst: MemOperand, imm: int, w: int) -> Bytes<...> { @emit mem_imm_instr(0x81, 7, dst, imm, w) }
-pub macro testi(dst: MemOperand, imm: int, w: int) -> Bytes<...> { @emit mem_imm_instr(0xF7, 0, dst, imm, w) }
+pub macro movi(
+    dst: MemOperand,
+    imm: int,
+    w: int
+) -> Bytes<...> { @emit mem_imm_instr(0xC7, 0, dst, imm, w) }
+pub macro addi(
+    dst: MemOperand,
+    imm: int,
+    w: int
+) -> Bytes<...> { @emit mem_imm_instr(0x81, 0, dst, imm, w) }
+pub macro ori(
+    dst: MemOperand,
+    imm: int,
+    w: int
+) -> Bytes<...> { @emit mem_imm_instr(0x81, 1, dst, imm, w) }
+pub macro andi(
+    dst: MemOperand,
+    imm: int,
+    w: int
+) -> Bytes<...> { @emit mem_imm_instr(0x81, 4, dst, imm, w) }
+pub macro subi(
+    dst: MemOperand,
+    imm: int,
+    w: int
+) -> Bytes<...> { @emit mem_imm_instr(0x81, 5, dst, imm, w) }
+pub macro xori(
+    dst: MemOperand,
+    imm: int,
+    w: int
+) -> Bytes<...> { @emit mem_imm_instr(0x81, 6, dst, imm, w) }
+pub macro cmpi(
+    dst: MemOperand,
+    imm: int,
+    w: int
+) -> Bytes<...> { @emit mem_imm_instr(0x81, 7, dst, imm, w) }
+pub macro testi(
+    dst: MemOperand,
+    imm: int,
+    w: int
+) -> Bytes<...> { @emit mem_imm_instr(0xF7, 0, dst, imm, w) }
 
 # =================
 # control flow: jmp/jcc/call/ret (Phase 4)
 # =================
-# Near-only (`rel32`), no automatic short/near relaxation — `std/x86_64/PROGRESS.md`'s
-# own "Decided scope" section commits to this; a real assembler's `rel8` vs `rel32`
+# Near-only (`rel32`), no automatic short/near relaxation —
+# `std/x86_64/PROGRESS.md`'s
+# own "Decided scope" section commits to this; a real assembler's `rel8` vs
+# `rel32`
 # choice is deliberately not this language's job to make automatically.
 #
 # `target` is a label's already-resolved entry position, exactly like
-# `std/riscv/impl.basm`'s branch instructions take theirs — `beq x1, x2, start`'s
+# `std/riscv/impl.basm`'s branch instructions take theirs — `beq x1, x2,
+# start`'s
 # `start` and this file's `jmp target`'s `target` mean the same thing.
 #
 # x86's `rel32` is relative to the address of the *next* instruction, not this
 # instruction's own start the way RISC-V's `here()`-based offset is — see
-# `std/x86_64/PROGRESS.md`'s Phase 4 section for the investigation this required:
-# `here()` only ever resolves to an entry *index*, never a byte address (so RISC-V's
+# `std/x86_64/PROGRESS.md`'s Phase 4 section for the investigation this
+# required:
+# `here()` only ever resolves to an entry *index*, never a byte address (so
+# RISC-V's
 # own fixed-width `mul(sub(target, here()), 4)` trick can't generalize to x86's
-# variable-length instructions), and `span` — the one primitive that does track real
-# per-entry byte widths — needed generalizing to accept a `Deferred` endpoint and to
+# variable-length instructions), and `span` — the one primitive that does track
+# real
+# per-entry byte widths — needed generalizing to accept a `Deferred` endpoint
+# and to
 # resolve bidirectionally before it could serve here at all (`std/bitter/
-# deferred.basm`). `rel32_offset` below is exactly `span(here(), target)` (the real
+# deferred.basm`). `rel32_offset` below is exactly `span(here(), target)` (the
+# real
 # byte distance from this instruction's own start to the target's), corrected by
 # this instruction's own fixed length to land on the *next* instruction instead.
-macro rel32_offset(target: int, own_length: int) -> Deferred {
+macro rel32_offset(
+    target: int,
+    own_length: int
+) -> Deferred {
     @return sub(span(here(), target), own_length)
 }
 
-# opcode + rel32 (`jmp`/`call`: one opcode byte; `jcc`: two). The `rel32` field is
-# wrapped in `LittleEndian<Positioned<32>, 32>` rather than folded into a `Bytes<N>`
+# opcode + rel32 (`jmp`/`call`: one opcode byte; `jcc`: two). The `rel32` field
+# is
+# wrapped in `LittleEndian<Positioned<32>, 32>` rather than folded into a
+# `Bytes<N>`
 # alongside the opcode byte(s) the way Phase 2/3's immediates were: those were
 # always already-known plain `int`s at macro-expansion time, so `byte_of` could
 # split them into individual little-endian `Byte`s directly, but `rel32_offset`
@@ -563,12 +958,16 @@ pub struct Rel32Instr2 {
 }
 
 # `jmp rel32` is always 5 bytes (1 opcode + 4 disp) — `own_length` below is that
-# fixed size, known here at macro-expansion time since there's no variable-length
+# fixed size, known here at macro-expansion time since there's no
+# variable-length
 # encoding in this instruction at all (unlike, say, Phase 3's memory operands).
 pub macro jmp(target: int) -> Rel32Instr {
     @emit Rel32Instr(
         opcode = Byte(0xE9),
-        rel32 = LittleEndian<Positioned<32>, 32> { value: Positioned<32> { value: rel32_offset(target, 5) } }
+        rel32 = LittleEndian<Positioned<32>, 32> { value: Positioned<32> { value: rel32_offset(
+                    target,
+                    5
+                ) } }
     )
 }
 
@@ -576,27 +975,40 @@ pub macro jmp(target: int) -> Rel32Instr {
 pub macro call(target: int) -> Rel32Instr {
     @emit Rel32Instr(
         opcode = Byte(0xE8),
-        rel32 = LittleEndian<Positioned<32>, 32> { value: Positioned<32> { value: rel32_offset(target, 5) } }
+        rel32 = LittleEndian<Positioned<32>, 32> { value: Positioned<32> { value: rel32_offset(
+                    target,
+                    5
+                ) } }
     )
 }
 
 # Shared by every `jcc` mnemonic below: `0x0F 0x8_`, where the low nibble is the
-# Intel SDM's own 4-bit condition code (`tttn`) — the same code shared by the short
+# Intel SDM's own 4-bit condition code (`tttn`) — the same code shared by the
+# short
 # `Jcc rel8`, `SETcc`, and `CMOVcc` families this file doesn't implement, not
-# something invented here. 6 bytes total (2 opcode + 4 disp), one byte longer than
+# something invented here. 6 bytes total (2 opcode + 4 disp), one byte longer
+# than
 # `jmp`/`call`'s `own_length`.
-macro jcc_instr(condition: int, target: int) -> Rel32Instr2 {
+macro jcc_instr(
+    condition: int,
+    target: int
+) -> Rel32Instr2 {
     @return Rel32Instr2(
         opcode1 = Byte(0x0F),
         opcode2 = Byte(0x80 | condition),
-        rel32 = LittleEndian<Positioned<32>, 32> { value: Positioned<32> { value: rel32_offset(target, 6) } }
+        rel32 = LittleEndian<Positioned<32>, 32> { value: Positioned<32> { value: rel32_offset(
+                    target,
+                    6
+                ) } }
     )
 }
 
 # All 16 near-`Jcc` mnemonics this file's scope commits to, named for their most
-# common reading (`je` over its `jz` synonym, etc.) — condition codes straight out
+# common reading (`je` over its `jz` synonym, etc.) — condition codes straight
+# out
 # of the Intel SDM's own `Jcc` opcode table, cross-checked pairwise (`je`/`jne`,
-# `jb`/`jae`, `ja`/`jbe`, `jl`/`jge`, `jle`/`jg`, `js`/`jns`, `jo`/`jno`, `jp`/`jnp`
+# `jb`/`jae`, `ja`/`jbe`, `jl`/`jge`, `jle`/`jg`, `js`/`jns`, `jo`/`jno`,
+# `jp`/`jnp`
 # are each other's exact bit-complement — `tttn` vs `tttn⊕1`).
 pub macro je(target: int) -> Rel32Instr2 { @emit jcc_instr(0x4, target) }
 pub macro jne(target: int) -> Rel32Instr2 { @emit jcc_instr(0x5, target) }
@@ -622,50 +1034,91 @@ pub macro ret() -> Byte {
 # =================
 # shl/shr/sar (Phase 5)
 # =================
-# `0xC1 /digit` (reg, imm8) and `0xD3 /digit` (reg, CL — the shift count comes from
+# `0xC1 /digit` (reg, imm8) and `0xD3 /digit` (reg, CL — the shift count comes
+# from
 # the CL register at runtime; there's no encoding for any other register in that
-# role, so its own macro signature has no count parameter at all, just `(rd, w)`,
+# role, so its own macro signature has no count parameter at all, just `(rd,
+# w)`,
 # not `(rd, cl_placeholder, w)`). Both reuse `reg_imm_instr` — the reg,CL form
-# simply passes `imm_len = 0`, so `instr`'s own `@for` loop never touches the unused
+# simply passes `imm_len = 0`, so `instr`'s own `@for` loop never touches the
+# unused
 # `imm` value.
 #
-# The reg,CL form gets its own `_cl`-suffixed name rather than an arity overload of
-# the plain mnemonic (`shl(rd, w)` alongside `shl(rd, imm, w)`, the way Phase 2's
+# The reg,CL form gets its own `_cl`-suffixed name rather than an arity overload
+# of
+# the plain mnemonic (`shl(rd, w)` alongside `shl(rd, imm, w)`, the way Phase
+# 2's
 # `mov`/ALU reg,reg vs reg,imm forms considered and rejected overloading for a
-# similar reason): `shr(rd: Reg, w: int)` would resolve to `(int, int)` — identical
-# to `std.bitter.deferred`'s own `shr(a: int, b: int)`, already `pub` and always in
+# similar reason): `shr(rd: Reg, w: int)` would resolve to `(int, int)` —
+# identical
+# to `std.bitter.deferred`'s own `shr(a: int, b: int)`, already `pub` and always
+# in
 # scope (every module's imports are recursively spliced into one flat program by
 # `src/loader.rs`'s `collect_declarations`, regardless of whether an import list
-# names specific symbols or uses `*` — naming imports doesn't limit what's spliced,
+# names specific symbols or uses `*` — naming imports doesn't limit what's
+# spliced,
 # only what a typo check validates, confirmed empirically after an early draft
-# tried exactly that and still hit `AmbiguousMacroOverload`) — an ambiguous overload
-# the resolver would reject. `shl_cl`/`sar_cl` don't actually collide with anything
-# (`std.bitter.deferred` has no `shl`/`sar` at all), but use the same `_cl` suffix
-# anyway so all three mnemonics stay parallel instead of two arity-overloading and
+# tried exactly that and still hit `AmbiguousMacroOverload`) — an ambiguous
+# overload
+# the resolver would reject. `shl_cl`/`sar_cl` don't actually collide with
+# anything
+# (`std.bitter.deferred` has no `shl`/`sar` at all), but use the same `_cl`
+# suffix
+# anyway so all three mnemonics stay parallel instead of two arity-overloading
+# and
 # one not.
-pub macro shl(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0xC1, 4, rd, imm, 1, w) }
-pub macro shl_cl(rd: Reg, w: int) -> Bytes<...> { @emit reg_imm_instr(0xD3, 4, rd, 0, 0, w) }
+pub macro shl(
+    rd: Reg,
+    imm: int,
+    w: int
+) -> Bytes<...> { @emit reg_imm_instr(0xC1, 4, rd, imm, 1, w) }
+pub macro shl_cl(
+    rd: Reg,
+    w: int
+) -> Bytes<...> { @emit reg_imm_instr(0xD3, 4, rd, 0, 0, w) }
 
-pub macro shr(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0xC1, 5, rd, imm, 1, w) }
-pub macro shr_cl(rd: Reg, w: int) -> Bytes<...> { @emit reg_imm_instr(0xD3, 5, rd, 0, 0, w) }
+pub macro shr(
+    rd: Reg,
+    imm: int,
+    w: int
+) -> Bytes<...> { @emit reg_imm_instr(0xC1, 5, rd, imm, 1, w) }
+pub macro shr_cl(
+    rd: Reg,
+    w: int
+) -> Bytes<...> { @emit reg_imm_instr(0xD3, 5, rd, 0, 0, w) }
 
-pub macro sar(rd: Reg, imm: int, w: int) -> Bytes<...> { @emit reg_imm_instr(0xC1, 7, rd, imm, 1, w) }
-pub macro sar_cl(rd: Reg, w: int) -> Bytes<...> { @emit reg_imm_instr(0xD3, 7, rd, 0, 0, w) }
+pub macro sar(
+    rd: Reg,
+    imm: int,
+    w: int
+) -> Bytes<...> { @emit reg_imm_instr(0xC1, 7, rd, imm, 1, w) }
+pub macro sar_cl(
+    rd: Reg,
+    w: int
+) -> Bytes<...> { @emit reg_imm_instr(0xD3, 7, rd, 0, 0, w) }
 
 # =================
 # lea (Phase 5)
 # =================
-# `0x8D /r` — reuses `mem_reg_instr` (Phase 3), but with the two roles swapped from
+# `0x8D /r` — reuses `mem_reg_instr` (Phase 3), but with the two roles swapped
+# from
 # every one of that helper's other callers: there, its `MemOperand` parameter is
 # always the actual destination (`mov [mem], rs` stores into it) and its `Reg`
 # parameter is the "other" operand placed in ModRM.reg. `lea`'s destination is
 # always a register — `rd` — placed in ModRM.reg exactly the same way, while the
-# `MemOperand` argument is the address *expression* to compute (never dereferenced;
-# nothing about the encoding itself expresses that, only the opcode `0x8D` chosen
-# instead of `0x8B`'s "load" — this file has no `0x8B` form at all, see Phase 3's
+# `MemOperand` argument is the address *expression* to compute (never
+# dereferenced;
+# nothing about the encoding itself expresses that, only the opcode `0x8D`
+# chosen
+# instead of `0x8B`'s "load" — this file has no `0x8B` form at all, see Phase
+# 3's
 # own note on why the mov/ALU `MemOperand` overloads only ever cover the store
 # direction).
-pub macro lea(rd: Reg, src: MemOperand, w: int) -> Bytes<...> { @emit mem_reg_instr(0x8D, src, rd, w) }
+pub macro lea(
+    rd: Reg,
+    src: MemOperand,
+    w: int
+) -> Bytes<...> { @emit mem_reg_instr(0x8D, src, rd, w) }
 
 # =================
 # push/pop (Phase 5)
@@ -674,7 +1127,8 @@ pub macro lea(rd: Reg, src: MemOperand, w: int) -> Bytes<...> { @emit mem_reg_in
 # low 3 bits, extension bit in REX.B" pattern `movi`'s register form (Phase 2)
 # established, reusing `instr` directly (`has_modrm=0`, `imm_len=0`: just an
 # optional REX byte followed by the one opcode byte). No `w` parameter: unlike
-# every other instruction in this file, `push`/`pop` have no 32-bit register form
+# every other instruction in this file, `push`/`pop` have no 32-bit register
+# form
 # to select in 64-bit mode at all (the default, and only, operand size for a GPR
 # push/pop here is 64 bits — REX.W would be redundant, so this file never emits
 # it).

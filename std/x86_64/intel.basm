@@ -1,60 +1,86 @@
-# Real, conventional Intel-syntax x86-64 assembly for `impl.basm`'s instructions —
-# assigned here, explicitly, rather than left to whichever ones happen to already
+# Real, conventional Intel-syntax x86-64 assembly for `impl.basm`'s instructions
+# —
+# assigned here, explicitly, rather than left to whichever ones happen to
+# already
 # read right under default positional `name arg, arg, ...` syntax, mirroring
-# `std/riscv/native.basm`'s own stated convention (see its header comment) for the
-# same reason: this file is then a complete, standalone spec of "native" syntax on
+# `std/riscv/native.basm`'s own stated convention (see its header comment) for
+# the
+# same reason: this file is then a complete, standalone spec of "native" syntax
+# on
 # its own.
 #
 # =================
 # operand size: always 64-bit
 # =================
-# Every mnemonic below drops `impl.basm`'s explicit trailing `w: int` parameter and
+# Every mnemonic below drops `impl.basm`'s explicit trailing `w: int` parameter
+# and
 # hardcodes `w = 1` (64-bit) — there is no 32-bit register name family in this
-# package (`r0..r15`/`rax`/`rbx`/... are the *only* register spellings `impl.basm`
-# defines; unlike real x86-64 assembly, there's no separate `eax`/`ebx`/... set to
-# read a 32-bit operand size off of), so a 32-bit form has no natural spelling to
-# give it here. 32-bit forms remain fully reachable — this file only *adds* syntax
-# sugar, it never removes `impl.basm`'s own default positional syntax — by writing
+# package (`r0..r15`/`rax`/`rbx`/... are the *only* register spellings
+# `impl.basm`
+# defines; unlike real x86-64 assembly, there's no separate `eax`/`ebx`/... set
+# to
+# read a 32-bit operand size off of), so a 32-bit form has no natural spelling
+# to
+# give it here. 32-bit forms remain fully reachable — this file only *adds*
+# syntax
+# sugar, it never removes `impl.basm`'s own default positional syntax — by
+# writing
 # the `w` argument explicitly, e.g. `mov rax, rbx, 0`; every mnemonic below also
-# gets an explicit "restatement" pattern for its own real, full-arity signature (see
+# gets an explicit "restatement" pattern for its own real, full-arity signature
+# (see
 # the next section) for exactly this reason.
 #
 # =================
 # why almost every mnemonic needs *two* patterns, not one
 # =================
-# Once a name has *any* registered syntax, default positional syntax for that name
+# Once a name has *any* registered syntax, default positional syntax for that
+# name
 # is gone entirely — not just for the shape the new syntax covers, but for every
 # other arity too (confirmed empirically: an early draft that dropped `w` via a
-# reduced-arity wrapper, with no restatement alongside it, made every one of this
+# reduced-arity wrapper, with no restatement alongside it, made every one of
+# this
 # file's *own* delegating calls to the real 3-argument `impl.basm` macro a parse
 # error, since `mov`, once claimed, no longer accepts a bare `mov $a$, $b$, $c$`
-# unless something says it still can). So for every mnemonic that gets a reduced,
-# `w`-dropping pattern below, this file also registers a second pattern that just
+# unless something says it still can). So for every mnemonic that gets a
+# reduced,
+# `w`-dropping pattern below, this file also registers a second pattern that
+# just
 # restates the real underlying macro's own full argument list verbatim
 # (`syntax mov(a, b, c) = { mov $a$, $b$, $c$ }`) — not because it changes
-# anything (it's byte-for-byte what default syntax already produced), but because
-# it has to be there for *any* 3-argument `mov`/`add`/etc. call to keep parsing at
-# all, including this file's own internal ones. A standalone restatement has to be
+# anything (it's byte-for-byte what default syntax already produced), but
+# because
+# it has to be there for *any* 3-argument `mov`/`add`/etc. call to keep parsing
+# at
+# all, including this file's own internal ones. A standalone restatement has to
+# be
 # declared *before* the reduced-arity macro it accompanies in this file — also
-# confirmed empirically (declaring it after produced a spurious parse error on the
+# confirmed empirically (declaring it after produced a spurious parse error on
+# the
 # very call it was meant to keep working) — so every section below follows that
 # order.
 #
 # =================
 # memory operands: real `[...]` syntax, and why it needs a compiler fix first
 # =================
-# `[base]`, `[base+disp]`, `[base+index*scale+disp]`, and `[rip+disp]` all *look*
+# `[base]`, `[base+disp]`, `[base+index*scale+disp]`, and `[rip+disp]` all
+# *look*
 # like they should be four independent patterns, but a `syntax` capture is an
 # unbounded, generic expression parse, stopped only by the next literal token in
-# its *own* pattern — so `[$base$+$disp$]`'s `disp` capture, bounded only by `]`,
+# its *own* pattern — so `[$base$+$disp$]`'s `disp` capture, bounded only by
+# `]`,
 # happily swallows an indexed form's entire `$index$*$scale$+$disp$` right-hand
-# side as one ordinary, well-typed arithmetic expression (`rcx*4+0x10` type-checks
-# fine as a plain `int`, so there's no type error for a later type-check to catch —
-# both readings are equally well-typed, they just disagree on what the source text
-# even *means*). The same trap catches `[base]` vs. `[base+disp]` (the empty-disp
+# side as one ordinary, well-typed arithmetic expression (`rcx*4+0x10`
+# type-checks
+# fine as a plain `int`, so there's no type error for a later type-check to
+# catch —
+# both readings are equally well-typed, they just disagree on what the source
+# text
+# even *means*). The same trap catches `[base]` vs. `[base+disp]` (the
+# empty-disp
 # capture swallows `+disp` too) and `[base+disp]` vs. `[rip+disp]` (a bare
 # identifier is itself a valid captured expression, so a generic `base` capture
-# also matches literal `rip`). Confirmed empirically before this file was written:
+# also matches literal `rip`). Confirmed empirically before this file was
+# written:
 # registering all four patterns made every one of them a hard "ambiguous syntax"
 # parse error, including `PROGRESS.md`'s own flagship
 # `mov rax, [rbx+rcx*4+0x10]` example.
@@ -63,17 +89,20 @@
 # invocation_syntax.rs`'s `parse_invocation_via_syntax_candidates` now prefers
 # whichever successful match used the *most* literal (non-capture) tokens, when
 # more than one candidate parses the same text — `[base+index*scale+disp]`'s 5
-# literal tokens (`[`,`+`,`*`,`+`,`]`) beat `[base+disp]`'s 3 (`[`,`+`,`]`), which
+# literal tokens (`[`,`+`,`*`,`+`,`]`) beat `[base+disp]`'s 3 (`[`,`+`,`]`),
+# which
 # beat `[base]`'s 2 (`[`,`]`); `[rip+disp]`'s literal `rip` token gives it 4,
 # beating `[base+disp]`'s 3. Two patterns that are *genuinely* equally specific
 # (like `$a$ + $b$` vs. `$b$ + $a$`) are untouched by this and still hit the
-# original ambiguity error. See that file's own comment, and the commit that added
+# original ambiguity error. See that file's own comment, and the commit that
+# added
 # it, for the full reasoning and the new tests covering it.
 #
 # =================
 # reg,reg vs. reg,imm: still separate mnemonics, not overloaded
 # =================
-# `movi`/`addi`/.../`testi` keep `impl.basm`'s own `i`-suffixed names rather than
+# `movi`/`addi`/.../`testi` keep `impl.basm`'s own `i`-suffixed names rather
+# than
 # merging into `mov`/`add`/... the way real Intel syntax spells both forms
 # identically: `Reg` is a plain `int` alias (`impl.basm`'s own Phase 1 note), so
 # `mov(rd, rs)` and `mov(rd, imm)` would both resolve to identical `(int, int)`
@@ -81,7 +110,8 @@
 # which literal syntax pattern produced the call, since overload resolution runs
 # on the parsed invocation's argument *types*, not on which pattern matched it.
 # (Memory-operand forms don't have this problem — see the section above: a
-# bracketed operand is lexically distinct from a bare one, so `mov`'s many memory
+# bracketed operand is lexically distinct from a bare one, so `mov`'s many
+# memory
 # shapes safely share its name without ever reaching this ambiguity.)
 
 from .impl import *
@@ -113,56 +143,76 @@ pub macro assert_valid_reg(r: Reg) {
 
 syntax mov(a, b, c) = { mov $a$, $b$, $c$ }
 
-pub macro mov(rd: Reg, rs: Reg) | syntax { mov $rd$, $rs$ } {
-    assert_valid_reg rs
-    mov rd, rs, 1
-}
+pub macro mov(rd: Reg, rs: Reg)
+    | syntax { mov $rd$, $rs$ } {
+        assert_valid_reg rs
+        mov rd, rs, 1
+    }
 
 # --- load direction: reg <- [mem] ---
 
-pub macro mov_load_base(rd: Reg, base: Reg) | syntax { mov $rd$, [$base$] } {
-    mov rd, Mem(base, 0), 1
-}
+pub macro mov_load_base(rd: Reg, base: Reg)
+    | syntax { mov $rd$, [$base$] } {
+        mov rd, Mem(base, 0), 1
+    }
 
-pub macro mov_load_base_disp(rd: Reg, base: Reg, disp: int) | syntax { mov $rd$, [$base$+$disp$] } {
-    mov rd, Mem(base, disp), 1
-}
+pub macro mov_load_base_disp(rd: Reg, base: Reg, disp: int)
+    | syntax { mov $rd$, [$base$+$disp$] } {
+        mov rd, Mem(base, disp), 1
+    }
 
-pub macro mov_load_indexed(rd: Reg, base: Reg, index: Reg, scale: int, disp: int)
+pub macro mov_load_indexed(
+    rd: Reg,
+    base: Reg,
+    index: Reg,
+    scale: int,
+    disp: int
+)
     | syntax { mov $rd$, [$base$+$index$*$scale$+$disp$] }
 {
     mov rd, MemIndexed(base, index, scale, disp), 1
 }
 
-pub macro mov_load_rip(rd: Reg, disp: int) | syntax { mov $rd$, [rip+$disp$] } {
-    mov rd, MemRipRelative(disp), 1
-}
+pub macro mov_load_rip(rd: Reg, disp: int)
+    | syntax { mov $rd$, [rip+$disp$] } {
+        mov rd, MemRipRelative(disp), 1
+    }
 
 # --- store direction: [mem] <- reg ---
 
-pub macro mov_store_base(base: Reg, rs: Reg) | syntax { mov [$base$], $rs$ } {
-    mov Mem(base, 0), rs, 1
-}
+pub macro mov_store_base(base: Reg, rs: Reg)
+    | syntax { mov [$base$], $rs$ } {
+        mov Mem(base, 0), rs, 1
+    }
 
-pub macro mov_store_base_disp(base: Reg, disp: int, rs: Reg) | syntax { mov [$base$+$disp$], $rs$ } {
-    mov Mem(base, disp), rs, 1
-}
+pub macro mov_store_base_disp(base: Reg, disp: int, rs: Reg)
+    | syntax { mov [$base$+$disp$], $rs$ } {
+        mov Mem(base, disp), rs, 1
+    }
 
-pub macro mov_store_indexed(base: Reg, index: Reg, scale: int, disp: int, rs: Reg)
+pub macro mov_store_indexed(
+    base: Reg,
+    index: Reg,
+    scale: int,
+    disp: int,
+    rs: Reg
+)
     | syntax { mov [$base$+$index$*$scale$+$disp$], $rs$ }
 {
     mov MemIndexed(base, index, scale, disp), rs, 1
 }
 
-pub macro mov_store_rip(disp: int, rs: Reg) | syntax { mov [rip+$disp$], $rs$ } {
-    mov MemRipRelative(disp), rs, 1
-}
+pub macro mov_store_rip(disp: int, rs: Reg)
+    | syntax { mov [rip+$disp$], $rs$ } {
+        mov MemRipRelative(disp), rs, 1
+    }
 
 # =================
 # ALU ops: add, or, and, sub, xor, cmp
 # =================
 # Register-only sugar (drop `w`, hardcode 64-bit) — memory-destination forms
-# (`add [rbx+4], rax, 1`'s style bracket sugar) aren't built here: the exact same
+# (`add [rbx+4], rax, 1`'s style bracket sugar) aren't built here: the exact
+# same
 # mechanical pattern `mov`'s store direction above demonstrates would apply
 # unchanged, just not worth six more near-identical copies of it for this file's
 # own sake. `impl.basm`'s own `Mem(...)`/`MemIndexed(...)`/`MemRipRelative(...)`
@@ -171,22 +221,25 @@ pub macro mov_store_rip(disp: int, rs: Reg) | syntax { mov [rip+$disp$], $rs$ } 
 # `add Mem(rax, 4), rbx, 1` still works verbatim with this file imported.
 
 syntax add(a, b, c) = { add $a$, $b$, $c$ }
-pub macro add(rd: Reg, rs: Reg) | syntax { add $rd$, $rs$ } {
-    assert_valid_reg rs
-    add rd, rs, 1
-}
+pub macro add(rd: Reg, rs: Reg)
+    | syntax { add $rd$, $rs$ } {
+        assert_valid_reg rs
+        add rd, rs, 1
+    }
 
 syntax or(a, b, c) = { or $a$, $b$, $c$ }
-pub macro or(rd: Reg, rs: Reg) | syntax { or $rd$, $rs$ } {
-    assert_valid_reg rs
-    or rd, rs, 1
-}
+pub macro or(rd: Reg, rs: Reg)
+    | syntax { or $rd$, $rs$ } {
+        assert_valid_reg rs
+        or rd, rs, 1
+    }
 
 syntax and(a, b, c) = { and $a$, $b$, $c$ }
-pub macro and(rd: Reg, rs: Reg) | syntax { and $rd$, $rs$ } {
-    assert_valid_reg rs
-    and rd, rs, 1
-}
+pub macro and(rd: Reg, rs: Reg)
+    | syntax { and $rd$, $rs$ } {
+        assert_valid_reg rs
+        and rd, rs, 1
+    }
 
 syntax sub(a, b, c) = { sub $a$, $b$, $c$ }
 
@@ -198,71 +251,86 @@ syntax sub(a, b, c) = { sub $a$, $b$, $c$ }
 # ran into this for the exact same reason). Unanchored (its pattern's own
 # leading token is the real mnemonic `sub`, not `sub2`), so `sub2` itself is
 # never "claimed" or user-facing at all.
-pub macro sub2(rd: Reg, rs: Reg) | syntax { sub $rd$, $rs$ } {
-    assert_valid_reg rs
-    sub rd, rs, 1
-}
+pub macro sub2(rd: Reg, rs: Reg)
+    | syntax { sub $rd$, $rs$ } {
+        assert_valid_reg rs
+        sub rd, rs, 1
+    }
 
 syntax xor(a, b, c) = { xor $a$, $b$, $c$ }
-pub macro xor(rd: Reg, rs: Reg) | syntax { xor $rd$, $rs$ } {
-    assert_valid_reg rs
-    xor rd, rs, 1
-}
+pub macro xor(rd: Reg, rs: Reg)
+    | syntax { xor $rd$, $rs$ } {
+        assert_valid_reg rs
+        xor rd, rs, 1
+    }
 
 syntax cmp(a, b, c) = { cmp $a$, $b$, $c$ }
-pub macro cmp(rd: Reg, rs: Reg) | syntax { cmp $rd$, $rs$ } {
-    assert_valid_reg rs
-    cmp rd, rs, 1
-}
+pub macro cmp(rd: Reg, rs: Reg)
+    | syntax { cmp $rd$, $rs$ } {
+        assert_valid_reg rs
+        cmp rd, rs, 1
+    }
 
 syntax test(a, b, c) = { test $a$, $b$, $c$ }
-pub macro test(rd: Reg, rs: Reg) | syntax { test $rd$, $rs$ } {
-    assert_valid_reg rs
-    test rd, rs, 1
-}
+pub macro test(rd: Reg, rs: Reg)
+    | syntax { test $rd$, $rs$ } {
+        assert_valid_reg rs
+        test rd, rs, 1
+    }
 
 # reg,imm forms — same treatment, `impl.basm`'s own `i`-suffixed names kept (see
 # this file's own header comment on why).
 
 syntax movi(a, b, c) = { movi $a$, $b$, $c$ }
-pub macro movi(rd: Reg, imm: int) | syntax { movi $rd$, $imm$ } { movi rd, imm, 1 }
+pub macro movi(rd: Reg, imm: int)
+    | syntax { movi $rd$, $imm$ } { movi rd, imm, 1 }
 
 syntax addi(a, b, c) = { addi $a$, $b$, $c$ }
-pub macro addi(rd: Reg, imm: int) | syntax { addi $rd$, $imm$ } { addi rd, imm, 1 }
+pub macro addi(rd: Reg, imm: int)
+    | syntax { addi $rd$, $imm$ } { addi rd, imm, 1 }
 
 syntax ori(a, b, c) = { ori $a$, $b$, $c$ }
-pub macro ori(rd: Reg, imm: int) | syntax { ori $rd$, $imm$ } { ori rd, imm, 1 }
+pub macro ori(rd: Reg, imm: int)
+    | syntax { ori $rd$, $imm$ } { ori rd, imm, 1 }
 
 syntax andi(a, b, c) = { andi $a$, $b$, $c$ }
-pub macro andi(rd: Reg, imm: int) | syntax { andi $rd$, $imm$ } { andi rd, imm, 1 }
+pub macro andi(rd: Reg, imm: int)
+    | syntax { andi $rd$, $imm$ } { andi rd, imm, 1 }
 
 syntax subi(a, b, c) = { subi $a$, $b$, $c$ }
-pub macro subi(rd: Reg, imm: int) | syntax { subi $rd$, $imm$ } { subi rd, imm, 1 }
+pub macro subi(rd: Reg, imm: int)
+    | syntax { subi $rd$, $imm$ } { subi rd, imm, 1 }
 
 syntax xori(a, b, c) = { xori $a$, $b$, $c$ }
-pub macro xori(rd: Reg, imm: int) | syntax { xori $rd$, $imm$ } { xori rd, imm, 1 }
+pub macro xori(rd: Reg, imm: int)
+    | syntax { xori $rd$, $imm$ } { xori rd, imm, 1 }
 
 syntax cmpi(a, b, c) = { cmpi $a$, $b$, $c$ }
-pub macro cmpi(rd: Reg, imm: int) | syntax { cmpi $rd$, $imm$ } { cmpi rd, imm, 1 }
+pub macro cmpi(rd: Reg, imm: int)
+    | syntax { cmpi $rd$, $imm$ } { cmpi rd, imm, 1 }
 
 syntax testi(a, b, c) = { testi $a$, $b$, $c$ }
-pub macro testi(rd: Reg, imm: int) | syntax { testi $rd$, $imm$ } { testi rd, imm, 1 }
+pub macro testi(rd: Reg, imm: int)
+    | syntax { testi $rd$, $imm$ } { testi rd, imm, 1 }
 
 # =================
 # lea
 # =================
-# Address-only — reuses the exact same four addressing-mode patterns `mov`'s load
+# Address-only — reuses the exact same four addressing-mode patterns `mov`'s
+# load
 # direction above establishes, since `lea`'s own encoding shape (Phase 5) is
 # identical to a memory *load*'s (reg field is the destination, `MemOperand` the
 # address), just a different opcode.
 
-pub macro lea_base(rd: Reg, base: Reg) | syntax { lea $rd$, [$base$] } {
-    lea rd, Mem(base, 0), 1
-}
+pub macro lea_base(rd: Reg, base: Reg)
+    | syntax { lea $rd$, [$base$] } {
+        lea rd, Mem(base, 0), 1
+    }
 
-pub macro lea_base_disp(rd: Reg, base: Reg, disp: int) | syntax { lea $rd$, [$base$+$disp$] } {
-    lea rd, Mem(base, disp), 1
-}
+pub macro lea_base_disp(rd: Reg, base: Reg, disp: int)
+    | syntax { lea $rd$, [$base$+$disp$] } {
+        lea rd, Mem(base, disp), 1
+    }
 
 pub macro lea_indexed(rd: Reg, base: Reg, index: Reg, scale: int, disp: int)
     | syntax { lea $rd$, [$base$+$index$*$scale$+$disp$] }
@@ -270,9 +338,10 @@ pub macro lea_indexed(rd: Reg, base: Reg, index: Reg, scale: int, disp: int)
     lea rd, MemIndexed(base, index, scale, disp), 1
 }
 
-pub macro lea_rip(rd: Reg, disp: int) | syntax { lea $rd$, [rip+$disp$] } {
-    lea rd, MemRipRelative(disp), 1
-}
+pub macro lea_rip(rd: Reg, disp: int)
+    | syntax { lea $rd$, [rip+$disp$] } {
+        lea rd, MemRipRelative(disp), 1
+    }
 
 # =================
 # shl/shr/sar
@@ -282,7 +351,8 @@ pub macro lea_rip(rd: Reg, disp: int) | syntax { lea $rd$, [rip+$disp$] } {
 # get this originally: a literal `cl` token and a generic `$imm$` capture both
 # successfully parse `shl rax, cl`, which used to be an unconditional "ambiguous
 # syntax" error before this file's own literal-specificity compiler fix — the
-# literal `cl` pattern's extra literal token now correctly wins). Registered as an
+# literal `cl` pattern's extra literal token now correctly wins). Registered as
+# an
 # *unanchored* pattern on `shl_cl`/`shr_cl`/`sar_cl` themselves (their own real
 # names, never spelled by a caller) rather than adding a third overload of
 # `shl`/`shr`/`sar` — since the pattern's own leading token is the real mnemonic
@@ -290,20 +360,26 @@ pub macro lea_rip(rd: Reg, disp: int) | syntax { lea $rd$, [rip+$disp$] } {
 # restatement of its own.
 
 syntax shl(a, b, c) = { shl $a$, $b$, $c$ }
-pub macro shl(rd: Reg, imm: int) | syntax { shl $rd$, $imm$ } { shl rd, imm, 1 }
-pub macro shl_cl(rd: Reg) | syntax { shl $rd$, cl } { shl_cl rd, 1 }
+pub macro shl(rd: Reg, imm: int)
+    | syntax { shl $rd$, $imm$ } { shl rd, imm, 1 }
+pub macro shl_cl(rd: Reg)
+    | syntax { shl $rd$, cl } { shl_cl rd, 1 }
 
 syntax shr(a, b, c) = { shr $a$, $b$, $c$ }
 
 # Named `shr_imm`, not `shr` — the exact same `std.bitter.deferred`-collision
 # reason as `sub2` above (`shr(rd: Reg, imm: int)` would be `(int, int)`,
 # identical to `std.bitter.deferred`'s own `shr(a: int, b: int)`).
-pub macro shr_imm(rd: Reg, imm: int) | syntax { shr $rd$, $imm$ } { shr rd, imm, 1 }
-pub macro shr_cl(rd: Reg) | syntax { shr $rd$, cl } { shr_cl rd, 1 }
+pub macro shr_imm(rd: Reg, imm: int)
+    | syntax { shr $rd$, $imm$ } { shr rd, imm, 1 }
+pub macro shr_cl(rd: Reg)
+    | syntax { shr $rd$, cl } { shr_cl rd, 1 }
 
 syntax sar(a, b, c) = { sar $a$, $b$, $c$ }
-pub macro sar(rd: Reg, imm: int) | syntax { sar $rd$, $imm$ } { sar rd, imm, 1 }
-pub macro sar_cl(rd: Reg) | syntax { sar $rd$, cl } { sar_cl rd, 1 }
+pub macro sar(rd: Reg, imm: int)
+    | syntax { sar $rd$, $imm$ } { sar rd, imm, 1 }
+pub macro sar_cl(rd: Reg)
+    | syntax { sar $rd$, cl } { sar_cl rd, 1 }
 
 # =================
 # push/pop, control flow, ret

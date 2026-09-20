@@ -12,37 +12,37 @@ from .impl import *
 # Two real ambiguities this has to design around, both from the same root
 # cause: a capture matches *any* expression, so nothing about the tokens
 # alone tells two same-shaped patterns apart the way a type check could —
-#   - reg-reg vs reg-immediate forms sharing an operator (`add`/`addi`) are
-#     disambiguated with `<-` instead of `=` for every immediate form, so
-#     the two shapes diverge at the very first token after `$rd$` — before
-#     either side's own capture has even started, rather than relying on
-#     a marker *inside* one of them. That distinction matters: an earlier
-#     draft put a literal `imm` keyword right before the immediate capture
-#     instead, which reads fine for `$rd$ = $rs1$ + imm 5` but silently
-#     breaks on a *negative* immediate — `$rd$ = $rs1$ + imm -1` is also a
-#     complete, valid parse of `add`'s own pattern (its unbounded trailing
-#     capture happily reads `imm - 1` as one subtraction expression, since
-#     nothing stops an identifier from being followed by a binary `-`) —
-#     a genuine ambiguity between `add`/`addi`/`sub` that only an actual
-#     compile of a negative-immediate case ever surfaced. Wrapping the
-#     value in parens instead of a keyword has the identical problem for
-#     the identical reason: `(x)` is itself a valid expression an unbounded
-#     reg-reg capture swallows just as well. `<-` sidesteps this
-#     completely — nothing needs to look inside a capture to tell the two
-#     shapes apart, so what the captured *value* looks like can't matter.
-#     (`:=` was the first choice, and *also* wrong, for an unrelated reason:
-#     an identifier immediately followed by `:` is already how this
-#     language spells a label, and that check runs before custom syntax is
-#     even tried — `$rd$` followed by `:=`'s leading `:` was read as a
-#     label declaration named `$rd$`, not the start of a pattern match at
-#     all. `<-` (`Less` then `Minus` — this language has no dedicated
-#     arrow token) doesn't collide with anything already reserved.)
-#   - lb/lh/lw/lbu/lhu (and sb/sh/sw) share the same `mem[rs1 + offset]`
-#     shape at every width, so each gets its own literal type tag right
-#     before `mem` (`i8`/`u8`/`i16`/`u16`, or none for the word-sized/
-#     default case) instead of leaving width ambiguous — same principle:
-#     the disambiguator sits in a fixed literal position, never inside a
-#     capture's own value.
+# - reg-reg vs reg-immediate forms sharing an operator (`add`/`addi`) are
+# disambiguated with `<-` instead of `=` for every immediate form, so
+# the two shapes diverge at the very first token after `$rd$` — before
+# either side's own capture has even started, rather than relying on
+# a marker *inside* one of them. That distinction matters: an earlier
+# draft put a literal `imm` keyword right before the immediate capture
+# instead, which reads fine for `$rd$ = $rs1$ + imm 5` but silently
+# breaks on a *negative* immediate — `$rd$ = $rs1$ + imm -1` is also a
+# complete, valid parse of `add`'s own pattern (its unbounded trailing
+# capture happily reads `imm - 1` as one subtraction expression, since
+# nothing stops an identifier from being followed by a binary `-`) —
+# a genuine ambiguity between `add`/`addi`/`sub` that only an actual
+# compile of a negative-immediate case ever surfaced. Wrapping the
+# value in parens instead of a keyword has the identical problem for
+# the identical reason: `(x)` is itself a valid expression an unbounded
+# reg-reg capture swallows just as well. `<-` sidesteps this
+# completely — nothing needs to look inside a capture to tell the two
+# shapes apart, so what the captured *value* looks like can't matter.
+# (`:=` was the first choice, and *also* wrong, for an unrelated reason:
+# an identifier immediately followed by `:` is already how this
+# language spells a label, and that check runs before custom syntax is
+# even tried — `$rd$` followed by `:=`'s leading `:` was read as a
+# label declaration named `$rd$`, not the start of a pattern match at
+# all. `<-` (`Less` then `Minus` — this language has no dedicated
+# arrow token) doesn't collide with anything already reserved.)
+# - lb/lh/lw/lbu/lhu (and sb/sh/sw) share the same `mem[rs1 + offset]`
+# shape at every width, so each gets its own literal type tag right
+# before `mem` (`i8`/`u8`/`i16`/`u16`, or none for the word-sized/
+# default case) instead of leaving width ambiguous — same principle:
+# the disambiguator sits in a fixed literal position, never inside a
+# capture's own value.
 #
 # Not every instruction has a natural collision-free spelling this way —
 # `sltu`/`sltiu`/`bltu`/`bgeu`'s *unsigned* comparison has no C operator of

@@ -53,7 +53,7 @@ pub macro reversed<T>(arr: Array<T, ...>) -> Array<T, ...>
 }
 
 pub macro popped(arr: Array<T, N>) -> Array<T, N-1>
-{   
+{
     @assert N > 0
     const new_len = N - 1
     @return Array<T, new_len>{
@@ -69,7 +69,7 @@ pub macro first(arr: Array<T, N>) -> T
     @return get(arr, 0)
 }
 
-pub macro last(arr: Array<T, N>) -> T 
+pub macro last(arr: Array<T, N>) -> T
 {
     @assert N > 0
     @return get(arr, N-1)
