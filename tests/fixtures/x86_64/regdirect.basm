@@ -1,7 +1,7 @@
 # Phase 2 register-direct instructions (ModRM mod=11): mov, the six ALU
 # ops, and test. `tests/x86_64_encoding.rs` compiles this file, packs it
 # with `bitter`, and checks the resulting bytes against hand-computed
-# expected values from the Intel SDM — see std/x86_64/PROGRESS.md.
+# expected values from the Intel SDM.
 
 from std.x86_64.impl import *
 

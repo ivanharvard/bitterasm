@@ -3,8 +3,7 @@
 # branch (jmp) and two backward branches (je, call) each have to cross a
 # genuinely non-uniform byte distance — the exact case that broke RISC-V's
 # fixed-width `mul(sub(target, here()), 4)` trick and motivated generalizing
-# `span()` (see std/x86_64/PROGRESS.md's Phase 4 section). See
-# tests/x86_64_encoding.rs for the hand-computed expected bytes.
+# `span()`. See tests/x86_64_encoding.rs for the hand-computed expected bytes.
 
 from std.x86_64.impl import *
 
@@ -18,3 +17,4 @@ mov r8, r9, 0              # 3 bytes
 je start                   # 6 bytes, backward branch
 call target                # 5 bytes, backward branch
 ret                        # 1 byte
+syscall                    # 2 bytes

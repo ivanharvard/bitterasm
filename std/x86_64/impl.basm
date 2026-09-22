@@ -1,7 +1,4 @@
 # x86-64 base instruction set (core GPR-only integer subset).
-#
-# See std/x86_64/PROGRESS.md for scope, phase plan, and design decisions already
-# made — read it before extending this file.
 
 from std.binary import *
 from std.bitter.deferred import *
@@ -215,8 +212,7 @@ macro reg_imm_instr(
 # =================
 # mov
 # =================
-# Direction convention (the open question `std/x86_64/PROGRESS.md`'s Phase
-# 2 section leaves for whoever implements it): every reg,reg opcode in this
+# Direction convention: every reg,reg opcode in this
 # file is the "r/m, r" form (`0x89`-style — ModRM.rm is the destination,
 # ModRM.reg is the source). With `mod=11` register-direct addressing this
 # is purely a byte-encoding choice, not a semantic one (`0x8B`, "r, r/m",
@@ -345,10 +341,8 @@ pub macro testi(
 # =================
 # Three named constructors, not one giant optional-everything struct — `Mem`
 # (`[base]`/`[base+disp]`), `MemIndexed` (`[base+index*scale+disp]`), and
-# `MemRipRelative` (`[rip+disp]`), matching the three memory forms
-# `PROGRESS.md`'s
-# "Decided scope" actually commits to (no bare `[disp32]` absolute addressing —
-# that
+# `MemRipRelative` (`[rip+disp]`), matching the three memory forms this
+# package supports (no bare `[disp32]` absolute addressing — that
 # would need a fourth, index-less "no base" constructor nothing here asks for).
 # Each
 # wraps its own field struct in one `MemOperand` enum variant so every reg/mem-
@@ -421,9 +415,8 @@ macro scale_code(scale: int) -> int {
 # disp8 vs disp32 is chosen automatically from the displacement's own magnitude
 # —
 # pure encoding-size selection with no semantic difference (unlike the branch-
-# relaxation this repo deliberately keeps manual, see PROGRESS.md's "Decided
-# scope"), the same `uleb128_length`-style "let the value's own magnitude pick
-# the
+# relaxation this repo deliberately keeps manual), the same
+# `uleb128_length`-style "let the value's own magnitude pick the
 # encoding" reasoning `std/wasm/leb128.basm` already uses.
 macro fits_disp8(disp: int) -> int {
     @return disp >= -128 && disp <= 127
@@ -448,11 +441,8 @@ struct AddrMode {
     pub rex_b: int,
 }
 
-# The actual addressing-mode selection logic — `mod`/`rm`/SIB selection exactly
-# as
-# `PROGRESS.md`'s Phase 3 plan lays out:
-# - `mod=11` register-direct doesn't appear here at all (Phase 2's
-# `reg_reg_instr`/
+# The actual addressing-mode selection logic — `mod`/`rm`/SIB selection:
+# - `mod=11` register-direct doesn't appear here at all (`reg_reg_instr`/
 # `reg_imm_instr` already cover it; `MemOperand` only ever models a true memory
 # operand).
 # - A base register whose low 3 bits are `0b100` (`rsp`/`r12`) can never be
@@ -879,10 +869,8 @@ pub macro testi(
 # =================
 # control flow: jmp/jcc/call/ret (Phase 4)
 # =================
-# Near-only (`rel32`), no automatic short/near relaxation —
-# `std/x86_64/PROGRESS.md`'s
-# own "Decided scope" section commits to this; a real assembler's `rel8` vs
-# `rel32`
+# Near-only (`rel32`), no automatic short/near relaxation — a real
+# assembler's `rel8` vs `rel32`
 # choice is deliberately not this language's job to make automatically.
 #
 # `target` is a label's already-resolved entry position, exactly like
@@ -891,9 +879,7 @@ pub macro testi(
 # `start` and this file's `jmp target`'s `target` mean the same thing.
 #
 # x86's `rel32` is relative to the address of the *next* instruction, not this
-# instruction's own start the way RISC-V's `here()`-based offset is — see
-# `std/x86_64/PROGRESS.md`'s Phase 4 section for the investigation this
-# required:
+# instruction's own start the way RISC-V's `here()`-based offset is:
 # `here()` only ever resolves to an entry *index*, never a byte address (so
 # RISC-V's
 # own fixed-width `mul(sub(target, here()), 4)` trick can't generalize to x86's
@@ -1124,4 +1110,17 @@ pub macro pop(rd: Reg) -> Bytes<...> {
     const rex = rex_byte(0, 0, 0, reg_ext(rd))
     const opcode = Byte(0x58 + reg_field(rd))
     @emit instr(need_rex, rex, opcode, 0, Byte(0), 0, 0)
+}
+
+# =================
+# syscall
+# =================
+# `0F 05`, no ModRM/REX/operand of any kind — Linux x86-64's fast system-call
+# entry point. The kernel reads its own calling convention (syscall number in
+# `rax`, arguments in `rdi`/`rsi`/`rdx`/`r10`/`r8`/`r9`) straight out of
+# registers, so unlike every other macro in this file there is no addressing
+# mode, operand size, or register argument for this instruction to encode at
+# all — same zero-operand shape as `ret` above.
+pub macro syscall() -> Bytes<2> {
+    @emit Bytes<2> { __el0: Byte(0x0F), __el1: Byte(0x05) }
 }

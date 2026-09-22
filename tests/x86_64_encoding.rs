@@ -214,7 +214,9 @@ fn control_flow_encodes_correctly() {
     // Byte offsets of each entry in `control_flow.basm`, computed from each
     // instruction's own encoded length (used below to hand-verify every
     // rel32): 0 (mov, 2B) -> 2 (movi, 5B) -> 7 (jmp, 5B) -> 12 (add, 3B) ->
-    // 15 (mov, 3B, this is `target:`) -> 18 (je, 6B) -> 24 (call, 5B) -> 29 (ret, 1B) -> 30 (end).
+    // 15 (mov, 3B, this is `target:`) -> 18 (je, 6B) -> 24 (call, 5B) -> 29 (ret, 1B) ->
+    // 30 (syscall, 2B) -> 32 (end). `ret`/`syscall` both trail every label and
+    // branch target, so appending `syscall` doesn't disturb any rel32 above.
     #[rustfmt::skip]
     let expected: &[u8] = &[
         // mov rax, rbx, 0 — 89 D8 (see regdirect_encodes_correctly)
@@ -235,6 +237,8 @@ fn control_flow_encodes_correctly() {
         0xE8, 0xF2, 0xFF, 0xFF, 0xFF,
         // ret — 0xC3
         0xC3,
+        // syscall — 0F 05
+        0x0F, 0x05,
     ];
 
     assert_case_encodes_to("control_flow", expected);

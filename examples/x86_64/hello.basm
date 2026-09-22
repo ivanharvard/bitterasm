@@ -1,13 +1,9 @@
 # "Hello, world!" for Linux x86-64, written in BitterASM.
 #
-# Demonstrates the language's own stated philosophy end to end: `syscall`
-# isn't in std/x86_64/impl.basm's v1 core subset (see its PROGRESS.md
-# "Decided scope"), so this program just defines it itself, as an ordinary
-# two-byte macro — no changes to the standard library required. The message
-# is loaded as two imm64 registers and pushed onto the stack rather than
-# read from a data section, since `bitter`'s packer only ever produces one
-# flat code stream (see docs/reference.md) with no separate data segment to
-# place a string literal in.
+# The message is loaded as two imm64 registers and pushed onto the stack
+# rather than read from a data section, since `bitter`'s packer only ever
+# produces one flat code stream (see docs/reference.md) with no separate
+# data segment to place a string literal in.
 #
 # Build and run (from the repository root):
 # bitter build examples/x86_64/hello.basm -o /tmp/hello
@@ -20,10 +16,6 @@
 # `bitterasm compile` + `bitter encode` + `bitter exec` run separately.
 
 from std.x86_64.intel import *
-
-macro syscall() -> Bytes<2> {
-    @emit Bytes<2> { __el0: Byte(0x0F), __el1: Byte(0x05) }
-}
 
 # "Hello, world!\n" (14 bytes), split into two little-endian imm64 chunks:
 # `chunk0` = "Hello, w", `chunk1` = "orld!\n" plus 2 unused padding bytes.

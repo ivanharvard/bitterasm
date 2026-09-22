@@ -1,7 +1,6 @@
 # Phase 3 memory operands: every ModRM/SIB addressing-mode branch `addr_mode`
 # (std/x86_64/impl.basm) can take, plus a handful of cases confirming
-# mem_reg_instr/mem_imm_instr wiring for mnemonics beyond mov. See
-# std/x86_64/PROGRESS.md.
+# mem_reg_instr/mem_imm_instr wiring for mnemonics beyond mov.
 
 from std.x86_64.impl import *
 
@@ -38,8 +37,7 @@ addi Mem(rax, 0), 0x7F, 0   # ALU imm,mem (0x81 /0)
 movi Mem(rbx, 4), 0x2A, 0   # mov mem,imm (0xC7 /0, distinct from 0xB8+reg)
 testi Mem(rax, 0), 0xFF, 0  # test mem,imm (0xF7 /0)
 
-# --- mov's load direction (0x8B), added in Phase 6 for the Intel dialect's
-# `mov rd, [mem]` bracket syntax — see std/x86_64/PROGRESS.md's Phase 6 section
-# ---
+# --- mov's load direction (0x8B), needed for the Intel dialect's
+# `mov rd, [mem]` bracket syntax ---
 mov rax, Mem(rbx, 8), 0
 mov r9, MemIndexed(rax, rcx, 4, 0x100), 1

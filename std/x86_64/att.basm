@@ -227,6 +227,7 @@ syntax pop(rd) = { pop %$rd$ }
 syntax jmp(target) = { jmp $target$ }
 syntax call(target) = { call $target$ }
 syntax ret() = { ret }
+syntax syscall() = { syscall }
 
 syntax je(target) = { je $target$ }
 syntax jne(target) = { jne $target$ }

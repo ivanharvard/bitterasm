@@ -49,3 +49,4 @@ jmp target
 je target
 jne target
 ret
+syscall

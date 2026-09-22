@@ -82,8 +82,8 @@
 # also matches literal `rip`). Confirmed empirically before this file was
 # written:
 # registering all four patterns made every one of them a hard "ambiguous syntax"
-# parse error, including `PROGRESS.md`'s own flagship
-# `mov rax, [rbx+rcx*4+0x10]` example.
+# parse error, including the flagship
+# `mov rax, [rbx+rcx*4+0x10]` example this dialect is built around.
 #
 # Fixed at the compiler level, not worked around here: `src/parser/
 # invocation_syntax.rs`'s `parse_invocation_via_syntax_candidates` now prefers
@@ -381,6 +381,7 @@ syntax pop(rd) = { pop $rd$ }
 syntax jmp(target) = { jmp $target$ }
 syntax call(target) = { call $target$ }
 syntax ret() = { ret }
+syntax syscall() = { syscall }
 
 syntax je(target) = { je $target$ }
 syntax jne(target) = { jne $target$ }

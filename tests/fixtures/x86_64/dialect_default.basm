@@ -1,7 +1,7 @@
 # The exact same instructions as dialect_intel.basm, in the same order, spelled
 # with std/x86_64/impl.basm's own default positional syntax (explicit w=1,
 # Mem(...)/MemIndexed(...)/MemRipRelative(...) instead of bracket syntax) — see
-# tests/x86_64_dialects.rs and std/x86_64/PROGRESS.md's Phase 6 section.
+# tests/x86_64_dialects.rs.
 
 from std.x86_64.impl import *
 
@@ -50,3 +50,4 @@ jmp target
 je target
 jne target
 ret
+syscall

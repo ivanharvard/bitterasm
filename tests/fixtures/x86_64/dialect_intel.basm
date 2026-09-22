@@ -3,8 +3,7 @@
 # shapes), the register-only ALU/shift/test sugar, lea's bracket forms, and the
 # reg,CL shift form. tests/x86_64_dialects.rs compiles this and
 # dialect_default.basm (the exact same instructions spelled with impl.basm's own
-# default positional syntax) and asserts byte-for-byte identical output — see
-# std/x86_64/PROGRESS.md's Phase 6 section.
+# default positional syntax) and asserts byte-for-byte identical output.
 
 from std.x86_64.intel import *
 
@@ -53,3 +52,4 @@ jmp target
 je target
 jne target
 ret
+syscall

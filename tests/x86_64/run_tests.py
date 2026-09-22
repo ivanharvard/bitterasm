@@ -35,9 +35,7 @@ sides disagree on encoding *length*, not correctness.
 
 Every case sticks to this dialect's own real surface: real reg,reg and
 bracket-memory forms share their real x86 mnemonic (`mov`/`add`/...), but a
-reg,imm form doesn't — this project's own `movi`/`addi`/etc. naming (see
-std/x86_64/PROGRESS.md's Phase 2 and Phase 6 notes on why `Reg` being a
-plain `int` alias rules out overloading them onto `mov`/`add`) has no
+reg,imm form doesn't — this project's own `movi`/`addi`/etc. naming has no
 counterpart in real Intel syntax, which spells both forms identically. GNU
 as doesn't recognize `movi`/`addi` as instructions at all, and a bare
 `mov rax, 100` silently means something different under this dialect (a
