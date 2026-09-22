@@ -1,0 +1,7 @@
+pub struct Enumerated<T>
+{
+    pub index: int,
+    pub value: T
+}
+
+

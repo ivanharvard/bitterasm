@@ -1,3 +1,5 @@
+from std.enumerated import Enumerated
+
 pub struct Array<T, const N: int>
     | invariant N >= 0
 {
@@ -52,7 +54,7 @@ pub macro reversed<T>(arr: Array<T, ...>) -> Array<T, ...>
     }
 }
 
-pub macro popped(arr: Array<T, N>) -> Array<T, N-1>
+pub macro popped<T, const N: int>(arr: Array<T, N>) -> Array<T, N-1>
 {
     @assert N > 0
     const new_len = N - 1
@@ -63,16 +65,16 @@ pub macro popped(arr: Array<T, N>) -> Array<T, N-1>
     }
 }
 
-pub macro first(arr: Array<T, N>) -> T
+pub macro first<T>(arr: Array<T, ...>) -> T
 {
-    @assert N > 0
+    @assert arr.len > 0
     @return get(arr, 0)
 }
 
-pub macro last(arr: Array<T, N>) -> T
+pub macro last<T>(arr: Array<T, ...>) -> T
 {
-    @assert N > 0
-    @return get(arr, N-1)
+    @assert arr.len > 0
+    @return get(arr, arr.len - 1)
 }
 
 pub macro mapped<T, U, F: Fn(T) -> U>(arr: Array<T, ...>, f: F) -> Array<U, ...>
@@ -90,6 +92,15 @@ pub macro array_from_struct<S>(source: S)
     @return Array<int, len> {
         @for i in 0..len {
             __el`i`: source.__el`i`,
+        }
+    }
+}
+
+pub macro enumerate<T>(arr: Array<T, ...>) -> Array<Enumerated<T>, ...>
+{
+    @return Array<Enumerated<T>, arr.len> {
+        @for i in 0..arr.len {
+            __el`i`: Enumerated<T> { index: i, value: arr.__el`i` },
         }
     }
 }
