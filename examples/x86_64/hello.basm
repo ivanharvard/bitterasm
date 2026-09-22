@@ -1,0 +1,48 @@
+# "Hello, world!" for Linux x86-64, written in BitterASM.
+#
+# Demonstrates the language's own stated philosophy end to end: `syscall`
+# isn't in std/x86_64/impl.basm's v1 core subset (see its PROGRESS.md
+# "Decided scope"), so this program just defines it itself, as an ordinary
+# two-byte macro — no changes to the standard library required. The message
+# is loaded as two imm64 registers and pushed onto the stack rather than
+# read from a data section, since `bitter`'s packer only ever produces one
+# flat code stream (see docs/reference.md) with no separate data segment to
+# place a string literal in.
+#
+# Build and run (from the repository root):
+# bitter build examples/x86_64/hello.basm -o /tmp/hello
+# /tmp/hello
+#
+# `bitter build` compiles, encodes, and wraps the result in a native
+# executable (ELF/PE/Mach-O, picked for whatever OS `bitter` itself is
+# running on — pass --format to override) in one step; `bitter exec` does
+# just the wrapping step on an already-encoded .bin, for the equivalent of
+# `bitterasm compile` + `bitter encode` + `bitter exec` run separately.
+
+from std.x86_64.intel import *
+
+macro syscall() -> Bytes<2> {
+    @emit Bytes<2> { __el0: Byte(0x0F), __el1: Byte(0x05) }
+}
+
+# "Hello, world!\n" (14 bytes), split into two little-endian imm64 chunks:
+# `chunk0` = "Hello, w", `chunk1` = "orld!\n" plus 2 unused padding bytes.
+# Pushing `chunk1` then `chunk0` leaves them in that order in memory
+# (the stack grows down, so the *last* push ends up at the *lowest*
+# address) with `rsp` pointing at the start of the 14-byte message.
+movi rax, 0x77202c6f6c6c6548
+movi rbx, 0xa21646c726f
+push rbx
+push rax
+mov rsi, rsp
+
+# write(1, rsp, 14)
+movi rdi, 1
+movi rdx, 14
+movi rax, 1
+syscall
+
+# exit(0)
+movi rdi, 0
+movi rax, 60
+syscall

@@ -61,5 +61,10 @@ This interactively builds and installs `bitterasm` (the compiler) and/or `bitter
 (the binary evaluator) to `~/.bitterasm/bin`, and copies `std/` to `~/.bitterasm/std`.
 Add `~/.bitterasm/bin` to your `PATH` if prompted.
 
+`bitter build program.basm` runs the whole pipeline — compile, encode, and wrap the
+result in a native executable (ELF, PE, or Mach-O, picked for the host OS) — in one
+command; see [examples/x86_64/hello.basm](examples/x86_64/hello.basm) for a runnable
+example. `bitter encode`/`bitter exec` expose the encode and wrap steps separately.
+
 For CLI usage — formatting, diagnostics/lints, and macro-default semantics — see
 [docs/reference.md](docs/reference.md).
