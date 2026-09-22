@@ -23,8 +23,8 @@ doesn't re-derive and re-reject them a second time.
 
 ## Status
 
-- [ ] Phase 0 — This document
-- [ ] Phase 1 — `section` statement (parser/AST only)
+- [x] Phase 0 — This document
+- [x] Phase 1 — `section` statement (parser/AST only)
 - [ ] Phase 2 — Section tagging in resolution + `.em` output
 - [ ] Phase 3 — Section-scope escape-hatch facet
 - [ ] Phase 4 — `pub` on labels
@@ -285,26 +285,45 @@ one of these, re-read why it didn't survive first.
 ### Phase 0 — This document
 Done by virtue of existing. Read it fully before starting Phase 1.
 
-### Phase 1 — `section` statement (parser/AST only)
+### Phase 1 — `section` statement (parser/AST only) — DONE
 **Deliverable:** `section <name>` parses as a new top-level statement
 (`Statement::Section` in `src/ast.rs`, parallel to `Statement::Label`).
 No resolver/emission behavior yet — this phase is purely "the syntax
 exists and parses," verified with parser-level tests the way
 `src/parser/tests.rs` already tests other statement kinds.
-**Open questions to settle here:**
-- Exact grammar: is it `section .text` (bare name, dot included, matching
-  NASM convention literally) or does bitterasm want its own naming
-  convention for section names? Nothing in the design conversation pinned
-  this down beyond "it's a new statement kind."
-- Does a section name have any character restrictions, or is it an
-  arbitrary identifier/string?
-**Files:** `src/ast.rs`, `src/parser/` (wherever `Statement::Label` parsing
-lives), `src/parser/tests.rs`.
-**Verification:** parser unit tests confirming `section foo` round-trips
-through the AST; confirm a `.basm` file containing only `section`
-statements and no other change still produces identical `.em` output to
-today (should be true automatically if this phase truly adds no resolver
-behavior).
+**Open questions, as settled:**
+- Grammar: `section` is a hard keyword (`TokenKind::Section`, lexed
+  alongside `struct`/`enum`/`const`/`macro` in `src/lexer.rs`) rather than
+  a contextually-disambiguated soft keyword like `syntax`'s
+  `at_syntax_override_start` — there's no legitimate existing use of
+  `section` as an identifier to preserve, and every other top-level
+  declaration keyword already works this way. `<name>` is a dotted
+  identifier: an optional leading `.` (NASM/ELF convention, e.g. `.text`,
+  `.rodata`) followed by one or more identifier segments joined by `.`
+  (e.g. `.rela.text`), stored verbatim as a single `String` including the
+  dots (`ast::Section::name`). A bare name with no leading dot (`section
+  data`) is also legal — bitterasm doesn't require the dot, it just
+  doesn't strip it if present, so a backend keying off literal ELF-style
+  names (`.rodata`) still works.
+- Character restrictions: none beyond what an identifier token already
+  enforces (each dot-separated segment is a normal identifier); no
+  arbitrary-string section names (no quoting).
+**Files:** `src/token.rs`/`src/lexer.rs` (new `Section` keyword),
+`src/ast.rs` (`Statement::Section`, `ast::Section`), `src/parser/mod.rs`
++ `src/parser/statements.rs` (`parse_section`), `src/parser/tests.rs`.
+Every other exhaustive `match` over `Statement`/`TokenKind` in the crate
+(`src/printer.rs`, `src/expander.rs`, `src/loader.rs`,
+`src/diagnostics/lint.rs`, `src/resolver/generated.rs`) got a
+no-behavior-change arm for the new variant so the crate keeps compiling;
+`src/resolver/macro_body.rs`'s `walk_macro_body` rejects a `section`
+statement inside a macro body with `ResolveError::UnsupportedMacroStatement`
+for now (same treatment as `import`) since Phase 2 is what actually
+defines push/pop scoping there.
+**Verification:** parser unit tests confirming `section foo`/`section
+.text`/`section .rela.text`/reopened sections all round-trip through the
+AST (`src/parser/tests.rs`). Manually confirmed a `.basm` file containing
+only `section` statements (no other statements) compiles to `[]` emitted
+values — zero resolver/emission behavior change, as required.
 
 ### Phase 2 — Section tagging in resolution + `.em` output
 **Deliverable:** the resolver tracks "current section" as call-site-scoped

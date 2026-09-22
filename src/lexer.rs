@@ -322,6 +322,7 @@ impl<'src> Lexer<'src> {
             "struct" => TokenKind::Struct,
             "enum" => TokenKind::Enum,
             "const" => TokenKind::Const,
+            "section" => TokenKind::Section,
 
             _ => TokenKind::Identifier(text.to_owned()),
         };

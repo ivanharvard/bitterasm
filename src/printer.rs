@@ -87,6 +87,8 @@ pub fn print_statement(statement: &Statement, indent: usize) -> String {
 
         Statement::Label(label) => format!("{pad}{name}:", name = label.name),
 
+        Statement::Section(section) => format!("{pad}section {name}", name = section.name),
+
         Statement::Invocation(invocation) => {
             if invocation.operands.is_empty() {
                 format!("{pad}{name}", name = invocation.name)
@@ -351,6 +353,7 @@ fn token_text(kind: &TokenKind) -> String {
         TokenKind::Struct => "struct".to_string(),
         TokenKind::Enum => "enum".to_string(),
         TokenKind::Const => "const".to_string(),
+        TokenKind::Section => "section".to_string(),
 
         TokenKind::Dot => ".".to_string(),
         TokenKind::DotDot => "..".to_string(),

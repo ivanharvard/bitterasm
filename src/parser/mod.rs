@@ -23,7 +23,7 @@ use std::fmt;
 use crate::ast::{
     BinaryOp, CallArgument, ConstDeclaration, Expr, ImportItems, ImportStatement,
     Invocation, Label, MacroDeclaration, MacroParameter, MetaStatement, ModulePath,
-    NamePart, Program, Statement, SyntaxOverrideStatement, UnaryOp, TypeAliasDeclaration,
+    NamePart, Program, Section, Statement, SyntaxOverrideStatement, UnaryOp, TypeAliasDeclaration,
 };
 
 use crate::facets::syntax::SyntaxPattern;

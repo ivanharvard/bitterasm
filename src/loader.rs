@@ -547,7 +547,8 @@ fn collect_declarations(
             // declaration either — its effect already happened at parse
             // time, propagated via `ParserSeed`, not by being spliced into
             // an importer's statement list.
-            Statement::Label(_) | Statement::Invocation(_) | Statement::SyntaxOverride(_) => {}
+            Statement::Label(_) | Statement::Section(_) | Statement::Invocation(_)
+            | Statement::SyntaxOverride(_) => {}
         }
     }
 
@@ -710,8 +711,8 @@ fn rename_statement(statement: &mut Statement, renames: &HashMap<String, String>
         // Never actually reached — `collect_declarations` never splices a
         // `SyntaxOverride` into a statement list for this to run on — but
         // matched here too for exhaustiveness.
-        Statement::Import(_) | Statement::Label(_) | Statement::Invocation(_)
-        | Statement::SyntaxOverride(_) => {}
+        Statement::Import(_) | Statement::Label(_) | Statement::Section(_)
+        | Statement::Invocation(_) | Statement::SyntaxOverride(_) => {}
     }
 }
 

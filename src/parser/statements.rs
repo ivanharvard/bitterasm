@@ -44,6 +44,12 @@ impl Parser {
                 ))
             }
 
+            TokenKind::Section => {
+                Ok(Statement::Section(
+                    self.parse_section()?
+                ))
+            }
+
             TokenKind::Pub => {
                 self.advance();
 
@@ -187,6 +193,44 @@ impl Parser {
         let end = self.statement_end()?;
 
         Ok(Label {
+            name,
+            span: Span::new(start, end),
+        })
+    }
+
+    // =============
+    // sections
+    // =============
+
+    // `section <name>`, where `<name>` is a dotted identifier — an optional
+    // leading `.` (matching NASM/ELF convention, e.g. `.text`, `.rodata`)
+    // followed by one or more identifier segments joined by `.` (e.g.
+    // `.rela.text`). Stored as a single literal string, dots included; no
+    // further character restrictions beyond what an identifier already
+    // allows.
+    fn parse_section(&mut self) -> Result<Section, ParseError> {
+        let start = self.current().span.start;
+
+        self.expect_simple(TokenKind::Section)?;
+
+        let mut name = String::new();
+
+        if self.check(&TokenKind::Dot) {
+            self.advance();
+            name.push('.');
+        }
+
+        name.push_str(&self.expect_identifier()?);
+
+        while self.check(&TokenKind::Dot) {
+            self.advance();
+            name.push('.');
+            name.push_str(&self.expect_identifier()?);
+        }
+
+        let end = self.statement_end()?;
+
+        Ok(Section {
             name,
             span: Span::new(start, end),
         })

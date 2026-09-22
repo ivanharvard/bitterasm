@@ -20,6 +20,7 @@ pub enum TokenKind {
     Struct,
     Enum,
     Const,
+    Section,
 
     // Punctuation
     Dot,

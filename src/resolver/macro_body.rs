@@ -929,6 +929,18 @@ impl<'a> AliasResolver<'a> {
                     generated.push(statement.clone());
                 }
 
+                // Phase 2 (see `docs/sections-and-linking/PROGRESS.md`)
+                // defines what a `section` statement inside a macro body
+                // actually does (push/pop scoping of the caller's active
+                // section) — until then it's rejected the same way `import`
+                // is, rather than silently doing nothing.
+                Statement::Section(section) => {
+                    return Err(ResolveError::UnsupportedMacroStatement {
+                        kind: "section".to_string(),
+                        span: section.span,
+                    });
+                }
+
                 Statement::Import(import) => {
                     return Err(ResolveError::UnsupportedMacroStatement {
                         kind: "import".to_string(),

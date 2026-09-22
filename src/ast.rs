@@ -33,6 +33,7 @@ pub enum Statement {
     Const(ConstDeclaration),
 
     Label(Label),
+    Section(Section),
     Invocation(Invocation),
 
     Macro(MacroDeclaration),
@@ -80,6 +81,17 @@ pub enum ImportItems {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Label {
+    pub name: String,
+    pub span: Span,
+}
+
+/// `section <name>` — reopens (or, on first use, opens) a named group that
+/// subsequent `@emit`s land in, until the next `section` statement. Pure
+/// naming: the name (e.g. `.text`, `.rodata`, `data.rel`) carries no
+/// interpreted meaning to `bitterasm` or `bitter`'s core — see
+/// `docs/sections-and-linking/PROGRESS.md`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Section {
     pub name: String,
     pub span: Span,
 }

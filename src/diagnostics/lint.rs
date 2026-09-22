@@ -159,7 +159,7 @@ pub fn lint_program(program: &Program, source: SourceId, config: &LintConfig) ->
 
 fn collect_program_statement_references(statement: &Statement, names: &mut HashSet<String>) {
     match statement {
-        Statement::Import(_) | Statement::Label(_) => {}
+        Statement::Import(_) | Statement::Label(_) | Statement::Section(_) => {}
         Statement::Struct(declaration) => {
             for item in &declaration.fields { collect_struct_item_references(item, names); }
             for facet in &declaration.facets {
@@ -417,6 +417,7 @@ fn statement_span(statement: &Statement) -> Span {
         Statement::TypeAlias(value) => value.span,
         Statement::Const(value) => value.span,
         Statement::Label(value) => value.span,
+        Statement::Section(value) => value.span,
         Statement::Invocation(value) => value.span,
         Statement::Macro(value) => value.span,
         Statement::Meta(value) => value.span,
@@ -438,8 +439,8 @@ fn collect_statement_identifiers(statement: &Statement, names: &mut HashSet<Stri
             }
         }
         Statement::Struct(_) | Statement::Enum(_) | Statement::TypeAlias(_) |
-        Statement::Import(_) | Statement::Label(_) | Statement::Macro(_) |
-        Statement::SyntaxOverride(_) => {}
+        Statement::Import(_) | Statement::Label(_) | Statement::Section(_) |
+        Statement::Macro(_) | Statement::SyntaxOverride(_) => {}
     }
 }
 

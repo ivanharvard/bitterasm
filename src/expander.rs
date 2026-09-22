@@ -217,8 +217,8 @@ pub(crate) fn substitute_statements(
 
 fn substitute_statement(statement: &Statement, substitutions: &HashMap<String, Expr>) -> Statement {
     match statement {
-        Statement::Import(_) | Statement::Label(_) | Statement::Enum(_)
-        | Statement::SyntaxOverride(_) => statement.clone(),
+        Statement::Import(_) | Statement::Label(_) | Statement::Section(_)
+        | Statement::Enum(_) | Statement::SyntaxOverride(_) => statement.clone(),
 
         Statement::Invocation(invocation) => Statement::Invocation(Invocation {
             name: invocation.name.clone(),

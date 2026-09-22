@@ -74,6 +74,63 @@ fn parses_label() {
 }
 
 #[test]
+fn parses_section_with_bare_name() {
+    let program = parse(lex("section data\n").unwrap()).unwrap();
+
+    let Statement::Section(section) = &program.statements[0] else {
+        panic!("expected section");
+    };
+
+    assert_eq!(section.name, "data");
+}
+
+#[test]
+fn parses_section_with_leading_dot() {
+    let program = parse(lex("section .text\n").unwrap()).unwrap();
+
+    let Statement::Section(section) = &program.statements[0] else {
+        panic!("expected section");
+    };
+
+    assert_eq!(section.name, ".text");
+}
+
+#[test]
+fn parses_section_with_multiple_dotted_segments() {
+    let program = parse(lex("section .rela.text\n").unwrap()).unwrap();
+
+    let Statement::Section(section) = &program.statements[0] else {
+        panic!("expected section");
+    };
+
+    assert_eq!(section.name, ".rela.text");
+}
+
+#[test]
+fn parses_reopened_sections() {
+    let source = "section .text\nnop\nsection .data\nsection .text\nnop\n";
+
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    assert_eq!(program.statements.len(), 5);
+
+    let Statement::Section(first) = &program.statements[0] else {
+        panic!("expected section");
+    };
+    assert_eq!(first.name, ".text");
+
+    let Statement::Section(second) = &program.statements[2] else {
+        panic!("expected section");
+    };
+    assert_eq!(second.name, ".data");
+
+    let Statement::Section(third) = &program.statements[3] else {
+        panic!("expected section");
+    };
+    assert_eq!(third.name, ".text");
+}
+
+#[test]
 fn parses_no_operand_invocation() {
     let program = parse(lex("nop\n").unwrap()).unwrap();
 
