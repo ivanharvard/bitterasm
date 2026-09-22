@@ -1,0 +1,19 @@
+# Phase 4: `pub` on a label is a purely additive parse/symbol-table flag —
+# it must not change how a label resolves or how `noop`/`reads_target`
+# behave. Mirrors `backward_label_only.basm` (same shape, same expected
+# emitted sequence) with `loop_start` marked `pub` and a second,
+# deliberately non-`pub` label alongside it to confirm both parse and
+# coexist normally.
+macro noop() {
+    @emit 1
+}
+
+macro reads_target(target: int) {
+    @emit target
+}
+
+pub loop_start:
+private_marker:
+noop
+reads_target loop_start
+noop

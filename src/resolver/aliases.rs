@@ -1047,6 +1047,33 @@ mod tests {
         assert_ne!(nominal, underlying);
     }
 
+    fn find_label<'a>(program: &'a Program, name: &str) -> &'a crate::ast::Label {
+        program
+            .statements
+            .iter()
+            .find_map(|statement| match statement {
+                crate::ast::Statement::Label(label) if label.name == name => Some(label),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("expected a label named `{name}`"))
+    }
+
+    #[test]
+    fn pub_label_is_distinguishable_from_a_non_pub_one_via_the_symbol_table() {
+        // Phase 4: `pub` on a label is registered into the symbol table by
+        // `collect_symbols` the same as any other top-level label, and the
+        // flag itself is readable straight off the found AST node — the
+        // same place every other declaration kind's `is_pub` already lives
+        // (`find_struct_declaration`/`find_alias_declaration`/etc. above).
+        let program = parse_fixture("pub_label.basm");
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
+
+        assert!(symbols.lookup("loop_start").is_some());
+        assert!(symbols.lookup("private_marker").is_some());
+        assert!(find_label(&program, "loop_start").is_pub);
+        assert!(!find_label(&program, "private_marker").is_pub);
+    }
+
     #[test]
     fn ambiguous_invariant_binder_is_rejected() {
         let program = parse_fixture("ambiguous_alias_invariant.basm");

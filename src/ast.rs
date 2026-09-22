@@ -82,6 +82,7 @@ pub enum ImportItems {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Label {
     pub name: String,
+    pub is_pub: bool,
     pub span: Span,
 }
 

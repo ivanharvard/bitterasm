@@ -74,6 +74,12 @@ impl Parser {
                         self.parse_macro_declaration(true)?
                     )),
 
+                    TokenKind::Identifier(_) if self.check_next(&TokenKind::Colon) => {
+                        Ok(Statement::Label(
+                            self.parse_label(true)?
+                        ))
+                    }
+
                     other => Err(ParseError::new(
                         format!("expected declaration after `pub`, found {other:?}"),
                         self.current().span,
@@ -88,7 +94,7 @@ impl Parser {
                     Ok(Statement::SyntaxOverride(self.parse_syntax_override()?))
                 } else if self.check_next(&TokenKind::Colon) {
                     Ok(Statement::Label(
-                        self.parse_label()?
+                        self.parse_label(false)?
                     ))
                 } else {
                     self.parse_invocation_statement(&name)
@@ -183,7 +189,7 @@ impl Parser {
     // labels
     // =============
 
-    fn parse_label(&mut self) -> Result<Label, ParseError> {
+    fn parse_label(&mut self, is_pub: bool) -> Result<Label, ParseError> {
         let start = self.current().span.start;
 
         let name = self.expect_identifier()?;
@@ -194,6 +200,7 @@ impl Parser {
 
         Ok(Label {
             name,
+            is_pub,
             span: Span::new(start, end),
         })
     }

@@ -85,7 +85,10 @@ pub fn print_statement(statement: &Statement, indent: usize) -> String {
             )
         }
 
-        Statement::Label(label) => format!("{pad}{name}:", name = label.name),
+        Statement::Label(label) => {
+            let pub_kw = if label.is_pub { "pub " } else { "" };
+            format!("{pad}{pub_kw}{name}:", name = label.name)
+        }
 
         Statement::Section(section) => format!("{pad}section {name}", name = section.name),
 

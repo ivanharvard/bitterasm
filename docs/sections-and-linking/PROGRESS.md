@@ -27,7 +27,7 @@ doesn't re-derive and re-reject them a second time.
 - [x] Phase 1 — `section` statement (parser/AST only)
 - [x] Phase 2 — Section tagging in resolution + `.em` output
 - [x] Phase 3 — Section-scope escape-hatch facet
-- [ ] Phase 4 — `pub` on labels
+- [x] Phase 4 — `pub` on labels
 - [ ] Phase 5 — Cross-unit label references (`from file import label`)
 - [ ] Phase 6 — `bitter build`/`bitter exec` multi-file merge + link + wrap
 
@@ -437,21 +437,55 @@ Full `cargo test` suite (290+ tests across `src/` and `tests/`) passes
 with no regressions; `cargo clippy --all-targets` shows no new warnings
 attributable to this phase's files.
 
-### Phase 4 — `pub` on labels
-**Deliverable:** `Label` (`src/ast.rs:82`) gains an `is_pub: bool` field,
+### Phase 4 — `pub` on labels — DONE
+**Deliverable:** `Label` (`src/ast.rs:83`) gains an `is_pub: bool` field,
 parsed the same way `pub` already parses on `struct`/`macro`/`const`/etc.
-(the five existing `is_pub` fields already in `src/ast.rs`, e.g. lines
-368/380/396/406/416, are the precedent to follow exactly). This phase is
-self-contained — it does not yet unlock cross-file references (that's
-Phase 5) — it only needs the flag to exist and parse correctly, and (per
-"Decided scope") to mean the *same* thing `pub` already means everywhere
-else, not a new concept.
-**Files:** `src/ast.rs`, parser, `src/resolver/mod.rs`/`generated.rs`
-(wherever `SymbolKind::Label` gets registered) to carry the flag through
-to the symbol table.
-**Verification:** parser/resolver tests confirming a `pub` label parses
-and is distinguishable from a non-`pub` one in the symbol table; no
-behavior change yet for anything that consumes labels within one file.
+(the five existing `is_pub` fields already in `src/ast.rs` are the
+precedent followed exactly). This phase is self-contained — it does not
+yet unlock cross-file references (that's Phase 5) — it only needed the
+flag to exist and parse correctly, and (per "Decided scope") to mean the
+*same* thing `pub` already means everywhere else, not a new concept.
+**Open questions, as settled:**
+- Grammar: `pub` precedes a label the same way it precedes every other
+  declaration keyword (`pub start:`), even though a label itself has no
+  leading keyword — `src/parser/statements.rs`'s `TokenKind::Pub` arm
+  gained one more case (`TokenKind::Identifier(_) if self.check_next(&
+  TokenKind::Colon)`) alongside its existing `Struct`/`Enum`/`Type`/
+  `Const`/`Macro` cases, calling the same `parse_label` the non-`pub`
+  path uses, now parameterized by `is_pub: bool`.
+- Whether the symbol table itself needed a new field: **no** — every
+  other kind's `is_pub` already lives only on the found AST declaration,
+  never as a field on `resolver::symbols::Symbol` (`find_struct_
+  declaration`/`find_alias_declaration`/etc. in `src/resolver/aliases.rs`
+  fetch the full declaration by `SymbolId` and read `is_pub` off *that*).
+  Labels follow the identical pattern once they need it — no
+  `find_label_declaration` was added yet, since nothing in Phase 4 (or
+  Phase 5, until it's actually built) calls it; adding it now would have
+  been unused `pub(super)` API sitting idle, which this codebase doesn't
+  otherwise carry. It's a same-shaped few-line addition to `src/resolver/
+  aliases.rs` whenever Phase 5 needs it for real.
+**Files:** `src/ast.rs` (`Label::is_pub`), `src/parser/statements.rs`
+(`parse_label` takes `is_pub`, `TokenKind::Pub`'s new label case),
+`src/printer.rs` (prints `pub ` before a `pub` label, mirroring every
+other kind's `pub_kw` handling). `src/resolver/mod.rs`/`generated.rs`
+needed no change at all — both already register every `Statement::Label`
+into the symbol table by cloning/reading through the whole `Label` value,
+so the new field rides along automatically. New fixture `tests/fixtures/
+emit/pub_label.basm` (a `pub` label and a non-`pub` label side by side,
+otherwise identical to the existing `backward_label_only.basm`).
+**Verification:** `src/parser/tests.rs`'s `parses_pub_label` (new, next to
+the existing `parses_label`) confirms `pub start:` parses with `is_pub ==
+true`, `parses_label` now also asserts the non-`pub` case is `false`.
+`src/resolver/aliases.rs`'s `pub_label_is_distinguishable_from_a_non_pub_
+one_via_the_symbol_table` confirms both `loop_start`/`private_marker`
+register into `collect_symbols`'s table and their `is_pub` values differ,
+read off the found AST node the same way every other kind's tests would.
+`tests/label_passes.rs`'s `a_pub_label_resolves_identically_to_a_non_pub_
+one` confirms the hard "no behavior change yet" bar through the real CLI
+— `pub_label.basm` emits the exact same sequence as `backward_label_only.
+basm`. Full `cargo test` (292+ lib tests, all integration suites) passes;
+`cargo clippy --all-targets` shows no new warnings from this phase's
+files.
 
 ### Phase 5 — Cross-unit label references
 **Deliverable:** `from file import label_name` resolves correctly when

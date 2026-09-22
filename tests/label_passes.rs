@@ -57,3 +57,13 @@ fn a_backward_only_label_reference_resolves_correctly_through_the_fast_single_pa
     let emitted = compile_to_emitted("tests/fixtures/emit/backward_label_only.basm");
     assert_eq!(emitted, vec![int("1"), int("0"), int("1")]);
 }
+
+#[test]
+fn a_pub_label_resolves_identically_to_a_non_pub_one() {
+    // Phase 4 (see `docs/sections-and-linking/PROGRESS.md`): `pub` on a
+    // label parses and is recorded, but changes nothing about how it
+    // resolves within a single file — same expected sequence as the
+    // otherwise-identical `backward_label_only.basm`.
+    let emitted = compile_to_emitted("tests/fixtures/emit/pub_label.basm");
+    assert_eq!(emitted, vec![int("1"), int("0"), int("1")]);
+}

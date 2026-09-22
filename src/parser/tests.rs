@@ -71,6 +71,19 @@ fn parses_label() {
     };
 
     assert_eq!(label.name, "start");
+    assert!(!label.is_pub);
+}
+
+#[test]
+fn parses_pub_label() {
+    let program = parse(lex("pub start:\n").unwrap()).unwrap();
+
+    let Statement::Label(label) = &program.statements[0] else {
+        panic!("expected label");
+    };
+
+    assert_eq!(label.name, "start");
+    assert!(label.is_pub);
 }
 
 #[test]
