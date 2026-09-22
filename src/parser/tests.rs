@@ -1391,6 +1391,20 @@ fn parses_repeated_emits_facets_on_a_macro() {
 }
 
 #[test]
+fn parses_bare_leaks_section_facet_on_a_macro() {
+    let source = "macro leaky() | leaks_section {\n    @emit 1\n}\n";
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    let Statement::Macro(decl) = &program.statements[0] else {
+        panic!("expected macro declaration");
+    };
+    assert_eq!(decl.facets.len(), 1);
+    assert_eq!(decl.facets[0].name, "leaks_section");
+    assert_eq!(decl.facets[0].payload, crate::ast::FacetPayload::Bare);
+    assert!(crate::facets::has(&decl.facets, "leaks_section"));
+}
+
+#[test]
 fn pub_and_return_type_are_macro_signature_fields_not_facets() {
     let source = "pub macro encode(value: int) -> bits<8>\n    | syntax { encode $value$ }\n{\n}\n";
     let program = parse(lex(source).unwrap()).unwrap();

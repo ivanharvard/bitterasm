@@ -136,13 +136,9 @@ impl Parser {
             // grammar a macro's own `-> Type` return annotation uses.
             PayloadShape::Type => FacetPayload::Type(self.parse_type_expr()?),
 
-            // `pub` and `return` are intercepted above, before reaching
-            // this identifier-based path, since they're spelled with
-            // dedicated tokens rather than a plain identifier — their
-            // shape never actually reaches this match.
-            PayloadShape::Bare => unreachable!(
-                "facet `{name}` has a dedicated-token payload shape but was parsed via the identifier path"
-            ),
+            // A marker facet with no payload at all, e.g. `leaks_section`
+            // — the name itself is the whole declaration.
+            PayloadShape::Bare => FacetPayload::Bare,
         }};
 
         if is_lint_facet {

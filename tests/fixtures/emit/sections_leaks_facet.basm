@@ -1,0 +1,19 @@
+# `leaks_on_purpose` is declared `| leaks_section`, opting out of the
+# default push/pop restore Phase 2 established (see
+# `sections_macro_scoped.basm` for the default, restored case) - its
+# `section .data` change is meant to survive past its own return, the same
+# way a bare top-level `section` statement would. `mark 2` below should
+# therefore land in `.data`, not back in `.text`.
+macro mark(n: int) {
+    @emit n
+}
+
+macro leaks_on_purpose() | leaks_section {
+    section .data
+    mark 99
+}
+
+section .text
+mark 1
+leaks_on_purpose
+mark 2

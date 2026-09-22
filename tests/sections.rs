@@ -79,3 +79,16 @@ fn a_macros_section_change_is_scoped_to_its_own_call_not_leaked_to_the_caller() 
         vec![int("1", Some(".text")), int("99", Some(".data")), int("2", Some(".text"))],
     );
 }
+
+#[test]
+fn a_macro_declared_leaks_section_leaves_its_section_change_active_after_return() {
+    // Phase 3: `| leaks_section` opts a macro out of the Phase 2 push/pop
+    // restore, on purpose - `mark 2` lands in `.data`, the section
+    // `leaks_on_purpose` switched to, not back in `.text` where it was
+    // called from.
+    let entries = compile_to_entries("tests/fixtures/emit/sections_leaks_facet.basm");
+    assert_eq!(
+        entries,
+        vec![int("1", Some(".text")), int("99", Some(".data")), int("2", Some(".data"))],
+    );
+}

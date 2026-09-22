@@ -35,6 +35,7 @@ mod expect;
 mod warn;
 mod deny;
 mod forbid;
+mod leaks_section;
 pub(crate) mod syntax;
 
 use crate::ast::{Expr, Facet, FacetPayload};
@@ -91,6 +92,7 @@ pub fn payload_shape(name: &str) -> Option<PayloadShape> {
         "warn" => Some(warn::PAYLOAD),
         "deny" => Some(deny::PAYLOAD),
         "forbid" => Some(forbid::PAYLOAD),
+        "leaks_section" => Some(leaks_section::PAYLOAD),
         _ => None,
     }
 }
@@ -114,6 +116,7 @@ pub fn check(name: &str, decl_kind: DeclKind, count: usize) -> Option<Result<(),
         "warn" => Some(warn::check(decl_kind, count)),
         "deny" => Some(deny::check(decl_kind, count)),
         "forbid" => Some(forbid::check(decl_kind, count)),
+        "leaks_section" => Some(leaks_section::check(decl_kind, count)),
         _ => None,
     }
 }
@@ -132,6 +135,14 @@ pub fn extract_exprs(facets: &[Facet], name: &str) -> Vec<Expr> {
             _ => None,
         })
         .collect()
+}
+
+/// Whether a facet named `name` (of any payload shape) appears at all —
+/// the presence check a bare marker facet like `leaks_section` needs,
+/// where the fact of the occurrence is the only thing that matters, not
+/// any payload it carries.
+pub fn has(facets: &[Facet], name: &str) -> bool {
+    facets.iter().any(|facet| facet.name == name)
 }
 
 pub fn extract_types(facets: &[Facet], name: &str) -> Vec<TypeExpr> {

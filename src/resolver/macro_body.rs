@@ -269,9 +269,10 @@ impl<'a> AliasResolver<'a> {
         // exactly that once this call returns — the push/pop discipline
         // "Decided scope" requires so a macro that changes section
         // internally can't silently leak that change into the caller's own
-        // subsequent code. (Phase 3's escape-hatch facet, not yet built,
-        // will let a macro opt out of the restore on purpose.)
+        // subsequent code. A macro declared `| leaks_section` opts out of
+        // the restore on purpose (Phase 3's escape hatch).
         let previous_section = self.current_section.clone();
+        let leaks_section = crate::facets::has(&declaration.facets, "leaks_section");
 
         self.macro_call_stack.push(symbol);
         let result = (|| {
@@ -345,7 +346,9 @@ impl<'a> AliasResolver<'a> {
         self.macro_call_stack.pop();
         self.generic_scope = previous_generic_scope;
         self.current_module = previous_module;
-        self.current_section = previous_section;
+        if !leaks_section {
+            self.current_section = previous_section;
+        }
         result
     }
 
@@ -949,7 +952,9 @@ impl<'a> AliasResolver<'a> {
                 // and in anything it calls) land in. `run_macro_body_inner`
                 // saves/restores `current_section` around this whole call,
                 // so the change never leaks into the caller's own code
-                // after this macro returns — see "Decided scope" in
+                // after this macro returns — unless this macro is declared
+                // `| leaks_section`, in which case the restore is skipped on
+                // purpose. See "Decided scope" in
                 // `docs/sections-and-linking/PROGRESS.md`.
                 Statement::Section(section) => {
                     self.current_section = Some(section.name.clone());

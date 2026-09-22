@@ -26,7 +26,7 @@ doesn't re-derive and re-reject them a second time.
 - [x] Phase 0 — This document
 - [x] Phase 1 — `section` statement (parser/AST only)
 - [x] Phase 2 — Section tagging in resolution + `.em` output
-- [ ] Phase 3 — Section-scope escape-hatch facet
+- [x] Phase 3 — Section-scope escape-hatch facet
 - [ ] Phase 4 — `pub` on labels
 - [ ] Phase 5 — Cross-unit label references (`from file import label`)
 - [ ] Phase 6 — `bitter build`/`bitter exec` multi-file merge + link + wrap
@@ -391,23 +391,51 @@ active at each of its three call sites) and the macro-call push/pop
 restore (a macro that changes section internally doesn't leak that change
 into the caller's code after it returns).
 
-### Phase 3 — Section-scope escape-hatch facet
-**Deliverable:** a new macro facet (working name `| leaks_section`, not
-finalized — see `src/facets/` for the existing pattern to follow) that
-opts a specific macro out of the automatic push/pop restore from Phase 2,
-for the deliberate case of a macro meant to behave like a bare `section`
-statement itself (e.g. a convenience wrapper that's *supposed* to change
-what section subsequent caller code lands in).
-**Open questions to settle here:**
-- Final facet name.
-- Does the facet need any parameters, or is it a bare marker?
-**Files:** `src/facets/` (new facet module, following `emits.rs`'s shape),
-`src/parser/facets.rs`, a fixture demonstrating both default (restored)
-and opted-out (leaking) behavior side by side.
-**Verification:** a macro without the facet cannot change its caller's
-subsequent section; a macro with the facet can, on purpose, confirmed via
-a fixture with assertions on final section membership of code after the
-call in both cases.
+### Phase 3 — Section-scope escape-hatch facet — DONE
+**Deliverable:** a new macro facet, `| leaks_section`, that opts a specific
+macro out of the automatic push/pop restore from Phase 2, for the
+deliberate case of a macro meant to behave like a bare `section` statement
+itself (e.g. a convenience wrapper that's *supposed* to change what
+section subsequent caller code lands in).
+**Open questions, as settled:**
+- Final facet name: `leaks_section` (the working name from the design
+  conversation survived unchanged).
+- Parameters: none — a bare marker (`FacetPayload::Bare`,
+  `PayloadShape::Bare`). This is the first facet to actually use
+  `PayloadShape::Bare` via the plain-identifier parse path — the type
+  existed already (and `printer.rs`/`expander.rs`/`loader.rs` already had
+  correct no-op-ish arms for it) but `src/parser/facets.rs`'s identifier
+  path previously hit `unreachable!()` for it, having been written on the
+  (incorrect, per this module's own doc) assumption that `Bare` was
+  reserved for dedicated-token facets like a hypothetical `pub`/`return`
+  facet, which don't actually exist as facets at all (`pub` and `-> Type`
+  are declaration-signature fields, not facets — see `src/parser/
+  facets.rs`'s module doc). That `unreachable!()` arm now does the real
+  work: `PayloadShape::Bare => FacetPayload::Bare`.
+**Files:** `src/facets/leaks_section.rs` (new facet module, following
+`syntax.rs`'s macro-only/at-most-once cardinality shape rather than
+`emits`'s repeatable one — leaking is a yes/no property of a macro, not a
+set), `src/facets/mod.rs` (registration in `payload_shape`/`check`, plus a
+new `facets::has` helper for a presence-only check — the other `extract_*`
+helpers all assume a payload worth collecting, which `Bare` doesn't have),
+`src/parser/facets.rs` (the `PayloadShape::Bare` arm), `src/resolver/
+macro_body.rs` (`run_macro_body_inner` now checks `facets::has(&declaration
+.facets, "leaks_section")` before restoring `current_section` on return),
+new fixture `tests/fixtures/emit/sections_leaks_facet.basm` demonstrating
+the opted-out (leaking) case side by side with the existing
+`sections_macro_scoped.basm` (default, restored case).
+**Verification:** `tests/sections.rs`'s existing
+`a_macros_section_change_is_scoped_to_its_own_call_not_leaked_to_the_caller`
+covers the default case (no facet: not leaked); the new
+`a_macro_declared_leaks_section_leaves_its_section_change_active_after_return`
+covers the opted-out case (facet present: leaked) — both assert final
+section membership of code after the call, via the real `bitterasm
+compile` CLI same as Phase 2. Also added a parser-level unit test
+(`parser::tests::parses_bare_leaks_section_facet_on_a_macro`) confirming
+`| leaks_section` round-trips to `FacetPayload::Bare` with no payload.
+Full `cargo test` suite (290+ tests across `src/` and `tests/`) passes
+with no regressions; `cargo clippy --all-targets` shows no new warnings
+attributable to this phase's files.
 
 ### Phase 4 — `pub` on labels
 **Deliverable:** `Label` (`src/ast.rs:82`) gains an `is_pub: bool` field,
