@@ -25,7 +25,7 @@ doesn't re-derive and re-reject them a second time.
 
 - [x] Phase 0 — This document
 - [x] Phase 1 — `section` statement (parser/AST only)
-- [ ] Phase 2 — Section tagging in resolution + `.em` output
+- [x] Phase 2 — Section tagging in resolution + `.em` output
 - [ ] Phase 3 — Section-scope escape-hatch facet
 - [ ] Phase 4 — `pub` on labels
 - [ ] Phase 5 — Cross-unit label references (`from file import label`)
@@ -325,7 +325,7 @@ AST (`src/parser/tests.rs`). Manually confirmed a `.basm` file containing
 only `section` statements (no other statements) compiles to `[]` emitted
 values — zero resolver/emission behavior change, as required.
 
-### Phase 2 — Section tagging in resolution + `.em` output
+### Phase 2 — Section tagging in resolution + `.em` output — DONE
 **Deliverable:** the resolver tracks "current section" as call-site-scoped
 state — starts as the implicit default/unnamed section, changes on
 encountering a `Statement::Section`, and every `@emit`-produced value in
@@ -333,27 +333,63 @@ encountering a `Statement::Section`, and every `@emit`-produced value in
 macro invocation inherits the caller's current section as its own starting
 state; on return, the caller's own current section is restored to exactly
 what it was before the call (push/pop discipline — see "Decided scope").
-**Open questions to settle here:**
-- Exactly where does "current section" state live in the resolver's
-  existing architecture, and how does it thread through nested macro
-  expansion? (`src/resolver/macro_body.rs` is almost certainly the right
-  place to look — it already threads other per-expansion context through
-  nested calls.)
-- What does the `.em` JSON shape look like once entries carry a section
-  tag — a flat array of `{section, value}` pairs, entries grouped by
-  section, or something else? Whatever is chosen needs to stay easy for
-  Phase 6 to concatenate same-named sections across multiple files.
-**Files:** `src/resolver/macro_body.rs`, `src/resolver/values.rs`,
-wherever `.em` serialization happens, plus new fixtures under
-`tests/fixtures/` exercising: no section declared (must match today's
-output exactly), one section, multiple reopened sections, and a macro
-that's called from two different active sections and confirmed to land in
-each one correctly.
-**Verification:** a fixture with zero `section` statements must produce
-byte-for-byte identical `.em` to what today's compiler produces for the
-same source (this is the hard backward-compatibility bar — do not weaken
-it). New fixtures covering reopening and macro-call inheritance, checked
-against hand-computed expected section membership.
+**Open questions, as settled:**
+- State lives directly on `AliasResolver` (`src/resolver/aliases.rs`):
+  `current_section: Option<String>` (the live state, `None` = the
+  implicit default section) plus `emitted_sections: Vec<Option<String>>`
+  (a whole-program-persistent parallel log, pushed once per `@emit`, kept
+  index-aligned with `values_emitted` — the exact same "shared counter
+  advanced once per `@emit`" idiom `values_emitted` itself already
+  established, just a `Vec` instead of a count). `walk_macro_body`
+  (`src/resolver/macro_body.rs`) mutates `current_section` on a
+  `Statement::Section`; `run_macro_body_inner` saves/restores it around
+  every macro call, in the same spot and the same way it already
+  saves/restores `generic_scope`/`current_module`. Top-level sections are
+  driven the same way, one level up, by `main::walk_top_level` calling the
+  new `AliasResolver::set_current_section` on a top-level
+  `Statement::Section` (no push/pop needed there — no caller to restore
+  to).
+- `.em` shape: a flat array of per-entry objects, each the same tagged
+  object `EmittedValue` already produced, with one new field
+  (`emit::EmittedEntry`, `src/emit.rs`) — `#[serde(flatten)]` on the value
+  merges its tagged fields into the same JSON object, and
+  `#[serde(skip_serializing_if = "Option::is_none")]` on `section` omits
+  that key entirely when there's no section, which is what makes the "no
+  `section` statement → byte-for-byte identical `.em`" bar achievable at
+  all (verified below) rather than merely "deserializes to the same
+  values." Flat (not grouped-by-section) specifically because Phase 6
+  needs to concatenate same-named sections across multiple files in
+  argument order — a flat array just needs filter-by-name-then-append; a
+  pre-grouped shape would need an extra merge step for no benefit now.
+  `bitter`'s existing `.em` reader (`bitter/src/main.rs`/`pack.rs`) needs
+  no change for this phase: it deserializes into `Vec<EmittedValue>`
+  directly, and serde silently ignores the extra `section` key on a
+  struct without `#[serde(deny_unknown_fields)]` — real section-aware
+  consumption is Phase 6's job (`bitter build`/`bitter exec`), not this
+  one's.
+**Files:** `src/resolver/aliases.rs` (new state + `set_current_section`/
+`take_emitted_sections`), `src/resolver/macro_body.rs` (`Statement::Section`
+handling, `@emit` tagging, push/pop around `run_macro_body_inner`),
+`src/main.rs` (`Expansion` gained a `sections` field; `walk_top_level`
+handles top-level `Statement::Section`; `compile` zips `emitted`/`sections`
+into `Vec<emit::EmittedEntry>` before serializing), `src/emit.rs`
+(`EmittedEntry`). New fixtures under `tests/fixtures/emit/`:
+`sections_none.basm`, `sections_one.basm`, `sections_reopened.basm`,
+`sections_macro_scoped.basm` (the macro-inheritance-and-restore case),
+exercised by the new `tests/sections.rs` (same real-CLI-binary standard as
+`tests/label_passes.rs`).
+**Verification:** `tests/sections.rs`'s
+`no_section_statement_produces_em_with_no_section_key_at_all` asserts the
+raw `.em` text contains no `"section"` key at all for a zero-`section`
+fixture — not just equal-after-deserializing. Additionally hand-verified
+by diffing actual compiled `.em` bytes for a pre-existing fixture
+(`tests/fixtures/emit/backward_label_only.basm`) between the pre-Phase-2
+and post-Phase-2 compiler: identical. The other three new tests cover
+reopening (same section name reused later is one group, confirmed by the
+macro `mark` landing its `@emit` in whichever of `.text`/`.data` was
+active at each of its three call sites) and the macro-call push/pop
+restore (a macro that changes section internally doesn't leak that change
+into the caller's code after it returns).
 
 ### Phase 3 — Section-scope escape-hatch facet
 **Deliverable:** a new macro facet (working name `| leaks_section`, not

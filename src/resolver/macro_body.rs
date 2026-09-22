@@ -263,6 +263,16 @@ impl<'a> AliasResolver<'a> {
         let previous_module = self.current_module;
         self.current_module = self.symbol_module(symbol);
 
+        // A `section` statement inside this call's body (directly, or via
+        // anything nested inside it) inherits whatever section was active
+        // at this call site as its own starting state, and is restored to
+        // exactly that once this call returns — the push/pop discipline
+        // "Decided scope" requires so a macro that changes section
+        // internally can't silently leak that change into the caller's own
+        // subsequent code. (Phase 3's escape-hatch facet, not yet built,
+        // will let a macro opt out of the restore on purpose.)
+        let previous_section = self.current_section.clone();
+
         self.macro_call_stack.push(symbol);
         let result = (|| {
             let mut arguments = arguments;
@@ -335,6 +345,7 @@ impl<'a> AliasResolver<'a> {
         self.macro_call_stack.pop();
         self.generic_scope = previous_generic_scope;
         self.current_module = previous_module;
+        self.current_section = previous_section;
         result
     }
 
@@ -675,6 +686,11 @@ impl<'a> AliasResolver<'a> {
                             // there's nothing extra to do where nested
                             // `emitted`/`generated` get folded in below.
                             self.values_emitted += Int::from(1);
+                            // Kept index-aligned with `values_emitted` (and
+                            // so, transitively, with wherever this value
+                            // ends up in the final flattened `emitted`
+                            // stream) — see `AliasResolver::emitted_sections`.
+                            self.emitted_sections.push(self.current_section.clone());
                         }
 
                         other => {
@@ -929,16 +945,14 @@ impl<'a> AliasResolver<'a> {
                     generated.push(statement.clone());
                 }
 
-                // Phase 2 (see `docs/sections-and-linking/PROGRESS.md`)
-                // defines what a `section` statement inside a macro body
-                // actually does (push/pop scoping of the caller's active
-                // section) — until then it's rejected the same way `import`
-                // is, rather than silently doing nothing.
+                // Changes which section subsequent `@emit`s (in this body,
+                // and in anything it calls) land in. `run_macro_body_inner`
+                // saves/restores `current_section` around this whole call,
+                // so the change never leaks into the caller's own code
+                // after this macro returns — see "Decided scope" in
+                // `docs/sections-and-linking/PROGRESS.md`.
                 Statement::Section(section) => {
-                    return Err(ResolveError::UnsupportedMacroStatement {
-                        kind: "section".to_string(),
-                        span: section.span,
-                    });
+                    self.current_section = Some(section.name.clone());
                 }
 
                 Statement::Import(import) => {

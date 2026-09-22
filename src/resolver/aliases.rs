@@ -95,6 +95,25 @@ pub struct AliasResolver<'a> {
     pub(super) label_positions: HashMap<SymbolId, Int>,
     pub(super) label_mode: LabelMode,
 
+    // Which named section is active right now — `None` is the implicit,
+    // unnamed default every program starts in (see
+    // `docs/sections-and-linking/PROGRESS.md`'s "Decided scope": no
+    // `section` statement at all is byte-for-byte identical to today's
+    // behavior). Changed by walking a `Statement::Section`
+    // (`macro_body::walk_macro_body`, `main::walk_top_level`); saved and
+    // restored around every macro call the same way `generic_scope`/
+    // `current_module` already are (`macro_body::run_macro_body_inner`), so
+    // a section change made *inside* a macro call never leaks into the
+    // caller's own subsequent code.
+    pub(super) current_section: Option<String>,
+
+    // Parallel to `values_emitted`: which section was active for each
+    // `@emit`'d value, in the same whole-program emission order — pushed
+    // once per `@emit`, right alongside `values_emitted`'s own increment,
+    // so this stays index-aligned with whatever the final flattened
+    // `emitted: Vec<Value>` accumulates into (see `main::resolve_and_expand`).
+    pub(super) emitted_sections: Vec<Option<String>>,
+
     // Declarations discovered mid-resolution — a macro's `generated`
     // output, or a `0..N` range's synthesized struct — rather than present
     // in `program` from the start. `generated_symbols` shares the same
@@ -206,6 +225,8 @@ impl<'a> AliasResolver<'a> {
             values_emitted: Int::from(0),
             label_positions: known_label_positions,
             label_mode,
+            current_section: None,
+            emitted_sections: Vec::new(),
             generated_symbols: SymbolTable::with_base(symbols.len()),
             generated: Vec::new(),
             macro_decl_cache: RefCell::new(HashMap::new()),
@@ -268,6 +289,27 @@ impl<'a> AliasResolver<'a> {
     /// completed label-position map to seed the real pass's resolver.
     pub fn into_label_positions(self) -> HashMap<SymbolId, Int> {
         self.label_positions
+    }
+
+    /// Sets which named section is active for top-level code (outside any
+    /// macro call) — called when `main::walk_top_level` walks a top-level
+    /// `Statement::Section`. There's no caller to restore to at this level
+    /// (see "Decided scope": a section stays active until the next
+    /// `section` statement, no nesting), so this is a plain, unscoped
+    /// mutation — unlike the push/pop `run_macro_body_inner` does around a
+    /// macro call.
+    pub fn set_current_section(&mut self, name: Option<String>) {
+        self.current_section = name;
+    }
+
+    /// Takes this resolver's whole-program-persistent record of which
+    /// section was active for each `@emit`'d value, leaving an empty `Vec`
+    /// behind — mirrors `into_label_positions`/`into_symbols_with_generated`
+    /// but by `&mut self`, since `main::resolve_and_expand` still needs
+    /// `self` afterward (for `into_symbols_with_generated`) on the
+    /// short-circuit, no-second-pass path.
+    pub fn take_emitted_sections(&mut self) -> Vec<Option<String>> {
+        std::mem::take(&mut self.emitted_sections)
     }
 
     /// Consumes the resolver and returns the original symbol table plus any

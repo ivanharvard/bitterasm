@@ -1,0 +1,6 @@
+macro noop() {
+    @emit 1
+}
+
+noop
+noop

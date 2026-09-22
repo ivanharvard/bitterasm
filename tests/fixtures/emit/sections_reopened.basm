@@ -1,0 +1,14 @@
+# The same macro (`mark`) is invoked once under each of three active
+# sections: `.text`, then `.data`, then `.text` again (reopened, not a
+# new section) - to confirm each call lands its `@emit` in whichever
+# section is active at its own call site, not wherever `mark` was defined.
+macro mark(n: int) {
+    @emit n
+}
+
+section .text
+mark 1
+section .data
+mark 2
+section .text
+mark 3

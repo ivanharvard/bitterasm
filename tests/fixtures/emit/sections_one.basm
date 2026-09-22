@@ -1,0 +1,7 @@
+macro noop() {
+    @emit 1
+}
+
+section .text
+noop
+noop

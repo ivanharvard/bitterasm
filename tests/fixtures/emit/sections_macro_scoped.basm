@@ -1,0 +1,17 @@
+# `leaky` changes section internally (as if it were a bare `section`
+# statement itself), but that change must not leak into the caller's own
+# code after `leaky` returns - `mark 2` below should still land back in
+# `.text`, the section active right before `leaky` was called.
+macro mark(n: int) {
+    @emit n
+}
+
+macro leaky() {
+    section .data
+    mark 99
+}
+
+section .text
+mark 1
+leaky
+mark 2

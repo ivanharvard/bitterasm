@@ -243,6 +243,10 @@ fn collect_basm_files(path: &Path, files: &mut Vec<PathBuf>) -> Result<(), Strin
 struct Expansion {
     symbols: SymbolTable,
     emitted: Vec<Value>,
+    // Index-aligned with `emitted` — which section (`None` for the
+    // implicit default) was active when each value was `@emit`'d. See
+    // `resolver::AliasResolver::emitted_sections`.
+    sections: Vec<Option<String>>,
     generated: Vec<Statement>,
 }
 
@@ -360,8 +364,9 @@ fn resolve_and_expand(path: &Path, verbose: Option<&VerboseReporter>) -> Result<
     // labels at all (or none referenced before their own declaration), so
     // this skips a full second walk of the entire program for them.
     if !discovery.used_forward_label_placeholder() {
+        let sections = discovery.take_emitted_sections();
         let symbols = discovery.into_symbols_with_generated();
-        return Ok(Expansion { symbols, emitted, generated });
+        return Ok(Expansion { symbols, emitted, sections, generated });
     }
 
     // This pass's output turned out to be unusable after all (see below) —
@@ -418,8 +423,9 @@ fn resolve_and_expand(path: &Path, verbose: Option<&VerboseReporter>) -> Result<
         None,
     )?;
 
+    let sections = alias_resolver.take_emitted_sections();
     let symbols = alias_resolver.into_symbols_with_generated();
-    Ok(Expansion { symbols, emitted, generated })
+    Ok(Expansion { symbols, emitted, sections, generated })
 }
 
 /// Resolves every struct/alias/const in the program up front (independent
@@ -494,6 +500,10 @@ fn walk_top_level(
                     .expect("every top-level label is registered by collect_symbols");
 
                 alias_resolver.record_label_position(id);
+            }
+
+            Statement::Section(section) => {
+                alias_resolver.set_current_section(Some(section.name.clone()));
             }
 
             _ => {}
@@ -653,10 +663,14 @@ fn compile(path: &Path, output: Option<PathBuf>, verbose: bool, options: Diagnos
     let reporter = verbose.then(VerboseReporter::new);
     let (expansion, _) = analyze(path, options, reporter.as_ref());
 
-    let emitted: Vec<emit::EmittedValue> = expansion
+    let emitted: Vec<emit::EmittedEntry> = expansion
         .emitted
         .iter()
-        .map(|value| emit::reify_value(&expansion.symbols, value))
+        .zip(&expansion.sections)
+        .map(|(value, section)| emit::EmittedEntry {
+            value: emit::reify_value(&expansion.symbols, value),
+            section: section.clone(),
+        })
         .collect();
 
     let json = match serde_json::to_string_pretty(&emitted) {

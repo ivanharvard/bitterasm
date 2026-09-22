@@ -13,6 +13,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::resolver::{BuiltinType, ResolvedGenericArg, ResolvedType, SymbolTable, Value};
 
+/// One `.em` entry: a reified value plus which section was active when it
+/// was `@emit`'d. `section` is flattened into the same JSON object as
+/// `value`'s own tagged fields, and omitted entirely when `None` — so a
+/// program that never declares a `section` at all produces `.em` output
+/// byte-for-byte identical to before this field existed (see "Decided
+/// scope" in `docs/sections-and-linking/PROGRESS.md`: no `section`
+/// statement = today's behavior, unchanged).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EmittedEntry {
+    #[serde(flatten)]
+    pub value: EmittedValue,
+
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub section: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum EmittedValue {
