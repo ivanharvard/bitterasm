@@ -1,19 +1,8 @@
 # "Hello, world!" for Linux x86-64, written in BitterASM.
 #
-# The message is loaded as two imm64 registers and pushed onto the stack
-# rather than read from a data section, since `bitter`'s packer only ever
-# produces one flat code stream (see docs/reference.md) with no separate
-# data segment to place a string literal in.
-#
 # Build and run (from the repository root):
 # bitter build examples/x86_64/hello.basm -o /tmp/hello
 # /tmp/hello
-#
-# `bitter build` compiles, encodes, and wraps the result in a native
-# executable (ELF/PE/Mach-O, picked for whatever OS `bitter` itself is
-# running on — pass --format to override) in one step; `bitter exec` does
-# just the wrapping step on an already-encoded .bin, for the equivalent of
-# `bitterasm compile` + `bitter encode` + `bitter exec` run separately.
 
 from std.x86_64.nasm import *
 from std.string import string_from_struct, validate_ascii
