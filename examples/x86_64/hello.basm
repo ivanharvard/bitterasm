@@ -1,7 +1,7 @@
 # "Hello, world!" for Linux x86-64, written in BitterASM.
 #
 # Build and run (from the repository root):
-# bitter build examples/x86_64/hello.basm -o /tmp/hello
+# bitter build examples/x86_64/hello.basm -o /tmp/hello --entry _start
 # /tmp/hello
 
 from std.x86_64.nasm import *
@@ -11,14 +11,13 @@ from std.binary import Endian
 section .rodata
 msg:
     const text = "Hello, World!\n"
-    const len = text.len
-    validate_ascii string_from_struct(text).value, len, Endian.Little
+    validate_ascii string_from_struct(text).value, text.len, Endian.Little
     db text
 
 section .text
 pub _start:
     lea rsi, [rel msg]
-    mov edx, len
+    mov edx, text.len
 
 .write:
     mov eax, 1      # sys_write
