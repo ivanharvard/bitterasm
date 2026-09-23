@@ -29,7 +29,12 @@ doesn't re-derive and re-reject them a second time.
 - [x] Phase 3 — Section-scope escape-hatch facet
 - [x] Phase 4 — `pub` on labels
 - [x] Phase 5 — Cross-unit label references (`from file import label`)
-- [ ] Phase 6 — `bitter build`/`bitter exec` multi-file merge + link + wrap
+- [x] Phase 6 — `bitter build`/`bitter exec` multi-file merge + link + wrap
+
+All six phases are done — this feature is complete. See Phase 6's own
+section below for the final settled design, including a few things
+implementation revealed that the original plan (written before any of
+this was built) didn't anticipate.
 
 Work through phases in order — each one is a real, separately verifiable
 increment, and later phases assume earlier ones are done. Phase 0 is this
@@ -595,35 +600,140 @@ introduces no new warning shapes beyond one `collapsible_if` that matches
 its own immediate neighbors' (`find_struct_declaration`/
 `find_alias_declaration`) pre-existing style exactly.
 
-### Phase 6 — `bitter build`/`bitter exec` multi-file merge + link + wrap
-**Deliverable:** `bitter build`/`bitter exec` accept multiple `.em` files
-as input. They: concatenate same-named sections across all inputs (order
-= command-line argument order — confirmed in "Decided scope"), build one
-combined symbol table from every `pub` label across every input, run a
-single resolution pass over the merged, still-symbolic result (reusing
-`bitter encode`'s existing resolve-everything logic — its contract does
-not change, see "Decided scope"), and then perform the exact same OS-
-executable-wrapping work (`bitter/src/formats.rs`) they already do today.
-`-f`/`--format` continues to work unchanged on this multi-input path.
-**Open questions to settle here:**
-- Duplicate `pub` symbol across two input files — confirm this is a hard
-  error before building it (see "Deferred, not rejected").
-- Exact CLI shape for accepting multiple input files (repeated positional
-  args, a flag, etc. — not decided).
-- How the entry point gets chosen now that `pub` labels exist — a
-  specific well-known name by convention (`_start`?), a required CLI flag,
-  or something else. "Decided scope" establishes *that* it should be "just
-  a `pub` symbol, same as a real linker's `ENTRY()`" but not which symbol
-  or how it's specified.
-**Files:** `bitter/src/main.rs`, `bitter/src/pack.rs` (section merging,
-symbol table construction, resolution over merged input), new integration
-tests with multiple `.basm` files compiled separately and linked together,
-run through the same real-execution verification `examples/x86_64/
-hello.basm` already gets (actually build and run the resulting
-executable, not just check its bytes).
-**Verification:** two-file program (e.g. one file with `_start` calling a
-`pub` function defined in a second file) compiles as two separate `.em`
-files, links via `bitter build` with both as input, produces a working
-native executable, actually runs and produces correct output — mirroring
-how `examples/x86_64/hello.basm` was verified by actually executing it,
-not just inspecting bytes.
+### Phase 6 — `bitter build`/`bitter exec` multi-file merge + link + wrap — DONE
+**Deliverable:** `bitter build` accepts multiple `.basm` files as input.
+It compiles each one separately, concatenates same-named sections across
+all of them (order = command-line argument order — confirmed in "Decided
+scope"), builds one combined table of every `pub` label across every
+input, substitutes every `Deferred { file, symbol }` (Phase 5) with the
+real, merged position its target resolved to, and hands the fully-
+resolved result to the exact same `bitter encode`/OS-executable-wrapping
+logic (`bitter/src/pack.rs`, `bitter/src/formats.rs`) that already existed
+— unchanged, reused wholesale, not reimplemented. `-f`/`--format`
+continues to work unchanged. A single-file `bitter build` invocation
+behaves exactly as it always has (verified — see below).
+**Open questions, as settled:**
+- **Duplicate `pub` symbol across two input files is a hard error** — the
+  same name declared `pub` in two different linked files fails the link
+  immediately, naming both files (`link::link` in `bitter/src/link.rs`).
+- **CLI shape: `bitter build <path1.basm> [path2.basm ...]`** — one or
+  more `.basm` *source* files, not `.em`. This is a deliberate deviation
+  from the original text ("accept multiple `.em` files as input"): once
+  actually implementing the merge, it became clear `bitter build` needs
+  each input's `pub`-label-position manifest too, not just its `.em` (see
+  the next point) — and `bitter build` already owns the "compile each
+  input myself" step (it always has, for one file), so extending that same
+  step to loop over N files, rather than asking the caller to pre-compile
+  N `.em` files by hand, is both simpler and strictly more capable (it
+  works from source, the same as running it on one file already does).
+  **`bitter exec` was deliberately *not* extended to multiple files** —
+  its whole purpose is wrapping bytes that are *already* fully resolved
+  (a `.bin`, with no symbol information left to link against at all), so
+  "multiple `.bin` files" isn't a coherent request; the original text's
+  mention of `bitter exec` here reads, in hindsight, like it was
+  conflating `exec` with `build` rather than describing something `exec`
+  specifically needed. Phase 6's own verification bullet only ever
+  exercises `build` — nothing was lost by leaving `exec` alone.
+- **A third, previously-unplanned `.em`-adjacent capability turned out to
+  be required: a `pub`-label-position manifest, per file.** Phase 5's
+  "Decided scope" said "`.em` gains exactly two new capabilities" (the
+  `Deferred` leaf, section tagging) — implementing the actual link step
+  revealed that isn't sufficient on its own: nothing in a file's own `.em`
+  records *where* its own `pub` labels resolved to (a label that's never
+  referenced within its own declaring file leaves no trace in that file's
+  emitted stream at all — exactly `extern_label_dep.basm`'s own shape,
+  `pub target:` with nothing following it). Resolving a `Deferred`
+  reference against another file's output needs that position, and it
+  can't be derived from `.em` after the fact. This is a real, necessary
+  revision to Phase 5's "exactly two capabilities" framing, made
+  explicitly here rather than silently: `bitterasm compile` gained a new,
+  **opt-in** `--labels <path>` flag (`src/main.rs`) that additionally
+  writes `{"name": "decimal position", ...}` for every top-level `pub`
+  label to a *separate* file — `.em`'s own shape is completely untouched
+  either way (still exactly what Phase 2 produced, byte for byte, for
+  ordinary `bitterasm compile` — verified: `tests/sections.rs`'s existing
+  byte-identity test still passes unchanged), and ordinary use of
+  `bitterasm compile` never needs to know this flag exists. `bitter
+  build` is the only caller.
+- **How the entry point gets chosen: unchanged — no new mechanism was
+  needed.** `bitter/src/formats.rs`'s existing "entry = the first byte of
+  the packed code stream" (hardcoded, per "Established facts") already
+  satisfies "just a `pub` symbol, same as a real linker's `ENTRY()`" once
+  section-based concatenation is in place: list whichever input file's
+  code should run first, first, on the command line — its own first
+  emitted value becomes the merged stream's first entry (section grouping
+  processes sections in first-seen order, and within a section, inputs in
+  argument order), which is exactly where "entry" already points. No
+  well-known name, no required flag. Documented directly on `Build`'s own
+  `--help` text.
+**Label-position remapping (a subtlety the plan didn't get into):** a
+label's recorded position (`AliasResolver::record_label_position`) is
+"how many of *this file's own* entries preceded it," counted across every
+section in that file's own program order — not per-section. Mapping that
+to the merged program's flat global index needs, for each input, a
+`(local_index) -> global_index` lookup built *during* the actual section-
+based merge (so it's automatically correct regardless of how much
+section-based reordering scattered that file's entries) — implemented as
+a side table in `link::link`. Two cases:
+  - **A label with at least one local entry after it (`position <
+    entries.len()`):** its global position is simply wherever that
+    specific local entry actually ended up — well-defined regardless of
+    section scattering, no extra bookkeeping needed beyond the lookup
+    itself.
+  - **A trailing label (`position == entries.len()`, nothing local
+    follows it):** resolves to "one past wherever this same file's own
+    actual last entry landed" if the file emitted at least one entry
+    anywhere (well-defined, and correct even across sections) — or, for
+    the fully anchorless case where the file emits *no* entries at all
+    under that label (`extern_label_dep.basm`'s own shape), falls back to
+    "the very end of the whole merged program." This fallback is a
+    **documented, deliberate simplification** for a case that has no
+    natural anchor point among interleaved multi-file, multi-section
+    content by construction — not a claim that it's the only sensible
+    choice, in the same spirit as Phase 5's own "Deferred, not rejected"
+    entries. Covered by a dedicated unit test
+    (`a_deferred_value_nested_inside_a_struct_field_is_still_resolved`)
+    so the choice is at least pinned down and won't silently drift.
+**Files:** `src/main.rs` (bitterasm: `compile --labels`, `Expansion::
+pub_label_positions`, `AliasResolver::label_positions` non-consuming
+accessor in `src/resolver/aliases.rs`), `bitter/src/link.rs` (new module:
+`LinkInput`, `link` — section merge, combined symbol table, recursive
+`Deferred` substitution through `Struct`/`Enum` trees), `bitter/src/
+main.rs` (`Build` takes `Vec<PathBuf>`, `compile_input` shells out to
+`bitterasm compile --labels` per input and reads both files back).
+`bitter/src/pack.rs`/`bitter encode` needed **no changes** for this phase
+— by design, `link::link`'s whole job is producing a plain, fully-
+resolved `Vec<EmittedValue>` so the *existing*, Phase-5-updated
+`pack::pack_stream` can encode it completely unmodified, exactly matching
+"reusing `bitter encode`'s existing resolve-everything logic — its
+contract does not change." New fixtures: `bitter/tests/fixtures/
+phase6_entry.basm` (nothing but a relative `call` into a `pub` label
+imported from the other file) / `phase6_dep.basm` (the `pub` label's real
+code, including an `exit(7)`) — deliberately uses a *relative jump*
+(`call`, going through `std.bitter.deferred`'s `span`/`Positioned<32>`
+machinery), not a raw immediate move (`movi`): `movi`'s own encoding does
+real compile-time byte-splitting arithmetic on its argument
+(`std/x86_64/impl.basm`'s `instr`/`instr_byte`, `byte_of(imm, ...)`),
+which a symbolic `Value::ExternLabel` can't satisfy — only a
+`Positioned<N>`-wrapped value can stay symbolic through to `bitter`'s
+packer, the same restriction `here()`'s own `Deferred` value already had.
+**Verification:** `bitter/tests/link.rs`'s
+`two_files_link_and_the_resulting_executable_actually_runs_correctly`
+compiles `phase6_entry.basm` + `phase6_dep.basm` completely separately,
+links them with `bitter build`, and actually runs the resulting native
+executable — asserting exit code 7, a value that only exists in
+`phase6_dep.basm`'s own source, reachable only if the cross-file relative
+jump resolved to the real, correct, merged byte offset (a wrong offset
+would segfault or exit with something else entirely, not coincidentally
+produce 7). `a_single_file_build_is_unaffected_by_multi_file_support`
+covers the regression bar by actually building and running `examples/
+x86_64/hello.basm` through the new multi-input-capable code path.
+`bitter/src/link.rs` additionally carries 7 focused unit tests (section
+grouping order, both label-position cases above, nested-in-a-struct-field
+substitution, the duplicate-symbol and missing-input error paths).
+`tests/extern_labels.rs` gained a test for `compile --labels` itself
+(writes every `pub` label's position, omits private ones, `.em`'s own
+shape unaffected). Full workspace `cargo test` (34 `bitter` + 292
+`bitterasm` lib tests + every integration suite, including a `cargo build
+--workspace --release` sanity pass) succeeds; `cargo clippy --workspace
+--all-targets` introduces no new warnings.

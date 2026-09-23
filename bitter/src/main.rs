@@ -4,6 +4,7 @@ use bitterasm::emit::EmittedValue;
 use clap::{Parser, Subcommand};
 
 mod formats;
+mod link;
 mod pack;
 
 use formats::Format;
@@ -42,15 +43,25 @@ enum Command {
         format: Option<String>,
     },
 
-    /// The whole pipeline in one command: compile a .basm program, encode
-    /// it, and wrap the result in a native executable — equivalent to
-    /// `bitterasm compile` + `bitter encode` + `bitter exec` run in
-    /// sequence, without the intermediate .em/.bin files.
+    /// The whole pipeline in one command: compile one or more .basm
+    /// programs, link them together, encode the result, and wrap it in a
+    /// native executable — equivalent to `bitterasm compile` + `bitter
+    /// encode` + `bitter exec` run in sequence, without the intermediate
+    /// .em/.bin files. A single path behaves exactly as it always has;
+    /// given more than one, same-named `section`s are concatenated across
+    /// every input (command-line order), and a `pub` label imported
+    /// (`from file import label`) in one input but declared in another is
+    /// resolved against that other input's own compiled output — real
+    /// multi-file linking (Phase 6, `docs/sections-and-linking/
+    /// PROGRESS.md`). The first-listed input's own first emitted value is
+    /// always the entry point, the same way it already is for one input —
+    /// list whichever file should run first, first.
     Build {
-        path: PathBuf,
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
 
-        /// Defaults to `path` with its extension dropped (`.exe` added
-        /// back for `--format pe`).
+        /// Defaults to the first path with its extension dropped (`.exe`
+        /// added back for `--format pe`).
         #[arg(short, long)]
         output: Option<PathBuf>,
 
@@ -75,7 +86,7 @@ fn main() {
     match cli.command {
         Command::Encode { path, output } => encode(&path, output),
         Command::Exec { path, output, format } => exec(&path, output, format),
-        Command::Build { path, output, format } => build(&path, output, format),
+        Command::Build { paths, output, format } => build(&paths, output, format),
         Command::External(args) => delegate_to_bitterasm(&args),
     }
 }
@@ -195,17 +206,25 @@ fn exec(path: &PathBuf, output: Option<PathBuf>, format: Option<String>) {
     );
 }
 
-/// Runs `bitterasm compile <path> -o <em_path>` as a subprocess (the same
-/// sibling-binary lookup `delegate_to_bitterasm` uses), the way a real
-/// `cc`-style driver shells out to a separate compiler pass rather than
-/// re-implementing it — `bitter` already depends on `bitterasm` as a
-/// library for `EmittedValue`'s own type, but resolving/expanding a
-/// program is `bitterasm compile`'s job, not this crate's.
-fn run_bitterasm_compile(path: &std::path::Path, em_path: &std::path::Path) {
+/// Runs `bitterasm compile <path> -o <em_path> --labels <labels_path>` as a
+/// subprocess (the same sibling-binary lookup `delegate_to_bitterasm`
+/// uses), the way a real `cc`-style driver shells out to a separate
+/// compiler pass rather than re-implementing it — `bitter` already depends
+/// on `bitterasm` as a library for `EmittedValue`'s own type, but
+/// resolving/expanding a program is `bitterasm compile`'s job, not this
+/// crate's. `--labels` is the opt-in manifest (Phase 6, `docs/sections-
+/// and-linking/PROGRESS.md`) `link::link` needs to resolve a `Deferred`
+/// cross-unit reference (Phase 5) against `path`'s own `pub` labels.
+fn run_bitterasm_compile(path: &std::path::Path, em_path: &std::path::Path, labels_path: &std::path::Path) {
     let bitterasm = bitterasm_path();
 
     let status = std::process::Command::new(&bitterasm)
-        .args(["compile", &path.display().to_string(), "-o", &em_path.display().to_string()])
+        .args([
+            "compile",
+            &path.display().to_string(),
+            "-o", &em_path.display().to_string(),
+            "--labels", &labels_path.display().to_string(),
+        ])
         .status();
 
     match status {
@@ -219,28 +238,75 @@ fn run_bitterasm_compile(path: &std::path::Path, em_path: &std::path::Path) {
     }
 }
 
-fn build(path: &PathBuf, output: Option<PathBuf>, format: Option<String>) {
-    let format = resolve_format(format);
-    let output_path = output.unwrap_or_else(|| output_path_for(path, format));
+/// Compiles one `bitter build` input, then reads back both files
+/// `run_bitterasm_compile` produced into a `link::LinkInput` — `file` is
+/// `path`, canonicalized the same way `bitterasm`'s own loader
+/// canonicalizes a `from file import label_name` target
+/// (`ast::ExternLabel::file`), so a `Deferred` value's own `file` field
+/// can be matched against it exactly.
+fn compile_input(path: &std::path::Path, unique: &str) -> link::LinkInput {
+    let em_path = std::env::temp_dir().join(format!("bitter-build-{unique}.em"));
+    let labels_path = std::env::temp_dir().join(format!("bitter-build-{unique}.labels.json"));
 
-    let em_path = std::env::temp_dir().join(format!("bitter-build-{}.em", std::process::id()));
-    run_bitterasm_compile(path, &em_path);
+    run_bitterasm_compile(path, &em_path, &labels_path);
 
-    let json = match std::fs::read_to_string(&em_path) {
-        Ok(json) => json,
-
-        Err(error) => {
-            eprintln!("failed to read {}: {error}", em_path.display());
-            std::process::exit(1);
-        }
-    };
+    let em_json = std::fs::read_to_string(&em_path).unwrap_or_else(|error| {
+        eprintln!("failed to read {}: {error}", em_path.display());
+        std::process::exit(1);
+    });
     let _ = std::fs::remove_file(&em_path);
 
-    let values: Vec<EmittedValue> = match serde_json::from_str(&json) {
+    let entries: Vec<bitterasm::emit::EmittedEntry> = serde_json::from_str(&em_json).unwrap_or_else(|error| {
+        eprintln!("failed to parse {}: {error}", em_path.display());
+        std::process::exit(1);
+    });
+
+    let labels_json = std::fs::read_to_string(&labels_path).unwrap_or_else(|error| {
+        eprintln!("failed to read {}: {error}", labels_path.display());
+        std::process::exit(1);
+    });
+    let _ = std::fs::remove_file(&labels_path);
+
+    let raw_labels: std::collections::HashMap<String, String> =
+        serde_json::from_str(&labels_json).unwrap_or_else(|error| {
+            eprintln!("failed to parse {}: {error}", labels_path.display());
+            std::process::exit(1);
+        });
+
+    let labels: std::collections::HashMap<String, usize> = raw_labels
+        .into_iter()
+        .map(|(name, position)| {
+            let position: usize = position.parse().unwrap_or_else(|error| {
+                eprintln!("{}: `{name}`'s position `{position}` isn't a valid index: {error}", labels_path.display());
+                std::process::exit(1);
+            });
+            (name, position)
+        })
+        .collect();
+
+    let file = std::fs::canonicalize(path).unwrap_or_else(|error| {
+        eprintln!("failed to resolve {}: {error}", path.display());
+        std::process::exit(1);
+    });
+
+    link::LinkInput { file, entries, labels }
+}
+
+fn build(paths: &[PathBuf], output: Option<PathBuf>, format: Option<String>) {
+    let format = resolve_format(format);
+    let output_path = output.unwrap_or_else(|| output_path_for(&paths[0], format));
+
+    let inputs: Vec<link::LinkInput> = paths
+        .iter()
+        .enumerate()
+        .map(|(index, path)| compile_input(path, &format!("{}-{index}", std::process::id())))
+        .collect();
+
+    let values = match link::link(inputs) {
         Ok(values) => values,
 
         Err(error) => {
-            eprintln!("failed to parse {}: {error}", em_path.display());
+            eprintln!("failed to link: {error}");
             std::process::exit(1);
         }
     };
@@ -249,7 +315,7 @@ fn build(path: &PathBuf, output: Option<PathBuf>, format: Option<String>) {
         Ok(code) => code,
 
         Err(error) => {
-            eprintln!("failed to encode {}: {error}", path.display());
+            eprintln!("failed to encode: {error}");
             std::process::exit(1);
         }
     };
@@ -260,8 +326,9 @@ fn build(path: &PathBuf, output: Option<PathBuf>, format: Option<String>) {
     }
 
     println!(
-        "built {} byte(s) of code into a {format:?} executable at {}",
+        "built {} byte(s) of code from {} input(s) into a {format:?} executable at {}",
         code.len(),
+        paths.len(),
         output_path.display()
     );
 }

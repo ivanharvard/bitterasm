@@ -1,0 +1,11 @@
+# Phase 6 (see `docs/sections-and-linking/PROGRESS.md`): compiled and
+# linked together with `phase6_dep.basm` via `bitter build`, this program
+# is nothing but a relative `call` into a `pub` label declared in the
+# *other* file — the exit code it produces (7) only exists in
+# `phase6_dep.basm`'s own code, so seeing it prove the cross-file
+# `Deferred` reference (Phase 5) resolved to the real, merged byte offset
+# (Phase 6), not a placeholder or a segfault.
+from std.x86_64.intel import *
+from .phase6_dep import after_first
+
+call after_first

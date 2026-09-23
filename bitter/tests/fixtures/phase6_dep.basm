@@ -1,0 +1,13 @@
+# Phase 6 (see `docs/sections-and-linking/PROGRESS.md`): the "second file"
+# in `bitter build`'s multi-file link test — never reached except via
+# `phase6_entry.basm`'s `call after_first`, a *relative* jump whose target
+# only linking can resolve: this file's own `.em`, compiled alone, has no
+# idea it will ever be imported, let alone at what byte offset.
+from std.x86_64.intel import *
+
+pub after_first:
+movi rdi, 7
+
+# exit(7)
+movi rax, 60
+syscall

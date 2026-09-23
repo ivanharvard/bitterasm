@@ -41,6 +41,17 @@ enum Command {
         #[arg(short, long)]
         output: Option<PathBuf>,
 
+        /// Also write every top-level `pub` label's resolved position, as
+        /// `{"name": "decimal position", ...}`, to this path. An advanced,
+        /// opt-in escape hatch for `bitter build`'s multi-file linking
+        /// (Phase 6, `docs/sections-and-linking/PROGRESS.md`) to resolve a
+        /// `Deferred { file, symbol }` cross-unit reference (Phase 5)
+        /// against this file's own compiled output — ordinary `bitterasm
+        /// compile` use never needs this, and `.em`'s own shape is
+        /// unaffected either way.
+        #[arg(long)]
+        labels: Option<PathBuf>,
+
         /// Print an animated, per-invocation status line to stderr as each
         /// top-level invocation is expanded, with its elapsed time and
         /// memory usage once it finishes.
@@ -112,8 +123,8 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Compile { path, output, verbose, diagnostics } => {
-            compile(&path, output, verbose, diagnostics)
+        Command::Compile { path, output, labels, verbose, diagnostics } => {
+            compile(&path, output, labels, verbose, diagnostics)
         }
 
         Command::Check { path, diagnostics } => check(&path, diagnostics),
@@ -248,6 +259,39 @@ struct Expansion {
     // `resolver::AliasResolver::emitted_sections`.
     sections: Vec<Option<String>>,
     generated: Vec<Statement>,
+
+    // Every top-level `pub` label's resolved position, keyed by name — see
+    // `pub_label_positions`'s own doc. Only ever consumed by `compile`'s
+    // `--labels` flag (Phase 6, `docs/sections-and-linking/PROGRESS.md`);
+    // every other caller of `resolve_and_expand`/`analyze` ignores it.
+    pub_label_positions: HashMap<String, eval::Int>,
+}
+
+/// Every top-level `pub` label's resolved position, keyed by name — the
+/// manifest `bitter build`'s multi-file linking needs (Phase 6) to resolve
+/// a `Deferred { file, symbol }` reference (Phase 5) against this file's
+/// own emitted stream. `resolver` must already have walked every top-level
+/// label (`AliasResolver::record_label_position`) by the time this runs —
+/// true of both `resolve_and_expand`'s return points, the single-pass
+/// short-circuit and the real pass after a two-pass fallback.
+fn pub_label_positions(
+    program: &bitterasm::ast::Program,
+    symbols: &SymbolTable,
+    label_positions: &HashMap<resolver::SymbolId, eval::Int>,
+) -> HashMap<String, eval::Int> {
+    program
+        .statements
+        .iter()
+        .filter_map(|statement| match statement {
+            Statement::Label(label) if label.is_pub => Some(&label.name),
+            _ => None,
+        })
+        .filter_map(|name| {
+            let id = symbols.lookup(name)?;
+            let position = label_positions.get(&id)?;
+            Some((name.clone(), position.clone()))
+        })
+        .collect()
 }
 
 enum CompileError {
@@ -364,9 +408,10 @@ fn resolve_and_expand(path: &Path, verbose: Option<&VerboseReporter>) -> Result<
     // labels at all (or none referenced before their own declaration), so
     // this skips a full second walk of the entire program for them.
     if !discovery.used_forward_label_placeholder() {
+        let pub_labels = pub_label_positions(&program, &symbols, discovery.label_positions());
         let sections = discovery.take_emitted_sections();
         let symbols = discovery.into_symbols_with_generated();
-        return Ok(Expansion { symbols, emitted, sections, generated });
+        return Ok(Expansion { symbols, emitted, sections, generated, pub_label_positions: pub_labels });
     }
 
     // This pass's output turned out to be unusable after all (see below) —
@@ -423,9 +468,10 @@ fn resolve_and_expand(path: &Path, verbose: Option<&VerboseReporter>) -> Result<
         None,
     )?;
 
+    let pub_labels = pub_label_positions(&program, &symbols, alias_resolver.label_positions());
     let sections = alias_resolver.take_emitted_sections();
     let symbols = alias_resolver.into_symbols_with_generated();
-    Ok(Expansion { symbols, emitted, sections, generated })
+    Ok(Expansion { symbols, emitted, sections, generated, pub_label_positions: pub_labels })
 }
 
 /// Resolves every struct/alias/const in the program up front (independent
@@ -659,7 +705,13 @@ fn check(path: &Path, options: DiagnosticCliOptions) {
     println!("checked {}", path.display());
 }
 
-fn compile(path: &Path, output: Option<PathBuf>, verbose: bool, options: DiagnosticCliOptions) {
+fn compile(
+    path: &Path,
+    output: Option<PathBuf>,
+    labels: Option<PathBuf>,
+    verbose: bool,
+    options: DiagnosticCliOptions,
+) {
     let reporter = verbose.then(VerboseReporter::new);
     let (expansion, _) = analyze(path, options, reporter.as_ref());
 
@@ -687,6 +739,28 @@ fn compile(path: &Path, output: Option<PathBuf>, verbose: bool, options: Diagnos
     if let Err(error) = std::fs::write(&output_path, json) {
         eprintln!("failed to write {}: {error}", output_path.display());
         std::process::exit(1);
+    }
+
+    if let Some(labels_path) = labels {
+        let positions: std::collections::BTreeMap<&str, String> = expansion
+            .pub_label_positions
+            .iter()
+            .map(|(name, position)| (name.as_str(), position.to_string()))
+            .collect();
+
+        let json = match serde_json::to_string_pretty(&positions) {
+            Ok(json) => json,
+
+            Err(error) => {
+                eprintln!("serialization error: {error}");
+                std::process::exit(1);
+            }
+        };
+
+        if let Err(error) = std::fs::write(&labels_path, json) {
+            eprintln!("failed to write {}: {error}", labels_path.display());
+            std::process::exit(1);
+        }
     }
 
     println!(

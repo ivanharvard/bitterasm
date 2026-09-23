@@ -291,6 +291,15 @@ impl<'a> AliasResolver<'a> {
         self.label_positions
     }
 
+    /// A non-consuming read of the same map `into_label_positions` would
+    /// hand back — for a caller (`main::resolve_and_expand`, building the
+    /// `pub`-label-position manifest `bitter build`'s multi-file linking
+    /// needs, Phase 6) that still needs `self` afterward for
+    /// `take_emitted_sections`/`into_symbols_with_generated`.
+    pub fn label_positions(&self) -> &HashMap<SymbolId, Int> {
+        &self.label_positions
+    }
+
     /// Sets which named section is active for top-level code (outside any
     /// macro call) — called when `main::walk_top_level` walks a top-level
     /// `Statement::Section`. There's no caller to restore to at this level
