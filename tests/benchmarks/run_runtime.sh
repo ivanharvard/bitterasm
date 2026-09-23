@@ -76,16 +76,18 @@
 # real number. Taking a median (rather than a mean) throws that kind of
 # one-off outlier away without needing to identify it explicitly.
 #
-# Peak memory is each process's own maximum resident set size (BSD
-# `/usr/bin/time -l`'s "maximum resident set size", in bytes) -- how much
+# Peak memory is each process's own maximum resident set size (the
+# kernel's per-child `ru_maxrss`, as reported by `wait4`) -- how much
 # RAM that one process ever held at once, not memory shared across the
 # three sequential bitterasm/bitter/wasmtime phases (they never run
 # concurrently, so summing their peaks the way `bt total` sums wall time
 # wouldn't mean "peak RAM this pipeline needs"; the max of the three does).
 #
-# Requires `wasmtime` on PATH (e.g. `brew install wasmtime`) and BSD's
-# `/usr/bin/time -l` (macOS ships this; Linux's `/usr/bin/time` needs `-v`
-# and a differently-shaped output this script doesn't parse).
+# Requires `wasmtime` on PATH (e.g. `brew install wasmtime`), `g++`, and
+# `python3`. Timing and peak RSS both come from a small python3 wrapper
+# (see `sample` below) rather than `/usr/bin/time`, whose flags and output
+# differ between BSD (`-l`, bytes) and GNU (`-v`, KB) and which many Linux
+# installs don't ship at all.
 #
 # Usage: tests/benchmarks/run_runtime.sh
 
@@ -103,29 +105,41 @@ if ! command -v wasmtime >/dev/null 2>&1; then
     exit 1
 fi
 
-if ! /usr/bin/time -l true >/dev/null 2>&1; then
-    echo "error: /usr/bin/time -l isn't available (this script's memory measurements need" \
-         "BSD time's -l flag, e.g. on macOS) -- re-run on a machine that has it." >&2
-    exit 1
-fi
-
 echo "Building bitterasm and bitter (release)..." >&2
 cargo build --release --quiet
 
 echo "Building the C++ comparison program (g++ -O2)..." >&2
 g++ -O2 -o "$work_dir/sum_squares_cpp" "$bench_dir/sum_squares.cpp"
 
-# Runs one command once under `/usr/bin/time -l`, printing its wall-clock
-# seconds and peak RSS (bytes) as two lines. One invocation of the target
-# command, not two -- both numbers come from the same run, rather than
-# timing once and separately measuring memory on a second run.
+# Runs one command once, printing its wall-clock seconds and peak RSS
+# (bytes) as two lines. One invocation of the target command, not two --
+# both numbers come from the same run, rather than timing once and
+# separately measuring memory on a second run. `wait4` hands back that one
+# child's own rusage, the same figure `time -l`/`time -v` print; its
+# `ru_maxrss` is bytes on macOS but KB on Linux, normalized here to bytes.
+cat >"$work_dir/sample.py" <<'EOF'
+import os, sys, time
+start = time.perf_counter()
+pid = os.fork()
+if pid == 0:
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, 1)
+    os.dup2(devnull, 2)
+    try:
+        os.execvp(sys.argv[1], sys.argv[1:])
+    finally:
+        os._exit(127)
+_, status, usage = os.wait4(pid, 0)
+elapsed = time.perf_counter() - start
+if os.waitstatus_to_exitcode(status) != 0:
+    sys.exit(f"error: {' '.join(sys.argv[1:])} exited with status {os.waitstatus_to_exitcode(status)}")
+rss = usage.ru_maxrss if sys.platform == "darwin" else usage.ru_maxrss * 1024
+print(f"{elapsed:.2f}")
+print(rss)
+EOF
+
 sample() {
-    { /usr/bin/time -l "$@" >/dev/null; } 2>"$work_dir/time_raw"
-    awk '
-        /real/ && !t { t = $1 }
-        /maximum resident set size/ { m = $1 }
-        END { print t; print m }
-    ' "$work_dir/time_raw"
+    python3 "$work_dir/sample.py" "$@"
 }
 
 # Median seconds are sortable as plain decimals; bytes are plain integers

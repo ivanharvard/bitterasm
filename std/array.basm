@@ -104,3 +104,17 @@ pub macro enumerate<T>(arr: Array<T, ...>) -> Array<Enumerated<T>, ...>
         }
     }
 }
+
+pub macro appended<T, const N: int>(
+    arr: Array<T, N>,
+    value: T
+) -> Array<T, N + 1>
+{
+    @return Array<T, N + 1> {
+        @for i in 0..N {
+            __el`i`: arr.__el`i`,
+        }
+        __el`N`: value,
+    }
+}
+
