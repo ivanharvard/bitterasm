@@ -41,6 +41,13 @@ enum Command {
         /// `bitter` is itself running on.
         #[arg(short, long)]
         format: Option<String>,
+
+        /// Byte offset into the code where execution starts (decimal, or
+        /// hex with `0x`). A raw .bin has no labels to name, so this is a
+        /// number here; `bitter build --entry` takes a label instead.
+        /// Defaults to 0, the first byte.
+        #[arg(short, long, value_parser = parse_offset)]
+        entry: Option<usize>,
     },
 
     /// The whole pipeline in one command: compile one or more .basm
@@ -53,9 +60,9 @@ enum Command {
     /// (`from file import label`) in one input but declared in another is
     /// resolved against that other input's own compiled output — real
     /// multi-file linking (Phase 6, `docs/sections-and-linking/
-    /// PROGRESS.md`). The first-listed input's own first emitted value is
-    /// always the entry point, the same way it already is for one input —
-    /// list whichever file should run first, first.
+    /// PROGRESS.md`). Execution starts at the `pub` label named by
+    /// `--entry`, or at a `pub _start` label if any input declares one, or
+    /// else at the very first byte of the linked output.
     Build {
         #[arg(required = true)]
         paths: Vec<PathBuf>,
@@ -69,6 +76,13 @@ enum Command {
         /// `bitter` is itself running on.
         #[arg(short, long)]
         format: Option<String>,
+
+        /// The `pub` label execution starts at (like NASM's `global` plus
+        /// a linker's `-e`). Must be `pub`: only `pub` labels are visible
+        /// to the link step. Defaults to `_start` when some input declares
+        /// `pub _start:`, otherwise the first byte of the output.
+        #[arg(short, long)]
+        entry: Option<String>,
     },
 
     /// Anything `bitter` doesn't recognize itself is handed to `bitterasm`
@@ -85,10 +99,19 @@ fn main() {
 
     match cli.command {
         Command::Encode { path, output } => encode(&path, output),
-        Command::Exec { path, output, format } => exec(&path, output, format),
-        Command::Build { paths, output, format } => build(&paths, output, format),
+        Command::Exec { path, output, format, entry } => exec(&path, output, format, entry.unwrap_or(0)),
+        Command::Build { paths, output, format, entry } => build(&paths, output, format, entry),
         Command::External(args) => delegate_to_bitterasm(&args),
     }
+}
+
+/// `--entry` for `exec`: a decimal or `0x`-prefixed hex byte offset.
+fn parse_offset(raw: &str) -> Result<usize, String> {
+    let parsed = match raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")) {
+        Some(hex) => usize::from_str_radix(hex, 16),
+        None => raw.parse(),
+    };
+    parsed.map_err(|error| format!("`{raw}` isn't a byte offset: {error}"))
 }
 
 /// Parses `--format`, exiting with a clear error on an unknown name, or
@@ -181,7 +204,7 @@ fn encode(path: &PathBuf, output: Option<PathBuf>) {
     println!("encoded {} byte(s) to {}", bytes.len(), output_path.display());
 }
 
-fn exec(path: &PathBuf, output: Option<PathBuf>, format: Option<String>) {
+fn exec(path: &PathBuf, output: Option<PathBuf>, format: Option<String>, entry: usize) {
     let code = match std::fs::read(path) {
         Ok(code) => code,
 
@@ -194,7 +217,7 @@ fn exec(path: &PathBuf, output: Option<PathBuf>, format: Option<String>) {
     let format = resolve_format(format);
     let output_path = output.unwrap_or_else(|| output_path_for(path, format));
 
-    if let Err(error) = formats::write_executable(&code, &output_path, format) {
+    if let Err(error) = formats::write_executable(&code, &output_path, format, entry) {
         eprintln!("failed to write {}: {error}", output_path.display());
         std::process::exit(1);
     }
@@ -292,7 +315,7 @@ fn compile_input(path: &std::path::Path, unique: &str) -> link::LinkInput {
     link::LinkInput { file, entries, labels }
 }
 
-fn build(paths: &[PathBuf], output: Option<PathBuf>, format: Option<String>) {
+fn build(paths: &[PathBuf], output: Option<PathBuf>, format: Option<String>, entry: Option<String>) {
     let format = resolve_format(format);
     let output_path = output.unwrap_or_else(|| output_path_for(&paths[0], format));
 
@@ -302,14 +325,27 @@ fn build(paths: &[PathBuf], output: Option<PathBuf>, format: Option<String>) {
         .map(|(index, path)| compile_input(path, &format!("{}-{index}", std::process::id())))
         .collect();
 
-    let values = match link::link(inputs) {
-        Ok(values) => values,
+    let linked = match link::link(inputs) {
+        Ok(linked) => linked,
 
         Err(error) => {
             eprintln!("failed to link: {error}");
             std::process::exit(1);
         }
     };
+    let values = linked.values;
+
+    let entry_index = match entry {
+        Some(name) => *linked.labels.get(&name).unwrap_or_else(|| {
+            eprintln!("no `pub` label named `{name}` to use as the entry point (entry labels must be `pub`)");
+            std::process::exit(1);
+        }),
+        None => linked.labels.get("_start").copied().unwrap_or(0),
+    };
+    let entry_offset = pack::byte_offset_of(&values, entry_index).unwrap_or_else(|error| {
+        eprintln!("failed to encode: {error}");
+        std::process::exit(1);
+    });
 
     let code = match pack::pack_stream(&values) {
         Ok(code) => code,
@@ -320,7 +356,7 @@ fn build(paths: &[PathBuf], output: Option<PathBuf>, format: Option<String>) {
         }
     };
 
-    if let Err(error) = formats::write_executable(&code, &output_path, format) {
+    if let Err(error) = formats::write_executable(&code, &output_path, format, entry_offset) {
         eprintln!("failed to write {}: {error}", output_path.display());
         std::process::exit(1);
     }

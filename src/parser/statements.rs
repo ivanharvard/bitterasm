@@ -80,6 +80,12 @@ impl Parser {
                         ))
                     }
 
+                    TokenKind::Dot if self.at_dotted_label() => {
+                        Ok(Statement::Label(
+                            self.parse_label(true)?
+                        ))
+                    }
+
                     other => Err(ParseError::new(
                         format!("expected declaration after `pub`, found {other:?}"),
                         self.current().span,
@@ -99,6 +105,12 @@ impl Parser {
                 } else {
                     self.parse_invocation_statement(&name)
                 }
+            }
+
+            TokenKind::Dot if self.at_dotted_label() => {
+                Ok(Statement::Label(
+                    self.parse_label(false)?
+                ))
             }
 
             TokenKind::At => {
@@ -189,10 +201,17 @@ impl Parser {
     // labels
     // =============
 
+    // A label name may carry a leading `.` (`.loop:`), matching the
+    // NASM/GAS local-label spelling; the dot is kept as part of the name,
+    // and references spell it the same way (`jmp .loop`).
     fn parse_label(&mut self, is_pub: bool) -> Result<Label, ParseError> {
         let start = self.current().span.start;
 
-        let name = self.expect_identifier()?;
+        let name = if self.at_dot_identifier() {
+            self.expect_dotted_name()
+        } else {
+            self.expect_identifier()?
+        };
 
         self.expect_simple(TokenKind::Colon)?;
 
@@ -365,7 +384,12 @@ impl Parser {
             .into_iter()
             .map(|pattern| (name.to_string(), pattern))
             .collect();
-        candidates.extend(self.unanchored_syntaxes.iter().cloned());
+        candidates.extend(
+            self.unanchored_syntaxes
+                .iter()
+                .filter(|(_, pattern)| !crate::facets::syntax::is_operand_pattern(pattern))
+                .cloned(),
+        );
 
         if candidates.is_empty() {
             return Ok(Statement::Invocation(self.parse_invocation()?));

@@ -617,16 +617,19 @@ pub macro sw(rs2: Reg, offset: int, rs1: Reg)
 # not a byte address, not a delta a caller computes by hand. `here()`
 # (`std.bitter.deferred`) never resolves to a concrete Int at compile
 # time — it's `bitter`, once it knows where this instruction actually
-# lands, that finishes `(target - here()) * 4`, the real byte distance the
-# BType format actually encodes (bit 0 is always 0 and isn't stored). Every
-# RV32I instruction is exactly 4 bytes, which is where that `* 4` comes
-# from. The scrambled field order below is RV32I's, not a choice made
-# here — see the BType declaration's own doc comment.
+# lands, that finishes `span(here(), target)`, the real byte distance the
+# BType format actually encodes (bit 0 is always 0 and isn't stored).
+# `span` rather than `(target - here()) * 4`: the two agree while every
+# entry is a 4-byte instruction, but `span` measures real bytes (so data
+# between branch and target doesn't throw it off) and marks `target` as a
+# position a linker has to translate when it reorders entries (see
+# `Deferred.Pos`). The scrambled field order below is RV32I's, not a choice
+# made here — see the BType declaration's own doc comment.
 
 pub macro beq(rs1: Reg, rs2: Reg, target: int)
     | emits LittleEndian<BType, 32>
 {
-    const offset = mul(sub(target, here()), 4)
+    const offset = span(here(), target)
     @emit LittleEndian<BType, 32> { value: BType(
             imm12 = Positioned<1> { value: band(shr(offset, 12), 1) },
             imm10_5 = Positioned<6> { value: band(shr(offset, 5), 0b111111) },
@@ -642,7 +645,7 @@ pub macro beq(rs1: Reg, rs2: Reg, target: int)
 pub macro bne(rs1: Reg, rs2: Reg, target: int)
     | emits LittleEndian<BType, 32>
 {
-    const offset = mul(sub(target, here()), 4)
+    const offset = span(here(), target)
     @emit LittleEndian<BType, 32> { value: BType(
             imm12 = Positioned<1> { value: band(shr(offset, 12), 1) },
             imm10_5 = Positioned<6> { value: band(shr(offset, 5), 0b111111) },
@@ -658,7 +661,7 @@ pub macro bne(rs1: Reg, rs2: Reg, target: int)
 pub macro blt(rs1: Reg, rs2: Reg, target: int)
     | emits LittleEndian<BType, 32>
 {
-    const offset = mul(sub(target, here()), 4)
+    const offset = span(here(), target)
     @emit LittleEndian<BType, 32> { value: BType(
             imm12 = Positioned<1> { value: band(shr(offset, 12), 1) },
             imm10_5 = Positioned<6> { value: band(shr(offset, 5), 0b111111) },
@@ -674,7 +677,7 @@ pub macro blt(rs1: Reg, rs2: Reg, target: int)
 pub macro bge(rs1: Reg, rs2: Reg, target: int)
     | emits LittleEndian<BType, 32>
 {
-    const offset = mul(sub(target, here()), 4)
+    const offset = span(here(), target)
     @emit LittleEndian<BType, 32> { value: BType(
             imm12 = Positioned<1> { value: band(shr(offset, 12), 1) },
             imm10_5 = Positioned<6> { value: band(shr(offset, 5), 0b111111) },
@@ -690,7 +693,7 @@ pub macro bge(rs1: Reg, rs2: Reg, target: int)
 pub macro bltu(rs1: Reg, rs2: Reg, target: int)
     | emits LittleEndian<BType, 32>
 {
-    const offset = mul(sub(target, here()), 4)
+    const offset = span(here(), target)
     @emit LittleEndian<BType, 32> { value: BType(
             imm12 = Positioned<1> { value: band(shr(offset, 12), 1) },
             imm10_5 = Positioned<6> { value: band(shr(offset, 5), 0b111111) },
@@ -706,7 +709,7 @@ pub macro bltu(rs1: Reg, rs2: Reg, target: int)
 pub macro bgeu(rs1: Reg, rs2: Reg, target: int)
     | emits LittleEndian<BType, 32>
 {
-    const offset = mul(sub(target, here()), 4)
+    const offset = span(here(), target)
     @emit LittleEndian<BType, 32> { value: BType(
             imm12 = Positioned<1> { value: band(shr(offset, 12), 1) },
             imm10_5 = Positioned<6> { value: band(shr(offset, 5), 0b111111) },
@@ -758,7 +761,7 @@ pub macro auipc(
 pub macro jal(rd: Reg, target: int)
     | emits LittleEndian<JType, 32>
 {
-    const offset = mul(sub(target, here()), 4)
+    const offset = span(here(), target)
     @emit LittleEndian<JType, 32> { value: JType(
             imm20 = Positioned<1> { value: band(shr(offset, 20), 1) },
             imm10_1 = Positioned<10> { value: band(shr(offset, 1), 0b1111111111) },

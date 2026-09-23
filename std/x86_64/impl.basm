@@ -29,6 +29,34 @@ pub const rbp = r5
 pub const rsi = r6
 pub const rdi = r7
 
+# The 32-bit views of the same 16 registers (`eax`, `r8d`, ...). Encoded with
+# the same register number as their 64-bit counterpart — only the REX.W bit
+# (the `w` argument every sized instruction below takes) tells them apart — so
+# a `Reg32` just wraps the `Reg` it views. A struct rather than another
+# `bits<4>` alias so it's a genuinely distinct type: dialects overload each
+# mnemonic on `Reg` vs. `Reg32` and pick `w` from which one they got.
+pub struct Reg32 {
+    pub reg: Reg,
+}
+
+pub const eax = Reg32(reg = rax)
+pub const ecx = Reg32(reg = rcx)
+pub const edx = Reg32(reg = rdx)
+pub const ebx = Reg32(reg = rbx)
+pub const esp = Reg32(reg = rsp)
+pub const ebp = Reg32(reg = rbp)
+pub const esi = Reg32(reg = rsi)
+pub const edi = Reg32(reg = rdi)
+
+pub const r8d = Reg32(reg = r8)
+pub const r9d = Reg32(reg = r9)
+pub const r10d = Reg32(reg = r10)
+pub const r11d = Reg32(reg = r11)
+pub const r12d = Reg32(reg = r12)
+pub const r13d = Reg32(reg = r13)
+pub const r14d = Reg32(reg = r14)
+pub const r15d = Reg32(reg = r15)
+
 # The 3 low bits of a register number — the field width every ModRM `reg`/`rm`,
 # SIB `index`/`base`, and register-in-opcode encoding actually carries.
 pub macro reg_field(r: Reg) -> int {
@@ -235,7 +263,7 @@ pub macro mov(
 # other instruction here is: with `REX.W` set, `0xB8+reg` takes a full
 # 8-byte imm64 (not a sign-extended imm32 like every other `w=1` form in
 # this file) — confirmed against the Intel SDM's own `MOV` opcode table.
-pub macro movi(
+pub macro mov(
     rd: Reg,
     imm: int,
     w: int
@@ -287,36 +315,34 @@ pub macro cmp(
     w: int
 ) -> Bytes<...> { @emit reg_reg_instr(0x39, rd, rs, w) }
 
-# reg,imm32 forms retain the `std/riscv/impl.basm`-established `i` suffix
-# (`addi`/`andi`/...) for API compatibility. Since `Reg` is now a distinct
-# `bits<4>` type, these could be overloaded with their reg,reg counterparts in
-# a future API cleanup.
-pub macro addi(
+# reg,imm32 forms overload their reg,reg counterparts. `Reg` is a distinct
+# `bits<4>` type, so the resolver selects the encoding by operand type.
+pub macro add(
     rd: Reg,
     imm: int,
     w: int
 ) -> Bytes<...> { @emit reg_imm_instr(0x81, 0, rd, imm, 4, w) }
-pub macro ori(
+pub macro or(
     rd: Reg,
     imm: int,
     w: int
 ) -> Bytes<...> { @emit reg_imm_instr(0x81, 1, rd, imm, 4, w) }
-pub macro andi(
+pub macro and(
     rd: Reg,
     imm: int,
     w: int
 ) -> Bytes<...> { @emit reg_imm_instr(0x81, 4, rd, imm, 4, w) }
-pub macro subi(
+pub macro sub(
     rd: Reg,
     imm: int,
     w: int
 ) -> Bytes<...> { @emit reg_imm_instr(0x81, 5, rd, imm, 4, w) }
-pub macro xori(
+pub macro xor(
     rd: Reg,
     imm: int,
     w: int
 ) -> Bytes<...> { @emit reg_imm_instr(0x81, 6, rd, imm, 4, w) }
-pub macro cmpi(
+pub macro cmp(
     rd: Reg,
     imm: int,
     w: int
@@ -330,7 +356,7 @@ pub macro test(
     rs: Reg,
     w: int
 ) -> Bytes<...> { @emit reg_reg_instr(0x85, rd, rs, w) }
-pub macro testi(
+pub macro test(
     rd: Reg,
     imm: int,
     w: int
@@ -719,7 +745,7 @@ macro mem_reg_instr(
 
 # Shared by every reg,imm instruction's memory-destination overload below (the
 # six
-# ALU ops via `0x81`, `test` via `0xF7`, and `mov` via `0xC7` — `movi`'s memory
+# ALU ops via `0x81`, `test` via `0xF7`, and `mov` via `0xC7` — `mov`'s memory
 # form
 # can't reuse `0xB8+reg` the way its register form does, since there's no
 # register
@@ -825,42 +851,42 @@ pub macro test(
 ) -> Bytes<...> { @emit mem_reg_instr(0x85, dst, rs, w) }
 
 # `0xC7 /0`, not `0xB8+reg` — see `mem_imm_instr`'s own comment above.
-pub macro movi(
+pub macro mov(
     dst: MemOperand,
     imm: int,
     w: int
 ) -> Bytes<...> { @emit mem_imm_instr(0xC7, 0, dst, imm, w) }
-pub macro addi(
+pub macro add(
     dst: MemOperand,
     imm: int,
     w: int
 ) -> Bytes<...> { @emit mem_imm_instr(0x81, 0, dst, imm, w) }
-pub macro ori(
+pub macro or(
     dst: MemOperand,
     imm: int,
     w: int
 ) -> Bytes<...> { @emit mem_imm_instr(0x81, 1, dst, imm, w) }
-pub macro andi(
+pub macro and(
     dst: MemOperand,
     imm: int,
     w: int
 ) -> Bytes<...> { @emit mem_imm_instr(0x81, 4, dst, imm, w) }
-pub macro subi(
+pub macro sub(
     dst: MemOperand,
     imm: int,
     w: int
 ) -> Bytes<...> { @emit mem_imm_instr(0x81, 5, dst, imm, w) }
-pub macro xori(
+pub macro xor(
     dst: MemOperand,
     imm: int,
     w: int
 ) -> Bytes<...> { @emit mem_imm_instr(0x81, 6, dst, imm, w) }
-pub macro cmpi(
+pub macro cmp(
     dst: MemOperand,
     imm: int,
     w: int
 ) -> Bytes<...> { @emit mem_imm_instr(0x81, 7, dst, imm, w) }
-pub macro testi(
+pub macro test(
     dst: MemOperand,
     imm: int,
     w: int
@@ -969,7 +995,7 @@ macro jcc_instr(
     )
 }
 
-# All 16 near-`Jcc` mnemonics this file's scope commits to, named for their most
+# All 16 near-`Jcc` condition codes, first under their most
 # common reading (`je` over its `jz` synonym, etc.) — condition codes straight
 # out
 # of the Intel SDM's own `Jcc` opcode table, cross-checked pairwise (`je`/`jne`,
@@ -992,6 +1018,23 @@ pub macro jo(target: int) -> Rel32Instr2 { @emit jcc_instr(0x0, target) }
 pub macro jno(target: int) -> Rel32Instr2 { @emit jcc_instr(0x1, target) }
 pub macro jp(target: int) -> Rel32Instr2 { @emit jcc_instr(0xA, target) }
 pub macro jnp(target: int) -> Rel32Instr2 { @emit jcc_instr(0xB, target) }
+
+# The SDM's synonyms for the same 16 condition codes — every alternate spelling
+# its `Jcc` table lists, so code written against any of them assembles as-is.
+pub macro jz(target: int) -> Rel32Instr2 { @emit jcc_instr(0x4, target) }
+pub macro jnz(target: int) -> Rel32Instr2 { @emit jcc_instr(0x5, target) }
+pub macro jc(target: int) -> Rel32Instr2 { @emit jcc_instr(0x2, target) }
+pub macro jnae(target: int) -> Rel32Instr2 { @emit jcc_instr(0x2, target) }
+pub macro jnc(target: int) -> Rel32Instr2 { @emit jcc_instr(0x3, target) }
+pub macro jnb(target: int) -> Rel32Instr2 { @emit jcc_instr(0x3, target) }
+pub macro jnbe(target: int) -> Rel32Instr2 { @emit jcc_instr(0x7, target) }
+pub macro jna(target: int) -> Rel32Instr2 { @emit jcc_instr(0x6, target) }
+pub macro jnge(target: int) -> Rel32Instr2 { @emit jcc_instr(0xC, target) }
+pub macro jnl(target: int) -> Rel32Instr2 { @emit jcc_instr(0xD, target) }
+pub macro jng(target: int) -> Rel32Instr2 { @emit jcc_instr(0xE, target) }
+pub macro jnle(target: int) -> Rel32Instr2 { @emit jcc_instr(0xF, target) }
+pub macro jpe(target: int) -> Rel32Instr2 { @emit jcc_instr(0xA, target) }
+pub macro jpo(target: int) -> Rel32Instr2 { @emit jcc_instr(0xB, target) }
 
 pub macro ret() -> Byte {
     @emit Byte(0xC3)
@@ -1087,10 +1130,83 @@ pub macro lea(
 ) -> Bytes<...> { @emit mem_reg_instr(0x8D, src, rd, w) }
 
 # =================
+# RIP-relative label operands
+# =================
+# `MemRipRelative(disp)` takes a displacement the caller already knows. A
+# `RipLabel` names a *label* instead, and lets `bitter` work out the
+# displacement once the code is laid out — the same `rel32_offset` trick
+# `jmp`/`call` use: `span(here(), target)` is the byte distance from this
+# instruction's start to the label, minus this instruction's own length to
+# measure from the next instruction, which is what the CPU adds `disp32` to.
+# The encoding is always `mod=00 rm=101` + disp32, so the only variable part
+# is whether a REX byte is needed — hence one struct with REX and one without,
+# each emitted as a single entry so `span` sees the whole instruction.
+pub struct RipLabel {
+    pub target: int,
+}
+
+pub struct RipRelInstr {
+    pub opcode: Byte,
+    pub modrm: Byte,
+    pub disp32: LittleEndian<Positioned<32>, 32>,
+}
+
+pub struct RipRelInstrRex {
+    pub rex: Byte,
+    pub opcode: Byte,
+    pub modrm: Byte,
+    pub disp32: LittleEndian<Positioned<32>, 32>,
+}
+
+# ModRM.reg = `r`, r/m = the label. Same "reg field is the other register"
+# shape as `mem_reg_instr`, for whichever direction `opcode` encodes. `pub`
+# only because a private macro invoked as a statement doesn't resolve once
+# this file is imported (the same quirk `intel.basm`'s `assert_valid_reg` notes).
+pub macro rip_label_instr(
+    opcode: int,
+    addr: RipLabel,
+    r: Reg,
+    w: int
+) {
+    const modrm = modrm_byte(0b00, reg_field(r), 0b101)
+    @if w == 1 || reg_ext(r) == 1 {
+        @emit RipRelInstrRex(
+            rex = rex_byte(w, reg_ext(r), 0, 0),
+            opcode = Byte(opcode),
+            modrm = modrm,
+            disp32 = LittleEndian<Positioned<32>, 32> { value: Positioned<32> { value: rel32_offset(
+                        addr.target,
+                        7
+                    ) } }
+        )
+    } @else {
+        @emit RipRelInstr(
+            opcode = Byte(opcode),
+            modrm = modrm,
+            disp32 = LittleEndian<Positioned<32>, 32> { value: Positioned<32> { value: rel32_offset(
+                        addr.target,
+                        6
+                    ) } }
+        )
+    }
+}
+
+pub macro lea(rd: Reg, src: RipLabel, w: int) { rip_label_instr 0x8D, src, rd, w }
+pub macro mov(rd: Reg, src: RipLabel, w: int) { rip_label_instr 0x8B, src, rd, w }
+pub macro mov(dst: RipLabel, rs: Reg, w: int) { rip_label_instr 0x89, dst, rs, w }
+pub macro add(dst: RipLabel, rs: Reg, w: int) { rip_label_instr 0x01, dst, rs, w }
+pub macro or(dst: RipLabel, rs: Reg, w: int) { rip_label_instr 0x09, dst, rs, w }
+pub macro and(dst: RipLabel, rs: Reg, w: int) { rip_label_instr 0x21, dst, rs, w }
+pub macro sub(dst: RipLabel, rs: Reg, w: int) { rip_label_instr 0x29, dst, rs, w }
+pub macro xor(dst: RipLabel, rs: Reg, w: int) { rip_label_instr 0x31, dst, rs, w }
+pub macro cmp(dst: RipLabel, rs: Reg, w: int) { rip_label_instr 0x39, dst, rs, w }
+pub macro test(dst: RipLabel, rs: Reg, w: int) { rip_label_instr 0x85, dst, rs, w }
+
+# =================
 # push/pop (Phase 5)
 # =================
 # `0x50+reg`/`0x58+reg` — the same "register number folded into the opcode's own
-# low 3 bits, extension bit in REX.B" pattern `movi`'s register form (Phase 2)
+# low 3 bits, extension bit in REX.B" pattern `mov`'s immediate form (Phase 2)
 # established, reusing `instr` directly (`has_modrm=0`, `imm_len=0`: just an
 # optional REX byte followed by the one opcode byte). No `w` parameter: unlike
 # every other instruction in this file, `push`/`pop` have no 32-bit register

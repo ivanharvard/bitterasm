@@ -16,20 +16,20 @@ mov MemIndexed(rbx, rcx, 4, 0x10), rax, 1
 mov MemRipRelative(0x20), rax, 1
 
 add rax, rbx, 1
-addi rax, 5, 1
+add rax, 5, 1
 or rax, rbx, 1
-ori rax, 5, 1
+or rax, 5, 1
 and rax, rbx, 1
-andi rax, 5, 1
+and rax, 5, 1
 sub rax, rbx, 1
-subi rax, 5, 1
+sub rax, 5, 1
 xor rax, rbx, 1
-xori rax, 5, 1
+xor rax, 5, 1
 cmp rax, rbx, 1
-cmpi rax, 5, 1
+cmp rax, 5, 1
 test rax, rbx, 1
-testi rax, 5, 1
-movi rax, 100, 1
+test rax, 5, 1
+mov rax, 100, 1
 
 lea rax, Mem(rbx, 8), 1
 lea rax, MemIndexed(rbx, rcx, 4, 0x10), 1

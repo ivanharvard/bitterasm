@@ -147,7 +147,7 @@ macro validate_ascii_at(
     @return validate_ascii_at(value, len, index + 1, endian)
 }
 
-macro validate_ascii(
+pub macro validate_ascii(
     value: int,
     len: int,
     endian: Endian
@@ -210,7 +210,7 @@ macro validate_utf8_at(
     @assert 0, "invalid UTF-8 leading byte"
 }
 
-macro validate_utf8(
+pub macro validate_utf8(
     value: int,
     len: int,
     endian: Endian

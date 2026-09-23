@@ -93,5 +93,5 @@ fn a_single_file_build_is_unaffected_by_multi_file_support() {
     let run = Command::new(&out).output().expect("hello.basm's executable should run");
 
     assert_eq!(run.status.code(), Some(0));
-    assert_eq!(String::from_utf8_lossy(&run.stdout), "Hello, world!\n");
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "Hello, World!\n");
 }

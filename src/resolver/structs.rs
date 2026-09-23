@@ -274,7 +274,7 @@ impl<'a> AliasResolver<'a> {
         // underneath is still just there.
         let ResolvedType::Struct { symbol, args } = ty.strip_alias() else {
             return Err(ResolveError::UnknownField {
-                type_name: describe_type(ty, self.symbols),
+                type_name: describe_type(ty, self),
                 field: field_name.to_string(),
                 span,
             });
@@ -500,17 +500,33 @@ fn generic_arg_scope(
 // Produces a human-readable name for a resolved type, used in diagnostics
 // like `UnknownField` when the type isn't the kind of thing that error
 // needs to describe more precisely (e.g. field access on a non-struct).
-pub(super) fn describe_type(ty: &ResolvedType, symbols: &SymbolTable) -> String {
+pub(super) trait TypeSymbolNames {
+    fn type_symbol_name(&self, symbol: SymbolId) -> String;
+}
+
+impl TypeSymbolNames for SymbolTable {
+    fn type_symbol_name(&self, symbol: SymbolId) -> String {
+        self.get(symbol).name.clone()
+    }
+}
+
+impl TypeSymbolNames for AliasResolver<'_> {
+    fn type_symbol_name(&self, symbol: SymbolId) -> String {
+        self.get_symbol(symbol).name.clone()
+    }
+}
+
+pub(super) fn describe_type(ty: &ResolvedType, symbols: &impl TypeSymbolNames) -> String {
     match ty {
         ResolvedType::Builtin(BuiltinType::Int) => "int".to_string(),
-        ResolvedType::Struct { symbol, .. } => symbols.get(*symbol).name.clone(),
-        ResolvedType::Enum { symbol, .. } => symbols.get(*symbol).name.clone(),
+        ResolvedType::Struct { symbol, .. } => symbols.type_symbol_name(*symbol),
+        ResolvedType::Enum { symbol, .. } => symbols.type_symbol_name(*symbol),
         ResolvedType::TypeParameter { name } => name.clone(),
 
         // The alias's own name reads better in a diagnostic than its
         // underlying struct's — "expected `uint8_t`, got `int`" over
         // "expected `bits`, got `int`".
-        ResolvedType::Alias { symbol, .. } => symbols.get(*symbol).name.clone(),
+        ResolvedType::Alias { symbol, .. } => symbols.type_symbol_name(*symbol),
 
         ResolvedType::MacroType { params, ret } => {
             let params = params.iter().map(|param| describe_type(param, symbols)).collect::<Vec<_>>().join(", ");

@@ -9,7 +9,7 @@ from std.x86_64.impl import *
 
 start:
 mov rax, rbx, 0            # 2 bytes
-movi rax, 0x12345678, 0    # 5 bytes
+mov rax, 0x12345678, 0    # 5 bytes
 jmp target                 # 5 bytes, forward branch (skips over the next instruction)
 add rcx, rdx, 1            # 3 bytes
 target:

@@ -6,8 +6,15 @@ pub struct BinOp {
     pub right: Deferred,
 }
 
+# `Pos` is an entry position (a label's value) rather than a plain number:
+# the same integer as a `Leaf`, but marked so a linker that reorders entries
+# (`bitter build` grouping same-named sections, or placing a second input
+# after the first) knows to translate it from the emitting file's own entry
+# numbering into the merged one. `span`'s `int` endpoints are always
+# positions, so it wraps them in `Pos`, never `Leaf`.
 pub enum Deferred {
     Leaf: int,
+    Pos: int,
     Here,
     Node: BinOp,
 }
@@ -186,8 +193,8 @@ pub macro span(
 ) -> Deferred {
     @return Deferred.Node(BinOp(
             op = Op.Span,
-            left = Deferred.Leaf(start),
-            right = Deferred.Leaf(end)
+            left = Deferred.Pos(start),
+            right = Deferred.Pos(end)
         ))
 }
 
@@ -198,7 +205,7 @@ pub macro span(
     @return Deferred.Node(BinOp(
             op = Op.Span,
             left = start,
-            right = Deferred.Leaf(end)
+            right = Deferred.Pos(end)
         ))
 }
 
@@ -208,7 +215,7 @@ pub macro span(
 ) -> Deferred {
     @return Deferred.Node(BinOp(
             op = Op.Span,
-            left = Deferred.Leaf(start),
+            left = Deferred.Pos(start),
             right = end
         ))
 }

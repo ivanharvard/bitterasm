@@ -1,0 +1,158 @@
+# NASM-flavored x86-64 assembly: everything `intel.basm` provides, plus the
+# NASM spellings it doesn't have —
+#
+#   lea rsi, [rel msg]      RIP-relative addressing of a *label*
+#   mov eax, [rel counter]
+#   mov [rel counter], eax
+#   add [rel total], rcx
+#
+#   msg:
+#       db "Hello, World!", 10
+#       dd 0xDEADBEEF
+#
+# `intel.basm`'s `[rip+disp]` takes a displacement you already know; `[rel x]`
+# takes a label and lets `bitter` compute the displacement once the code is laid
+# out (`impl.basm`'s `RipLabel` section has the encoding). The two can't share a
+# spelling: a label is a plain `int` too, so `[rip+label]` would be exactly as
+# well-typed as `[rip+disp]` with nothing to tell them apart.
+#
+# Not covered: NASM's `$`/`$$`, `equ`, `times`, `resb`, and `global`/`extern`
+# (use `const`, `@for`, and `pub` labels instead).
+
+from .intel import *
+from std.string import string_from_struct
+
+# =================
+# [rel label]
+# =================
+# An *operand* syntax (its pattern starts with `[`, which no statement can, so
+# the parser tries it wherever an operand starts — see
+# `facets::syntax::is_operand_pattern`): `[rel msg]` parses as the call
+# `rel(msg)`, a `RipLabel` value, which then picks the `RipLabel` overloads
+# below by ordinary type-based overload resolution, reusing each mnemonic's
+# existing `mov $a$, $b$`-shaped pattern.
+pub macro rel(target: int) -> RipLabel
+    | syntax { [rel $target$] } {
+        @return RipLabel(target = target)
+    }
+
+# `lea` had no two-operand pattern of its own in `intel.basm` (only its four
+# bracketed shapes, registered unanchored under `lea_base`/... names), so
+# claiming it here needs the same full-arity restatement every mnemonic there
+# gets — see `intel.basm`'s header on why.
+syntax lea(a, b, c) = { lea $a$, $b$, $c$ }
+
+pub macro lea(rd: Reg, src: RipLabel)
+    | syntax { lea $rd$, $src$ } { lea rd, src, 1 }
+pub macro lea(rd: Reg32, src: RipLabel)
+    | syntax { lea $rd$, $src$ } { lea rd.reg, src, 0 }
+
+pub macro mov(rd: Reg, src: RipLabel)
+    | syntax { mov $rd$, $src$ } { mov rd, src, 1 }
+pub macro mov(rd: Reg32, src: RipLabel)
+    | syntax { mov $rd$, $src$ } { mov rd.reg, src, 0 }
+pub macro mov(dst: RipLabel, rs: Reg)
+    | syntax { mov $dst$, $rs$ } { mov dst, rs, 1 }
+pub macro mov(dst: RipLabel, rs: Reg32)
+    | syntax { mov $dst$, $rs$ } { mov dst, rs.reg, 0 }
+
+pub macro add(dst: RipLabel, rs: Reg)
+    | syntax { add $dst$, $rs$ } { add dst, rs, 1 }
+pub macro add(dst: RipLabel, rs: Reg32)
+    | syntax { add $dst$, $rs$ } { add dst, rs.reg, 0 }
+pub macro or(dst: RipLabel, rs: Reg)
+    | syntax { or $dst$, $rs$ } { or dst, rs, 1 }
+pub macro or(dst: RipLabel, rs: Reg32)
+    | syntax { or $dst$, $rs$ } { or dst, rs.reg, 0 }
+pub macro and(dst: RipLabel, rs: Reg)
+    | syntax { and $dst$, $rs$ } { and dst, rs, 1 }
+pub macro and(dst: RipLabel, rs: Reg32)
+    | syntax { and $dst$, $rs$ } { and dst, rs.reg, 0 }
+pub macro sub(dst: RipLabel, rs: Reg)
+    | syntax { sub $dst$, $rs$ } { sub dst, rs, 1 }
+pub macro sub(dst: RipLabel, rs: Reg32)
+    | syntax { sub $dst$, $rs$ } { sub dst, rs.reg, 0 }
+pub macro xor(dst: RipLabel, rs: Reg)
+    | syntax { xor $dst$, $rs$ } { xor dst, rs, 1 }
+pub macro xor(dst: RipLabel, rs: Reg32)
+    | syntax { xor $dst$, $rs$ } { xor dst, rs.reg, 0 }
+pub macro cmp(dst: RipLabel, rs: Reg)
+    | syntax { cmp $dst$, $rs$ } { cmp dst, rs, 1 }
+pub macro cmp(dst: RipLabel, rs: Reg32)
+    | syntax { cmp $dst$, $rs$ } { cmp dst, rs.reg, 0 }
+pub macro test(dst: RipLabel, rs: Reg)
+    | syntax { test $dst$, $rs$ } { test dst, rs, 1 }
+pub macro test(dst: RipLabel, rs: Reg32)
+    | syntax { test $dst$, $rs$ } { test dst, rs.reg, 0 }
+
+# =================
+# data: db/dw/dd/dq
+# =================
+# Each operand is either an integer (stored little-endian in the directive's
+# width, truncated like NASM does) or, for `db` only, a string literal (stored
+# as its UTF-8 bytes, no terminator — add `, 0` yourself). Up to four operands
+# per line; `db "Hello", 10` is the common case. A string's `String<N>` packs
+# its first byte most significant, hence the reversed index.
+
+pub macro data_int(value: int, width: int) -> Bytes<...> {
+    @return Bytes<width> {
+        @for i in 0..width {
+            __el`i`: byte_of(value, i),
+        }
+    }
+}
+
+pub macro data_string<S>(source: S) -> Bytes<...> {
+    const packed = string_from_struct(source)
+    const n = packed.len
+    @return Bytes<n> {
+        @for i in 0..n {
+            __el`i`: byte_of(packed.value, n - 1 - i),
+        }
+    }
+}
+
+pub macro db(a: int) { @emit data_int(a, 1) }
+pub macro db<S>(a: S) { @emit data_string(a) }
+pub macro db<S>(a: S, b: int) {
+    @emit data_string(a)
+    @emit data_int(b, 1)
+}
+pub macro db<S>(a: S, b: int, c: int) {
+    @emit data_string(a)
+    @emit data_int(b, 1)
+    @emit data_int(c, 1)
+}
+pub macro db(a: int, b: int) {
+    @emit data_int(a, 1)
+    @emit data_int(b, 1)
+}
+pub macro db(a: int, b: int, c: int) {
+    @emit data_int(a, 1)
+    @emit data_int(b, 1)
+    @emit data_int(c, 1)
+}
+pub macro db(a: int, b: int, c: int, d: int) {
+    @emit data_int(a, 1)
+    @emit data_int(b, 1)
+    @emit data_int(c, 1)
+    @emit data_int(d, 1)
+}
+
+pub macro dw(a: int) { @emit data_int(a, 2) }
+pub macro dw(a: int, b: int) {
+    @emit data_int(a, 2)
+    @emit data_int(b, 2)
+}
+
+pub macro dd(a: int) { @emit data_int(a, 4) }
+pub macro dd(a: int, b: int) {
+    @emit data_int(a, 4)
+    @emit data_int(b, 4)
+}
+
+pub macro dq(a: int) { @emit data_int(a, 8) }
+pub macro dq(a: int, b: int) {
+    @emit data_int(a, 8)
+    @emit data_int(b, 8)
+}

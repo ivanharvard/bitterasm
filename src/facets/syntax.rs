@@ -112,6 +112,23 @@ pub fn is_anchored(pattern: &SyntaxPattern, name: &str) -> bool {
     )
 }
 
+/// Whether `pattern` is an *operand* pattern — one whose first token is a
+/// literal that can't start a statement (anything but an identifier or
+/// keyword, e.g. `[rel $target$]`). Every statement a custom syntax can
+/// match starts with a word, so such a pattern could never match one;
+/// instead the parser tries it wherever an operand expression starts, and
+/// a match becomes an ordinary call to the pattern's macro (`rel(msg)`),
+/// so it's only meaningful on a macro that `@return`s a value. Operand
+/// patterns share the unanchored pool (threaded across imports the same
+/// way), but statement matching skips them.
+pub fn is_operand_pattern(pattern: &SyntaxPattern) -> bool {
+    matches!(
+        pattern.segments.first(),
+        Some(PatternSegment::Literal(tokens))
+            if tokens.first().is_some_and(|first| first.word_text().is_none())
+    )
+}
+
 fn split_into_segments(tokens: Vec<TokenKind>) -> Result<Vec<PatternSegment>, String> {
     let mut segments = Vec::new();
     let mut literal = Vec::new();

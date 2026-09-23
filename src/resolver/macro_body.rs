@@ -203,9 +203,18 @@ impl<'a> AliasResolver<'a> {
             }
         }
 
+        // A non-generic overload is a more specific claim than a generic one
+        // that merely *can* bind to the same arguments, so it wins the tie
+        // (`db(b: int)` over `db<S>(s: S)` for `db 10`) — the usual
+        // "exact match beats template" rule. Two matching non-generic (or
+        // two generic) overloads are still genuinely ambiguous.
+        if matches.len() > 1 && matches.iter().any(|(_, declaration)| declaration.generic_params.is_empty()) {
+            matches.retain(|(_, declaration)| declaration.generic_params.is_empty());
+        }
+
         let actual = actual_types
             .iter()
-            .map(|ty| describe_type(ty, self.symbols))
+            .map(|ty| describe_type(ty, self))
             .collect();
         match matches.len() {
             1 => Ok(matches.remove(0)),
@@ -390,8 +399,8 @@ impl<'a> AliasResolver<'a> {
                 let expected = self.resolve_type_expr(&param.ty)?;
                 if !expected.accepts(&actual) {
                     return Err(ResolveError::TypeMismatch {
-                        name: param.name.clone(), expected: describe_type(&expected, self.symbols),
-                        actual: describe_type(&actual, self.symbols), span: param.span,
+                        name: param.name.clone(), expected: describe_type(&expected, self),
+                        actual: describe_type(&actual, self), span: param.span,
                     });
                 }
             } else {
@@ -481,7 +490,7 @@ impl<'a> AliasResolver<'a> {
         let mismatch = |this: &Self| ResolveError::TypeMismatch {
             name: param_name.to_string(),
             expected: crate::printer::print_fn_bound(bound),
-            actual: describe_type(actual, this.symbols),
+            actual: describe_type(actual, this),
             span,
         };
 
@@ -532,13 +541,13 @@ impl<'a> AliasResolver<'a> {
                     Some(bound_wrong_kind @ GenericBinding::Const(_)) => Err(ResolveError::TypeMismatch {
                         name: name.clone(),
                         expected: format!("{bound_wrong_kind:?}"),
-                        actual: describe_type(actual, self.symbols),
+                        actual: describe_type(actual, self),
                         span,
                     }),
                     Some(GenericBinding::Type(bound)) => Err(ResolveError::TypeMismatch {
                         name: name.clone(),
-                        expected: describe_type(bound, self.symbols),
-                        actual: describe_type(actual, self.symbols),
+                        expected: describe_type(bound, self),
+                        actual: describe_type(actual, self),
                         span,
                     }),
                     None => {
@@ -550,10 +559,11 @@ impl<'a> AliasResolver<'a> {
         }
 
         if let TypeExpr::Apply { base, args, .. } = expected {
+            let actual_name = describe_type(actual, self);
             let mismatch = || ResolveError::TypeMismatch {
                 name: expected.name().unwrap_or("<generic argument>").to_string(),
                 expected: format!("{base:?}<...>"),
-                actual: describe_type(actual, self.symbols),
+                actual: actual_name.clone(),
                 span,
             };
 
@@ -613,8 +623,8 @@ impl<'a> AliasResolver<'a> {
         } else {
             Err(ResolveError::TypeMismatch {
                 name: expected.name().unwrap_or("<type>").to_string(),
-                expected: describe_type(&resolved, self.symbols),
-                actual: describe_type(actual, self.symbols),
+                expected: describe_type(&resolved, self),
+                actual: describe_type(actual, self),
                 span,
             })
         }
@@ -670,10 +680,10 @@ impl<'a> AliasResolver<'a> {
                                 let actual = self.value_type(&value)?;
                                 if !allowed_emits.iter().any(|ty| ty == &actual) {
                                     return Err(ResolveError::EmittedTypeNotDeclared {
-                                        actual: describe_type(&actual, self.symbols),
+                                        actual: describe_type(&actual, self),
                                         declared: allowed_emits
                                             .iter()
-                                            .map(|ty| describe_type(ty, self.symbols))
+                                            .map(|ty| describe_type(ty, self))
                                             .collect(),
                                         span: expr.span(),
                                     });
@@ -894,7 +904,7 @@ impl<'a> AliasResolver<'a> {
 
                     let value = match &decl.ty {
                         Some(ty) => {
-                            let target = self.resolve_type_expr(ty)?;
+                            let target = self.resolve_value_type_expr(ty, &scope)?;
                             self.convert_to(value, &target, decl.span)?
                         }
                         None => value,
@@ -2737,6 +2747,30 @@ mod tests {
     }
 
     #[test]
+    fn non_generic_overload_wins_over_a_generic_one() {
+        let source = "macro put<S>(value: S) { @emit 1000 + value.len\n }\n\
+                      macro put(value: int) { @emit value\n }\n\
+                      put 7\nput \"abc\"\n";
+        let program = parser::parse(lexer::lex(source).unwrap()).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let emitted: Vec<_> = program
+            .statements
+            .iter()
+            .filter_map(|statement| match statement {
+                Statement::Invocation(invocation) => Some(invocation),
+                _ => None,
+            })
+            .map(|invocation| {
+                resolver.expand_invocation(invocation, &HashMap::new()).unwrap().emitted[0].clone()
+            })
+            .collect();
+        assert_eq!(emitted, vec![Value::Int(Int::from(7)), Value::Int(Int::from(1003))]);
+    }
+
+    #[test]
     fn macro_overloads_dispatch_by_arity() {
         let source = "macro pick(value: int) { @emit 1\n }\n\
                       macro pick(left: int, right: int) { @emit 2\n }\n\
@@ -2851,6 +2885,25 @@ mod tests {
             resolver.expand_invocation(invocation, &HashMap::new()),
             Err(ResolveError::NoMatchingMacroOverload { name, actual, .. })
                 if name == "choose" && actual == ["int", "int"]
+        ));
+    }
+
+    #[test]
+    fn overloaded_macro_reports_a_generated_string_type_without_panicking() {
+        let source = "struct Reg { pub id: int }\n\
+                      macro choose(value: int) { @emit 1\n }\n\
+                      macro choose(value: Reg) { @emit 2\n }\n\
+                      choose \"text\"\n";
+        let program = parser::parse(lexer::lex(source).unwrap()).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+        let invocation = find_invocation(&program, "choose");
+
+        assert!(matches!(
+            resolver.expand_invocation(invocation, &HashMap::new()),
+            Err(ResolveError::NoMatchingMacroOverload { name, actual, .. })
+                if name == "choose" && actual == ["__string#0"]
         ));
     }
 

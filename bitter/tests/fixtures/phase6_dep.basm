@@ -6,8 +6,8 @@
 from std.x86_64.intel import *
 
 pub after_first:
-movi rdi, 7
+mov rdi, 7
 
 # exit(7)
-movi rax, 60
+mov rax, 60
 syscall

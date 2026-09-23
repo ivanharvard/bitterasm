@@ -711,7 +711,7 @@ phase6_entry.basm` (nothing but a relative `call` into a `pub` label
 imported from the other file) / `phase6_dep.basm` (the `pub` label's real
 code, including an `exit(7)`) — deliberately uses a *relative jump*
 (`call`, going through `std.bitter.deferred`'s `span`/`Positioned<32>`
-machinery), not a raw immediate move (`movi`): `movi`'s own encoding does
+machinery), not a raw immediate `mov`: `mov`'s immediate encoding does
 real compile-time byte-splitting arithmetic on its argument
 (`std/x86_64/impl.basm`'s `instr`/`instr_byte`, `byte_of(imm, ...)`),
 which a symbolic `Value::ExternLabel` can't satisfy — only a
@@ -737,3 +737,45 @@ shape unaffected). Full workspace `cargo test` (34 `bitter` + 292
 `bitterasm` lib tests + every integration suite, including a `cargo build
 --workspace --release` sanity pass) succeeds; `cargo clippy --workspace
 --all-targets` introduces no new warnings.
+
+## Follow-up: local label positions across regrouping, and `--entry`
+
+**Bug fixed.** `link::link` translated only cross-file `pub` references
+(`EmittedValue::Deferred`) into merged positions. A *local* label reached
+the `.em` as a plain entry index in its own file's source order, so it
+pointed at the wrong entry whenever `bitter build` moved entries: a
+reopened section (`.text` / `.data` / `.text`) or any input after the
+first. A `jmp` over a reopened section exited 0 instead of 7.
+
+**Fix.** `std.bitter.deferred` gained a `Deferred.Pos: int` variant, the
+same integer as `Leaf` but marked as an entry position. `span`'s `int`
+endpoints (positions by definition) are wrapped in `Pos`. `link` now
+remembers which input each merged value came from, and rewrites every
+`Pos(n)` through that input's `(input, local) -> global` map (the same
+map, factored into `Layout::global_position`, that `pub` labels use)
+before substituting cross-file placeholders. `pack.rs` resolves `Pos`
+exactly like `Leaf`. `bitter encode` (no regrouping) is unaffected.
+
+**Departs from "Established facts".** That section says this plan
+shouldn't change how an ISA package consumes label positions. RISC-V's
+branches changed from `mul(sub(target, here()), 4)` to
+`span(here(), target)`: byte-identical while every entry is a 4-byte
+instruction, but the old form hid which operand was a position, so the
+linker couldn't translate it (and `* 4` was wrong as soon as any
+non-instruction entry sat between branch and target).
+
+**Still not translated:** a label used as a plain number outside `span`,
+e.g. PDP-10's absolute jumps (`std/pdp10/impl.basm`, `jrst`/`jumpa`) or
+`@emit label`. Those remain correct only in `bitter encode` output or a
+single-input build with no reopened sections. Fixing them needs the same
+kind of marking for absolute positions (something like a `Positioned`
+field holding a `Deferred.Pos`).
+
+**Entry point.** `bitter build --entry <label>` starts execution at a
+`pub` label (reported by `link` in merged terms, converted to a byte
+offset with `pack::byte_offset_of`); with no flag, a `pub _start:` is
+used if any input declares one, otherwise the first byte as before.
+`bitter exec --entry <offset>` takes a byte offset (decimal or `0x` hex),
+since a raw `.bin` has no labels. All three container formats take the
+offset (ELF `e_entry`, PE `AddressOfEntryPoint`, Mach-O `LC_MAIN`
+`entryoff`). This supersedes the "entry point: unchanged" decision above.

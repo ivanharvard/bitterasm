@@ -18,20 +18,20 @@ mov [rbx+rcx*4+0x10], rax
 mov [rip+0x20], rax
 
 add rax, rbx
-addi rax, 5
+add rax, 5
 or rax, rbx
-ori rax, 5
+or rax, 5
 and rax, rbx
-andi rax, 5
+and rax, 5
 sub rax, rbx
-subi rax, 5
+sub rax, 5
 xor rax, rbx
-xori rax, 5
+xor rax, 5
 cmp rax, rbx
-cmpi rax, 5
+cmp rax, 5
 test rax, rbx
-testi rax, 5
-movi rax, 100
+test rax, 5
+mov rax, 100
 
 lea rax, [rbx+8]
 lea rax, [rbx+rcx*4+0x10]

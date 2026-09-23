@@ -33,9 +33,9 @@ mov MemRipRelative(0x100), rbx, 0
 
 # --- other mnemonics wired through mem_reg_instr/mem_imm_instr ---
 add Mem(rax, 0), rcx, 1     # ALU reg,mem, w=1 (REX.W)
-addi Mem(rax, 0), 0x7F, 0   # ALU imm,mem (0x81 /0)
-movi Mem(rbx, 4), 0x2A, 0   # mov mem,imm (0xC7 /0, distinct from 0xB8+reg)
-testi Mem(rax, 0), 0xFF, 0  # test mem,imm (0xF7 /0)
+add Mem(rax, 0), 0x7F, 0   # ALU imm,mem (0x81 /0)
+mov Mem(rbx, 4), 0x2A, 0   # mov mem,imm (0xC7 /0, distinct from 0xB8+reg)
+test Mem(rax, 0), 0xFF, 0  # test mem,imm (0xF7 /0)
 
 # --- mov's load direction (0x8B), needed for the Intel dialect's
 # `mov rd, [mem]` bracket syntax ---

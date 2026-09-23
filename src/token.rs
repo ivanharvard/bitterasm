@@ -89,6 +89,31 @@ pub enum TokenKind {
     Eof,
 }
 
+impl TokenKind {
+    /// The source text of a word-shaped token — an identifier or a keyword
+    /// — or `None` for anything else. Used where a keyword can't mean
+    /// anything special, e.g. after the `.` of a dotted label name
+    /// (`.skip:`, `jmp .type`).
+    pub fn word_text(&self) -> Option<&str> {
+        Some(match self {
+            TokenKind::Identifier(name) => name,
+            TokenKind::From => "from",
+            TokenKind::Import => "import",
+            TokenKind::As => "as",
+            TokenKind::In => "in",
+            TokenKind::Pub => "pub",
+            TokenKind::Skip => "skip",
+            TokenKind::Macro => "macro",
+            TokenKind::Type => "type",
+            TokenKind::Struct => "struct",
+            TokenKind::Enum => "enum",
+            TokenKind::Const => "const",
+            TokenKind::Section => "section",
+            _ => return None,
+        })
+    }
+}
+
 /// A half-open `[start, end)` byte range into the original source text,
 /// attached to every token and AST node for diagnostics.
 ///

@@ -109,6 +109,115 @@ impl Parser {
     ) -> Result<Invocation, ParseError> {
         let start = self.current().span.start;
 
+        let operands = self.match_syntax_pattern(name, pattern)?;
+
+        if !self.at_statement_end() {
+            return Err(ParseError::new(
+                format!(
+                    "unexpected token after matching `{name}`'s syntax pattern: {:?}",
+                    self.current().kind
+                ),
+                self.current().span,
+            ));
+        }
+
+        let end = self.statement_end()?;
+
+        Ok(Invocation {
+            name: name.to_string(),
+            operands,
+            span: Span::new(start, end),
+        })
+    }
+
+    // Operand position (see `facets::syntax::is_operand_pattern`): tries
+    // every operand pattern whose leading token is the current one, with
+    // the same most-literal-tokens tie-break as statement matching, and
+    // turns the match into a plain call `name(operands...)`. `None` (with
+    // the position untouched) when no candidate matches, so the caller
+    // falls back to ordinary expression parsing and its own diagnostics.
+    pub(super) fn parse_operand_via_syntax(&mut self) -> Result<Option<Expr>, ParseError> {
+        let current = self.current().kind.clone();
+        let candidates: Vec<(String, SyntaxPattern)> = self
+            .unanchored_syntaxes
+            .iter()
+            .filter(|(_, pattern)| {
+                crate::facets::syntax::is_operand_pattern(pattern)
+                    && matches!(
+                        pattern.segments.first(),
+                        Some(PatternSegment::Literal(tokens)) if tokens.first() == Some(&current)
+                    )
+            })
+            .cloned()
+            .collect();
+
+        if candidates.is_empty() {
+            return Ok(None);
+        }
+
+        let start_pos = self.pos;
+        let start_span = self.current().span;
+        let mut matches: Vec<(String, Vec<Expr>, usize, usize)> = Vec::new();
+
+        for (name, pattern) in &candidates {
+            self.pos = start_pos;
+            if let Ok(operands) = self.match_syntax_pattern(name, pattern) {
+                let specificity = literal_token_count(pattern);
+                if !matches.iter().any(|(known, args, _, _)| known == name && args == &operands) {
+                    matches.push((name.clone(), operands, self.pos, specificity));
+                }
+            }
+        }
+
+        if let Some(max_specificity) = matches.iter().map(|(_, _, _, specificity)| *specificity).max() {
+            matches.retain(|(_, _, _, specificity)| *specificity == max_specificity);
+        }
+
+        match matches.len() {
+            0 => {
+                self.pos = start_pos;
+                Ok(None)
+            }
+            1 => {
+                let (name, operands, end_pos, _) = matches.pop().unwrap();
+                self.pos = end_pos;
+                let span = Span::new(start_span.start, self.previous().span.end);
+                let arguments = operands
+                    .into_iter()
+                    .map(|value| CallArgument { name: None, span: value.span(), value })
+                    .collect();
+                Ok(Some(Expr::Call {
+                    callee: Box::new(Expr::Identifier { name, span: start_span }),
+                    arguments,
+                    span,
+                }))
+            }
+            _ => {
+                let mut names: Vec<&str> = matches.iter().map(|(name, _, _, _)| name.as_str()).collect();
+                names.sort_unstable();
+                names.dedup();
+
+                Err(ParseError::new(
+                    format!(
+                        "ambiguous syntax for `{}`: multiple patterns match this operand",
+                        names.join("`/`"),
+                    ),
+                    start_span,
+                ))
+            }
+        }
+    }
+
+    // Matches `pattern`'s segments from the current position, returning the
+    // captured expressions reordered into the macro's declared parameter
+    // order. Leaves the position just past the last segment; what may
+    // follow (statement end, or the rest of an enclosing expression) is the
+    // caller's business.
+    fn match_syntax_pattern(
+        &mut self,
+        name: &str,
+        pattern: &SyntaxPattern,
+    ) -> Result<Vec<Expr>, ParseError> {
         let mut captured: HashMap<String, Expr> = HashMap::new();
 
         for (index, segment) in pattern.segments.iter().enumerate() {
@@ -146,18 +255,6 @@ impl Parser {
             }
         }
 
-        if !self.at_statement_end() {
-            return Err(ParseError::new(
-                format!(
-                    "unexpected token after matching `{name}`'s syntax pattern: {:?}",
-                    self.current().kind
-                ),
-                self.current().span,
-            ));
-        }
-
-        let end = self.statement_end()?;
-
         let operands = pattern
             .param_order
             .iter()
@@ -170,11 +267,7 @@ impl Parser {
             })
             .collect();
 
-        Ok(Invocation {
-            name: name.to_string(),
-            operands,
-            span: Span::new(start, end),
-        })
+        Ok(operands)
     }
 }
 

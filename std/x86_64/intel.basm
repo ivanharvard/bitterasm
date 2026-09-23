@@ -10,25 +10,16 @@
 # its own.
 #
 # =================
-# operand size: always 64-bit
+# operand size: picked by register spelling
 # =================
 # Every mnemonic below drops `impl.basm`'s explicit trailing `w: int` parameter
-# and
-# hardcodes `w = 1` (64-bit) — there is no 32-bit register name family in this
-# package (`r0..r15`/`rax`/`rbx`/... are the *only* register spellings
-# `impl.basm`
-# defines; unlike real x86-64 assembly, there's no separate `eax`/`ebx`/... set
-# to
-# read a 32-bit operand size off of), so a 32-bit form has no natural spelling
-# to
-# give it here. 32-bit forms remain fully reachable — this file only *adds*
-# syntax
-# sugar, it never removes `impl.basm`'s own default positional syntax — by
-# writing
-# the `w` argument explicitly, e.g. `mov rax, rbx, 0`; every mnemonic below also
-# gets an explicit "restatement" pattern for its own real, full-arity signature
-# (see
-# the next section) for exactly this reason.
+# and reads it off the register family instead: `rax`/`r8`/... (`Reg`) mean
+# `w = 1` (64-bit), `eax`/`r8d`/... (`Reg32`) mean `w = 0` (32-bit) — see the
+# "32-bit operand size" section near the end. The explicit `w` form stays
+# reachable too — this file only *adds* syntax sugar, it never removes
+# `impl.basm`'s own default positional syntax — e.g. `mov rax, rbx, 0`; every
+# mnemonic below also gets an explicit "restatement" pattern for its own real,
+# full-arity signature (see the next section) for exactly this reason.
 #
 # =================
 # why almost every mnemonic needs *two* patterns, not one
@@ -99,13 +90,10 @@
 # it, for the full reasoning and the new tests covering it.
 #
 # =================
-# reg,reg vs. reg,imm: compatibility mnemonics
+# reg,reg vs. reg,imm: overloads
 # =================
-# `movi`/`addi`/.../`testi` keep `impl.basm`'s own `i`-suffixed names rather
-# than
-# merging into `mov`/`add`/... to preserve the package's existing API. `Reg` is
-# now a distinct `bits<4>` type, so the resolver can distinguish register and
-# immediate operands; the separate names are no longer a type-system necessity.
+# `Reg` is a distinct `bits<4>` type, so the resolver can distinguish register
+# and immediate operands. Expose both forms under the real Intel mnemonic.
 # (Memory-operand forms don't have this problem — see the section above: a
 # bracketed operand is lexically distinct from a bare one, so `mov`'s many
 # memory
@@ -122,7 +110,7 @@ from .impl import *
 # (`unknown macro` from a file that only ever imports this one) — not
 # investigated further, `pub` costs nothing here.
 pub macro assert_valid_reg(r: Reg) {
-    @assert r.value >= 0 && r.value <= 15, "not a valid register (0-15) — use the `i`-suffixed mnemonic for an immediate"
+    @assert r.value >= 0 && r.value <= 15, "not a valid register (0-15)"
 }
 
 # =================
@@ -231,9 +219,7 @@ pub macro and(rd: Reg, rs: Reg)
 
 syntax sub(a, b, c) = { sub $a$, $b$, $c$ }
 
-# `sub2` is retained as the internal name for compatibility. Its unanchored
-# syntax pattern still exposes the real `sub` mnemonic at the call site.
-pub macro sub2(rd: Reg, rs: Reg)
+pub macro sub(rd: Reg, rs: Reg)
     | syntax { sub $rd$, $rs$ } {
         assert_valid_reg rs
         sub rd, rs, 1
@@ -260,40 +246,31 @@ pub macro test(rd: Reg, rs: Reg)
         test rd, rs, 1
     }
 
-# reg,imm forms — same treatment, `impl.basm`'s own `i`-suffixed names kept (see
-# this file's own header comment on why).
+# reg,imm forms — same surface mnemonic as reg,reg, selected by operand type.
 
-syntax movi(a, b, c) = { movi $a$, $b$, $c$ }
-pub macro movi(rd: Reg, imm: int)
-    | syntax { movi $rd$, $imm$ } { movi rd, imm, 1 }
+pub macro mov(rd: Reg, imm: int)
+    | syntax { mov $rd$, $imm$ } { mov rd, imm, 1 }
 
-syntax addi(a, b, c) = { addi $a$, $b$, $c$ }
-pub macro addi(rd: Reg, imm: int)
-    | syntax { addi $rd$, $imm$ } { addi rd, imm, 1 }
+pub macro add(rd: Reg, imm: int)
+    | syntax { add $rd$, $imm$ } { add rd, imm, 1 }
 
-syntax ori(a, b, c) = { ori $a$, $b$, $c$ }
-pub macro ori(rd: Reg, imm: int)
-    | syntax { ori $rd$, $imm$ } { ori rd, imm, 1 }
+pub macro or(rd: Reg, imm: int)
+    | syntax { or $rd$, $imm$ } { or rd, imm, 1 }
 
-syntax andi(a, b, c) = { andi $a$, $b$, $c$ }
-pub macro andi(rd: Reg, imm: int)
-    | syntax { andi $rd$, $imm$ } { andi rd, imm, 1 }
+pub macro and(rd: Reg, imm: int)
+    | syntax { and $rd$, $imm$ } { and rd, imm, 1 }
 
-syntax subi(a, b, c) = { subi $a$, $b$, $c$ }
-pub macro subi(rd: Reg, imm: int)
-    | syntax { subi $rd$, $imm$ } { subi rd, imm, 1 }
+pub macro sub(rd: Reg, imm: int)
+    | syntax { sub $rd$, $imm$ } { sub rd, imm, 1 }
 
-syntax xori(a, b, c) = { xori $a$, $b$, $c$ }
-pub macro xori(rd: Reg, imm: int)
-    | syntax { xori $rd$, $imm$ } { xori rd, imm, 1 }
+pub macro xor(rd: Reg, imm: int)
+    | syntax { xor $rd$, $imm$ } { xor rd, imm, 1 }
 
-syntax cmpi(a, b, c) = { cmpi $a$, $b$, $c$ }
-pub macro cmpi(rd: Reg, imm: int)
-    | syntax { cmpi $rd$, $imm$ } { cmpi rd, imm, 1 }
+pub macro cmp(rd: Reg, imm: int)
+    | syntax { cmp $rd$, $imm$ } { cmp rd, imm, 1 }
 
-syntax testi(a, b, c) = { testi $a$, $b$, $c$ }
-pub macro testi(rd: Reg, imm: int)
-    | syntax { testi $rd$, $imm$ } { testi rd, imm, 1 }
+pub macro test(rd: Reg, imm: int)
+    | syntax { test $rd$, $imm$ } { test rd, imm, 1 }
 
 # =================
 # lea
@@ -349,9 +326,8 @@ pub macro shl_cl(rd: Reg)
 
 syntax shr(a, b, c) = { shr $a$, $b$, $c$ }
 
-# Named `shr_imm`, not `shr` — the exact same `std.bitter.deferred`-collision
-# reason as `sub2` above (`shr(rd: Reg, imm: int)` would be `(int, int)`,
-# identical to `std.bitter.deferred`'s own `shr(a: int, b: int)`).
+# These wrapper names distinguish the immediate and literal-`cl` bodies
+# internally; both still expose the ordinary `shr` mnemonic at the call site.
 pub macro shr_imm(rd: Reg, imm: int)
     | syntax { shr $rd$, $imm$ } { shr rd, imm, 1 }
 pub macro shr_cl(rd: Reg)
@@ -362,6 +338,145 @@ pub macro sar(rd: Reg, imm: int)
     | syntax { sar $rd$, $imm$ } { sar rd, imm, 1 }
 pub macro sar_cl(rd: Reg)
     | syntax { sar $rd$, cl } { sar_cl rd, 1 }
+
+# =================
+# 32-bit operand size: eax, ecx, ..., r15d
+# =================
+# The same sugar as every section above, overloaded on `Reg32` instead of
+# `Reg` and hardcoding `w = 0` instead of `w = 1` — each one reuses its
+# 64-bit counterpart's exact name and pattern, so the resolver alone picks
+# the operand size from the register spelling (`mov eax, 1` vs.
+# `mov rax, 1`), the same way it already picks reg,reg vs. reg,imm. Mixing
+# sizes (`add rax, ecx`) matches no overload and is an error, as in real
+# assembly. Memory operands' base/index registers stay `Reg`: in 64-bit
+# mode an address is always formed from 64-bit registers, whatever the
+# size of the data moved. `mov r32, imm` takes an imm32 (`impl.basm`'s
+# `imm_len = 4 + 4 * w`), and like every 32-bit write it zero-extends into
+# the full 64-bit register.
+
+pub macro mov(rd: Reg32, rs: Reg32)
+    | syntax { mov $rd$, $rs$ } { mov rd.reg, rs.reg, 0 }
+
+pub macro mov(rd: Reg32, imm: int)
+    | syntax { mov $rd$, $imm$ } { mov rd.reg, imm, 0 }
+
+pub macro mov_load_base(rd: Reg32, base: Reg)
+    | syntax { mov $rd$, [$base$] } {
+        mov rd.reg, Mem(base, 0), 0
+    }
+
+pub macro mov_load_base_disp(rd: Reg32, base: Reg, disp: int)
+    | syntax { mov $rd$, [$base$+$disp$] } {
+        mov rd.reg, Mem(base, disp), 0
+    }
+
+pub macro mov_load_indexed(
+    rd: Reg32,
+    base: Reg,
+    index: Reg,
+    scale: int,
+    disp: int
+)
+    | syntax { mov $rd$, [$base$+$index$*$scale$+$disp$] }
+{
+    mov rd.reg, MemIndexed(base, index, scale, disp), 0
+}
+
+pub macro mov_load_rip(rd: Reg32, disp: int)
+    | syntax { mov $rd$, [rip+$disp$] } {
+        mov rd.reg, MemRipRelative(disp), 0
+    }
+
+pub macro mov_store_base(base: Reg, rs: Reg32)
+    | syntax { mov [$base$], $rs$ } {
+        mov Mem(base, 0), rs.reg, 0
+    }
+
+pub macro mov_store_base_disp(base: Reg, disp: int, rs: Reg32)
+    | syntax { mov [$base$+$disp$], $rs$ } {
+        mov Mem(base, disp), rs.reg, 0
+    }
+
+pub macro mov_store_indexed(
+    base: Reg,
+    index: Reg,
+    scale: int,
+    disp: int,
+    rs: Reg32
+)
+    | syntax { mov [$base$+$index$*$scale$+$disp$], $rs$ }
+{
+    mov MemIndexed(base, index, scale, disp), rs.reg, 0
+}
+
+pub macro mov_store_rip(disp: int, rs: Reg32)
+    | syntax { mov [rip+$disp$], $rs$ } {
+        mov MemRipRelative(disp), rs.reg, 0
+    }
+
+pub macro add(rd: Reg32, rs: Reg32)
+    | syntax { add $rd$, $rs$ } { add rd.reg, rs.reg, 0 }
+pub macro or(rd: Reg32, rs: Reg32)
+    | syntax { or $rd$, $rs$ } { or rd.reg, rs.reg, 0 }
+pub macro and(rd: Reg32, rs: Reg32)
+    | syntax { and $rd$, $rs$ } { and rd.reg, rs.reg, 0 }
+pub macro sub(rd: Reg32, rs: Reg32)
+    | syntax { sub $rd$, $rs$ } { sub rd.reg, rs.reg, 0 }
+pub macro xor(rd: Reg32, rs: Reg32)
+    | syntax { xor $rd$, $rs$ } { xor rd.reg, rs.reg, 0 }
+pub macro cmp(rd: Reg32, rs: Reg32)
+    | syntax { cmp $rd$, $rs$ } { cmp rd.reg, rs.reg, 0 }
+pub macro test(rd: Reg32, rs: Reg32)
+    | syntax { test $rd$, $rs$ } { test rd.reg, rs.reg, 0 }
+
+pub macro add(rd: Reg32, imm: int)
+    | syntax { add $rd$, $imm$ } { add rd.reg, imm, 0 }
+pub macro or(rd: Reg32, imm: int)
+    | syntax { or $rd$, $imm$ } { or rd.reg, imm, 0 }
+pub macro and(rd: Reg32, imm: int)
+    | syntax { and $rd$, $imm$ } { and rd.reg, imm, 0 }
+pub macro sub(rd: Reg32, imm: int)
+    | syntax { sub $rd$, $imm$ } { sub rd.reg, imm, 0 }
+pub macro xor(rd: Reg32, imm: int)
+    | syntax { xor $rd$, $imm$ } { xor rd.reg, imm, 0 }
+pub macro cmp(rd: Reg32, imm: int)
+    | syntax { cmp $rd$, $imm$ } { cmp rd.reg, imm, 0 }
+pub macro test(rd: Reg32, imm: int)
+    | syntax { test $rd$, $imm$ } { test rd.reg, imm, 0 }
+
+pub macro lea_base(rd: Reg32, base: Reg)
+    | syntax { lea $rd$, [$base$] } {
+        lea rd.reg, Mem(base, 0), 0
+    }
+
+pub macro lea_base_disp(rd: Reg32, base: Reg, disp: int)
+    | syntax { lea $rd$, [$base$+$disp$] } {
+        lea rd.reg, Mem(base, disp), 0
+    }
+
+pub macro lea_indexed(rd: Reg32, base: Reg, index: Reg, scale: int, disp: int)
+    | syntax { lea $rd$, [$base$+$index$*$scale$+$disp$] }
+{
+    lea rd.reg, MemIndexed(base, index, scale, disp), 0
+}
+
+pub macro lea_rip(rd: Reg32, disp: int)
+    | syntax { lea $rd$, [rip+$disp$] } {
+        lea rd.reg, MemRipRelative(disp), 0
+    }
+
+pub macro shl(rd: Reg32, imm: int)
+    | syntax { shl $rd$, $imm$ } { shl rd.reg, imm, 0 }
+pub macro shl_cl(rd: Reg32)
+    | syntax { shl $rd$, cl } { shl_cl rd.reg, 0 }
+pub macro shr_imm(rd: Reg32, imm: int)
+    | syntax { shr $rd$, $imm$ } { shr rd.reg, imm, 0 }
+pub macro shr_cl(rd: Reg32)
+    | syntax { shr $rd$, cl } { shr_cl rd.reg, 0 }
+pub macro sar(rd: Reg32, imm: int)
+    | syntax { sar $rd$, $imm$ } { sar rd.reg, imm, 0 }
+pub macro sar_cl(rd: Reg32)
+    | syntax { sar $rd$, cl } { sar_cl rd.reg, 0 }
 
 # =================
 # push/pop, control flow, ret
@@ -399,3 +514,17 @@ syntax jo(target) = { jo $target$ }
 syntax jno(target) = { jno $target$ }
 syntax jp(target) = { jp $target$ }
 syntax jnp(target) = { jnp $target$ }
+syntax jz(target) = { jz $target$ }
+syntax jnz(target) = { jnz $target$ }
+syntax jc(target) = { jc $target$ }
+syntax jnae(target) = { jnae $target$ }
+syntax jnc(target) = { jnc $target$ }
+syntax jnb(target) = { jnb $target$ }
+syntax jnbe(target) = { jnbe $target$ }
+syntax jna(target) = { jna $target$ }
+syntax jnge(target) = { jnge $target$ }
+syntax jnl(target) = { jnl $target$ }
+syntax jng(target) = { jng $target$ }
+syntax jnle(target) = { jnle $target$ }
+syntax jpe(target) = { jpe $target$ }
+syntax jpo(target) = { jpo $target$ }

@@ -148,7 +148,7 @@ impl<'a> AliasResolver<'a> {
         } else {
             TypeExpr::Apply { base: Box::new(base), args: generic_args.to_vec(), span }
         };
-        let ResolvedType::Enum { symbol, args } = self.resolve_type_expr(&ty)? else {
+        let ResolvedType::Enum { symbol, args } = self.resolve_value_type_expr(&ty, scope)? else {
             return Err(ResolveError::ExpectedType { name: enum_name.to_string(), span });
         };
         let expected_payload = self.instantiate_enum_payload(symbol, &args, variant, span)?;
@@ -342,7 +342,7 @@ impl<'a> AliasResolver<'a> {
 
             Expr::As { value, ty, span } => {
                 let value = self.eval_value(value, scope)?;
-                let target = self.resolve_type_expr(ty)?;
+                let target = self.resolve_value_type_expr(ty, scope)?;
 
                 self.convert_to(value, &target, *span)
             }
@@ -652,8 +652,8 @@ impl<'a> AliasResolver<'a> {
             if actual != expected {
                 return Err(ResolveError::TypeMismatch {
                     name: field_name,
-                    expected: describe_type(&expected, self.symbols),
-                    actual: describe_type(&actual, self.symbols),
+                    expected: describe_type(&expected, self),
+                    actual: describe_type(&actual, self),
                     span,
                 });
             }
@@ -788,8 +788,8 @@ impl<'a> AliasResolver<'a> {
             if actual != expected {
                 return Err(ResolveError::TypeMismatch {
                     name: field_name,
-                    expected: describe_type(&expected, self.symbols),
-                    actual: describe_type(&actual, self.symbols),
+                    expected: describe_type(&expected, self),
+                    actual: describe_type(&actual, self),
                     span,
                 });
             }
@@ -836,37 +836,96 @@ impl<'a> AliasResolver<'a> {
         args.iter()
             .map(|arg| match arg {
                 TypeArgument::Type(ty) => {
-                    Ok(ResolvedGenericArg::Type(Box::new(self.resolve_type_expr(ty)?)))
+                    Ok(ResolvedGenericArg::Type(Box::new(
+                        self.resolve_value_type_expr(ty, scope)?,
+                    )))
                 }
 
                 TypeArgument::Const(expr) => {
-                    let value = self.eval_value(expr, scope)?;
-                    let discriminant = match value {
-                        Value::Int(value) => value,
-                        Value::Enum { symbol, variant, payload: None, .. } => {
-                            let declaration = self.find_enum_declaration_rc(symbol)?;
-                            let index = declaration
-                                .variants
-                                .iter()
-                                .position(|candidate| candidate.name == variant)
-                                .ok_or_else(|| ResolveError::Internal {
-                                    message: format!("enum value has unknown variant `{variant}`"),
-                                    span: expr.span(),
-                                })?;
-                            Int::from(index)
-                        }
-                        Value::Enum { .. } | Value::Struct { .. } | Value::Macro(_)
-                        | Value::ExternLabel { .. } => {
-                            return Err(ResolveError::ExpectedIntValue { span: expr.span() });
-                        }
-                    };
-                    Ok(ResolvedGenericArg::Const(discriminant))
+                    Ok(ResolvedGenericArg::Const(
+                        self.eval_generic_const_arg(expr, scope)?,
+                    ))
                 }
                 TypeArgument::Wildcard(span) => {
                     Err(ResolveError::ExpectedValueExpression { span: *span })
                 }
             })
             .collect()
+    }
+
+    /// Resolves a type written in value position against the live value
+    /// scope. Unlike declaration types, these types may use a constant
+    /// computed through field access, such as
+    /// `const n = packed.len; packed as String<n>`.
+    pub(super) fn resolve_value_type_expr(
+        &mut self,
+        ty: &TypeExpr,
+        scope: &HashMap<String, Value>,
+    ) -> Result<ResolvedType, ResolveError> {
+        let materialized = self.materialize_type_const_args(ty, scope)?;
+        self.resolve_type_expr(&materialized)
+    }
+
+    fn materialize_type_const_args(
+        &mut self,
+        ty: &TypeExpr,
+        scope: &HashMap<String, Value>,
+    ) -> Result<TypeExpr, ResolveError> {
+        match ty {
+            TypeExpr::Named { .. } => Ok(ty.clone()),
+            TypeExpr::Apply { base, args, span } => {
+                let base = Box::new(self.materialize_type_const_args(base, scope)?);
+                let mut materialized_args = Vec::with_capacity(args.len());
+
+                for arg in args {
+                    materialized_args.push(match arg {
+                        TypeArgument::Type(inner) => TypeArgument::Type(
+                            self.materialize_type_const_args(inner, scope)?,
+                        ),
+                        TypeArgument::Const(expr) => {
+                            let value = self.eval_generic_const_arg(expr, scope)?;
+                            TypeArgument::Const(Expr::Integer {
+                                raw: value.to_string(),
+                                span: expr.span(),
+                            })
+                        }
+                        TypeArgument::Wildcard(span) => TypeArgument::Wildcard(*span),
+                    });
+                }
+
+                Ok(TypeExpr::Apply {
+                    base,
+                    args: materialized_args,
+                    span: *span,
+                })
+            }
+        }
+    }
+
+    fn eval_generic_const_arg(
+        &mut self,
+        expr: &Expr,
+        scope: &HashMap<String, Value>,
+    ) -> Result<Int, ResolveError> {
+        match self.eval_value(expr, scope)? {
+            Value::Int(value) => Ok(value),
+            Value::Enum { symbol, variant, payload: None, .. } => {
+                let declaration = self.find_enum_declaration_rc(symbol)?;
+                let index = declaration
+                    .variants
+                    .iter()
+                    .position(|candidate| candidate.name == variant)
+                    .ok_or_else(|| ResolveError::Internal {
+                        message: format!("enum value has unknown variant `{variant}`"),
+                        span: expr.span(),
+                    })?;
+                Ok(Int::from(index))
+            }
+            Value::Enum { .. } | Value::Struct { .. } | Value::Macro(_)
+            | Value::ExternLabel { .. } => {
+                Err(ResolveError::ExpectedIntValue { span: expr.span() })
+            }
+        }
     }
 
     // Expands a construction's own `@for`/`@if` items into concrete
@@ -1085,8 +1144,8 @@ impl<'a> AliasResolver<'a> {
 
         if candidates.len() > 1 {
             return Err(ResolveError::AmbiguousConversion {
-                source: describe_type(source_ty, self.symbols),
-                target: describe_type(target, self.symbols),
+                source: describe_type(source_ty, self),
+                target: describe_type(target, self),
                 span,
             });
         }
@@ -1308,7 +1367,7 @@ impl<'a> AliasResolver<'a> {
 
                 match ty {
                     Some(ty) => {
-                        let target = this.resolve_type_expr(&ty)?;
+                        let target = this.resolve_value_type_expr(&ty, &HashMap::new())?;
                         this.convert_to(value, &target, declaration.span)
                     }
                     None => Ok(value),
@@ -2285,6 +2344,50 @@ mod tests {
                 nominal: Some(ubyte_id),
             }
         );
+    }
+
+    #[test]
+    fn as_target_const_generics_can_use_field_derived_value_constants() {
+        let source = r#"
+enum Order {
+    First,
+    Second,
+}
+
+struct Sized<const len: int, const order: Order> {
+    pub value: int,
+    pub len: int,
+}
+
+const original = Sized<3, Order.Second> {
+    value: 7,
+    len: 3,
+}
+const derived_len = original.len
+const converted = original as Sized<derived_len, Order.Second>
+"#;
+        let program = parser::parse(lexer::lex(source).unwrap()).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
+        let sized_id = symbols.lookup("Sized").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        let value = resolver
+            .resolve_const_value("converted", crate::token::Span::new(0, 0))
+            .unwrap();
+
+        assert!(matches!(
+            value,
+            Value::Struct {
+                symbol,
+                args,
+                ..
+            } if symbol == sized_id
+                && args == vec![
+                    ResolvedGenericArg::Const(Int::from(3)),
+                    ResolvedGenericArg::Const(Int::from(1)),
+                ]
+        ));
     }
 
     #[test]

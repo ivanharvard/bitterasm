@@ -33,17 +33,10 @@ is close enough, but this project's own encoder is deliberately near-only
 (rel32) by explicit design, so a close-enough target would make the two
 sides disagree on encoding *length*, not correctness.
 
-Every case sticks to this dialect's own real surface: real reg,reg and
-bracket-memory forms share their real x86 mnemonic (`mov`/`add`/...), but a
-reg,imm form doesn't — this project's own `movi`/`addi`/etc. naming has no
-counterpart in real Intel syntax, which spells both forms identically. GNU
-as doesn't recognize `movi`/`addi` as instructions at all, and a bare
-`mov rax, 100` silently means something different under this dialect (a
-reg,reg `mov` misreading `100` as a register number — see
-std/x86_64/intel.basm's `assert_valid_reg`) than it does to a real
-assembler, so reg,imm forms are outside what a shared `.s` file can safely
-express and are excluded from this harness entirely; they're already
-byte-verified by hand against the Intel SDM in tests/x86_64_encoding.rs.
+Every case sticks to this dialect's real Intel surface: register, immediate,
+and bracket-memory forms share their real x86 mnemonic (`mov`/`add`/...).
+The resolver selects the encoding from the operand types, just as it does for
+the dialect's other overloaded instruction forms.
 
 Requires Docker; this builds the oracle image itself (cached by Docker after
 the first run, `--platform linux/amd64` so it's genuine x86-64 binutils

@@ -595,6 +595,36 @@ impl Parser {
         same_variant(&self.current().kind, kind)
     }
 
+    // `.` immediately followed (no whitespace) by an identifier or keyword
+    // — the spelling of a dotted label name like `.loop`.
+    fn at_dot_identifier(&self) -> bool {
+        let dot = self.current();
+
+        matches!(dot.kind, TokenKind::Dot)
+            && self.tokens.get(self.pos + 1).is_some_and(|token| {
+                token.kind.word_text().is_some()
+                    && token.span.start == dot.span.end
+            })
+    }
+
+    // Consumes a dotted label name (`at_dot_identifier` must hold) and
+    // returns it with its leading `.` kept.
+    fn expect_dotted_name(&mut self) -> String {
+        self.advance();
+
+        let word = self.advance().kind.word_text().unwrap_or_default();
+
+        format!(".{word}")
+    }
+
+    // `.name:` at statement start — a dotted label definition.
+    fn at_dotted_label(&self) -> bool {
+        self.at_dot_identifier()
+            && self.tokens
+                .get(self.pos + 2)
+                .is_some_and(|token| matches!(token.kind, TokenKind::Colon))
+    }
+
     fn check_next(&self, kind: &TokenKind) -> bool {
         self.tokens
             .get(self.pos + 1)

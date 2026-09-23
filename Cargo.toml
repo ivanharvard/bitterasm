@@ -3,7 +3,7 @@ members = ["bitter"]
 
 [package]
 name = "bitterasm"
-version = "0.1.0-alpha.1"
+version = "0.2.0-alpha"
 edition = "2024"
 description = "A metalanguage for constructing assembly languages, assuming almost nothing about the target architecture."
 license = "MIT OR Apache-2.0"

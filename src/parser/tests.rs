@@ -87,6 +87,39 @@ fn parses_pub_label() {
 }
 
 #[test]
+fn parses_dotted_label() {
+    let program = parse(lex(".loop:\npub .skip:\n").unwrap()).unwrap();
+
+    let Statement::Label(label) = &program.statements[0] else {
+        panic!("expected label");
+    };
+
+    assert_eq!(label.name, ".loop");
+    assert!(!label.is_pub);
+
+    let Statement::Label(label) = &program.statements[1] else {
+        panic!("expected label");
+    };
+
+    assert_eq!(label.name, ".skip");
+    assert!(label.is_pub);
+}
+
+#[test]
+fn parses_dotted_label_reference() {
+    let program = parse(lex("jmp .loop\n").unwrap()).unwrap();
+
+    let Statement::Invocation(invocation) = &program.statements[0] else {
+        panic!("expected invocation");
+    };
+
+    assert!(matches!(
+        &invocation.operands[0],
+        Expr::Identifier { name, .. } if name == ".loop"
+    ));
+}
+
+#[test]
 fn parses_section_with_bare_name() {
     let program = parse(lex("section data\n").unwrap()).unwrap();
 
@@ -1287,6 +1320,32 @@ fn syntax_overloads_reject_multiple_distinct_matches() {
 
     let error = parse(lex(source).unwrap()).unwrap_err();
     assert!(error.message.contains("ambiguous syntax for `mix`"));
+}
+
+#[test]
+fn operand_syntax_becomes_a_call_in_operand_position() {
+    let source = "macro rel(target: int) -> int | syntax { [rel $target$] } {\n    @return target\n}\n\n\
+                  lea rsi, [rel msg]\n";
+
+    let program = parse(lex(source).unwrap()).unwrap();
+    let Statement::Invocation(invocation) = &program.statements[1] else {
+        panic!("expected invocation");
+    };
+    assert_eq!(invocation.name, "lea");
+    let Expr::Call { callee, arguments, .. } = &invocation.operands[1] else {
+        panic!("expected `[rel msg]` to parse as a call, got {:?}", invocation.operands[1]);
+    };
+    assert!(matches!(callee.as_ref(), Expr::Identifier { name, .. } if name == "rel"));
+    assert!(matches!(&arguments[0].value, Expr::Identifier { name, .. } if name == "msg"));
+}
+
+#[test]
+fn operand_syntax_that_does_not_match_falls_back_to_ordinary_parsing() {
+    let source = "macro rel(target: int) -> int | syntax { [rel $target$] } {\n    @return target\n}\n\n\
+                  foo [bar]\n";
+
+    let error = parse(lex(source).unwrap()).unwrap_err();
+    assert!(error.message.contains("expected expression"), "{}", error.message);
 }
 
 #[test]

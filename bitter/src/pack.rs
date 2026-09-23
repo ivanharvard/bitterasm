@@ -64,6 +64,17 @@ pub fn pack_stream(values: &[EmittedValue]) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+/// The byte offset at which entry `index` of `values` starts once packed —
+/// for `bitter build --entry`, which knows its entry label's *entry*
+/// position but the executable header wants a byte offset. Uses the same
+/// structural widths `pack_stream` does, so the two always agree.
+pub fn byte_offset_of(values: &[EmittedValue], index: usize) -> Result<usize, String> {
+    values[..index.min(values.len())]
+        .iter()
+        .map(|value| structural_width_bits(value).map(|width_bits| width_bits.div_ceil(8)))
+        .sum()
+}
+
 // A width-only echo of `pack_value`'s own structural walk, deliberately not
 // sharing code with it: this never resolves a `Deferred` (no `here_index`,
 // no `byte_widths` — it's what *produces* `byte_widths`), so it never needs
@@ -254,9 +265,12 @@ fn resolve_deferred(deferred: &EmittedValue, here_index: usize, byte_widths: &[u
     }
 
     match variant.as_str() {
-        "Leaf" => {
+        // `Pos` is a `Leaf` that `link` may already have translated into
+        // merged-stream numbering — by the time it's packed it's the same
+        // plain integer either way.
+        "Leaf" | "Pos" => {
             let Some(payload) = payload else {
-                return Err("`Deferred.Leaf` is missing its payload".to_string());
+                return Err(format!("`Deferred.{variant}` is missing its payload"));
             };
             match payload.as_ref() {
                 EmittedValue::Int { value } => value

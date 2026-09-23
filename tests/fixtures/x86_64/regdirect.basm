@@ -11,8 +11,8 @@ mov r8, r9, 0     # REX needed for both extended registers
 mov rax, rbx, 1   # REX.W needed for 64-bit operand size
 
 # --- mov reg,imm ---
-movi rax, 0x12345678, 0  # imm32, no REX
-movi r15, 0x1, 1         # imm64 (REX.W changes immediate width, not just size)
+mov rax, 0x12345678, 0  # imm32, no REX
+mov r15, 0x1, 1         # imm64 (REX.W changes immediate width, not just size)
 
 # --- ALU reg,reg ---
 add rcx, rdx, 0
@@ -24,14 +24,14 @@ cmp rbp, rsp, 0
 add r12, r13, 1   # REX.W + both extended registers
 
 # --- ALU reg,imm ---
-addi rax, 0x11223344, 0
-ori rbx, 0x11223344, 0
-andi rcx, 0x11223344, 0
-subi rdx, 0x11223344, 0
-xori rsi, 0x11223344, 0
-cmpi rdi, 0x11223344, 0
-subi r10, 0x5, 1  # REX.W + extended register
+add rax, 0x11223344, 0
+or rbx, 0x11223344, 0
+and rcx, 0x11223344, 0
+sub rdx, 0x11223344, 0
+xor rsi, 0x11223344, 0
+cmp rdi, 0x11223344, 0
+sub r10, 0x5, 1  # REX.W + extended register
 
 # --- test ---
 test rax, rcx, 0
-testi rax, 0xFF, 0
+test rax, 0xFF, 0

@@ -15,26 +15,42 @@
 # just the wrapping step on an already-encoded .bin, for the equivalent of
 # `bitterasm compile` + `bitter encode` + `bitter exec` run separately.
 
-from std.x86_64.intel import *
+from std.x86_64.nasm import *
+from std.string import string_from_struct, validate_ascii
+from std.binary import Endian
 
-# "Hello, world!\n" (14 bytes), split into two little-endian imm64 chunks:
-# `chunk0` = "Hello, w", `chunk1` = "orld!\n" plus 2 unused padding bytes.
-# Pushing `chunk1` then `chunk0` leaves them in that order in memory
-# (the stack grows down, so the *last* push ends up at the *lowest*
-# address) with `rsp` pointing at the start of the 14-byte message.
-movi rax, 0x77202c6f6c6c6548
-movi rbx, 0xa21646c726f
-push rbx
-push rax
-mov rsi, rsp
+section .rodata
+msg:
+    const text = "Hello, World!\n"
+    const len = text.len
+    validate_ascii string_from_struct(text).value, len, Endian.Little
+    db text
 
-# write(1, rsp, 14)
-movi rdi, 1
-movi rdx, 14
-movi rax, 1
-syscall
+section .text
+pub _start:
+    lea rsi, [rel msg]
+    mov edx, len
 
-# exit(0)
-movi rdi, 0
-movi rax, 60
-syscall
+.write:
+    mov eax, 1      # sys_write
+    mov edi, 1      # stdout
+    syscall
+
+    cmp rax, -4     # -EINTR
+    je .write
+
+    test rax, rax
+    jle .error
+
+    add rsi, rax
+    sub rdx, rax
+    jnz .write
+
+    mov eax, 60      # sys_exit
+    xor edi, edi
+    syscall
+
+.error:
+    mov eax, 60
+    mov edi, 1
+    syscall

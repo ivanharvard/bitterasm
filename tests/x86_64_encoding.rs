@@ -95,9 +95,9 @@ fn regdirect_encodes_correctly() {
         // mov rax, rbx, 1 — REX.W needed: REX(W=1,R=0,X=0,B=0)=0x48,
         // opcode=0x89, ModRM(mod=11, reg=3, rm=0)=0xD8
         0x48, 0x89, 0xD8,
-        // movi rax, 0x12345678, 0 — no REX, opcode=0xB8+rax(0)=0xB8, imm32 LE
+        // mov rax, 0x12345678, 0 — no REX, opcode=0xB8+rax(0)=0xB8, imm32 LE
         0xB8, 0x78, 0x56, 0x34, 0x12,
-        // movi r15, 0x1, 1 — REX.W + REX.B: REX(W=1,R=0,X=0,B=ext(r15)=1)=0x49,
+        // mov r15, 0x1, 1 — REX.W + REX.B: REX(W=1,R=0,X=0,B=ext(r15)=1)=0x49,
         // opcode=0xB8+(r15&7=7)=0xBF, imm64 LE (REX.W widens the immediate itself, not
         // just sign-extension — 0xB8+reg takes a full imm64 under REX.W)
         0x49, 0xBF, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -116,24 +116,24 @@ fn regdirect_encodes_correctly() {
         // add r12, r13, 1 — REX.W + both extended: REX(W=1,R=ext(r13)=1,X=0,B=ext(r12)=1)=0x4D,
         // opcode=0x01, ModRM(mod=11, reg=r13&7=5, rm=r12&7=4)=0xEC
         0x4D, 0x01, 0xEC,
-        // addi rax, 0x11223344, 0 — opcode=0x81, ModRM(mod=11, digit=0, rm=rax=0)=0xC0, imm32 LE
+        // add rax, 0x11223344, 0 — opcode=0x81, ModRM(mod=11, digit=0, rm=rax=0)=0xC0, imm32 LE
         0x81, 0xC0, 0x44, 0x33, 0x22, 0x11,
-        // ori rbx, 0x11223344, 0 — ModRM(mod=11, digit=1, rm=rbx=3)=0xCB
+        // or rbx, 0x11223344, 0 — ModRM(mod=11, digit=1, rm=rbx=3)=0xCB
         0x81, 0xCB, 0x44, 0x33, 0x22, 0x11,
-        // andi rcx, 0x11223344, 0 — ModRM(mod=11, digit=4, rm=rcx=1)=0xE1
+        // and rcx, 0x11223344, 0 — ModRM(mod=11, digit=4, rm=rcx=1)=0xE1
         0x81, 0xE1, 0x44, 0x33, 0x22, 0x11,
-        // subi rdx, 0x11223344, 0 — ModRM(mod=11, digit=5, rm=rdx=2)=0xEA
+        // sub rdx, 0x11223344, 0 — ModRM(mod=11, digit=5, rm=rdx=2)=0xEA
         0x81, 0xEA, 0x44, 0x33, 0x22, 0x11,
-        // xori rsi, 0x11223344, 0 — ModRM(mod=11, digit=6, rm=rsi=6)=0xF6
+        // xor rsi, 0x11223344, 0 — ModRM(mod=11, digit=6, rm=rsi=6)=0xF6
         0x81, 0xF6, 0x44, 0x33, 0x22, 0x11,
-        // cmpi rdi, 0x11223344, 0 — ModRM(mod=11, digit=7, rm=rdi=7)=0xFF
+        // cmp rdi, 0x11223344, 0 — ModRM(mod=11, digit=7, rm=rdi=7)=0xFF
         0x81, 0xFF, 0x44, 0x33, 0x22, 0x11,
-        // subi r10, 0x5, 1 — REX.W + REX.B: REX(W=1,R=0,X=0,B=ext(r10)=1)=0x49,
+        // sub r10, 0x5, 1 — REX.W + REX.B: REX(W=1,R=0,X=0,B=ext(r10)=1)=0x49,
         // opcode=0x81, ModRM(mod=11, digit=5, rm=r10&7=2)=0xEA, imm32 LE
         0x49, 0x81, 0xEA, 0x05, 0x00, 0x00, 0x00,
         // test rax, rcx, 0 — opcode=0x85, ModRM(mod=11, reg=rcx=1, rm=rax=0)=0xC8
         0x85, 0xC8,
-        // testi rax, 0xFF, 0 — opcode=0xF7, ModRM(mod=11, digit=0, rm=rax=0)=0xC0, imm32 LE
+        // test rax, 0xFF, 0 — opcode=0xF7, ModRM(mod=11, digit=0, rm=rax=0)=0xC0, imm32 LE
         0xF7, 0xC0, 0xFF, 0x00, 0x00, 0x00,
     ];
 
@@ -188,13 +188,13 @@ fn regmem_encodes_correctly() {
         // add Mem(rax, 0), rcx, 1 — w=1 forces REX.W even with no extended
         // registers: REX(W=1,R=0,X=0,B=0)=0x48, opcode=0x01, ModRM(mod=00, reg=rcx=1, rm=0)=0x08
         0x48, 0x01, 0x08,
-        // addi Mem(rax, 0), 0x7F, 0 — opcode=0x81, ModRM(mod=00, digit=0, rm=0)=0x00, imm32 LE
+        // add Mem(rax, 0), 0x7F, 0 — opcode=0x81, ModRM(mod=00, digit=0, rm=0)=0x00, imm32 LE
         0x81, 0x00, 0x7F, 0x00, 0x00, 0x00,
-        // movi Mem(rbx, 4), 0x2A, 0 — 0xC7 /0 (distinct from the register form's
+        // mov Mem(rbx, 4), 0x2A, 0 — 0xC7 /0 (distinct from the register form's
         // 0xB8+reg — no register to fold into the opcode when the destination is
         // memory): ModRM(mod=01, digit=0, rm=rbx=3)=0x43, disp8=4, imm32 LE of 0x2A
         0xC7, 0x43, 0x04, 0x2A, 0x00, 0x00, 0x00,
-        // testi Mem(rax, 0), 0xFF, 0 — opcode=0xF7, ModRM(mod=00, digit=0, rm=0)=0x00, imm32 LE
+        // test Mem(rax, 0), 0xFF, 0 — opcode=0xF7, ModRM(mod=00, digit=0, rm=0)=0x00, imm32 LE
         0xF7, 0x00, 0xFF, 0x00, 0x00, 0x00,
         // mov rax, Mem(rbx, 8), 0 — load direction (0x8B), added in Phase 6:
         // ModRM(mod=01, reg=rax=0, rm=rbx=3)=0x43, disp8=8
@@ -213,7 +213,7 @@ fn regmem_encodes_correctly() {
 fn control_flow_encodes_correctly() {
     // Byte offsets of each entry in `control_flow.basm`, computed from each
     // instruction's own encoded length (used below to hand-verify every
-    // rel32): 0 (mov, 2B) -> 2 (movi, 5B) -> 7 (jmp, 5B) -> 12 (add, 3B) ->
+    // rel32): 0 (mov, 2B) -> 2 (mov imm, 5B) -> 7 (jmp, 5B) -> 12 (add, 3B) ->
     // 15 (mov, 3B, this is `target:`) -> 18 (je, 6B) -> 24 (call, 5B) -> 29 (ret, 1B) ->
     // 30 (syscall, 2B) -> 32 (end). `ret`/`syscall` both trail every label and
     // branch target, so appending `syscall` doesn't disturb any rel32 above.
@@ -221,7 +221,7 @@ fn control_flow_encodes_correctly() {
     let expected: &[u8] = &[
         // mov rax, rbx, 0 — 89 D8 (see regdirect_encodes_correctly)
         0x89, 0xD8,
-        // movi rax, 0x12345678, 0 — B8 78 56 34 12 (see regdirect_encodes_correctly)
+        // mov rax, 0x12345678, 0 — B8 78 56 34 12 (see regdirect_encodes_correctly)
         0xB8, 0x78, 0x56, 0x34, 0x12,
         // jmp target — opcode=0xE9, rel32 = target_addr(15) - next_instr_addr(7+5=12) = 3
         0xE9, 0x03, 0x00, 0x00, 0x00,

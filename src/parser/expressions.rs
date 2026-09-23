@@ -307,6 +307,10 @@ impl Parser {
     }
 
     fn parse_prefix_expr(&mut self, stop: Option<&TokenKind>) -> Result<Expr, ParseError> {
+        if let Some(expr) = self.parse_operand_via_syntax()? {
+            return Ok(expr);
+        }
+
         let token = self.current().clone();
 
         match token.kind {
@@ -320,6 +324,16 @@ impl Parser {
                 Ok(Expr::Identifier {
                     name,
                     span: token.span,
+                })
+            }
+
+            // a dotted label reference, e.g. `jmp .loop`
+            TokenKind::Dot if self.at_dot_identifier() => {
+                let name = self.expect_dotted_name();
+
+                Ok(Expr::Identifier {
+                    name,
+                    span: Span::new(token.span.start, self.previous().span.end),
                 })
             }
 

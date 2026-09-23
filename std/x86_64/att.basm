@@ -108,7 +108,7 @@ pub macro and(rs: Reg, rd: Reg)
     }
 
 syntax sub(a, b, c) = { sub $a$, $b$, $c$ }
-pub macro sub2(rs: Reg, rd: Reg)
+pub macro sub(rs: Reg, rd: Reg)
     | syntax { sub %$rs$, %$rd$ } {
         assert_valid_reg rs
         sub rd, rs, 1
@@ -135,40 +135,32 @@ pub macro test(rs: Reg, rd: Reg)
         test rd, rs, 1
     }
 
-# Immediate forms keep dispatching to `impl.basm`'s i-suffixed macros, but the
-# call-site syntax uses ordinary AT&T `$imm, %dst` spelling.
+# Immediate forms overload the same macros as register forms; the literal `$`
+# in their patterns gives them ordinary AT&T `$imm, %dst` spelling.
 
-syntax movi(a, b, c) = { movi $a$, $b$, $c$ }
-pub macro movi(imm: int, rd: Reg)
-    | syntax { mov \$$imm$, %$rd$ } { movi rd, imm, 1 }
+pub macro mov(imm: int, rd: Reg)
+    | syntax { mov \$$imm$, %$rd$ } { mov rd, imm, 1 }
 
-syntax addi(a, b, c) = { addi $a$, $b$, $c$ }
-pub macro addi(imm: int, rd: Reg)
-    | syntax { add \$$imm$, %$rd$ } { addi rd, imm, 1 }
+pub macro add(imm: int, rd: Reg)
+    | syntax { add \$$imm$, %$rd$ } { add rd, imm, 1 }
 
-syntax ori(a, b, c) = { ori $a$, $b$, $c$ }
-pub macro ori(imm: int, rd: Reg)
-    | syntax { or \$$imm$, %$rd$ } { ori rd, imm, 1 }
+pub macro or(imm: int, rd: Reg)
+    | syntax { or \$$imm$, %$rd$ } { or rd, imm, 1 }
 
-syntax andi(a, b, c) = { andi $a$, $b$, $c$ }
-pub macro andi(imm: int, rd: Reg)
-    | syntax { and \$$imm$, %$rd$ } { andi rd, imm, 1 }
+pub macro and(imm: int, rd: Reg)
+    | syntax { and \$$imm$, %$rd$ } { and rd, imm, 1 }
 
-syntax subi(a, b, c) = { subi $a$, $b$, $c$ }
-pub macro subi(imm: int, rd: Reg)
-    | syntax { sub \$$imm$, %$rd$ } { subi rd, imm, 1 }
+pub macro sub(imm: int, rd: Reg)
+    | syntax { sub \$$imm$, %$rd$ } { sub rd, imm, 1 }
 
-syntax xori(a, b, c) = { xori $a$, $b$, $c$ }
-pub macro xori(imm: int, rd: Reg)
-    | syntax { xor \$$imm$, %$rd$ } { xori rd, imm, 1 }
+pub macro xor(imm: int, rd: Reg)
+    | syntax { xor \$$imm$, %$rd$ } { xor rd, imm, 1 }
 
-syntax cmpi(a, b, c) = { cmpi $a$, $b$, $c$ }
-pub macro cmpi(imm: int, rd: Reg)
-    | syntax { cmp \$$imm$, %$rd$ } { cmpi rd, imm, 1 }
+pub macro cmp(imm: int, rd: Reg)
+    | syntax { cmp \$$imm$, %$rd$ } { cmp rd, imm, 1 }
 
-syntax testi(a, b, c) = { testi $a$, $b$, $c$ }
-pub macro testi(imm: int, rd: Reg)
-    | syntax { test \$$imm$, %$rd$ } { testi rd, imm, 1 }
+pub macro test(imm: int, rd: Reg)
+    | syntax { test \$$imm$, %$rd$ } { test rd, imm, 1 }
 
 # =================
 # lea
@@ -245,3 +237,17 @@ syntax jo(target) = { jo $target$ }
 syntax jno(target) = { jno $target$ }
 syntax jp(target) = { jp $target$ }
 syntax jnp(target) = { jnp $target$ }
+syntax jz(target) = { jz $target$ }
+syntax jnz(target) = { jnz $target$ }
+syntax jc(target) = { jc $target$ }
+syntax jnae(target) = { jnae $target$ }
+syntax jnc(target) = { jnc $target$ }
+syntax jnb(target) = { jnb $target$ }
+syntax jnbe(target) = { jnbe $target$ }
+syntax jna(target) = { jna $target$ }
+syntax jnge(target) = { jnge $target$ }
+syntax jnl(target) = { jnl $target$ }
+syntax jng(target) = { jng $target$ }
+syntax jnle(target) = { jnle $target$ }
+syntax jpe(target) = { jpe $target$ }
+syntax jpo(target) = { jpo $target$ }

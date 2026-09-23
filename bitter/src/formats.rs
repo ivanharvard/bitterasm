@@ -79,11 +79,14 @@ impl Format {
     }
 }
 
-pub fn wrap(code: &[u8], format: Format) -> Vec<u8> {
+/// `entry` is the byte offset into `code` where execution starts — `0`
+/// for "the very first byte", which is all any caller could ask for before
+/// `--entry` existed.
+pub fn wrap(code: &[u8], format: Format, entry: usize) -> Vec<u8> {
     match format {
-        Format::Elf => wrap_elf(code),
-        Format::Pe => wrap_pe(code),
-        Format::MachO => wrap_macho(code),
+        Format::Elf => wrap_elf(code, entry),
+        Format::Pe => wrap_pe(code, entry),
+        Format::MachO => wrap_macho(code, entry),
     }
 }
 
@@ -92,8 +95,15 @@ pub fn wrap(code: &[u8], format: Format) -> Vec<u8> {
 /// `.exe` alone is what makes a PE runnable there, and Mach-O's own `+x`
 /// bit still matters even when this `bitter` isn't itself running on
 /// macOS, e.g. building a `--format macho` file from Linux to copy over).
-pub fn write_executable(code: &[u8], output: &Path, format: Format) -> io::Result<()> {
-    let bytes = wrap(code, format);
+pub fn write_executable(code: &[u8], output: &Path, format: Format, entry: usize) -> io::Result<()> {
+    if entry >= code.len().max(1) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("entry offset {entry} is past the end of the {}-byte code", code.len()),
+        ));
+    }
+
+    let bytes = wrap(code, format, entry);
     std::fs::write(output, &bytes)?;
 
     #[cfg(unix)]
@@ -170,14 +180,14 @@ fn round_up(n: usize, align: usize) -> usize {
 // The smallest valid ET_EXEC: one 64-byte Elf64_Ehdr, one 56-byte
 // Elf64_Phdr (a single PT_LOAD segment mapping the *entire* file, headers
 // included — `p_offset=0` — at a fixed load address), then the code
-// itself right after, entered at its very first byte. No section headers,
+// itself right after, entered `entry_offset` bytes in. No section headers,
 // no dynamic linking: this is a fully static, non-PIE binary, which is
 // all a straight-line syscall-only program like `hello.basm` needs.
-fn wrap_elf(code: &[u8]) -> Vec<u8> {
+fn wrap_elf(code: &[u8], entry_offset: usize) -> Vec<u8> {
     const LOAD_ADDR: u64 = 0x400000;
     const EHDR_SIZE: u64 = 64;
     const PHDR_SIZE: u64 = 56;
-    let entry = LOAD_ADDR + EHDR_SIZE + PHDR_SIZE;
+    let entry = LOAD_ADDR + EHDR_SIZE + PHDR_SIZE + entry_offset as u64;
     let file_size = EHDR_SIZE + PHDR_SIZE + code.len() as u64;
 
     let mut w = Writer::default();
@@ -229,7 +239,7 @@ fn wrap_elf(code: &[u8]) -> Vec<u8> {
 // 40-byte `IMAGE_SECTION_HEADER` describing `.text`. Headers are padded to
 // `FileAlignment` (0x200) and the section to `SectionAlignment` (0x1000),
 // matching the two-alignment scheme every real PE file uses.
-fn wrap_pe(code: &[u8]) -> Vec<u8> {
+fn wrap_pe(code: &[u8], entry_offset: usize) -> Vec<u8> {
     const FILE_ALIGN: usize = 0x200;
     const SECTION_ALIGN: usize = 0x1000;
     const IMAGE_BASE: u64 = 0x1_4000_0000;
@@ -268,7 +278,7 @@ fn wrap_pe(code: &[u8]) -> Vec<u8> {
         .u32(size_of_raw_data as u32) // SizeOfCode
         .u32(0) // SizeOfInitializedData
         .u32(0) // SizeOfUninitializedData
-        .u32(SECTION_RVA) // AddressOfEntryPoint: .text's very first byte
+        .u32(SECTION_RVA + entry_offset as u32) // AddressOfEntryPoint: `entry_offset` bytes into .text
         .u32(SECTION_RVA) // BaseOfCode
         .u64(IMAGE_BASE) // ImageBase
         .u32(SECTION_ALIGN as u32) // SectionAlignment
@@ -329,7 +339,7 @@ fn wrap_pe(code: &[u8]) -> Vec<u8> {
 // entry point as a file offset (`entryoff`) into that segment rather than
 // a raw address, the modern replacement for the deprecated
 // `LC_UNIXTHREAD`.
-fn wrap_macho(code: &[u8]) -> Vec<u8> {
+fn wrap_macho(code: &[u8], entry_offset: usize) -> Vec<u8> {
     const VM_ADDR: u64 = 0x1_0000_0000; // typical fixed __TEXT base for a non-PIE x86_64 Mach-O
 
     let dylinker_path = b"/usr/lib/dyld\0";
@@ -341,7 +351,7 @@ fn wrap_macho(code: &[u8]) -> Vec<u8> {
     let sizeofcmds = (segment_cmdsize + dylinker_cmdsize + main_cmdsize) as u32;
     let header_len = 32 + sizeofcmds as usize;
     let file_size = header_len + code.len();
-    let entryoff = header_len as u64;
+    let entryoff = (header_len + entry_offset) as u64;
 
     let mut w = Writer::default();
 
@@ -393,7 +403,7 @@ mod tests {
     #[test]
     fn elf_header_reports_the_right_entry_point_and_file_size() {
         let code = [0x90, 0x90, 0x90]; // 3 NOPs
-        let bytes = wrap_elf(&code);
+        let bytes = wrap_elf(&code, 0);
         assert_eq!(bytes.len(), 64 + 56 + code.len());
         assert_eq!(&bytes[0..4], &[0x7f, b'E', b'L', b'F']);
         let entry = u64::from_le_bytes(bytes[24..32].try_into().unwrap());
@@ -404,7 +414,7 @@ mod tests {
     #[test]
     fn pe_header_is_file_aligned_and_reports_the_entry_rva() {
         let code = [0x90, 0x90, 0x90];
-        let bytes = wrap_pe(&code);
+        let bytes = wrap_pe(&code, 0);
         assert_eq!(&bytes[0..2], b"MZ");
         let lfanew = u32::from_le_bytes(bytes[0x3C..0x40].try_into().unwrap()) as usize;
         assert_eq!(&bytes[lfanew..lfanew + 4], b"PE\0\0");
@@ -418,9 +428,26 @@ mod tests {
     #[test]
     fn macho_header_reports_the_right_magic_and_entry_offset() {
         let code = [0x90, 0x90, 0x90];
-        let bytes = wrap_macho(&code);
+        let bytes = wrap_macho(&code, 0);
         assert_eq!(u32::from_le_bytes(bytes[0..4].try_into().unwrap()), 0xfeedfacf);
         assert_eq!(&bytes[bytes.len() - code.len()..], &code);
+    }
+
+    #[test]
+    fn entry_offset_moves_every_format_s_entry_point() {
+        let code = [0x90, 0x90, 0x90];
+
+        let elf = wrap_elf(&code, 2);
+        assert_eq!(u64::from_le_bytes(elf[24..32].try_into().unwrap()), 0x400000 + 64 + 56 + 2);
+
+        let pe = wrap_pe(&code, 2);
+        let opt_start = u32::from_le_bytes(pe[0x3C..0x40].try_into().unwrap()) as usize + 4 + 20;
+        assert_eq!(u32::from_le_bytes(pe[opt_start + 16..opt_start + 20].try_into().unwrap()), 0x1000 + 2);
+
+        let at_start = wrap_macho(&code, 0);
+        let moved = wrap_macho(&code, 2);
+        let diff: Vec<usize> = (0..at_start.len()).filter(|&i| at_start[i] != moved[i]).collect();
+        assert!(!diff.is_empty(), "LC_MAIN's entryoff should change");
     }
 
     #[test]

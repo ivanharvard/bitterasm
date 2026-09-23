@@ -60,28 +60,29 @@ macro verify() {
     # concrete label positions still build a Deferred.Node. (Deferred, int)
     # and (int, Deferred) are what let `span(here(), target)` work at all —
     # exactly x86's `jmp`/`jcc`/`call rel32` use case (see
-    # std/bitter/deferred.basm's own doc comment on `span`).
+    # std/bitter/deferred.basm's own doc comment on `span`). Its `int`
+    # endpoints are positions, so they're wrapped as `Pos`, not `Leaf`.
     @assert span(
         0,
         2
-    ) == Deferred.Node(BinOp(op = Op.Span, left = Deferred.Leaf(0), right = Deferred.Leaf(2)))
+    ) == Deferred.Node(BinOp(op = Op.Span, left = Deferred.Pos(0), right = Deferred.Pos(2)))
     @assert span(
         x,
         2
-    ) == Deferred.Node(BinOp(op = Op.Span, left = x, right = Deferred.Leaf(2)))
+    ) == Deferred.Node(BinOp(op = Op.Span, left = x, right = Deferred.Pos(2)))
     @assert span(
         0,
         x
-    ) == Deferred.Node(BinOp(op = Op.Span, left = Deferred.Leaf(0), right = x))
+    ) == Deferred.Node(BinOp(op = Op.Span, left = Deferred.Pos(0), right = x))
     @assert span(
         here(),
         5
-    ) == Deferred.Node(BinOp(op = Op.Span, left = Deferred.Here, right = Deferred.Leaf(5)))
+    ) == Deferred.Node(BinOp(op = Op.Span, left = Deferred.Here, right = Deferred.Pos(5)))
 
     # nesting: once any operand in a chain is Deferred, every later call in
     # the same expression keeps building the tree rather than collapsing
-    # back to Int — exactly the composition beq/jal now rely on
-    # (`mul(sub(target, here()), 4)` then `band(shr(offset, N), M)`).
+    # back to Int — the same composition beq/jal rely on
+    # (`span(here(), target)` then `band(shr(offset, N), M)`).
     const chained = band(shr(mul(sub(x, 5), 4), 12), 1)
     @assert chained == Deferred.Node(BinOp(
             op = Op.Band,
