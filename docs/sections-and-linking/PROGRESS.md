@@ -28,7 +28,7 @@ doesn't re-derive and re-reject them a second time.
 - [x] Phase 2 — Section tagging in resolution + `.em` output
 - [x] Phase 3 — Section-scope escape-hatch facet
 - [x] Phase 4 — `pub` on labels
-- [ ] Phase 5 — Cross-unit label references (`from file import label`)
+- [x] Phase 5 — Cross-unit label references (`from file import label`)
 - [ ] Phase 6 — `bitter build`/`bitter exec` multi-file merge + link + wrap
 
 Work through phases in order — each one is a real, separately verifiable
@@ -487,36 +487,113 @@ basm`. Full `cargo test` (292+ lib tests, all integration suites) passes;
 `cargo clippy --all-targets` shows no new warnings from this phase's
 files.
 
-### Phase 5 — Cross-unit label references
+### Phase 5 — Cross-unit label references — DONE
 **Deliverable:** `from file import label_name` resolves correctly when
 `label_name` is a `pub` label in `file` — instead of splicing (today's
 behavior for every other declaration kind), the resolver records a
-deferred cross-unit reference: a new `Deferred` leaf (see "Established
-facts" — same by-name-recognition precedent as `LittleEndian`/
-`Positioned`) meaning "value of symbol `label_name` from `file`, not yet
-known." The importing file still gets an immediate compile-time error if
-`label_name` isn't declared `pub` in `file` — the compiler reads `file`'s
-source to check this the same way it already does for a normal import,
-it just doesn't need `file`'s labels to have their final numeric
-positions yet, only to know they exist and are `pub`.
-**Open questions to settle here:**
-- Exact shape of the new `Deferred` leaf and how it's represented in
-  `.em`'s JSON (needs to carry both the symbol name and which file it
-  came from, for Phase 6 to resolve against).
-- How the resolver distinguishes "this import should splice" from "this
-  import should defer" — presumably branching on whether the imported
-  symbol's `SymbolKind` is `Label` vs. everything else, but confirm this
-  doesn't interact badly with the existing whole-module-splice behavior
-  described in "Established facts."
-**Files:** `src/loader.rs` (`collect_declarations`), `src/resolver/`
-(wherever imports currently resolve to spliced declarations), `bitter/src/
-pack.rs` (new `Deferred` variant), new fixtures with two files, one
-importing a `pub` label from the other.
-**Verification:** compiling the importing file alone (without its
-dependency's final byte layout known) succeeds and produces an `.em` with
-a visibly-unresolved symbol reference; compiling with a typo'd or non-
-`pub` label name fails immediately with a clear error, the same quality of
-error an unimported macro/const reference gets today.
+deferred cross-unit reference. The importing file still gets an immediate
+compile-time error if `label_name` isn't declared `pub` in `file` — the
+compiler reads `file`'s source to check this the same way it already does
+for a normal import, it just doesn't need `file`'s labels to have their
+final numeric positions yet, only to know they exist and are `pub`.
+**Open questions, as settled:**
+- **Exact shape of the new "Deferred" leaf:** *not* a new variant of the
+  user-space `std.bitter.deferred.Deferred` enum (that enum, and the
+  `Here`/`Leaf`/`Node` vocabulary the original phase text pointed at, is
+  entirely library code `bitter`'s packer recognizes by name — the
+  resolver itself has zero built-in knowledge of it, and coupling a
+  cross-unit label's representation to whether a program happens to
+  import `std.bitter.deferred` would break the "no ISA package needs its
+  own changes" bar (an architecture like WASM, which per "Established
+  facts" never imports `std.bitter.deferred` at all, still needs to be
+  able to import a label from another file). Instead: a genuinely new,
+  core-level `EmittedValue::Deferred { file: String, symbol: String }`
+  variant (`src/emit.rs`), sibling to `Int`/`Struct`/`Enum`, with a
+  matching resolver-level `Value::ExternLabel { file, name }`
+  (`src/resolver/values.rs`) that reifies to it. `value_type()` reports
+  `Value::ExternLabel` as plain `ResolvedType::Builtin(BuiltinType::Int)`
+  — the *same* type an ordinary, locally-resolvable label reference
+  already has — which is what actually delivers "no ISA package needs its
+  own changes": every existing `target: int`-shaped branch macro (RISC-V,
+  x86-64, ...) accepts a cross-unit label with no changes of its own,
+  the same way it already accepts a same-file one. It still composes with
+  `std.bitter.deferred`'s own arithmetic where a program chooses to use
+  it: `sub(imported_label, here())` picks `sub`'s `(int, Deferred) ->
+  Deferred` overload and constructs `Deferred.Leaf(imported_label)`
+  exactly as it would for a same-file `int`; `imported_label`'s own
+  `Value::ExternLabel` just rides along as that variant's payload, reified
+  through `Deferred.Leaf` to `EmittedValue::Deferred` at emission —
+  `bitter/src/pack.rs` was taught to recognize that shape in the one place
+  a real `Deferred.Leaf` payload is parsed (see "Files" below), alongside
+  the two other places an `int`-typed value could receive one directly
+  (bare `@emit`, and a `bits<N>{value: ...}` field) — all three give the
+  same clear "link required" error rather than a wrong byte or a panic.
+  `bitter encode`'s contract is unchanged by construction: a `.em`
+  containing one is not fully resolvable, so refusing it *is* honoring
+  the contract, not an exception to it.
+- **How the resolver distinguishes "this import should splice" from "this
+  import should defer":** at the *loader* level, before symbol collection
+  ever runs — not a `SymbolKind` branch inside symbol collection itself.
+  A new `ast::ExternLabel { name, file, span }` / `Statement::ExternLabel`
+  (parallel to `ast::Label`/`Statement::Label`, but never real parseable
+  source syntax — only ever synthesized by `loader::splice_import`) is
+  what a requested import name that turns out to be a `pub` label
+  produces, in place of the ordinary whole-declaration splice every other
+  kind gets. `collect_symbols` registers it under its own new
+  `SymbolKind::ExternLabel` (distinct from `SymbolKind::Label`), so
+  identifier lookup (`resolver::values`) can tell a deferred reference
+  apart from a locally-resolvable one purely by symbol kind, matching the
+  open question's own guess — it just didn't need touching
+  `collect_declarations`'s existing whole-module-splice loop at all (which
+  already ignored `Statement::Label` outright and still does): the
+  distinction is made once, in `splice_import`'s own per-requested-name
+  validation loop, not woven through the transitive-splice machinery.
+  Scoped deliberately narrow: only a plain `from file import label_name`
+  triggers this — `import *` and package-style imports don't currently
+  expose labels at all (same as before this phase; no regression, just
+  not built, since Phase 5's own text only ever describes the named-import
+  form).
+**Files:** `src/ast.rs` (`ExternLabel`, `Statement::ExternLabel`),
+`src/loader.rs` (`splice_import`'s new pub-label branch in its per-name
+validation loop; every other exhaustive `Statement` match in the crate —
+`printer.rs`, `expander.rs`, `diagnostics/lint.rs`, `resolver/generated.rs`,
+`resolver/macro_body.rs` — got a no-behavior-change or clear-rejection arm
+so the crate keeps compiling, the same treatment Phase 1's `section`
+statement got), `src/resolver/symbols.rs` (`SymbolKind::ExternLabel`),
+`src/resolver/mod.rs` (`collect_symbols`), `src/resolver/values.rs`
+(`Value::ExternLabel`, `resolve_extern_label_value`, `value_type`),
+`src/resolver/aliases.rs` (`find_extern_label_declaration`, following
+`find_struct_declaration`'s exact shape), `src/emit.rs`
+(`EmittedValue::Deferred`, `reify_value`), `bitter/src/pack.rs`
+(`EmittedValue::Deferred` handled in `structural_width_bits`, `pack_value`'s
+bare/`bits<N>`-field cases, and `resolve_deferred`'s `Leaf` case — all via
+one shared `unresolved_deferred_error` message). New fixtures:
+`tests/fixtures/emit/extern_label_dep.basm` (a `pub` label and a private
+one), `extern_label_importer.basm` (imports and uses the `pub` one),
+`extern_label_private_import.basm`/`extern_label_typo_import.basm` (the
+two rejection cases).
+**Verification:** `tests/extern_labels.rs`'s
+`importing_a_pub_label_compiles_to_an_em_with_a_visibly_unresolved_deferred_entry`
+compiles the importer fixture through the real `bitterasm compile` CLI and
+asserts the resulting `.em`'s one entry is `EmittedValue::Deferred { file,
+symbol: "target" }` — confirmed by hand too:
+`bitter encode` on that same `.em` fails with "can't encode standalone:
+`target` from `.../extern_label_dep.basm` is an unresolved cross-file
+reference ... link it with `bitter build`/`bitter exec` instead" (exit 1,
+no panic), not a wrong byte. `importing_a_non_pub_label_fails_immediately_
+with_a_clear_error`/`importing_a_name_that_doesnt_exist_at_all_fails_the_
+same_way_a_typod_macro_import_would` cover the two rejection cases, both
+`UnknownImportedName` — the same error path (and message shape) an
+unimported private/nonexistent macro or const already gets. Three new
+`bitter/src/pack.rs` unit tests (`rejects_a_bare_unresolved_extern_label`,
+`rejects_an_unresolved_extern_label_as_a_bits_n_value`,
+`rejects_an_unresolved_extern_label_wrapped_in_deferred_leaf`) cover all
+three shapes an unresolved reference can reach `bitter encode` in. Full
+workspace `cargo test` (27 `bitter` + 292 `bitterasm` lib tests + every
+integration suite) passes; `cargo clippy --workspace --all-targets`
+introduces no new warning shapes beyond one `collapsible_if` that matches
+its own immediate neighbors' (`find_struct_declaration`/
+`find_alias_declaration`) pre-existing style exactly.
 
 ### Phase 6 — `bitter build`/`bitter exec` multi-file merge + link + wrap
 **Deliverable:** `bitter build`/`bitter exec` accept multiple `.em` files

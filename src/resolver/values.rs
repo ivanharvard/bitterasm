@@ -68,6 +68,24 @@ pub enum Value {
         /// remember; see `AliasResolver::value_type`.
         nominal: Option<SymbolId>,
     },
+
+    /// The value of a `pub` label imported from another file (Phase 5, see
+    /// `docs/sections-and-linking/PROGRESS.md`) — never resolvable within
+    /// this compilation, only at a later `bitter build`/`bitter exec` link
+    /// step. `file` is the declaring file's already-canonicalized absolute
+    /// path (`ast::ExternLabel::file`), `name` its label's own name.
+    /// Reports as plain `int` (`AliasResolver::value_type`), the same type
+    /// an ordinary, locally-resolvable label reference already has — so
+    /// every existing ISA package's `target: int`-shaped macro parameters
+    /// keep working unchanged, with no ISA-specific awareness of deferred
+    /// values needed (see "Established facts" in the design doc). Reified
+    /// to `emit::EmittedValue::Deferred`, never a plain `Int`, so `.em`
+    /// still visibly marks it as unresolved rather than lying about a
+    /// value nobody actually knows yet.
+    ExternLabel {
+        file: String,
+        name: String,
+    },
 }
 
 // Lazy-resolve-and-memoize state for a top-level const's `Value`, mirroring
@@ -204,6 +222,10 @@ impl<'a> AliasResolver<'a> {
                         self.resolve_label_value(id, *span)
                     }
 
+                    Some(id) if self.get_symbol(id).kind == SymbolKind::ExternLabel => {
+                        self.resolve_extern_label_value(id)
+                    }
+
                     Some(id) if self.get_symbol(id).kind == SymbolKind::Macro => {
                         self.resolve_macro_value(name, *span)
                     }
@@ -265,7 +287,7 @@ impl<'a> AliasResolver<'a> {
                         })
                 }
 
-                Value::Int(_) | Value::Enum { .. } | Value::Macro(_) => {
+                Value::Int(_) | Value::Enum { .. } | Value::Macro(_) | Value::ExternLabel { .. } => {
                     Err(ResolveError::ExpectedStructValue { span: *span })
                 }
                 }
@@ -404,7 +426,14 @@ impl<'a> AliasResolver<'a> {
                     raw: value.to_string(),
                     span: other.span(),
                 }),
-                Value::Struct { .. } | Value::Enum { .. } | Value::Macro(_) => {
+                // A deferred cross-unit label (`Value::ExternLabel`) type-
+                // checks as `int` (`value_type`) but isn't a compile-time
+                // constant this evaluator's real `BigInt` arithmetic can
+                // operate on — same bucket as `Struct`/`Enum`/`Macro`. Real
+                // arithmetic on one isn't supported yet; route it through
+                // `std.bitter.deferred`'s `sub`/`mul`/`span` instead, the
+                // same way a same-file `here()` value already has to.
+                Value::Struct { .. } | Value::Enum { .. } | Value::Macro(_) | Value::ExternLabel { .. } => {
                     Err(ResolveError::ExpectedIntValue { span: other.span() })
                 }
             },
@@ -826,7 +855,8 @@ impl<'a> AliasResolver<'a> {
                                 })?;
                             Int::from(index)
                         }
-                        Value::Enum { .. } | Value::Struct { .. } | Value::Macro(_) => {
+                        Value::Enum { .. } | Value::Struct { .. } | Value::Macro(_)
+                        | Value::ExternLabel { .. } => {
                             return Err(ResolveError::ExpectedIntValue { span: expr.span() });
                         }
                     };
@@ -991,7 +1021,10 @@ impl<'a> AliasResolver<'a> {
             },
 
             ResolvedType::Builtin(BuiltinType::Int) => match value {
-                Value::Int(_) => Ok(value),
+                // Already `int`-typed (`value_type`), same as a plain
+                // `Value::Int` — an identity conversion, not a real
+                // coercion.
+                Value::Int(_) | Value::ExternLabel { .. } => Ok(value),
                 Value::Struct { .. } | Value::Enum { .. } | Value::Macro(_) => {
                     Err(ResolveError::ExpectedIntValue { span })
                 }
@@ -1363,6 +1396,21 @@ impl<'a> AliasResolver<'a> {
         }
     }
 
+    /// Resolves a deferred cross-unit label reference's `SymbolId` to a
+    /// `Value::ExternLabel` — unlike `resolve_label_value`, there's no
+    /// two-pass discovery to wait on: this value is never known within
+    /// this compilation at all, in either pass, so there's exactly one
+    /// case, not a `label_mode` branch. `id` is already known to be
+    /// `SymbolKind::ExternLabel` by the caller (`eval_value`'s
+    /// `Expr::Identifier` arm).
+    pub(super) fn resolve_extern_label_value(&mut self, id: SymbolId) -> Result<Value, ResolveError> {
+        let extern_label = self.find_extern_label_declaration(id)?;
+        Ok(Value::ExternLabel {
+            file: extern_label.file.clone(),
+            name: extern_label.name.clone(),
+        })
+    }
+
     /// Evaluates `expr` and requires the result to be an `Int` — shared by
     /// every caller that needs a plain integer rather than the general
     /// `Value` (`@for`'s range bounds; `@if`/`@assert`'s condition goes
@@ -1374,7 +1422,8 @@ impl<'a> AliasResolver<'a> {
     ) -> Result<Int, ResolveError> {
         match self.eval_value(expr, scope)? {
             Value::Int(value) => Ok(value),
-            Value::Struct { .. } | Value::Enum { .. } | Value::Macro(_) => {
+            Value::Struct { .. } | Value::Enum { .. } | Value::Macro(_)
+            | Value::ExternLabel { .. } => {
                 Err(ResolveError::ExpectedIntValue { span: expr.span() })
             }
         }
@@ -1438,6 +1487,14 @@ impl<'a> AliasResolver<'a> {
     pub(super) fn value_type(&mut self, value: &Value) -> Result<ResolvedType, ResolveError> {
         Ok(match value {
             Value::Int(_) => ResolvedType::Builtin(BuiltinType::Int),
+
+            // Reports the same type an ordinary, locally-resolvable label
+            // reference already has (`Value::Int`, via `resolve_label_value`)
+            // — see `Value::ExternLabel`'s own doc for why: every existing
+            // ISA package's `target: int`-shaped macro parameters need to
+            // keep accepting a cross-unit label with no changes of their
+            // own.
+            Value::ExternLabel { .. } => ResolvedType::Builtin(BuiltinType::Int),
 
             Value::Macro(symbol) => self.macro_value_type(*symbol)?,
 
@@ -1514,7 +1571,7 @@ fn tag_nominal(value: Value, symbol: SymbolId) -> Value {
             Value::Struct { symbol: inner_symbol, args, fields, nominal: Some(symbol) }
         }
 
-        Value::Int(_) | Value::Macro(_) | Value::Enum { .. } => value,
+        Value::Int(_) | Value::Macro(_) | Value::Enum { .. } | Value::ExternLabel { .. } => value,
     }
 }
 

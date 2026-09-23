@@ -90,6 +90,19 @@ pub fn print_statement(statement: &Statement, indent: usize) -> String {
             format!("{pad}{pub_kw}{name}:", name = label.name)
         }
 
+        // Synthesized only by `crate::loader::splice_import` (Phase 5) once
+        // imports are flattened — never real source syntax a `.basm` file
+        // could itself contain, so there's no literal form to round-trip.
+        // Every caller of this printer today (`expander`'s macro-expansion
+        // rendering) only ever runs on a single file's own unflattened
+        // statements, so this is unreachable in practice; a comment is the
+        // honest fallback if that ever changes.
+        Statement::ExternLabel(extern_label) => format!(
+            "{pad}# extern label `{name}` from `{file}`",
+            name = extern_label.name,
+            file = extern_label.file,
+        ),
+
         Statement::Section(section) => format!("{pad}section {name}", name = section.name),
 
         Statement::Invocation(invocation) => {

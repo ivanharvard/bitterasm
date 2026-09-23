@@ -1,0 +1,13 @@
+# Phase 5 (see `docs/sections-and-linking/PROGRESS.md`): imports a `pub`
+# label from another file instead of splicing it — `target`'s real position
+# isn't known here, only that it exists and is `pub`. `mark target` proves
+# the deferred value type-checks as plain `int` (`mark`'s own declared
+# parameter type), same as any locally-resolvable label reference already
+# does, with no special-casing needed on the call site.
+from .extern_label_dep import target
+
+macro mark(n: int) {
+    @emit n
+}
+
+mark target

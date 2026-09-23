@@ -48,6 +48,17 @@ pub enum EmittedValue {
         variant: String,
         payload: Option<Box<EmittedValue>>,
     },
+
+    /// The value of a `pub` label imported from another file (Phase 5, see
+    /// `docs/sections-and-linking/PROGRESS.md`) — `symbol`'s value from
+    /// `file`, not yet known. `file` is the declaring file's already-
+    /// canonicalized absolute path. Left for a later `bitter build`/`bitter
+    /// exec` link step to resolve, once it has every input file's own
+    /// emitted stream to find `symbol`'s real position in; `bitter encode`
+    /// alone can never resolve one on its own, the same way it can't
+    /// resolve a bare `here()`/`span()` value with no `Positioned<N>`
+    /// around it either.
+    Deferred { file: String, symbol: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -102,6 +113,16 @@ pub fn reify_value(symbols: &SymbolTable, value: &Value) -> EmittedValue {
         Value::Macro(_) => unreachable!(
             "a macro is compile-time-only metaprogramming machinery and can never reach emission"
         ),
+
+        // Phase 5 (`docs/sections-and-linking/PROGRESS.md`): a `pub` label
+        // imported from another file, not yet resolved to a real position
+        // — reified as its own distinct leaf, never `EmittedValue::Int`, so
+        // `.em` keeps visibly marking it unresolved rather than lying about
+        // a value nobody actually knows yet (real resolution happens later,
+        // at a `bitter build`/`bitter exec` link step).
+        Value::ExternLabel { file, name } => {
+            EmittedValue::Deferred { file: file.clone(), symbol: name.clone() }
+        }
     }
 }
 

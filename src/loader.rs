@@ -446,6 +446,17 @@ fn splice_import(
     spliced: &mut HashSet<PathBuf>,
     out_modules: &mut Vec<usize>,
 ) -> Result<Vec<Statement>, LoadError> {
+    // Phase 5 (`docs/sections-and-linking/PROGRESS.md`): a name in a plain
+    // `from file import ...` list that names a `pub` label in `file`,
+    // rather than an ordinary declaration — collected alongside the
+    // ordinary `declared` validation below (`file` already canonicalized,
+    // via `target_path`), then turned into `Statement::ExternLabel`s once
+    // every target is known to exist, instead of being spliced in
+    // `collect_declarations` (which never touches `Statement::Label` at
+    // all — see its own doc).
+    let mut extern_labels: Vec<crate::ast::ExternLabel> = Vec::new();
+    let mut extern_label_modules: Vec<usize> = Vec::new();
+
     let target_paths: Vec<PathBuf> = match resolve_import_paths(import, importer)? {
         ImportResolution::Plain(target_path) => {
             // Only a plain import's names are "declarations inside one
@@ -463,13 +474,34 @@ fn splice_import(
                     .map(|(name, _)| name)
                     .collect();
 
+                let pub_labels: HashSet<&str> = target
+                    .statements
+                    .iter()
+                    .filter_map(|statement| match statement {
+                        Statement::Label(label) if label.is_pub => Some(label.name.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+
                 for name in names {
-                    if !declared.contains(name.as_str()) {
-                        return Err(LoadError::UnknownImportedName {
-                            module: module_display(&import.module),
-                            name: name.clone(),
-                        });
+                    if declared.contains(name.as_str()) {
+                        continue;
                     }
+
+                    if pub_labels.contains(name.as_str()) {
+                        extern_labels.push(crate::ast::ExternLabel {
+                            name: name.clone(),
+                            file: target_path.display().to_string(),
+                            span: import.span,
+                        });
+                        extern_label_modules.push(target.module_id);
+                        continue;
+                    }
+
+                    return Err(LoadError::UnknownImportedName {
+                        module: module_display(&import.module),
+                        name: name.clone(),
+                    });
                 }
             }
 
@@ -487,6 +519,11 @@ fn splice_import(
 
     for target_path in &target_paths {
         collect_declarations(target_path, cache, spliced, &mut out, out_modules)?;
+    }
+
+    for (extern_label, module_id) in extern_labels.into_iter().zip(extern_label_modules) {
+        out.push(Statement::ExternLabel(extern_label));
+        out_modules.push(module_id);
     }
 
     Ok(out)
@@ -546,9 +583,15 @@ fn collect_declarations(
             // nothing else imports them. A syntax override isn't a
             // declaration either — its effect already happened at parse
             // time, propagated via `ParserSeed`, not by being spliced into
-            // an importer's statement list.
+            // an importer's statement list. `ExternLabel` is never present
+            // in a *loaded* module's own `statements` in the first place —
+            // it only ever exists as something `splice_import` synthesizes
+            // directly into `out` for the file that wrote the `from ...
+            // import label_name`, so re-exporting it transitively through a
+            // second file's own import isn't a case Phase 5 needs to
+            // support; matched here only for exhaustiveness.
             Statement::Label(_) | Statement::Section(_) | Statement::Invocation(_)
-            | Statement::SyntaxOverride(_) => {}
+            | Statement::SyntaxOverride(_) | Statement::ExternLabel(_) => {}
         }
     }
 
@@ -709,10 +752,11 @@ fn rename_statement(statement: &mut Statement, renames: &HashMap<String, String>
         }
 
         // Never actually reached — `collect_declarations` never splices a
-        // `SyntaxOverride` into a statement list for this to run on — but
-        // matched here too for exhaustiveness.
+        // `SyntaxOverride` (or `ExternLabel`, which it also never re-splices
+        // transitively — see its own doc) into a statement list for this to
+        // run on — but matched here too for exhaustiveness.
         Statement::Import(_) | Statement::Label(_) | Statement::Section(_)
-        | Statement::Invocation(_) | Statement::SyntaxOverride(_) => {}
+        | Statement::Invocation(_) | Statement::SyntaxOverride(_) | Statement::ExternLabel(_) => {}
     }
 }
 

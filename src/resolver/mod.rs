@@ -103,6 +103,22 @@ pub fn collect_symbols(program: &Program, module_of: &[usize]) -> Result<SymbolT
                 )
             }
 
+            // A deferred cross-unit label reference (Phase 5) — registered
+            // under its own `SymbolKind` so identifier lookup
+            // (`resolver::values`) can tell it apart from an ordinary,
+            // locally-resolvable `Label`. `module` here is whichever module
+            // `crate::loader::splice_import` recorded as `label_name`'s
+            // *declaring* file (see `ast::ExternLabel::file`), not the
+            // importer's own module.
+            Statement::ExternLabel(extern_label) => {
+                table.insert(
+                    extern_label.name.clone(),
+                    SymbolKind::ExternLabel,
+                    extern_label.span,
+                    module,
+                )
+            }
+
             _ => continue,
         };
 

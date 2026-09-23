@@ -33,6 +33,7 @@ pub enum Statement {
     Const(ConstDeclaration),
 
     Label(Label),
+    ExternLabel(ExternLabel),
     Section(Section),
     Invocation(Invocation),
 
@@ -83,6 +84,24 @@ pub enum ImportItems {
 pub struct Label {
     pub name: String,
     pub is_pub: bool,
+    pub span: Span,
+}
+
+/// A `from file import label_name` where `label_name` names a `pub` label
+/// in `file` — synthesized by `crate::loader::splice_import` in place of
+/// the ordinary whole-declaration splice every other imported kind gets
+/// (see `docs/sections-and-linking/PROGRESS.md`'s Phase 5: labels defer
+/// instead of splice, since `label_name`'s numeric position isn't known
+/// here — only that it exists and is `pub`, checked at import time the
+/// same way any other imported name already is). `file` is the already-
+/// canonicalized absolute path of the file that declared `label_name`.
+/// Registered into the symbol table as `SymbolKind::ExternLabel`, never
+/// `SymbolKind::Label` — referencing it resolves to a
+/// `Value::ExternLabel`, not a plain `Value::Int`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternLabel {
+    pub name: String,
+    pub file: String,
     pub span: Span,
 }
 

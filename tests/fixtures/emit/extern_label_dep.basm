@@ -1,0 +1,7 @@
+# Phase 5 dependency fixture (see `docs/sections-and-linking/PROGRESS.md`):
+# declares one `pub` label another file imports by name
+# (`extern_label_importer.basm`) and one deliberately private label, to
+# confirm importing the private one is rejected the same way importing a
+# private macro/const/struct already is.
+pub target:
+private_marker:

@@ -1,0 +1,6 @@
+# Phase 5 (see `docs/sections-and-linking/PROGRESS.md`): importing a label
+# that exists but isn't `pub` must fail immediately and clearly, the same
+# quality of error an unimported private macro/const/struct already gets —
+# not silently succeed, and not defer to some later, harder-to-diagnose
+# failure.
+from .extern_label_dep import private_marker

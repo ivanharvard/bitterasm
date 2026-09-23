@@ -20,6 +20,14 @@ pub enum SymbolKind {
     Const,
     Macro,
     Label,
+
+    /// A `from file import label_name` deferred cross-unit reference —
+    /// see `ast::ExternLabel` and `docs/sections-and-linking/PROGRESS.md`'s
+    /// Phase 5. Deliberately distinct from `Label`: an ordinary `Label`
+    /// resolves through `AliasResolver::label_positions` (known by the end
+    /// of this compilation), while an `ExternLabel` never does — its value
+    /// isn't known until a later `bitter build`/`bitter exec` link step.
+    ExternLabel,
 }
 
 #[derive(Debug, Clone)]

@@ -1,0 +1,4 @@
+# Phase 5: a name that doesn't exist in the target file at all (neither a
+# declaration nor a label) must fail the same way `extern_label_private_
+# import.basm` does for a real-but-non-`pub` name.
+from .extern_label_dep import totally_made_up_name

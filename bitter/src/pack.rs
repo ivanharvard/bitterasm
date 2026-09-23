@@ -93,7 +93,24 @@ fn structural_width_bits(value: &EmittedValue) -> Result<usize, String> {
         EmittedValue::Enum { name, variant, .. } => Err(format!(
             "can't infer a machine-code layout for enum value `{name}.{variant}`"
         )),
+
+        EmittedValue::Deferred { file, symbol } => Err(unresolved_deferred_error(file, symbol)),
     }
+}
+
+// Phase 5 (`docs/sections-and-linking/PROGRESS.md`): a cross-unit label
+// reference `bitter encode` alone can never resolve — its `.em` file is, by
+// definition, not fully resolvable standalone, so `encode`'s contract (no
+// partial output, ever) means the only correct move on hitting one is a
+// clear, immediate error rather than a guess. Real resolution is `bitter
+// build`/`bitter exec`'s job (Phase 6, not yet built), once they can see
+// every linked file's own emitted stream.
+fn unresolved_deferred_error(file: &str, symbol: &str) -> String {
+    format!(
+        "can't encode standalone: `{symbol}` from `{file}` is an unresolved cross-file \
+         reference — `bitter encode` only ever resolves a single, self-contained `.em` file; \
+         link it with `bitter build`/`bitter exec` instead"
+    )
 }
 
 // `here_index` is which top-level emitted entry (0-based, in emission
@@ -118,6 +135,16 @@ fn pack_value(value: &EmittedValue, here_index: usize, byte_widths: &[usize]) ->
                 EmittedValue::Int { value } => value
                     .parse::<BigInt>()
                     .map_err(|error| format!("`{value}` isn't a valid integer: {error}"))?,
+
+                // A cross-unit label (Phase 5) type-checks as plain `int`,
+                // so `bits<N>{value: imported_label}` parses and resolves
+                // fine at the `bitterasm` level — it's only here, trying to
+                // actually pack it, that the missing final value becomes a
+                // problem. `Positioned<N>` (not `bits<N>`) is the wrapper
+                // meant for a value that isn't known yet.
+                EmittedValue::Deferred { file, symbol } => {
+                    return Err(unresolved_deferred_error(file, symbol))
+                }
 
                 other => {
                     return Err(format!(
@@ -204,6 +231,8 @@ fn pack_value(value: &EmittedValue, here_index: usize, byte_widths: &[usize]) ->
         EmittedValue::Enum { name, variant, .. } => Err(format!(
             "can't infer a machine-code layout for enum value `{name}.{variant}`"
         )),
+
+        EmittedValue::Deferred { file, symbol } => Err(unresolved_deferred_error(file, symbol)),
     }
 }
 
@@ -229,10 +258,22 @@ fn resolve_deferred(deferred: &EmittedValue, here_index: usize, byte_widths: &[u
             let Some(payload) = payload else {
                 return Err("`Deferred.Leaf` is missing its payload".to_string());
             };
-            let EmittedValue::Int { value } = payload.as_ref() else {
-                return Err(format!("`Deferred.Leaf`'s payload should be an Int, found {payload:?}"));
-            };
-            value.parse::<BigInt>().map_err(|error| format!("`{value}` isn't a valid integer: {error}"))
+            match payload.as_ref() {
+                EmittedValue::Int { value } => value
+                    .parse::<BigInt>()
+                    .map_err(|error| format!("`{value}` isn't a valid integer: {error}")),
+
+                // A cross-unit label (Phase 5) flows into `Deferred.Leaf`
+                // through `std.bitter.deferred`'s own `sub`/`mul`/`span`
+                // overloads that accept a plain `int` — see
+                // `Value::ExternLabel`'s doc — so this is the shape a
+                // program like `sub(imported_label, here())` actually
+                // produces, and needs the same clear error as a bare
+                // top-level one.
+                EmittedValue::Deferred { file, symbol } => Err(unresolved_deferred_error(file, symbol)),
+
+                other => Err(format!("`Deferred.Leaf`'s payload should be an Int, found {other:?}")),
+            }
         }
 
         "Here" => Ok(BigInt::from(here_index)),
@@ -526,14 +567,48 @@ mod tests {
         assert!(error.contains("bare Int"), "{error}");
     }
 
+    // --- Phase 5 (`docs/sections-and-linking/PROGRESS.md`): a cross-unit
+    // label reference (`EmittedValue::Deferred`) can never be resolved by
+    // `bitter encode` alone — every shape it could appear in should give a
+    // clear "link required" error, never a panic or a wrong byte. ---
+
+    fn extern_label(file: &str, symbol: &str) -> EmittedValue {
+        EmittedValue::Deferred { file: file.to_string(), symbol: symbol.to_string() }
+    }
+
+    #[test]
+    fn rejects_a_bare_unresolved_extern_label() {
+        let value = extern_label("other.basm", "target");
+        let error = pack_stream(&[value]).unwrap_err();
+        assert!(error.contains("target"), "{error}");
+        assert!(error.contains("other.basm"), "{error}");
+        assert!(error.contains("bitter build"), "{error}");
+    }
+
+    #[test]
+    fn rejects_an_unresolved_extern_label_as_a_bits_n_value() {
+        let value = EmittedValue::Struct {
+            name: "bits".to_string(),
+            args: vec![EmittedGenericArg::Const { value: "32".to_string() }],
+            fields: vec![("value".to_string(), extern_label("other.basm", "target"))],
+        };
+        let error = pack_value(&value, 0, &[]).unwrap_err();
+        assert!(error.contains("target"), "{error}");
+        assert!(error.contains("other.basm"), "{error}");
+    }
+
     // --- std.bitter.deferred: Positioned<N> / Deferred resolution ---
 
     fn deferred_leaf(value: &str) -> EmittedValue {
+        deferred_leaf_value(EmittedValue::Int { value: value.to_string() })
+    }
+
+    fn deferred_leaf_value(payload: EmittedValue) -> EmittedValue {
         EmittedValue::Enum {
             name: "Deferred".to_string(),
             args: vec![],
             variant: "Leaf".to_string(),
-            payload: Some(Box::new(EmittedValue::Int { value: value.to_string() })),
+            payload: Some(Box::new(payload)),
         }
     }
 
@@ -589,6 +664,19 @@ mod tests {
     fn resolves_a_bare_leaf_regardless_of_here_index() {
         let value = positioned("8", deferred_leaf("42"));
         assert_eq!(pack_value(&value, 999, &[]).unwrap().value, BigInt::from(42));
+    }
+
+    #[test]
+    fn rejects_an_unresolved_extern_label_wrapped_in_deferred_leaf() {
+        // The shape `sub(imported_label, here())` (or any other
+        // `std.bitter.deferred` arithmetic over a cross-unit label) actually
+        // produces: `Deferred.Leaf(imported_label)`, not a bare
+        // `EmittedValue::Deferred` — this is the common case, unlike
+        // `rejects_a_bare_unresolved_extern_label` above.
+        let value = positioned("8", deferred_leaf_value(extern_label("other.basm", "target")));
+        let error = pack_value(&value, 0, &[]).unwrap_err();
+        assert!(error.contains("target"), "{error}");
+        assert!(error.contains("other.basm"), "{error}");
     }
 
     #[test]

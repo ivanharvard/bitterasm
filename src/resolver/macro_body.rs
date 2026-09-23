@@ -967,6 +967,19 @@ impl<'a> AliasResolver<'a> {
                     });
                 }
 
+                // Unreachable in practice — `Statement::ExternLabel` is
+                // only ever synthesized by `crate::loader::splice_import`
+                // into a *top-level* statement list, never something a
+                // macro body's own statements could contain (there's no
+                // source syntax that produces one directly) — matched for
+                // exhaustiveness with the same treatment `import` gets.
+                Statement::ExternLabel(extern_label) => {
+                    return Err(ResolveError::UnsupportedMacroStatement {
+                        kind: "extern label".to_string(),
+                        span: extern_label.span,
+                    });
+                }
+
                 // Unreachable in practice — the parser only ever
                 // recognizes `syntax name(...) = { ... }` at true top
                 // level (`Parser::block_depth`), never inside a macro
@@ -1259,7 +1272,7 @@ impl<'a> AliasResolver<'a> {
 fn reify_value(value: &Value, span: Span) -> Result<Expr, ResolveError> {
     match value {
         Value::Int(int) => Ok(Expr::Integer { raw: int.to_string(), span }),
-        Value::Struct { .. } | Value::Enum { .. } | Value::Macro(_) => {
+        Value::Struct { .. } | Value::Enum { .. } | Value::Macro(_) | Value::ExternLabel { .. } => {
             Err(ResolveError::UnsupportedSpliceValue { span })
         }
     }

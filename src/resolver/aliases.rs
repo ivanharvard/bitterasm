@@ -544,7 +544,7 @@ impl<'a> AliasResolver<'a> {
                 })
             }
 
-            SymbolKind::Label => {
+            SymbolKind::Label | SymbolKind::ExternLabel => {
                 Err(ResolveError::ExpectedType {
                     name: name.clone(),
                     span,
@@ -796,6 +796,35 @@ impl<'a> AliasResolver<'a> {
         Err(ResolveError::Internal {
             message: format!(
                 "symbol table contains struct `{}` but no matching AST declaration exists",
+                symbol.name,
+            ),
+            span: symbol.span,
+        })
+    }
+
+    /// `ExternLabel`s are always unique by name, the same as ordinary
+    /// `Label`s (never an overload set) — no ordinal disambiguation needed,
+    /// same shape as `find_alias_declaration`/`find_struct_declaration`
+    /// above.
+    pub(super) fn find_extern_label_declaration(
+        &self,
+        id: SymbolId,
+    ) -> Result<&crate::ast::ExternLabel, ResolveError> {
+        let symbol = self.get_symbol(id);
+
+        for statement in self.program.statements.iter().chain(&self.generated) {
+            if let Statement::ExternLabel(extern_label) = statement {
+                if extern_label.name == symbol.name {
+                    return Ok(extern_label);
+                }
+            }
+        }
+
+        // there is some internal compiler inconsistency rather than bad
+        // BitterASM source.
+        Err(ResolveError::Internal {
+            message: format!(
+                "symbol table contains extern label `{}` but no matching AST declaration exists",
                 symbol.name,
             ),
             span: symbol.span,
