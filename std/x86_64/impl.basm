@@ -1,6 +1,7 @@
 # x86-64 base instruction set (core GPR-only integer subset).
 
 from std.binary import *
+from std.bitfield import *
 from std.bitter.deferred import *
 from std.bitter.byte_order import *
 
@@ -60,14 +61,14 @@ pub const r15d = Reg32(reg = r15)
 # The 3 low bits of a register number — the field width every ModRM `reg`/`rm`,
 # SIB `index`/`base`, and register-in-opcode encoding actually carries.
 pub macro reg_field(r: Reg) -> int {
-    @return r.value & 0b111
+    @return slice(r.value, 2, 0)
 }
 
 # The register number's 4th bit — folded into the REX prefix (R/X/B) whenever
 # the
 # register is r8-r15, since the 3-bit fields above can't carry it.
 pub macro reg_ext(r: Reg) -> int {
-    @return (r.value >> 3) & 1
+    @return bit(r.value, 3)
 }
 
 # =================
@@ -116,7 +117,7 @@ pub macro modrm_byte(
     reg: int,
     rm: int
 ) -> Byte {
-    @return Byte((mod << 6) | (reg << 3) | rm)
+    @return Byte(place(mod, 7, 6) | place(reg, 5, 3) | place(rm, 2, 0))
 }
 
 # SIB byte: `scale` (2 bits, log2 of the index's multiplier), `index` (3 bits),
@@ -126,7 +127,7 @@ pub macro sib_byte(
     index: int,
     base: int
 ) -> Byte {
-    @return Byte((scale << 6) | (index << 3) | base)
+    @return Byte(place(scale, 7, 6) | place(index, 5, 3) | place(base, 2, 0))
 }
 
 # Little-endian byte `index` (0 = least significant) of `value`, for any width —
@@ -135,7 +136,7 @@ pub macro byte_of(
     value: int,
     index: int
 ) -> Byte {
-    @return Byte((value >> (8 * index)) & 0xFF)
+    @return field(value, 8 * index + 7, 8 * index)
 }
 
 # =================

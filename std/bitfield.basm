@@ -1,0 +1,99 @@
+from std.binary import *
+from std.bitter.deferred import *
+
+# Bit-range vocabulary for instruction encoders. Every ISA manual describes
+# its fields the same way — `imm[10:5]`, "bits 7:6 of the ModRM byte" — and
+# every encoder in `std/` used to spell that out by hand as a shift, a mask
+# literal whose width had to be counted by eye (`& 0b111111`), and a
+# separately-named `bits<N>` alias whose `N` had to agree with both. The
+# macros below take the manual's own `hi`/`lo` bit numbers instead and derive
+# the shift, the mask, and the result's width from them, so the three can't
+# drift apart.
+#
+# `hi`/`lo` are inclusive and `hi >= lo`, the manuals' own convention: a
+# one-bit field is `(n, n)`, not `(n + 1, n)`.
+#
+# `slice`/`field` are overloaded on `int` and `Deferred` the same way
+# `std.bitter.deferred`'s own `shr`/`band` are, so a branch encoder slicing a
+# still-unresolved `span(here(), target)` reads identically to one slicing a
+# plain immediate — the only difference is which packed type comes out
+# (`bits<N>` for a value known now, `Positioned<N>` for one `bitter` has to
+# finish).
+
+# `width` one-bits: `mask(5) == 0b11111`.
+pub macro mask(width: int) -> int {
+    @return (1 << width) - 1
+}
+
+# Bit `n` of `value`, as a 0/1 `int`.
+pub macro bit(
+    value: int,
+    n: int
+) -> int {
+    @return (value >> n) & 1
+}
+
+# ---------------------------------------------------------------
+# slice — bits `hi` down to `lo` of `value`, shifted down to bit 0.
+# `slice(x, 10, 5)` is the manuals' `x[10:5]`.
+# ---------------------------------------------------------------
+
+pub macro slice(
+    value: int,
+    hi: int,
+    lo: int
+) -> int {
+    @return (value >> lo) & mask(hi - lo + 1)
+}
+
+pub macro slice(
+    value: Deferred,
+    hi: int,
+    lo: int
+) -> Deferred {
+    @return band(shr(value, lo), mask(hi - lo + 1))
+}
+
+# ---------------------------------------------------------------
+# field — `slice`, packaged as the `hi - lo + 1`-bit value a format struct's
+# field actually holds. `imm10_5 = field(offset, 10, 5)` in place of
+# `Positioned<6> { value: band(shr(offset, 5), 0b111111) }`.
+# ---------------------------------------------------------------
+
+pub macro field(
+    value: int,
+    hi: int,
+    lo: int
+) -> bits<...> {
+    @return bits<hi - lo + 1> { value: slice(value, hi, lo) }
+}
+
+pub macro field(
+    value: Deferred,
+    hi: int,
+    lo: int
+) -> Positioned<...> {
+    @return Positioned<hi - lo + 1> { value: slice(value, hi, lo) }
+}
+
+# The low `width` bits of `value` as a `bits<width>` — truncating, never
+# rejecting, so a negative immediate becomes its two's-complement encoding:
+# `truncate(-1, 12)` is `0xFFF`, where `Imm12(-1)` would fail `bits`'s own
+# range invariant.
+pub macro truncate(
+    value: int,
+    width: int
+) -> bits<...> {
+    @return field(value, width - 1, 0)
+}
+
+# `value`'s low `hi - lo + 1` bits, moved up to occupy bits `hi` down to `lo`
+# — `slice`'s inverse, for building a word out of fields by `|`:
+# `place(mod, 7, 6) | place(reg, 5, 3) | place(rm, 2, 0)` is a ModRM byte.
+pub macro place(
+    value: int,
+    hi: int,
+    lo: int
+) -> int {
+    @return (value & mask(hi - lo + 1)) << lo
+}

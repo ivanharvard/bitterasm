@@ -1,5 +1,6 @@
 from std.binary import *
 from std.bitter.deferred import *
+from std.bitfield import *
 from std.wasm.leb128 import *
 
 # =================
@@ -39,7 +40,7 @@ macro deferred_leb128_group(
     index: int,
     length: int
 ) -> Leb128Group {
-    const payload = band(shr(value, 7 * index), 0x7F)
+    const payload = slice(value, 7 * index + 6, 7 * index)
     @if index < length - 1 {
         @return Leb128Group(
             continuation = true,

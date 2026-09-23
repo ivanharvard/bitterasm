@@ -1,0 +1,32 @@
+from std.binary import *
+from std.bitfield import *
+from std.bitter.deferred import *
+
+struct Word {
+    imm: bits<12>,
+    hi: bits<3>,
+    rel: Positioned<6>,
+}
+
+macro verify(target: int) {
+    @assert mask(5) == 0b11111, "mask"
+    @assert bit(0b100, 2) == 1, "bit set"
+    @assert bit(0b100, 1) == 0, "bit clear"
+    @assert slice(0b1011_0110, 5, 2) == 0b1101, "slice"
+    @assert slice(-4, 11, 5) == 0b1111111, "slice of a negative value"
+    @assert place(0b101, 5, 3) == 0b101000, "place"
+    @assert place(0b1111, 5, 3) == 0b111000, "place truncates"
+    @assert truncate(-1, 12).value == 0xFFF, "truncate"
+    @assert field(0xABCD, 11, 4).value == 0xBC, "field"
+
+    # `field` sizes its result from `hi`/`lo`, so it drops straight into a
+    # format struct's fields, `Positioned<N>` ones included.
+    @emit Word(
+        imm = truncate(-1, 12),
+        hi = field(0b10110, 3, 1),
+        rel = field(span(here(), target), 10, 5)
+    )
+}
+
+top:
+verify top

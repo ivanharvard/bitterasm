@@ -1,4 +1,5 @@
 from std.binary import *
+from std.bitfield import *
 
 # One LEB128 group, always 8 bits wide (7 payload bits plus a continuation
 # bit) — its own alias, the same reasoning `std/riscv`/`std/pdp10` give
@@ -66,7 +67,7 @@ macro leb128_group(
     index: int,
     length: int
 ) -> Byte {
-    const group = (value >> (7 * index)) & 0x7F
+    const group = slice(value, 7 * index + 6, 7 * index)
     @if index < length - 1 {
         @return Byte(0x80 | group)
     } @else {

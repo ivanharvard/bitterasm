@@ -1,4 +1,5 @@
 from std.binary import *
+from std.bitfield import *
 from std.bitter.deferred import *
 from std.bitter.byte_order import *
 
@@ -109,8 +110,8 @@ pub struct SType {
 # The immediate's bits are scrambled across the word by the ISA spec, not
 # by anything here — `imm[12]`/`imm[10:5]`/`imm[4:1]`/`imm[11]` are just
 # this format's real field names, in the order RV32I actually lays them
-# out, so a branch macro's own arithmetic (see `beq` etc. below) is the
-# only place that "scrambling" is expressed at all.
+# out, so `b_type`'s own `field` calls below are the only place that
+# "scrambling" is expressed at all.
 #
 # These four fields are `Positioned<N>`, not a bare `bits<N>` alias: every
 # branch target is offset from `here()` (see `std.bitter.deferred`), which
@@ -145,6 +146,135 @@ pub struct JType {
 }
 
 # =================
+# major opcodes
+# =================
+# The 7-bit `opcode` field picks an instruction's format and family; the
+# names are the RISC-V spec's own (its "RV32I Base Instruction Set" opcode
+# map), so each instruction below reads the way the spec's encoding table
+# lists it: family, then `funct3`/`funct7`.
+
+const OP = 0b0110011
+const OP_IMM = 0b0010011
+const LOAD = 0b0000011
+const STORE = 0b0100011
+const BRANCH = 0b1100011
+const JALR = 0b1100111
+const JAL = 0b1101111
+const LUI = 0b0110111
+const AUIPC = 0b0010111
+const SYSTEM = 0b1110011
+
+# =================
+# format constructors
+# =================
+# One per format, taking the fixed encoding constants first and the
+# operands after in assembly order, so every instruction macro below is a
+# single call. Immediates are plain `int`s truncated to their field here —
+# a negative immediate becomes its two's-complement encoding, the same as
+# the spec's own sign-extended reading of it.
+
+macro r_type(
+    opcode: int,
+    funct3: int,
+    funct7: int,
+    rd: Reg,
+    rs1: Reg,
+    rs2: Reg
+) -> LittleEndian<RType, 32> {
+    @return LittleEndian<RType, 32> { value: RType(
+            funct7 = Funct7(funct7),
+            rs2 = rs2,
+            rs1 = rs1,
+            funct3 = Funct3(funct3),
+            rd = rd,
+            opcode = Opcode(opcode)
+    ) }
+}
+
+macro i_type(
+    opcode: int,
+    funct3: int,
+    rd: Reg,
+    rs1: Reg,
+    imm: int
+) -> LittleEndian<IType, 32> {
+    @return LittleEndian<IType, 32> { value: IType(
+            imm = truncate(imm, 12),
+            rs1 = rs1,
+            funct3 = Funct3(funct3),
+            rd = rd,
+            opcode = Opcode(opcode)
+    ) }
+}
+
+macro s_type(
+    opcode: int,
+    funct3: int,
+    rs1: Reg,
+    rs2: Reg,
+    offset: int
+) -> LittleEndian<SType, 32> {
+    @return LittleEndian<SType, 32> { value: SType(
+            imm_hi = field(offset, 11, 5),
+            rs2 = rs2,
+            rs1 = rs1,
+            funct3 = Funct3(funct3),
+            imm_lo = field(offset, 4, 0),
+            opcode = Opcode(opcode)
+    ) }
+}
+
+# `here()` is sound inside this helper: it resolves to whichever entry ends
+# up holding the value, and that's the one instruction the caller emits.
+macro b_type(
+    opcode: int,
+    funct3: int,
+    rs1: Reg,
+    rs2: Reg,
+    target: int
+) -> LittleEndian<BType, 32> {
+    const offset = span(here(), target)
+    @return LittleEndian<BType, 32> { value: BType(
+            imm12 = field(offset, 12, 12),
+            imm10_5 = field(offset, 10, 5),
+            rs2 = rs2,
+            rs1 = rs1,
+            funct3 = Funct3(funct3),
+            imm4_1 = field(offset, 4, 1),
+            imm11 = field(offset, 11, 11),
+            opcode = Opcode(opcode)
+    ) }
+}
+
+macro u_type(
+    opcode: int,
+    rd: Reg,
+    imm: int
+) -> LittleEndian<UType, 32> {
+    @return LittleEndian<UType, 32> { value: UType(
+            imm = truncate(imm, 20),
+            rd = rd,
+            opcode = Opcode(opcode)
+    ) }
+}
+
+macro j_type(
+    opcode: int,
+    rd: Reg,
+    target: int
+) -> LittleEndian<JType, 32> {
+    const offset = span(here(), target)
+    @return LittleEndian<JType, 32> { value: JType(
+            imm20 = field(offset, 20, 20),
+            imm10_1 = field(offset, 10, 1),
+            imm11 = field(offset, 11, 11),
+            imm19_12 = field(offset, 19, 12),
+            rd = rd,
+            opcode = Opcode(opcode)
+    ) }
+}
+
+# =================
 # R-type: register-register ops
 # =================
 
@@ -155,13 +285,7 @@ pub macro add(
 )
     | emits LittleEndian<RType, 32>
 {
-    @emit LittleEndian<RType, 32> { value: RType(
-            funct7 = Funct7(0b0000000),
-            rs2 = rs2,
-            rs1 = rs1,
-            funct3 = Funct3(0b000), rd = rd,
-            opcode = Opcode(0b0110011)
-    ) }
+    @emit r_type(OP, 0b000, 0b0000000, rd, rs1, rs2)
 }
 
 pub macro sub(
@@ -171,13 +295,7 @@ pub macro sub(
 )
     | emits LittleEndian<RType, 32>
 {
-    @emit LittleEndian<RType, 32> { value: RType(
-            funct7 = Funct7(0b0100000),
-            rs2 = rs2,
-            rs1 = rs1,
-            funct3 = Funct3(0b000), rd = rd,
-            opcode = Opcode(0b0110011)
-    ) }
+    @emit r_type(OP, 0b000, 0b0100000, rd, rs1, rs2)
 }
 
 pub macro sll(
@@ -187,13 +305,7 @@ pub macro sll(
 )
     | emits LittleEndian<RType, 32>
 {
-    @emit LittleEndian<RType, 32> { value: RType(
-            funct7 = Funct7(0b0000000),
-            rs2 = rs2,
-            rs1 = rs1,
-            funct3 = Funct3(0b001), rd = rd,
-            opcode = Opcode(0b0110011)
-    ) }
+    @emit r_type(OP, 0b001, 0b0000000, rd, rs1, rs2)
 }
 
 pub macro slt(
@@ -203,13 +315,7 @@ pub macro slt(
 )
     | emits LittleEndian<RType, 32>
 {
-    @emit LittleEndian<RType, 32> { value: RType(
-            funct7 = Funct7(0b0000000),
-            rs2 = rs2,
-            rs1 = rs1,
-            funct3 = Funct3(0b010), rd = rd,
-            opcode = Opcode(0b0110011)
-    ) }
+    @emit r_type(OP, 0b010, 0b0000000, rd, rs1, rs2)
 }
 
 pub macro sltu(
@@ -219,13 +325,7 @@ pub macro sltu(
 )
     | emits LittleEndian<RType, 32>
 {
-    @emit LittleEndian<RType, 32> { value: RType(
-            funct7 = Funct7(0b0000000),
-            rs2 = rs2,
-            rs1 = rs1,
-            funct3 = Funct3(0b011), rd = rd,
-            opcode = Opcode(0b0110011)
-    ) }
+    @emit r_type(OP, 0b011, 0b0000000, rd, rs1, rs2)
 }
 
 pub macro xor(
@@ -235,13 +335,7 @@ pub macro xor(
 )
     | emits LittleEndian<RType, 32>
 {
-    @emit LittleEndian<RType, 32> { value: RType(
-            funct7 = Funct7(0b0000000),
-            rs2 = rs2,
-            rs1 = rs1,
-            funct3 = Funct3(0b100), rd = rd,
-            opcode = Opcode(0b0110011)
-    ) }
+    @emit r_type(OP, 0b100, 0b0000000, rd, rs1, rs2)
 }
 
 pub macro srl(
@@ -251,13 +345,7 @@ pub macro srl(
 )
     | emits LittleEndian<RType, 32>
 {
-    @emit LittleEndian<RType, 32> { value: RType(
-            funct7 = Funct7(0b0000000),
-            rs2 = rs2,
-            rs1 = rs1,
-            funct3 = Funct3(0b101), rd = rd,
-            opcode = Opcode(0b0110011)
-    ) }
+    @emit r_type(OP, 0b101, 0b0000000, rd, rs1, rs2)
 }
 
 pub macro sra(
@@ -267,13 +355,7 @@ pub macro sra(
 )
     | emits LittleEndian<RType, 32>
 {
-    @emit LittleEndian<RType, 32> { value: RType(
-            funct7 = Funct7(0b0100000),
-            rs2 = rs2,
-            rs1 = rs1,
-            funct3 = Funct3(0b101), rd = rd,
-            opcode = Opcode(0b0110011)
-    ) }
+    @emit r_type(OP, 0b101, 0b0100000, rd, rs1, rs2)
 }
 
 pub macro or(
@@ -283,13 +365,7 @@ pub macro or(
 )
     | emits LittleEndian<RType, 32>
 {
-    @emit LittleEndian<RType, 32> { value: RType(
-            funct7 = Funct7(0b0000000),
-            rs2 = rs2,
-            rs1 = rs1,
-            funct3 = Funct3(0b110), rd = rd,
-            opcode = Opcode(0b0110011)
-    ) }
+    @emit r_type(OP, 0b110, 0b0000000, rd, rs1, rs2)
 }
 
 pub macro and(
@@ -299,13 +375,7 @@ pub macro and(
 )
     | emits LittleEndian<RType, 32>
 {
-    @emit LittleEndian<RType, 32> { value: RType(
-            funct7 = Funct7(0b0000000),
-            rs2 = rs2,
-            rs1 = rs1,
-            funct3 = Funct3(0b111), rd = rd,
-            opcode = Opcode(0b0110011)
-    ) }
+    @emit r_type(OP, 0b111, 0b0000000, rd, rs1, rs2)
 }
 
 # =================
@@ -319,13 +389,7 @@ pub macro addi(
 )
     | emits LittleEndian<IType, 32>
 {
-    @emit LittleEndian<IType, 32> { value: IType(
-            imm = Imm12(imm & 0xFFF),
-            rs1 = rs1,
-            funct3 = Funct3(0b000),
-            rd = rd,
-            opcode = Opcode(0b0010011)
-    ) }
+    @emit i_type(OP_IMM, 0b000, rd, rs1, imm)
 }
 
 pub macro slti(
@@ -335,13 +399,7 @@ pub macro slti(
 )
     | emits LittleEndian<IType, 32>
 {
-    @emit LittleEndian<IType, 32> { value: IType(
-            imm = Imm12(imm & 0xFFF),
-            rs1 = rs1,
-            funct3 = Funct3(0b010),
-            rd = rd,
-            opcode = Opcode(0b0010011)
-    ) }
+    @emit i_type(OP_IMM, 0b010, rd, rs1, imm)
 }
 
 pub macro sltiu(
@@ -351,13 +409,7 @@ pub macro sltiu(
 )
     | emits LittleEndian<IType, 32>
 {
-    @emit LittleEndian<IType, 32> { value: IType(
-            imm = Imm12(imm & 0xFFF),
-            rs1 = rs1,
-            funct3 = Funct3(0b011),
-            rd = rd,
-            opcode = Opcode(0b0010011)
-    ) }
+    @emit i_type(OP_IMM, 0b011, rd, rs1, imm)
 }
 
 pub macro xori(
@@ -367,13 +419,7 @@ pub macro xori(
 )
     | emits LittleEndian<IType, 32>
 {
-    @emit LittleEndian<IType, 32> { value: IType(
-            imm = Imm12(imm & 0xFFF),
-            rs1 = rs1,
-            funct3 = Funct3(0b100),
-            rd = rd,
-            opcode = Opcode(0b0010011)
-    ) }
+    @emit i_type(OP_IMM, 0b100, rd, rs1, imm)
 }
 
 pub macro ori(
@@ -383,13 +429,7 @@ pub macro ori(
 )
     | emits LittleEndian<IType, 32>
 {
-    @emit LittleEndian<IType, 32> { value: IType(
-            imm = Imm12(imm & 0xFFF),
-            rs1 = rs1,
-            funct3 = Funct3(0b110),
-            rd = rd,
-            opcode = Opcode(0b0010011)
-    ) }
+    @emit i_type(OP_IMM, 0b110, rd, rs1, imm)
 }
 
 pub macro andi(
@@ -399,13 +439,7 @@ pub macro andi(
 )
     | emits LittleEndian<IType, 32>
 {
-    @emit LittleEndian<IType, 32> { value: IType(
-            imm = Imm12(imm & 0xFFF),
-            rs1 = rs1,
-            funct3 = Funct3(0b111),
-            rd = rd,
-            opcode = Opcode(0b0010011)
-    ) }
+    @emit i_type(OP_IMM, 0b111, rd, rs1, imm)
 }
 
 # Shift-by-immediate is still I-type, but its 12-bit `imm` field is really
@@ -422,13 +456,7 @@ pub macro slli(
 )
     | emits LittleEndian<IType, 32>
 {
-    @emit LittleEndian<IType, 32> { value: IType(
-            imm = Imm12(shamt & 0b11111),
-            rs1 = rs1,
-            funct3 = Funct3(0b001),
-            rd = rd,
-            opcode = Opcode(0b0010011)
-    ) }
+    @emit i_type(OP_IMM, 0b001, rd, rs1, slice(shamt, 4, 0))
 }
 
 pub macro srli(
@@ -438,13 +466,7 @@ pub macro srli(
 )
     | emits LittleEndian<IType, 32>
 {
-    @emit LittleEndian<IType, 32> { value: IType(
-            imm = Imm12(shamt & 0b11111),
-            rs1 = rs1,
-            funct3 = Funct3(0b101),
-            rd = rd,
-            opcode = Opcode(0b0010011)
-    ) }
+    @emit i_type(OP_IMM, 0b101, rd, rs1, slice(shamt, 4, 0))
 }
 
 pub macro srai(
@@ -454,12 +476,7 @@ pub macro srai(
 )
     | emits LittleEndian<IType, 32>
 {
-    @emit LittleEndian<IType, 32> { value: IType(
-            imm = Imm12((0b0100000 << 5) | (shamt & 0b11111)),
-            rs1 = rs1,
-            funct3 = Funct3(0b101), rd = rd,
-            opcode = Opcode(0b0010011)
-    ) }
+    @emit i_type(OP_IMM, 0b101, rd, rs1, place(0b0100000, 11, 5) | slice(shamt, 4, 0))
 }
 
 pub macro jalr(
@@ -469,37 +486,19 @@ pub macro jalr(
 )
     | emits LittleEndian<IType, 32>
 {
-    @emit LittleEndian<IType, 32> { value: IType(
-            imm = Imm12(offset & 0xFFF),
-            rs1 = rs1,
-            funct3 = Funct3(0b000),
-            rd = rd,
-            opcode = Opcode(0b1100111)
-    ) }
+    @emit i_type(JALR, 0b000, rd, rs1, offset)
 }
 
 pub macro ecall()
     | emits LittleEndian<IType, 32>
 {
-    @emit LittleEndian<IType, 32> { value: IType(
-            imm = Imm12(0),
-            rs1 = x0,
-            funct3 = Funct3(0b000),
-            rd = x0,
-            opcode = Opcode(0b1110011)
-    ) }
+    @emit i_type(SYSTEM, 0b000, x0, x0, 0)
 }
 
 pub macro ebreak()
     | emits LittleEndian<IType, 32>
 {
-    @emit LittleEndian<IType, 32> { value: IType(
-            imm = Imm12(1),
-            rs1 = x0,
-            funct3 = Funct3(0b000),
-            rd = x0,
-            opcode = Opcode(0b1110011)
-    ) }
+    @emit i_type(SYSTEM, 0b000, x0, x0, 1)
 }
 
 # =================
@@ -513,61 +512,31 @@ pub macro ebreak()
 pub macro lb(rd: Reg, offset: int, rs1: Reg)
     | emits LittleEndian<IType, 32>
 {
-    @emit LittleEndian<IType, 32> { value: IType(
-            imm = Imm12(offset & 0xFFF),
-            rs1 = rs1,
-            funct3 = Funct3(0b000),
-            rd = rd,
-            opcode = Opcode(0b0000011)
-    ) }
+    @emit i_type(LOAD, 0b000, rd, rs1, offset)
 }
 
 pub macro lh(rd: Reg, offset: int, rs1: Reg)
     | emits LittleEndian<IType, 32>
 {
-    @emit LittleEndian<IType, 32> { value: IType(
-            imm = Imm12(offset & 0xFFF),
-            rs1 = rs1,
-            funct3 = Funct3(0b001),
-            rd = rd,
-            opcode = Opcode(0b0000011)
-    ) }
+    @emit i_type(LOAD, 0b001, rd, rs1, offset)
 }
 
 pub macro lw(rd: Reg, offset: int, rs1: Reg)
     | emits LittleEndian<IType, 32>
 {
-    @emit LittleEndian<IType, 32> { value: IType(
-            imm = Imm12(offset & 0xFFF),
-            rs1 = rs1,
-            funct3 = Funct3(0b010),
-            rd = rd,
-            opcode = Opcode(0b0000011)
-    ) }
+    @emit i_type(LOAD, 0b010, rd, rs1, offset)
 }
 
 pub macro lbu(rd: Reg, offset: int, rs1: Reg)
     | emits LittleEndian<IType, 32>
 {
-    @emit LittleEndian<IType, 32> { value: IType(
-            imm = Imm12(offset & 0xFFF),
-            rs1 = rs1,
-            funct3 = Funct3(0b100),
-            rd = rd,
-            opcode = Opcode(0b0000011)
-    ) }
+    @emit i_type(LOAD, 0b100, rd, rs1, offset)
 }
 
 pub macro lhu(rd: Reg, offset: int, rs1: Reg)
     | emits LittleEndian<IType, 32>
 {
-    @emit LittleEndian<IType, 32> { value: IType(
-            imm = Imm12(offset & 0xFFF),
-            rs1 = rs1,
-            funct3 = Funct3(0b101),
-            rd = rd,
-            opcode = Opcode(0b0000011)
-    ) }
+    @emit i_type(LOAD, 0b101, rd, rs1, offset)
 }
 
 # =================
@@ -577,37 +546,19 @@ pub macro lhu(rd: Reg, offset: int, rs1: Reg)
 pub macro sb(rs2: Reg, offset: int, rs1: Reg)
     | emits LittleEndian<SType, 32>
 {
-    @emit LittleEndian<SType, 32> { value: SType(
-            imm_hi = Imm7((offset >> 5) & 0b1111111),
-            rs2 = rs2,
-            rs1 = rs1,
-            funct3 = Funct3(0b000), imm_lo = Imm5(offset & 0b11111),
-            opcode = Opcode(0b0100011)
-    ) }
+    @emit s_type(STORE, 0b000, rs1, rs2, offset)
 }
 
 pub macro sh(rs2: Reg, offset: int, rs1: Reg)
     | emits LittleEndian<SType, 32>
 {
-    @emit LittleEndian<SType, 32> { value: SType(
-            imm_hi = Imm7((offset >> 5) & 0b1111111),
-            rs2 = rs2,
-            rs1 = rs1,
-            funct3 = Funct3(0b001), imm_lo = Imm5(offset & 0b11111),
-            opcode = Opcode(0b0100011)
-    ) }
+    @emit s_type(STORE, 0b001, rs1, rs2, offset)
 }
 
 pub macro sw(rs2: Reg, offset: int, rs1: Reg)
     | emits LittleEndian<SType, 32>
 {
-    @emit LittleEndian<SType, 32> { value: SType(
-            imm_hi = Imm7((offset >> 5) & 0b1111111),
-            rs2 = rs2,
-            rs1 = rs1,
-            funct3 = Funct3(0b010), imm_lo = Imm5(offset & 0b11111),
-            opcode = Opcode(0b0100011)
-    ) }
+    @emit s_type(STORE, 0b010, rs1, rs2, offset)
 }
 
 # =================
@@ -623,103 +574,43 @@ pub macro sw(rs2: Reg, offset: int, rs1: Reg)
 # entry is a 4-byte instruction, but `span` measures real bytes (so data
 # between branch and target doesn't throw it off) and marks `target` as a
 # position a linker has to translate when it reorders entries (see
-# `Deferred.Pos`). The scrambled field order below is RV32I's, not a choice
-# made here — see the BType declaration's own doc comment.
+# `Deferred.Pos`). The scrambled field order `b_type` builds is RV32I's, not
+# a choice made here — see the BType declaration's own doc comment.
 
 pub macro beq(rs1: Reg, rs2: Reg, target: int)
     | emits LittleEndian<BType, 32>
 {
-    const offset = span(here(), target)
-    @emit LittleEndian<BType, 32> { value: BType(
-            imm12 = Positioned<1> { value: band(shr(offset, 12), 1) },
-            imm10_5 = Positioned<6> { value: band(shr(offset, 5), 0b111111) },
-            rs2 = rs2,
-            rs1 = rs1,
-            funct3 = Funct3(0b000),
-            imm4_1 = Positioned<4> { value: band(shr(offset, 1), 0b1111) },
-            imm11 = Positioned<1> { value: band(shr(offset, 11), 1) },
-            opcode = Opcode(0b1100011)
-    ) }
+    @emit b_type(BRANCH, 0b000, rs1, rs2, target)
 }
 
 pub macro bne(rs1: Reg, rs2: Reg, target: int)
     | emits LittleEndian<BType, 32>
 {
-    const offset = span(here(), target)
-    @emit LittleEndian<BType, 32> { value: BType(
-            imm12 = Positioned<1> { value: band(shr(offset, 12), 1) },
-            imm10_5 = Positioned<6> { value: band(shr(offset, 5), 0b111111) },
-            rs2 = rs2,
-            rs1 = rs1,
-            funct3 = Funct3(0b001),
-            imm4_1 = Positioned<4> { value: band(shr(offset, 1), 0b1111) },
-            imm11 = Positioned<1> { value: band(shr(offset, 11), 1) },
-            opcode = Opcode(0b1100011)
-    ) }
+    @emit b_type(BRANCH, 0b001, rs1, rs2, target)
 }
 
 pub macro blt(rs1: Reg, rs2: Reg, target: int)
     | emits LittleEndian<BType, 32>
 {
-    const offset = span(here(), target)
-    @emit LittleEndian<BType, 32> { value: BType(
-            imm12 = Positioned<1> { value: band(shr(offset, 12), 1) },
-            imm10_5 = Positioned<6> { value: band(shr(offset, 5), 0b111111) },
-            rs2 = rs2,
-            rs1 = rs1,
-            funct3 = Funct3(0b100),
-            imm4_1 = Positioned<4> { value: band(shr(offset, 1), 0b1111) },
-            imm11 = Positioned<1> { value: band(shr(offset, 11), 1) },
-            opcode = Opcode(0b1100011)
-    ) }
+    @emit b_type(BRANCH, 0b100, rs1, rs2, target)
 }
 
 pub macro bge(rs1: Reg, rs2: Reg, target: int)
     | emits LittleEndian<BType, 32>
 {
-    const offset = span(here(), target)
-    @emit LittleEndian<BType, 32> { value: BType(
-            imm12 = Positioned<1> { value: band(shr(offset, 12), 1) },
-            imm10_5 = Positioned<6> { value: band(shr(offset, 5), 0b111111) },
-            rs2 = rs2,
-            rs1 = rs1,
-            funct3 = Funct3(0b101),
-            imm4_1 = Positioned<4> { value: band(shr(offset, 1), 0b1111) },
-            imm11 = Positioned<1> { value: band(shr(offset, 11), 1) },
-            opcode = Opcode(0b1100011)
-    ) }
+    @emit b_type(BRANCH, 0b101, rs1, rs2, target)
 }
 
 pub macro bltu(rs1: Reg, rs2: Reg, target: int)
     | emits LittleEndian<BType, 32>
 {
-    const offset = span(here(), target)
-    @emit LittleEndian<BType, 32> { value: BType(
-            imm12 = Positioned<1> { value: band(shr(offset, 12), 1) },
-            imm10_5 = Positioned<6> { value: band(shr(offset, 5), 0b111111) },
-            rs2 = rs2,
-            rs1 = rs1,
-            funct3 = Funct3(0b110),
-            imm4_1 = Positioned<4> { value: band(shr(offset, 1), 0b1111) },
-            imm11 = Positioned<1> { value: band(shr(offset, 11), 1) },
-            opcode = Opcode(0b1100011)
-    ) }
+    @emit b_type(BRANCH, 0b110, rs1, rs2, target)
 }
 
 pub macro bgeu(rs1: Reg, rs2: Reg, target: int)
     | emits LittleEndian<BType, 32>
 {
-    const offset = span(here(), target)
-    @emit LittleEndian<BType, 32> { value: BType(
-            imm12 = Positioned<1> { value: band(shr(offset, 12), 1) },
-            imm10_5 = Positioned<6> { value: band(shr(offset, 5), 0b111111) },
-            rs2 = rs2,
-            rs1 = rs1,
-            funct3 = Funct3(0b111),
-            imm4_1 = Positioned<4> { value: band(shr(offset, 1), 0b1111) },
-            imm11 = Positioned<1> { value: band(shr(offset, 11), 1) },
-            opcode = Opcode(0b1100011)
-    ) }
+    @emit b_type(BRANCH, 0b111, rs1, rs2, target)
 }
 
 # =================
@@ -732,11 +623,7 @@ pub macro lui(
 )
     | emits LittleEndian<UType, 32>
 {
-    @emit LittleEndian<UType, 32> { value: UType(
-            imm = Imm20(imm & 0xFFFFF),
-            rd = rd,
-            opcode = Opcode(0b0110111)
-        ) }
+    @emit u_type(LUI, rd, imm)
 }
 
 pub macro auipc(
@@ -745,11 +632,7 @@ pub macro auipc(
 )
     | emits LittleEndian<UType, 32>
 {
-    @emit LittleEndian<UType, 32> { value: UType(
-            imm = Imm20(imm & 0xFFFFF),
-            rd = rd,
-            opcode = Opcode(0b0010111)
-        ) }
+    @emit u_type(AUIPC, rd, imm)
 }
 
 # =================
@@ -761,13 +644,5 @@ pub macro auipc(
 pub macro jal(rd: Reg, target: int)
     | emits LittleEndian<JType, 32>
 {
-    const offset = span(here(), target)
-    @emit LittleEndian<JType, 32> { value: JType(
-            imm20 = Positioned<1> { value: band(shr(offset, 20), 1) },
-            imm10_1 = Positioned<10> { value: band(shr(offset, 1), 0b1111111111) },
-            imm11 = Positioned<1> { value: band(shr(offset, 11), 1) },
-            imm19_12 = Positioned<8> { value: band(shr(offset, 12), 0b11111111) },
-            rd = rd,
-            opcode = Opcode(0b1101111)
-    ) }
+    @emit j_type(JAL, rd, target)
 }

@@ -1,4 +1,5 @@
 from std.binary import *
+from std.bitfield import *
 
 # =================
 # accumulators
@@ -88,9 +89,9 @@ pub macro jrst(
     @emit Instr(
         opcode = Opcode(0o254),
         ac = AC(0),
-        i = Indirect(i & 0b1),
+        i = truncate(i, 1),
         x = x,
-        y = Addr(y & 0x3FFFF)
+        y = truncate(y, 18)
     )
 }
 
@@ -102,9 +103,9 @@ pub macro jumpa(
     @emit Instr(
         opcode = Opcode(0o324),
         ac = AC(0),
-        i = Indirect(i & 0b1),
+        i = truncate(i, 1),
         x = x,
-        y = Addr(y & 0x3FFFF)
+        y = truncate(y, 18)
     )
 }
 
@@ -117,9 +118,9 @@ pub macro movei(
     @emit Instr(
         opcode = Opcode(0o201),
         ac = ac,
-        i = Indirect(i & 0b1),
+        i = truncate(i, 1),
         x = x,
-        y = Addr(y & 0x3FFFF)
+        y = truncate(y, 18)
     )
 }
 
@@ -132,9 +133,9 @@ pub macro move(
     @emit Instr(
         opcode = Opcode(0o200),
         ac = ac,
-        i = Indirect(i & 0b1),
+        i = truncate(i, 1),
         x = x,
-        y = Addr(y & 0x3FFFF)
+        y = truncate(y, 18)
     )
 }
 
@@ -147,9 +148,9 @@ pub macro movem(
     @emit Instr(
         opcode = Opcode(0o202),
         ac = ac,
-        i = Indirect(i & 0b1),
+        i = truncate(i, 1),
         x = x,
-        y = Addr(y & 0x3FFFF)
+        y = truncate(y, 18)
     )
 }
 
@@ -166,9 +167,9 @@ pub macro add(
     @emit Instr(
         opcode = Opcode(0o270),
         ac = ac,
-        i = Indirect(i & 0b1),
+        i = truncate(i, 1),
         x = x,
-        y = Addr(y & 0x3FFFF)
+        y = truncate(y, 18)
     )
 }
 
@@ -181,9 +182,9 @@ pub macro addi(
     @emit Instr(
         opcode = Opcode(0o271),
         ac = ac,
-        i = Indirect(i & 0b1),
+        i = truncate(i, 1),
         x = x,
-        y = Addr(y & 0x3FFFF)
+        y = truncate(y, 18)
     )
 }
 
@@ -196,9 +197,9 @@ pub macro sub(
     @emit Instr(
         opcode = Opcode(0o274),
         ac = ac,
-        i = Indirect(i & 0b1),
+        i = truncate(i, 1),
         x = x,
-        y = Addr(y & 0x3FFFF)
+        y = truncate(y, 18)
     )
 }
 
@@ -211,9 +212,9 @@ pub macro and(
     @emit Instr(
         opcode = Opcode(0o404),
         ac = ac,
-        i = Indirect(i & 0b1),
+        i = truncate(i, 1),
         x = x,
-        y = Addr(y & 0x3FFFF)
+        y = truncate(y, 18)
     )
 }
 
@@ -230,9 +231,9 @@ pub macro cain(
     @emit Instr(
         opcode = Opcode(0o306),
         ac = ac,
-        i = Indirect(i & 0b1),
+        i = truncate(i, 1),
         x = x,
-        y = Addr(y & 0x3FFFF)
+        y = truncate(y, 18)
     )
 }
 
@@ -245,8 +246,8 @@ pub macro exch(
     @emit Instr(
         opcode = Opcode(0o250),
         ac = ac,
-        i = Indirect(i & 0b1),
+        i = truncate(i, 1),
         x = x,
-        y = Addr(y & 0x3FFFF)
+        y = truncate(y, 18)
     )
 }

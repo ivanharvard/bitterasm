@@ -31,6 +31,11 @@ fn assert_checks_cleanly(relative_path: &str) {
 }
 
 #[test]
+fn bitfield_all_ops_fixture_checks_cleanly() {
+    assert_checks_cleanly("tests/fixtures/bitfield/all_ops.basm");
+}
+
+#[test]
 fn deferred_dispatch_fixture_checks_cleanly() {
     assert_checks_cleanly("tests/fixtures/bitter/deferred_dispatch.basm");
 }
