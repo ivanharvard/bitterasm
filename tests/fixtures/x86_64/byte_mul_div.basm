@@ -1,17 +1,17 @@
 # Byte loads/stores, movzx, inc/dec, mul/imul/div/idiv, cqo/cdq — see
 # tests/x86_64_encoding.rs's byte_mul_div_encodes_correctly.
 from std.x86_64.impl import *
-mov al, bl
-mov sil, dl
-mov r9b, dil
-mov al, 0x41
-mov dil, 7
-mov r10b, 1
-mov dl, Mem(rax, 0)
-mov sil, Mem(rbx, 8)
-mov Mem(rdi, 0), r8b
-mov Mem(rsp, 0), bpl
-mov_byte Mem(rax, 3), 0x7F
+mov8 al, bl
+mov8 sil, dl
+mov8 r9b, dil
+mov8 al, 0x41
+mov8 dil, 7
+mov8 r10b, 1
+mov8 dl, Mem(rax, 0)
+mov8 sil, Mem(rbx, 8)
+mov8 Mem(rdi, 0), r8b
+mov8 Mem(rsp, 0), bpl
+mov8 Mem(rax, 3), 0x7F
 movzx rdx, Mem(rax, 0), 0
 movzx rax, sil, 1
 movzx r11, r12b, 1

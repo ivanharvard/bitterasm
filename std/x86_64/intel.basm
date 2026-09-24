@@ -500,38 +500,41 @@ pub macro mem_rip(disp: int) -> MemOperand
 # =================
 # byte registers: al, cl, ..., r15b
 # =================
-# `mov rd, rs`/`mov rd, imm` need nothing here: the existing two-operand `mov`
-# patterns already reach `impl.basm`'s `Reg8` overloads. The bracket patterns
-# above name the load/store macros, so the byte forms overload those names. A byte store of an immediate has no
-# register to size it, hence `mov byte [...], imm`.
+# Every form maps onto `impl.basm`'s `mov8`. The bracket patterns above name
+# the load/store macros, so the byte forms overload those names. A byte store
+# of an immediate has no register to size it, hence `mov byte [...], imm`.
+
+pub macro mov(rd: Reg8, rs: Reg8)
+    | syntax { mov $rd$, $rs$ } { mov8 rd, rs }
+pub macro mov(rd: Reg8, imm: int)
+    | syntax { mov $rd$, $imm$ } { mov8 rd, imm }
 
 pub macro mov_load_base(rd: Reg8, base: Reg)
-    | syntax { mov $rd$, [$base$] } { mov rd, Mem(base, 0) }
+    | syntax { mov $rd$, [$base$] } { mov8 rd, Mem(base, 0) }
 pub macro mov_load_base_disp(rd: Reg8, base: Reg, disp: int)
-    | syntax { mov $rd$, [$base$+$disp$] } { mov rd, Mem(base, disp) }
+    | syntax { mov $rd$, [$base$+$disp$] } { mov8 rd, Mem(base, disp) }
 pub macro mov_load_indexed(rd: Reg8, base: Reg, index: Reg, scale: int, disp: int)
     | syntax { mov $rd$, [$base$+$index$*$scale$+$disp$] }
 {
-    mov rd, MemIndexed(base, index, scale, disp)
+    mov8 rd, MemIndexed(base, index, scale, disp)
 }
 pub macro mov_load_rip(rd: Reg8, disp: int)
-    | syntax { mov $rd$, [rip+$disp$] } { mov rd, MemRipRelative(disp) }
+    | syntax { mov $rd$, [rip+$disp$] } { mov8 rd, MemRipRelative(disp) }
 
 pub macro mov_store_base(base: Reg, rs: Reg8)
-    | syntax { mov [$base$], $rs$ } { mov Mem(base, 0), rs }
+    | syntax { mov [$base$], $rs$ } { mov8 Mem(base, 0), rs }
 pub macro mov_store_base_disp(base: Reg, disp: int, rs: Reg8)
-    | syntax { mov [$base$+$disp$], $rs$ } { mov Mem(base, disp), rs }
+    | syntax { mov [$base$+$disp$], $rs$ } { mov8 Mem(base, disp), rs }
 pub macro mov_store_indexed(base: Reg, index: Reg, scale: int, disp: int, rs: Reg8)
     | syntax { mov [$base$+$index$*$scale$+$disp$], $rs$ }
 {
-    mov MemIndexed(base, index, scale, disp), rs
+    mov8 MemIndexed(base, index, scale, disp), rs
 }
 pub macro mov_store_rip(disp: int, rs: Reg8)
-    | syntax { mov [rip+$disp$], $rs$ } { mov MemRipRelative(disp), rs }
+    | syntax { mov [rip+$disp$], $rs$ } { mov8 MemRipRelative(disp), rs }
 
-syntax mov_byte(a, b) = { mov_byte $a$, $b$ }
 pub macro mov_byte_mem(dst: MemOperand, imm: int)
-    | syntax { mov byte $dst$, $imm$ } { mov_byte dst, imm }
+    | syntax { mov byte $dst$, $imm$ } { mov8 dst, imm }
 
 # =================
 # movzx

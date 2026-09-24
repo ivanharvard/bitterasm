@@ -210,6 +210,380 @@ pub macro sar_cl(rd: Reg)
     | syntax { sar %cl, %$rd$ } { sar_cl rd, 1 }
 
 # =================
+# 32-bit operand size: eax, ecx, ..., r15d
+# =================
+# The same sugar as above, overloaded on `Reg32` with `w = 0`, as in
+# `intel.basm`: the register spelling alone picks the operand size.
+
+pub macro mov(rs: Reg32, rd: Reg32)
+    | syntax { mov %$rs$, %$rd$ } { mov rd.reg, rs.reg, 0 }
+pub macro mov(imm: int, rd: Reg32)
+    | syntax { mov \$$imm$, %$rd$ } { mov rd.reg, imm, 0 }
+pub macro mov_load_base(rd: Reg32, base: Reg)
+    | syntax { mov (%$base$), %$rd$ } { mov rd.reg, Mem(base, 0), 0 }
+pub macro mov_store_base(rs: Reg32, base: Reg)
+    | syntax { mov %$rs$, (%$base$) } { mov Mem(base, 0), rs.reg, 0 }
+pub macro mov_load_base_disp(rd: Reg32, disp: int, base: Reg)
+    | syntax { mov $disp$(%$base$), %$rd$ } { mov rd.reg, Mem(base, disp), 0 }
+pub macro mov_store_base_disp(rs: Reg32, disp: int, base: Reg)
+    | syntax { mov %$rs$, $disp$(%$base$) } { mov Mem(base, disp), rs.reg, 0 }
+pub macro mov_load_indexed(rd: Reg32, disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { mov $disp$(%$base$,%$index$,$scale$), %$rd$ } { mov rd.reg, MemIndexed(base, index, scale, disp), 0 }
+pub macro mov_store_indexed(rs: Reg32, disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { mov %$rs$, $disp$(%$base$,%$index$,$scale$) } { mov MemIndexed(base, index, scale, disp), rs.reg, 0 }
+pub macro mov_load_rip(rd: Reg32, disp: int)
+    | syntax { mov $disp$(%rip), %$rd$ } { mov rd.reg, MemRipRelative(disp), 0 }
+pub macro mov_store_rip(rs: Reg32, disp: int)
+    | syntax { mov %$rs$, $disp$(%rip) } { mov MemRipRelative(disp), rs.reg, 0 }
+pub macro add(rs: Reg32, rd: Reg32)
+    | syntax { add %$rs$, %$rd$ } { add rd.reg, rs.reg, 0 }
+pub macro add(imm: int, rd: Reg32)
+    | syntax { add \$$imm$, %$rd$ } { add rd.reg, imm, 0 }
+pub macro or(rs: Reg32, rd: Reg32)
+    | syntax { or %$rs$, %$rd$ } { or rd.reg, rs.reg, 0 }
+pub macro or(imm: int, rd: Reg32)
+    | syntax { or \$$imm$, %$rd$ } { or rd.reg, imm, 0 }
+pub macro and(rs: Reg32, rd: Reg32)
+    | syntax { and %$rs$, %$rd$ } { and rd.reg, rs.reg, 0 }
+pub macro and(imm: int, rd: Reg32)
+    | syntax { and \$$imm$, %$rd$ } { and rd.reg, imm, 0 }
+pub macro sub(rs: Reg32, rd: Reg32)
+    | syntax { sub %$rs$, %$rd$ } { sub rd.reg, rs.reg, 0 }
+pub macro sub(imm: int, rd: Reg32)
+    | syntax { sub \$$imm$, %$rd$ } { sub rd.reg, imm, 0 }
+pub macro xor(rs: Reg32, rd: Reg32)
+    | syntax { xor %$rs$, %$rd$ } { xor rd.reg, rs.reg, 0 }
+pub macro xor(imm: int, rd: Reg32)
+    | syntax { xor \$$imm$, %$rd$ } { xor rd.reg, imm, 0 }
+pub macro cmp(rs: Reg32, rd: Reg32)
+    | syntax { cmp %$rs$, %$rd$ } { cmp rd.reg, rs.reg, 0 }
+pub macro cmp(imm: int, rd: Reg32)
+    | syntax { cmp \$$imm$, %$rd$ } { cmp rd.reg, imm, 0 }
+pub macro test(rs: Reg32, rd: Reg32)
+    | syntax { test %$rs$, %$rd$ } { test rd.reg, rs.reg, 0 }
+pub macro test(imm: int, rd: Reg32)
+    | syntax { test \$$imm$, %$rd$ } { test rd.reg, imm, 0 }
+pub macro lea_base(rd: Reg32, base: Reg)
+    | syntax { lea (%$base$), %$rd$ } { lea rd.reg, Mem(base, 0), 0 }
+pub macro lea_base_disp(rd: Reg32, disp: int, base: Reg)
+    | syntax { lea $disp$(%$base$), %$rd$ } { lea rd.reg, Mem(base, disp), 0 }
+pub macro lea_indexed(rd: Reg32, disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { lea $disp$(%$base$,%$index$,$scale$), %$rd$ } { lea rd.reg, MemIndexed(base, index, scale, disp), 0 }
+pub macro lea_rip(rd: Reg32, disp: int)
+    | syntax { lea $disp$(%rip), %$rd$ } { lea rd.reg, MemRipRelative(disp), 0 }
+pub macro shl(imm: int, rd: Reg32)
+    | syntax { shl \$$imm$, %$rd$ } { shl rd.reg, imm, 0 }
+pub macro shl_cl(rd: Reg32)
+    | syntax { shl %cl, %$rd$ } { shl_cl rd.reg, 0 }
+pub macro shr_imm(imm: int, rd: Reg32)
+    | syntax { shr \$$imm$, %$rd$ } { shr rd.reg, imm, 0 }
+pub macro shr_cl(rd: Reg32)
+    | syntax { shr %cl, %$rd$ } { shr_cl rd.reg, 0 }
+pub macro sar(imm: int, rd: Reg32)
+    | syntax { sar \$$imm$, %$rd$ } { sar rd.reg, imm, 0 }
+pub macro sar_cl(rd: Reg32)
+    | syntax { sar %cl, %$rd$ } { sar_cl rd.reg, 0 }
+
+# =================
+# byte registers: al, cl, ..., r15b
+# =================
+# `mov` sizes itself from a byte register; `movb` spells the size out, and is
+# the only way to store an immediate byte to memory. The register-to-register
+# forms all go through `impl.basm`'s `mov8`, named apart from `mov` so these
+# source-first overloads can't resolve to its destination-first ones.
+
+pub macro mov(rs: Reg8, rd: Reg8)
+    | syntax { mov %$rs$, %$rd$ } { mov8 rd, rs }
+pub macro movb(rs: Reg8, rd: Reg8)
+    | syntax { movb %$rs$, %$rd$ } { mov8 rd, rs }
+pub macro mov(imm: int, rd: Reg8)
+    | syntax { mov \$$imm$, %$rd$ } { mov8 rd, imm }
+pub macro movb(imm: int, rd: Reg8)
+    | syntax { movb \$$imm$, %$rd$ } { mov8 rd, imm }
+pub macro mov_load_base(rd: Reg8, base: Reg)
+    | syntax { mov (%$base$), %$rd$ } { mov8 rd, Mem(base, 0) }
+pub macro mov_store_base(rs: Reg8, base: Reg)
+    | syntax { mov %$rs$, (%$base$) } { mov8 Mem(base, 0), rs }
+pub macro movb_load_base(rd: Reg8, base: Reg)
+    | syntax { movb (%$base$), %$rd$ } { mov8 rd, Mem(base, 0) }
+pub macro movb_store_base(rs: Reg8, base: Reg)
+    | syntax { movb %$rs$, (%$base$) } { mov8 Mem(base, 0), rs }
+pub macro movb_imm_base(imm: int, base: Reg)
+    | syntax { movb \$$imm$, (%$base$) } { mov8 Mem(base, 0), imm }
+pub macro mov_load_base_disp(rd: Reg8, disp: int, base: Reg)
+    | syntax { mov $disp$(%$base$), %$rd$ } { mov8 rd, Mem(base, disp) }
+pub macro mov_store_base_disp(rs: Reg8, disp: int, base: Reg)
+    | syntax { mov %$rs$, $disp$(%$base$) } { mov8 Mem(base, disp), rs }
+pub macro movb_load_base_disp(rd: Reg8, disp: int, base: Reg)
+    | syntax { movb $disp$(%$base$), %$rd$ } { mov8 rd, Mem(base, disp) }
+pub macro movb_store_base_disp(rs: Reg8, disp: int, base: Reg)
+    | syntax { movb %$rs$, $disp$(%$base$) } { mov8 Mem(base, disp), rs }
+pub macro movb_imm_base_disp(imm: int, disp: int, base: Reg)
+    | syntax { movb \$$imm$, $disp$(%$base$) } { mov8 Mem(base, disp), imm }
+pub macro mov_load_indexed(rd: Reg8, disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { mov $disp$(%$base$,%$index$,$scale$), %$rd$ } { mov8 rd, MemIndexed(base, index, scale, disp) }
+pub macro mov_store_indexed(rs: Reg8, disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { mov %$rs$, $disp$(%$base$,%$index$,$scale$) } { mov8 MemIndexed(base, index, scale, disp), rs }
+pub macro movb_load_indexed(rd: Reg8, disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { movb $disp$(%$base$,%$index$,$scale$), %$rd$ } { mov8 rd, MemIndexed(base, index, scale, disp) }
+pub macro movb_store_indexed(rs: Reg8, disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { movb %$rs$, $disp$(%$base$,%$index$,$scale$) } { mov8 MemIndexed(base, index, scale, disp), rs }
+pub macro movb_imm_indexed(imm: int, disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { movb \$$imm$, $disp$(%$base$,%$index$,$scale$) } { mov8 MemIndexed(base, index, scale, disp), imm }
+pub macro mov_load_rip(rd: Reg8, disp: int)
+    | syntax { mov $disp$(%rip), %$rd$ } { mov8 rd, MemRipRelative(disp) }
+pub macro mov_store_rip(rs: Reg8, disp: int)
+    | syntax { mov %$rs$, $disp$(%rip) } { mov8 MemRipRelative(disp), rs }
+pub macro movb_load_rip(rd: Reg8, disp: int)
+    | syntax { movb $disp$(%rip), %$rd$ } { mov8 rd, MemRipRelative(disp) }
+pub macro movb_store_rip(rs: Reg8, disp: int)
+    | syntax { movb %$rs$, $disp$(%rip) } { mov8 MemRipRelative(disp), rs }
+pub macro movb_imm_rip(imm: int, disp: int)
+    | syntax { movb \$$imm$, $disp$(%rip) } { mov8 MemRipRelative(disp), imm }
+
+# =================
+# movzbl/movzbq/movzwl/movzwq
+# =================
+# AT&T spells `movzx` with its source and destination sizes: `movzb` + `l`/`q`
+# zero-extends a byte into a 32/64-bit register, `movzw` + `l`/`q` a word
+# (memory only: there are no 16-bit registers here).
+
+syntax movzx(a, b, c) = { movzx $a$, $b$, $c$ }
+syntax movzx_word(a, b, c) = { movzx_word $a$, $b$, $c$ }
+pub macro movzbl(src: Reg8, rd: Reg32)
+    | syntax { movzbl %$src$, %$rd$ } { movzx rd.reg, src, 0 }
+pub macro movzbq(src: Reg8, rd: Reg)
+    | syntax { movzbq %$src$, %$rd$ } { movzx rd, src, 1 }
+pub macro movzbl_base(rd: Reg32, base: Reg)
+    | syntax { movzbl (%$base$), %$rd$ } { movzx rd.reg, Mem(base, 0), 0 }
+pub macro movzbl_base_disp(rd: Reg32, disp: int, base: Reg)
+    | syntax { movzbl $disp$(%$base$), %$rd$ } { movzx rd.reg, Mem(base, disp), 0 }
+pub macro movzbl_indexed(rd: Reg32, disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { movzbl $disp$(%$base$,%$index$,$scale$), %$rd$ } { movzx rd.reg, MemIndexed(base, index, scale, disp), 0 }
+pub macro movzbl_rip(rd: Reg32, disp: int)
+    | syntax { movzbl $disp$(%rip), %$rd$ } { movzx rd.reg, MemRipRelative(disp), 0 }
+pub macro movzbq_base(rd: Reg, base: Reg)
+    | syntax { movzbq (%$base$), %$rd$ } { movzx rd, Mem(base, 0), 1 }
+pub macro movzbq_base_disp(rd: Reg, disp: int, base: Reg)
+    | syntax { movzbq $disp$(%$base$), %$rd$ } { movzx rd, Mem(base, disp), 1 }
+pub macro movzbq_indexed(rd: Reg, disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { movzbq $disp$(%$base$,%$index$,$scale$), %$rd$ } { movzx rd, MemIndexed(base, index, scale, disp), 1 }
+pub macro movzbq_rip(rd: Reg, disp: int)
+    | syntax { movzbq $disp$(%rip), %$rd$ } { movzx rd, MemRipRelative(disp), 1 }
+pub macro movzwl_base(rd: Reg32, base: Reg)
+    | syntax { movzwl (%$base$), %$rd$ } { movzx_word rd.reg, Mem(base, 0), 0 }
+pub macro movzwl_base_disp(rd: Reg32, disp: int, base: Reg)
+    | syntax { movzwl $disp$(%$base$), %$rd$ } { movzx_word rd.reg, Mem(base, disp), 0 }
+pub macro movzwl_indexed(rd: Reg32, disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { movzwl $disp$(%$base$,%$index$,$scale$), %$rd$ } { movzx_word rd.reg, MemIndexed(base, index, scale, disp), 0 }
+pub macro movzwl_rip(rd: Reg32, disp: int)
+    | syntax { movzwl $disp$(%rip), %$rd$ } { movzx_word rd.reg, MemRipRelative(disp), 0 }
+pub macro movzwq_base(rd: Reg, base: Reg)
+    | syntax { movzwq (%$base$), %$rd$ } { movzx_word rd, Mem(base, 0), 1 }
+pub macro movzwq_base_disp(rd: Reg, disp: int, base: Reg)
+    | syntax { movzwq $disp$(%$base$), %$rd$ } { movzx_word rd, Mem(base, disp), 1 }
+pub macro movzwq_indexed(rd: Reg, disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { movzwq $disp$(%$base$,%$index$,$scale$), %$rd$ } { movzx_word rd, MemIndexed(base, index, scale, disp), 1 }
+pub macro movzwq_rip(rd: Reg, disp: int)
+    | syntax { movzwq $disp$(%rip), %$rd$ } { movzx_word rd, MemRipRelative(disp), 1 }
+
+# =================
+# inc/dec, mul/imul/div/idiv, cqto/cltd
+# =================
+# A register operand sizes itself (`inc %rax`, or `incq %rax`); a memory one
+# needs the `q`/`l` suffix (`incq 8(%rbx)`). One-operand `imul` goes through
+# `impl.basm`'s `imul1`.
+syntax inc(a, b) = { inc $a$, $b$ }
+pub macro inc(rd: Reg)
+    | syntax { inc %$rd$ } { inc rd, 1 }
+pub macro incq(rd: Reg)
+    | syntax { incq %$rd$ } { inc rd, 1 }
+pub macro incq_base(base: Reg)
+    | syntax { incq (%$base$) } { inc Mem(base, 0), 1 }
+pub macro incq_base_disp(disp: int, base: Reg)
+    | syntax { incq $disp$(%$base$) } { inc Mem(base, disp), 1 }
+pub macro incq_indexed(disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { incq $disp$(%$base$,%$index$,$scale$) } { inc MemIndexed(base, index, scale, disp), 1 }
+pub macro incq_rip(disp: int)
+    | syntax { incq $disp$(%rip) } { inc MemRipRelative(disp), 1 }
+pub macro inc(rd: Reg32)
+    | syntax { inc %$rd$ } { inc rd.reg, 0 }
+pub macro incl(rd: Reg32)
+    | syntax { incl %$rd$ } { inc rd.reg, 0 }
+pub macro incl_base(base: Reg)
+    | syntax { incl (%$base$) } { inc Mem(base, 0), 0 }
+pub macro incl_base_disp(disp: int, base: Reg)
+    | syntax { incl $disp$(%$base$) } { inc Mem(base, disp), 0 }
+pub macro incl_indexed(disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { incl $disp$(%$base$,%$index$,$scale$) } { inc MemIndexed(base, index, scale, disp), 0 }
+pub macro incl_rip(disp: int)
+    | syntax { incl $disp$(%rip) } { inc MemRipRelative(disp), 0 }
+
+syntax dec(a, b) = { dec $a$, $b$ }
+pub macro dec(rd: Reg)
+    | syntax { dec %$rd$ } { dec rd, 1 }
+pub macro decq(rd: Reg)
+    | syntax { decq %$rd$ } { dec rd, 1 }
+pub macro decq_base(base: Reg)
+    | syntax { decq (%$base$) } { dec Mem(base, 0), 1 }
+pub macro decq_base_disp(disp: int, base: Reg)
+    | syntax { decq $disp$(%$base$) } { dec Mem(base, disp), 1 }
+pub macro decq_indexed(disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { decq $disp$(%$base$,%$index$,$scale$) } { dec MemIndexed(base, index, scale, disp), 1 }
+pub macro decq_rip(disp: int)
+    | syntax { decq $disp$(%rip) } { dec MemRipRelative(disp), 1 }
+pub macro dec(rd: Reg32)
+    | syntax { dec %$rd$ } { dec rd.reg, 0 }
+pub macro decl(rd: Reg32)
+    | syntax { decl %$rd$ } { dec rd.reg, 0 }
+pub macro decl_base(base: Reg)
+    | syntax { decl (%$base$) } { dec Mem(base, 0), 0 }
+pub macro decl_base_disp(disp: int, base: Reg)
+    | syntax { decl $disp$(%$base$) } { dec Mem(base, disp), 0 }
+pub macro decl_indexed(disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { decl $disp$(%$base$,%$index$,$scale$) } { dec MemIndexed(base, index, scale, disp), 0 }
+pub macro decl_rip(disp: int)
+    | syntax { decl $disp$(%rip) } { dec MemRipRelative(disp), 0 }
+
+syntax mul(a, b) = { mul $a$, $b$ }
+pub macro mul(rd: Reg)
+    | syntax { mul %$rd$ } { mul rd, 1 }
+pub macro mulq(rd: Reg)
+    | syntax { mulq %$rd$ } { mul rd, 1 }
+pub macro mulq_base(base: Reg)
+    | syntax { mulq (%$base$) } { mul Mem(base, 0), 1 }
+pub macro mulq_base_disp(disp: int, base: Reg)
+    | syntax { mulq $disp$(%$base$) } { mul Mem(base, disp), 1 }
+pub macro mulq_indexed(disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { mulq $disp$(%$base$,%$index$,$scale$) } { mul MemIndexed(base, index, scale, disp), 1 }
+pub macro mulq_rip(disp: int)
+    | syntax { mulq $disp$(%rip) } { mul MemRipRelative(disp), 1 }
+pub macro mul(rd: Reg32)
+    | syntax { mul %$rd$ } { mul rd.reg, 0 }
+pub macro mull(rd: Reg32)
+    | syntax { mull %$rd$ } { mul rd.reg, 0 }
+pub macro mull_base(base: Reg)
+    | syntax { mull (%$base$) } { mul Mem(base, 0), 0 }
+pub macro mull_base_disp(disp: int, base: Reg)
+    | syntax { mull $disp$(%$base$) } { mul Mem(base, disp), 0 }
+pub macro mull_indexed(disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { mull $disp$(%$base$,%$index$,$scale$) } { mul MemIndexed(base, index, scale, disp), 0 }
+pub macro mull_rip(disp: int)
+    | syntax { mull $disp$(%rip) } { mul MemRipRelative(disp), 0 }
+
+syntax div(a, b) = { div $a$, $b$ }
+pub macro div(rd: Reg)
+    | syntax { div %$rd$ } { div rd, 1 }
+pub macro divq(rd: Reg)
+    | syntax { divq %$rd$ } { div rd, 1 }
+pub macro divq_base(base: Reg)
+    | syntax { divq (%$base$) } { div Mem(base, 0), 1 }
+pub macro divq_base_disp(disp: int, base: Reg)
+    | syntax { divq $disp$(%$base$) } { div Mem(base, disp), 1 }
+pub macro divq_indexed(disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { divq $disp$(%$base$,%$index$,$scale$) } { div MemIndexed(base, index, scale, disp), 1 }
+pub macro divq_rip(disp: int)
+    | syntax { divq $disp$(%rip) } { div MemRipRelative(disp), 1 }
+pub macro div(rd: Reg32)
+    | syntax { div %$rd$ } { div rd.reg, 0 }
+pub macro divl(rd: Reg32)
+    | syntax { divl %$rd$ } { div rd.reg, 0 }
+pub macro divl_base(base: Reg)
+    | syntax { divl (%$base$) } { div Mem(base, 0), 0 }
+pub macro divl_base_disp(disp: int, base: Reg)
+    | syntax { divl $disp$(%$base$) } { div Mem(base, disp), 0 }
+pub macro divl_indexed(disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { divl $disp$(%$base$,%$index$,$scale$) } { div MemIndexed(base, index, scale, disp), 0 }
+pub macro divl_rip(disp: int)
+    | syntax { divl $disp$(%rip) } { div MemRipRelative(disp), 0 }
+
+syntax idiv(a, b) = { idiv $a$, $b$ }
+pub macro idiv(rd: Reg)
+    | syntax { idiv %$rd$ } { idiv rd, 1 }
+pub macro idivq(rd: Reg)
+    | syntax { idivq %$rd$ } { idiv rd, 1 }
+pub macro idivq_base(base: Reg)
+    | syntax { idivq (%$base$) } { idiv Mem(base, 0), 1 }
+pub macro idivq_base_disp(disp: int, base: Reg)
+    | syntax { idivq $disp$(%$base$) } { idiv Mem(base, disp), 1 }
+pub macro idivq_indexed(disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { idivq $disp$(%$base$,%$index$,$scale$) } { idiv MemIndexed(base, index, scale, disp), 1 }
+pub macro idivq_rip(disp: int)
+    | syntax { idivq $disp$(%rip) } { idiv MemRipRelative(disp), 1 }
+pub macro idiv(rd: Reg32)
+    | syntax { idiv %$rd$ } { idiv rd.reg, 0 }
+pub macro idivl(rd: Reg32)
+    | syntax { idivl %$rd$ } { idiv rd.reg, 0 }
+pub macro idivl_base(base: Reg)
+    | syntax { idivl (%$base$) } { idiv Mem(base, 0), 0 }
+pub macro idivl_base_disp(disp: int, base: Reg)
+    | syntax { idivl $disp$(%$base$) } { idiv Mem(base, disp), 0 }
+pub macro idivl_indexed(disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { idivl $disp$(%$base$,%$index$,$scale$) } { idiv MemIndexed(base, index, scale, disp), 0 }
+pub macro idivl_rip(disp: int)
+    | syntax { idivl $disp$(%rip) } { idiv MemRipRelative(disp), 0 }
+
+pub macro imul(rd: Reg)
+    | syntax { imul %$rd$ } { imul1 rd, 1 }
+pub macro imulq(rd: Reg)
+    | syntax { imulq %$rd$ } { imul1 rd, 1 }
+pub macro imulq_base(base: Reg)
+    | syntax { imulq (%$base$) } { imul1 Mem(base, 0), 1 }
+pub macro imulq_base_disp(disp: int, base: Reg)
+    | syntax { imulq $disp$(%$base$) } { imul1 Mem(base, disp), 1 }
+pub macro imulq_indexed(disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { imulq $disp$(%$base$,%$index$,$scale$) } { imul1 MemIndexed(base, index, scale, disp), 1 }
+pub macro imulq_rip(disp: int)
+    | syntax { imulq $disp$(%rip) } { imul1 MemRipRelative(disp), 1 }
+pub macro imul(rd: Reg32)
+    | syntax { imul %$rd$ } { imul1 rd.reg, 0 }
+pub macro imull(rd: Reg32)
+    | syntax { imull %$rd$ } { imul1 rd.reg, 0 }
+pub macro imull_base(base: Reg)
+    | syntax { imull (%$base$) } { imul1 Mem(base, 0), 0 }
+pub macro imull_base_disp(disp: int, base: Reg)
+    | syntax { imull $disp$(%$base$) } { imul1 Mem(base, disp), 0 }
+pub macro imull_indexed(disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { imull $disp$(%$base$,%$index$,$scale$) } { imul1 MemIndexed(base, index, scale, disp), 0 }
+pub macro imull_rip(disp: int)
+    | syntax { imull $disp$(%rip) } { imul1 MemRipRelative(disp), 0 }
+
+# Two- and three-operand `imul` (`impl.basm`'s `imul2`/`imul3`), sized by
+# their registers: `imul %rs, %rd` is `rd *= rs`, `imul $imm, %rs, %rd` is
+# `rd = rs * imm`.
+pub macro imul(rs: Reg, rd: Reg)
+    | syntax { imul %$rs$, %$rd$ } { imul2 rd, rs, 1 }
+pub macro imul(imm: int, rs: Reg, rd: Reg)
+    | syntax { imul \$$imm$, %$rs$, %$rd$ } { imul3 rd, rs, imm, 1 }
+pub macro imul_load_base(rd: Reg, base: Reg)
+    | syntax { imul (%$base$), %$rd$ } { imul2 rd, Mem(base, 0), 1 }
+pub macro imul_load_base_disp(rd: Reg, disp: int, base: Reg)
+    | syntax { imul $disp$(%$base$), %$rd$ } { imul2 rd, Mem(base, disp), 1 }
+pub macro imul_load_indexed(rd: Reg, disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { imul $disp$(%$base$,%$index$,$scale$), %$rd$ } { imul2 rd, MemIndexed(base, index, scale, disp), 1 }
+pub macro imul_load_rip(rd: Reg, disp: int)
+    | syntax { imul $disp$(%rip), %$rd$ } { imul2 rd, MemRipRelative(disp), 1 }
+pub macro imul(rs: Reg32, rd: Reg32)
+    | syntax { imul %$rs$, %$rd$ } { imul2 rd.reg, rs.reg, 0 }
+pub macro imul(imm: int, rs: Reg32, rd: Reg32)
+    | syntax { imul \$$imm$, %$rs$, %$rd$ } { imul3 rd.reg, rs.reg, imm, 0 }
+pub macro imul_load_base(rd: Reg32, base: Reg)
+    | syntax { imul (%$base$), %$rd$ } { imul2 rd.reg, Mem(base, 0), 0 }
+pub macro imul_load_base_disp(rd: Reg32, disp: int, base: Reg)
+    | syntax { imul $disp$(%$base$), %$rd$ } { imul2 rd.reg, Mem(base, disp), 0 }
+pub macro imul_load_indexed(rd: Reg32, disp: int, base: Reg, index: Reg, scale: int)
+    | syntax { imul $disp$(%$base$,%$index$,$scale$), %$rd$ } { imul2 rd.reg, MemIndexed(base, index, scale, disp), 0 }
+pub macro imul_load_rip(rd: Reg32, disp: int)
+    | syntax { imul $disp$(%rip), %$rd$ } { imul2 rd.reg, MemRipRelative(disp), 0 }
+
+syntax cqo() = { cqo }
+syntax cdq() = { cdq }
+pub macro cqto()
+    | syntax { cqto } { cqo }
+pub macro cltd()
+    | syntax { cltd } { cdq }
+
+# =================
 # push/pop, control flow, ret
 # =================
 

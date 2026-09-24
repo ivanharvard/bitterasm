@@ -286,7 +286,7 @@ fn shift_lea_stack_encodes_correctly() {
 fn byte_mul_div_encodes_correctly() {
     // Cross-checked against GNU objdump (`-b binary -mi386:x86-64 -M intel`),
     // which decodes each line back to the fixture's own instruction. The
-    // `_intel` fixture writes the same instructions in Intel syntax.
+    // `_intel` and `_att` fixtures write the same instructions in each dialect.
     #[rustfmt::skip]
     let expected: &[u8] = &[
         // mov al, bl — 0x88 /r, no REX for registers 0-3
@@ -352,4 +352,5 @@ fn byte_mul_div_encodes_correctly() {
 
     assert_case_encodes_to("byte_mul_div", expected);
     assert_case_encodes_to("byte_mul_div_intel", expected);
+    assert_case_encodes_to("byte_mul_div_att", expected);
 }

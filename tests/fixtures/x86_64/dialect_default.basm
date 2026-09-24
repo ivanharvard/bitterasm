@@ -51,3 +51,15 @@ je target
 jne target
 ret
 syscall
+
+# 32-bit operand size
+mov eax.reg, ebx.reg, 0
+mov eax.reg, 100, 0
+mov eax.reg, Mem(rbx, 8), 0
+mov MemIndexed(rbx, rcx, 4, 0x10), eax.reg, 0
+add eax.reg, ebx.reg, 0
+sub eax.reg, 5, 0
+test eax.reg, ebx.reg, 0
+lea eax.reg, Mem(rbx, 8), 0
+shl eax.reg, 4, 0
+sar_cl eax.reg, 0

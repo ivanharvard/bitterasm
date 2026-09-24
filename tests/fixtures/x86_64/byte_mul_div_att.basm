@@ -1,0 +1,32 @@
+# byte_mul_div.basm's instructions in AT&T syntax; must encode identically.
+from std.x86_64.att import *
+mov %bl, %al
+movb %dl, %sil
+mov %dil, %r9b
+mov $0x41, %al
+movb $7, %dil
+mov $1, %r10b
+mov (%rax), %dl
+movb 8(%rbx), %sil
+mov %r8b, (%rdi)
+movb %bpl, (%rsp)
+movb $0x7F, 3(%rax)
+movzbl (%rax), %edx
+movzbq %sil, %rax
+movzbq %r12b, %r11
+movzwq 2(%rbx), %rcx
+incq %rax
+dec %ecx
+inc %r9
+incq (%rax)
+decl 16(%rbx,%rcx,8)
+mul %rcx
+imulq %r8
+divq %rbx
+idivq 8(%rsp)
+imul %rdx, %rcx
+imul (%rax), %r9
+imul $10, %rcx, %rcx
+imul $1000, %r15d, %eax
+cqto
+cltd

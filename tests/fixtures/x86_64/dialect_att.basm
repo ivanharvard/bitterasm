@@ -50,3 +50,15 @@ je target
 jne target
 ret
 syscall
+
+# 32-bit operand size
+mov %ebx, %eax
+mov $100, %eax
+mov 8(%rbx), %eax
+mov %eax, 0x10(%rbx,%rcx,4)
+add %ebx, %eax
+sub $5, %eax
+test %ebx, %eax
+lea 8(%rbx), %eax
+shl $4, %eax
+sar %cl, %eax

@@ -1309,12 +1309,15 @@ pub macro test(dst: RipLabel, rs: Reg, w: int) { rip_label_instr 0x85, dst, rs, 
 # =================
 # byte loads/stores, movzx
 # =================
-# The 8-bit `mov` family: `0x88` (r/m8, r8), `0x8A` (r8, r/m8), `0xB0+reg`
-# (r8, imm8), and `0xC6 /0` (r/m8, imm8). There's no `w`: the operand size is
-# the byte registers' own. A byte store of an immediate has no register to
-# carry its size, so it gets its own name, `mov_byte`, rather than an overload
-# of `mov(dst: MemOperand, imm: int, w)`.
-pub macro mov(
+# The 8-bit `mov` family, all named `mov8`: `0x88` (r/m8, r8), `0x8A` (r8,
+# r/m8), `0xB0+reg` (r8, imm8), and `0xC6 /0` (r/m8, imm8). There's no `w`: the
+# operand size is always a byte, which is also what lets `mov8 [mem], imm` say
+# so without a register. Named apart from `mov` because these are two-operand:
+# `(Reg8, Reg8)` is exactly the signature of AT&T's source-first
+# `mov %al, %bl` sugar, which would otherwise silently resolve to this
+# destination-first form, and neither dialect can call a two-operand `mov` from
+# its own macro bodies once its `mov` patterns claim that shape.
+pub macro mov8(
     rd: Reg8,
     rs: Reg8
 ) -> Bytes<...> {
@@ -1322,7 +1325,7 @@ pub macro mov(
     @emit reg_reg_instr_ex(0, 0x88, rd.reg, rs.reg, 0, force)
 }
 
-pub macro mov(
+pub macro mov8(
     rd: Reg8,
     imm: int
 ) -> Bytes<...> {
@@ -1332,17 +1335,17 @@ pub macro mov(
     @emit instr(need_rex, rex, 0, opcode, 0, Byte(0), imm, 1)
 }
 
-pub macro mov(
+pub macro mov8(
     rd: Reg8,
     src: MemOperand
 ) -> Bytes<...> { @emit mem_reg_instr_ex(0, 0x8A, src, rd.reg, 0, reg8_force_rex(rd)) }
 
-pub macro mov(
+pub macro mov8(
     dst: MemOperand,
     rs: Reg8
 ) -> Bytes<...> { @emit mem_reg_instr_ex(0, 0x88, dst, rs.reg, 0, reg8_force_rex(rs)) }
 
-pub macro mov_byte(
+pub macro mov8(
     dst: MemOperand,
     imm: int
 ) -> Bytes<...> { @emit mem_digit_instr(0xC6, 0, dst, imm, 1, 0) }
