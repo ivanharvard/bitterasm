@@ -1,0 +1,32 @@
+# byte_mul_div.basm's instructions in Intel syntax; must encode identically.
+from std.x86_64.nasm import *
+mov al, bl
+mov sil, dl
+mov r9b, dil
+mov al, 0x41
+mov dil, 7
+mov r10b, 1
+mov dl, [rax]
+mov sil, [rbx+8]
+mov [rdi], r8b
+mov [rsp], bpl
+mov byte [rax+3], 0x7F
+movzx edx, byte [rax]
+movzx rax, sil
+movzx r11, r12b
+movzx rcx, word [rbx+2]
+inc rax
+dec ecx
+inc r9
+inc qword [rax]
+dec dword [rbx+rcx*8+16]
+mul rcx
+imul r8
+div rbx
+idiv qword [rsp+8]
+imul rcx, rdx
+imul r9, [rax]
+imul rcx, rcx, 10
+imul eax, r15d, 1000
+cqo
+cdq

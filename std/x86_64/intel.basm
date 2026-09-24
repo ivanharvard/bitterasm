@@ -479,6 +479,164 @@ pub macro sar_cl(rd: Reg32)
     | syntax { sar $rd$, cl } { sar_cl rd.reg, 0 }
 
 # =================
+# memory operands as values
+# =================
+# Operand patterns (they start with `[`, so the parser tries them wherever an
+# operand starts, like `nasm.basm`'s `[rel x]`): each bracketed address becomes
+# a plain `MemOperand` value. The sections above predate these and keep their
+# own per-mnemonic bracket patterns, which still win wherever both match
+# (more literal tokens); everything below takes a `$src$`/`$dst$` capture
+# instead and lets the type pick the overload.
+
+pub macro mem_base(base: Reg) -> MemOperand
+    | syntax { [$base$] } { @return Mem(base, 0) }
+pub macro mem_base_disp(base: Reg, disp: int) -> MemOperand
+    | syntax { [$base$+$disp$] } { @return Mem(base, disp) }
+pub macro mem_indexed(base: Reg, index: Reg, scale: int, disp: int) -> MemOperand
+    | syntax { [$base$+$index$*$scale$+$disp$] } { @return MemIndexed(base, index, scale, disp) }
+pub macro mem_rip(disp: int) -> MemOperand
+    | syntax { [rip+$disp$] } { @return MemRipRelative(disp) }
+
+# =================
+# byte registers: al, cl, ..., r15b
+# =================
+# `mov rd, rs`/`mov rd, imm` need nothing here: the existing two-operand `mov`
+# patterns already reach `impl.basm`'s `Reg8` overloads. The bracket patterns
+# above name the load/store macros, so the byte forms overload those names. A byte store of an immediate has no
+# register to size it, hence `mov byte [...], imm`.
+
+pub macro mov_load_base(rd: Reg8, base: Reg)
+    | syntax { mov $rd$, [$base$] } { mov rd, Mem(base, 0) }
+pub macro mov_load_base_disp(rd: Reg8, base: Reg, disp: int)
+    | syntax { mov $rd$, [$base$+$disp$] } { mov rd, Mem(base, disp) }
+pub macro mov_load_indexed(rd: Reg8, base: Reg, index: Reg, scale: int, disp: int)
+    | syntax { mov $rd$, [$base$+$index$*$scale$+$disp$] }
+{
+    mov rd, MemIndexed(base, index, scale, disp)
+}
+pub macro mov_load_rip(rd: Reg8, disp: int)
+    | syntax { mov $rd$, [rip+$disp$] } { mov rd, MemRipRelative(disp) }
+
+pub macro mov_store_base(base: Reg, rs: Reg8)
+    | syntax { mov [$base$], $rs$ } { mov Mem(base, 0), rs }
+pub macro mov_store_base_disp(base: Reg, disp: int, rs: Reg8)
+    | syntax { mov [$base$+$disp$], $rs$ } { mov Mem(base, disp), rs }
+pub macro mov_store_indexed(base: Reg, index: Reg, scale: int, disp: int, rs: Reg8)
+    | syntax { mov [$base$+$index$*$scale$+$disp$], $rs$ }
+{
+    mov MemIndexed(base, index, scale, disp), rs
+}
+pub macro mov_store_rip(disp: int, rs: Reg8)
+    | syntax { mov [rip+$disp$], $rs$ } { mov MemRipRelative(disp), rs }
+
+syntax mov_byte(a, b) = { mov_byte $a$, $b$ }
+pub macro mov_byte_mem(dst: MemOperand, imm: int)
+    | syntax { mov byte $dst$, $imm$ } { mov_byte dst, imm }
+
+# =================
+# movzx
+# =================
+
+syntax movzx(a, b, c) = { movzx $a$, $b$, $c$ }
+syntax movzx_word(a, b, c) = { movzx_word $a$, $b$, $c$ }
+pub macro movzx(rd: Reg, src: Reg8)
+    | syntax { movzx $rd$, $src$ } { movzx rd, src, 1 }
+pub macro movzx_byte(rd: Reg, src: MemOperand)
+    | syntax { movzx $rd$, byte $src$ } { movzx rd, src, 1 }
+pub macro movzx_word_mem(rd: Reg, src: MemOperand)
+    | syntax { movzx $rd$, word $src$ } { movzx_word rd, src, 1 }
+pub macro movzx(rd: Reg32, src: Reg8)
+    | syntax { movzx $rd$, $src$ } { movzx rd.reg, src, 0 }
+pub macro movzx_byte(rd: Reg32, src: MemOperand)
+    | syntax { movzx $rd$, byte $src$ } { movzx rd.reg, src, 0 }
+pub macro movzx_word_mem(rd: Reg32, src: MemOperand)
+    | syntax { movzx $rd$, word $src$ } { movzx_word rd.reg, src, 0 }
+
+# =================
+# inc/dec, mul/imul/div/idiv, cqo/cdq
+# =================
+# A register operand sizes itself; a memory one needs `qword`/`dword`, each
+# its own `_qword`/`_dword` macro (the two would otherwise be identical
+# `MemOperand` overloads).
+syntax inc(a, b) = { inc $a$, $b$ }
+pub macro inc(rd: Reg)
+    | syntax { inc $rd$ } { inc rd, 1 }
+pub macro inc(rd: Reg32)
+    | syntax { inc $rd$ } { inc rd.reg, 0 }
+pub macro inc_qword(dst: MemOperand)
+    | syntax { inc qword $dst$ } { inc dst, 1 }
+pub macro inc_dword(dst: MemOperand)
+    | syntax { inc dword $dst$ } { inc dst, 0 }
+
+syntax dec(a, b) = { dec $a$, $b$ }
+pub macro dec(rd: Reg)
+    | syntax { dec $rd$ } { dec rd, 1 }
+pub macro dec(rd: Reg32)
+    | syntax { dec $rd$ } { dec rd.reg, 0 }
+pub macro dec_qword(dst: MemOperand)
+    | syntax { dec qword $dst$ } { dec dst, 1 }
+pub macro dec_dword(dst: MemOperand)
+    | syntax { dec dword $dst$ } { dec dst, 0 }
+
+syntax mul(a, b) = { mul $a$, $b$ }
+pub macro mul(rd: Reg)
+    | syntax { mul $rd$ } { mul rd, 1 }
+pub macro mul(rd: Reg32)
+    | syntax { mul $rd$ } { mul rd.reg, 0 }
+pub macro mul_qword(dst: MemOperand)
+    | syntax { mul qword $dst$ } { mul dst, 1 }
+pub macro mul_dword(dst: MemOperand)
+    | syntax { mul dword $dst$ } { mul dst, 0 }
+
+syntax div(a, b) = { div $a$, $b$ }
+pub macro div(rd: Reg)
+    | syntax { div $rd$ } { div rd, 1 }
+pub macro div(rd: Reg32)
+    | syntax { div $rd$ } { div rd.reg, 0 }
+pub macro div_qword(dst: MemOperand)
+    | syntax { div qword $dst$ } { div dst, 1 }
+pub macro div_dword(dst: MemOperand)
+    | syntax { div dword $dst$ } { div dst, 0 }
+
+syntax idiv(a, b) = { idiv $a$, $b$ }
+pub macro idiv(rd: Reg)
+    | syntax { idiv $rd$ } { idiv rd, 1 }
+pub macro idiv(rd: Reg32)
+    | syntax { idiv $rd$ } { idiv rd.reg, 0 }
+pub macro idiv_qword(dst: MemOperand)
+    | syntax { idiv qword $dst$ } { idiv dst, 1 }
+pub macro idiv_dword(dst: MemOperand)
+    | syntax { idiv dword $dst$ } { idiv dst, 0 }
+
+# `imul` has one-, two- and three-operand forms: `impl.basm`'s `imul1`
+# (`rdx:rax = rax * src`), `imul2` (`rd *= src`) and `imul3` (`rd = rs * imm`).
+# NASM's `imul rd, imm` shorthand for `imul rd, rd, imm` is left out, since its
+# `$rd$, $imm$` pattern would match exactly as much text as `imul rd, rs`.
+pub macro imul(rs: Reg)
+    | syntax { imul $rs$ } { imul1 rs, 1 }
+pub macro imul(rs: Reg32)
+    | syntax { imul $rs$ } { imul1 rs.reg, 0 }
+pub macro imul_qword(src: MemOperand)
+    | syntax { imul qword $src$ } { imul1 src, 1 }
+pub macro imul_dword(src: MemOperand)
+    | syntax { imul dword $src$ } { imul1 src, 0 }
+pub macro imul(rd: Reg, rs: Reg)
+    | syntax { imul $rd$, $rs$ } { imul2 rd, rs, 1 }
+pub macro imul(rd: Reg, src: MemOperand)
+    | syntax { imul $rd$, $src$ } { imul2 rd, src, 1 }
+pub macro imul(rd: Reg, rs: Reg, imm: int)
+    | syntax { imul $rd$, $rs$, $imm$ } { imul3 rd, rs, imm, 1 }
+pub macro imul(rd: Reg32, rs: Reg32)
+    | syntax { imul $rd$, $rs$ } { imul2 rd.reg, rs.reg, 0 }
+pub macro imul(rd: Reg32, src: MemOperand)
+    | syntax { imul $rd$, $src$ } { imul2 rd.reg, src, 0 }
+pub macro imul(rd: Reg32, rs: Reg32, imm: int)
+    | syntax { imul $rd$, $rs$, $imm$ } { imul3 rd.reg, rs.reg, imm, 0 }
+
+syntax cqo() = { cqo }
+syntax cdq() = { cdq }
+
+# =================
 # push/pop, control flow, ret
 # =================
 # None of these have a `w` parameter in `impl.basm` at all (Phase 4/5's own

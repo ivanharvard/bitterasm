@@ -58,6 +58,38 @@ pub const r13d = Reg32(reg = r13)
 pub const r14d = Reg32(reg = r14)
 pub const r15d = Reg32(reg = r15)
 
+# The 8-bit views (`al`, ..., `r15b`), wrapped the same way as `Reg32`. Register
+# numbers 4-7 are ambiguous at byte size: without a REX prefix they mean
+# `ah`/`ch`/`dh`/`bh`, with any REX prefix (even a bare `0x40`) they mean
+# `spl`/`bpl`/`sil`/`dil`. Only the latter are provided, so every byte
+# instruction forces a REX byte for them (`reg8_force_rex`). No `ah`-family
+# registers: they can't be encoded alongside anything that needs REX anyway.
+pub struct Reg8 {
+    pub reg: Reg,
+}
+
+pub const al = Reg8(reg = rax)
+pub const cl = Reg8(reg = rcx)
+pub const dl = Reg8(reg = rdx)
+pub const bl = Reg8(reg = rbx)
+pub const spl = Reg8(reg = rsp)
+pub const bpl = Reg8(reg = rbp)
+pub const sil = Reg8(reg = rsi)
+pub const dil = Reg8(reg = rdi)
+
+pub const r8b = Reg8(reg = r8)
+pub const r9b = Reg8(reg = r9)
+pub const r10b = Reg8(reg = r10)
+pub const r11b = Reg8(reg = r11)
+pub const r12b = Reg8(reg = r12)
+pub const r13b = Reg8(reg = r13)
+pub const r14b = Reg8(reg = r14)
+pub const r15b = Reg8(reg = r15)
+
+pub macro reg8_force_rex(r: Reg8) -> int {
+    @return r.reg.value >= 4 && r.reg.value <= 7
+}
+
 # The 3 low bits of a register number — the field width every ModRM `reg`/`rm`,
 # SIB `index`/`base`, and register-in-opcode encoding actually carries.
 pub macro reg_field(r: Reg) -> int {
@@ -154,6 +186,7 @@ pub macro byte_of(
 macro instr_byte(
     need_rex: int,
     rex: Byte,
+    escape: int,
     opcode: Byte,
     has_modrm: int,
     modrm: Byte,
@@ -164,31 +197,41 @@ macro instr_byte(
         @return rex
     }
     const after_rex = index - need_rex
-    @if after_rex == 0 {
+    @if escape != 0 && after_rex == 0 {
+        @return Byte(0x0F)
+    }
+    const after_escape = after_rex - escape
+    @if after_escape == 0 {
         @return opcode
     }
-    const after_opcode = after_rex - 1
+    const after_opcode = after_escape - 1
     @if has_modrm != 0 && after_opcode == 0 {
         @return modrm
     }
     @return byte_of(imm, after_opcode - has_modrm)
 }
 
+#
+# `escape` (0 or 1) puts the `0x0F` two-byte-opcode escape between the REX byte
+# and `opcode` — `movzx`/`imul`'s `0F B6`/`0F AF`, where REX must still come
+# first.
 macro instr(
     need_rex: int,
     rex: Byte,
+    escape: int,
     opcode: Byte,
     has_modrm: int,
     modrm: Byte,
     imm: int,
     imm_len: int
 ) -> Bytes<...> {
-    const n = need_rex + 1 + has_modrm + imm_len
+    const n = need_rex + escape + 1 + has_modrm + imm_len
     @return Bytes<n> {
         @for i in 0..n {
             __el`i`: instr_byte(
                 need_rex,
                 rex,
+                escape,
                 opcode,
                 has_modrm,
                 modrm,
@@ -211,10 +254,24 @@ macro reg_reg_instr(
     rs: Reg,
     w: int
 ) -> Bytes<...> {
-    const need_rex = w == 1 || reg_ext(rd) == 1 || reg_ext(rs) == 1
+    @return reg_reg_instr_ex(0, opcode, rd, rs, w, 0)
+}
+
+# `reg_reg_instr` plus the `0x0F` `escape` and `force_rex` — a REX byte even
+# when nothing else asks for one, which is what selects `spl`/`bpl`/`sil`/`dil`
+# over `ah`/`ch`/`dh`/`bh` for a byte register (see `Reg8`).
+macro reg_reg_instr_ex(
+    escape: int,
+    opcode: int,
+    rd: Reg,
+    rs: Reg,
+    w: int,
+    force_rex: int
+) -> Bytes<...> {
+    const need_rex = force_rex == 1 || w == 1 || reg_ext(rd) == 1 || reg_ext(rs) == 1
     const rex = rex_byte(w, reg_ext(rs), 0, reg_ext(rd))
     const modrm = modrm_byte(0b11, reg_field(rs), reg_field(rd))
-    @return instr(need_rex, rex, Byte(opcode), 1, modrm, 0, 0)
+    @return instr(need_rex, rex, escape, Byte(opcode), 1, modrm, 0, 0)
 }
 
 # Shared by every reg,imm instruction below (the six ALU ops and `test` via
@@ -232,10 +289,22 @@ macro reg_imm_instr(
     imm_len: int,
     w: int
 ) -> Bytes<...> {
-    const need_rex = w == 1 || reg_ext(rd) == 1
+    @return reg_imm_instr_ex(opcode, digit, rd, imm, imm_len, w, 0)
+}
+
+macro reg_imm_instr_ex(
+    opcode: int,
+    digit: int,
+    rd: Reg,
+    imm: int,
+    imm_len: int,
+    w: int,
+    force_rex: int
+) -> Bytes<...> {
+    const need_rex = force_rex == 1 || w == 1 || reg_ext(rd) == 1
     const rex = rex_byte(w, 0, 0, reg_ext(rd))
     const modrm = modrm_byte(0b11, digit, reg_field(rd))
-    @return instr(need_rex, rex, Byte(opcode), 1, modrm, imm, imm_len)
+    @return instr(need_rex, rex, 0, Byte(opcode), 1, modrm, imm, imm_len)
 }
 
 # =================
@@ -273,7 +342,7 @@ pub macro mov(
     const rex = rex_byte(w, 0, 0, reg_ext(rd))
     const opcode = Byte(0xB8 + reg_field(rd))
     const imm_len = 4 + 4 * w
-    @emit instr(need_rex, rex, opcode, 0, Byte(0), imm, imm_len)
+    @emit instr(need_rex, rex, 0, opcode, 0, Byte(0), imm, imm_len)
 }
 
 # =================
@@ -653,6 +722,7 @@ macro addr_mode(mem: MemOperand) -> AddrMode {
 macro mem_instr_byte(
     need_rex: int,
     rex: Byte,
+    escape: int,
     opcode: Byte,
     modrm: Byte,
     has_sib: int,
@@ -666,10 +736,14 @@ macro mem_instr_byte(
         @return rex
     }
     const after_rex = index - need_rex
-    @if after_rex == 0 {
+    @if escape != 0 && after_rex == 0 {
+        @return Byte(0x0F)
+    }
+    const after_escape = after_rex - escape
+    @if after_escape == 0 {
         @return opcode
     }
-    const after_opcode = after_rex - 1
+    const after_opcode = after_escape - 1
     @if after_opcode == 0 {
         @return modrm
     }
@@ -687,6 +761,7 @@ macro mem_instr_byte(
 macro mem_instr(
     need_rex: int,
     rex: Byte,
+    escape: int,
     opcode: Byte,
     modrm: Byte,
     has_sib: int,
@@ -696,12 +771,13 @@ macro mem_instr(
     imm: int,
     imm_len: int
 ) -> Bytes<...> {
-    const n = need_rex + 1 + 1 + has_sib + disp_len + imm_len
+    const n = need_rex + escape + 1 + 1 + has_sib + disp_len + imm_len
     @return Bytes<n> {
         @for i in 0..n {
             __el`i`: mem_instr_byte(
                 need_rex,
                 rex,
+                escape,
                 opcode,
                 modrm,
                 has_sib,
@@ -726,13 +802,26 @@ macro mem_reg_instr(
     rs: Reg,
     w: int
 ) -> Bytes<...> {
+    @return mem_reg_instr_ex(0, opcode, dst, rs, w, 0)
+}
+
+# `mem_reg_instr` plus `escape`/`force_rex`, as `reg_reg_instr_ex`.
+macro mem_reg_instr_ex(
+    escape: int,
+    opcode: int,
+    dst: MemOperand,
+    rs: Reg,
+    w: int,
+    force_rex: int
+) -> Bytes<...> {
     const addr = addr_mode(dst)
-    const need_rex = w == 1 || reg_ext(rs) == 1 || addr.rex_x == 1 || addr.rex_b == 1
+    const need_rex = force_rex == 1 || w == 1 || reg_ext(rs) == 1 || addr.rex_x == 1 || addr.rex_b == 1
     const rex = rex_byte(w, reg_ext(rs), addr.rex_x, addr.rex_b)
     const modrm = modrm_byte(addr.mode, reg_field(rs), addr.rm)
     @return mem_instr(
         need_rex,
         rex,
+        escape,
         Byte(opcode),
         modrm,
         addr.has_sib,
@@ -761,6 +850,19 @@ macro mem_imm_instr(
     imm: int,
     w: int
 ) -> Bytes<...> {
+    @return mem_digit_instr(opcode, digit, dst, imm, 4, w)
+}
+
+# `mem_imm_instr` with the immediate's length left to the caller: 0 for the
+# one-operand `0xF7`/`0xFF` group (`mul`/`div`/`inc`/...), 1 for a byte store.
+macro mem_digit_instr(
+    opcode: int,
+    digit: int,
+    dst: MemOperand,
+    imm: int,
+    imm_len: int,
+    w: int
+) -> Bytes<...> {
     const addr = addr_mode(dst)
     const need_rex = w == 1 || addr.rex_x == 1 || addr.rex_b == 1
     const rex = rex_byte(w, 0, addr.rex_x, addr.rex_b)
@@ -768,6 +870,7 @@ macro mem_imm_instr(
     @return mem_instr(
         need_rex,
         rex,
+        0,
         Byte(opcode),
         modrm,
         addr.has_sib,
@@ -775,7 +878,7 @@ macro mem_imm_instr(
         addr.disp,
         addr.disp_len,
         imm,
-        4
+        imm_len
     )
 }
 
@@ -1204,6 +1307,172 @@ pub macro cmp(dst: RipLabel, rs: Reg, w: int) { rip_label_instr 0x39, dst, rs, w
 pub macro test(dst: RipLabel, rs: Reg, w: int) { rip_label_instr 0x85, dst, rs, w }
 
 # =================
+# byte loads/stores, movzx
+# =================
+# The 8-bit `mov` family: `0x88` (r/m8, r8), `0x8A` (r8, r/m8), `0xB0+reg`
+# (r8, imm8), and `0xC6 /0` (r/m8, imm8). There's no `w`: the operand size is
+# the byte registers' own. A byte store of an immediate has no register to
+# carry its size, so it gets its own name, `mov_byte`, rather than an overload
+# of `mov(dst: MemOperand, imm: int, w)`.
+pub macro mov(
+    rd: Reg8,
+    rs: Reg8
+) -> Bytes<...> {
+    const force = reg8_force_rex(rd) || reg8_force_rex(rs)
+    @emit reg_reg_instr_ex(0, 0x88, rd.reg, rs.reg, 0, force)
+}
+
+pub macro mov(
+    rd: Reg8,
+    imm: int
+) -> Bytes<...> {
+    const need_rex = reg8_force_rex(rd) || reg_ext(rd.reg) == 1
+    const rex = rex_byte(0, 0, 0, reg_ext(rd.reg))
+    const opcode = Byte(0xB0 + reg_field(rd.reg))
+    @emit instr(need_rex, rex, 0, opcode, 0, Byte(0), imm, 1)
+}
+
+pub macro mov(
+    rd: Reg8,
+    src: MemOperand
+) -> Bytes<...> { @emit mem_reg_instr_ex(0, 0x8A, src, rd.reg, 0, reg8_force_rex(rd)) }
+
+pub macro mov(
+    dst: MemOperand,
+    rs: Reg8
+) -> Bytes<...> { @emit mem_reg_instr_ex(0, 0x88, dst, rs.reg, 0, reg8_force_rex(rs)) }
+
+pub macro mov_byte(
+    dst: MemOperand,
+    imm: int
+) -> Bytes<...> { @emit mem_digit_instr(0xC6, 0, dst, imm, 1, 0) }
+
+# `movzx`: `0F B6 /r` zero-extends a byte, `0F B7 /r` a word, into a 32-bit
+# (`w = 0`) or 64-bit (`w = 1`) register. ModRM.reg is the destination, as in
+# `mov`'s load direction. A `MemOperand` source is a byte unless it goes
+# through `movzx_word`: memory carries no size of its own. (A word *register*
+# source would need 16-bit registers, which this package doesn't define.)
+pub macro movzx(
+    rd: Reg,
+    src: Reg8,
+    w: int
+) -> Bytes<...> { @emit reg_reg_instr_ex(1, 0xB6, src.reg, rd, w, reg8_force_rex(src)) }
+
+pub macro movzx(
+    rd: Reg,
+    src: MemOperand,
+    w: int
+) -> Bytes<...> { @emit mem_reg_instr_ex(1, 0xB6, src, rd, w, 0) }
+
+pub macro movzx_word(
+    rd: Reg,
+    src: MemOperand,
+    w: int
+) -> Bytes<...> { @emit mem_reg_instr_ex(1, 0xB7, src, rd, w, 0) }
+
+# =================
+# inc/dec, mul/imul/div/idiv, cqo/cdq
+# =================
+# `inc`/`dec` are `0xFF /0` and `/1`; the one-operand multiply/divide group is
+# `0xF7 /4` (`mul`), `/5` (`imul1`), `/6` (`div`), `/7` (`idiv`), all on
+# `rdx:rax` (or `edx:eax` with `w = 0`): the product lands in `rdx:rax`; a
+# divide takes its dividend from `rdx:rax` and leaves the quotient in `rax`,
+# the remainder in `rdx`. Zero `rdx` before an unsigned `div`, and sign-extend
+# `rax` into it with `cqo` (`cdq` for `w = 0`) before an `idiv`. The CPU raises
+# #DE on a zero divisor or a quotient that doesn't fit.
+pub macro inc(
+    rd: Reg,
+    w: int
+) -> Bytes<...> { @emit reg_imm_instr(0xFF, 0, rd, 0, 0, w) }
+pub macro inc(
+    dst: MemOperand,
+    w: int
+) -> Bytes<...> { @emit mem_digit_instr(0xFF, 0, dst, 0, 0, w) }
+pub macro dec(
+    rd: Reg,
+    w: int
+) -> Bytes<...> { @emit reg_imm_instr(0xFF, 1, rd, 0, 0, w) }
+pub macro dec(
+    dst: MemOperand,
+    w: int
+) -> Bytes<...> { @emit mem_digit_instr(0xFF, 1, dst, 0, 0, w) }
+
+pub macro mul(
+    rs: Reg,
+    w: int
+) -> Bytes<...> { @emit reg_imm_instr(0xF7, 4, rs, 0, 0, w) }
+pub macro mul(
+    src: MemOperand,
+    w: int
+) -> Bytes<...> { @emit mem_digit_instr(0xF7, 4, src, 0, 0, w) }
+pub macro imul1(
+    rs: Reg,
+    w: int
+) -> Bytes<...> { @emit reg_imm_instr(0xF7, 5, rs, 0, 0, w) }
+pub macro imul1(
+    src: MemOperand,
+    w: int
+) -> Bytes<...> { @emit mem_digit_instr(0xF7, 5, src, 0, 0, w) }
+pub macro div(
+    rs: Reg,
+    w: int
+) -> Bytes<...> { @emit reg_imm_instr(0xF7, 6, rs, 0, 0, w) }
+pub macro div(
+    src: MemOperand,
+    w: int
+) -> Bytes<...> { @emit mem_digit_instr(0xF7, 6, src, 0, 0, w) }
+pub macro idiv(
+    rs: Reg,
+    w: int
+) -> Bytes<...> { @emit reg_imm_instr(0xF7, 7, rs, 0, 0, w) }
+pub macro idiv(
+    src: MemOperand,
+    w: int
+) -> Bytes<...> { @emit mem_digit_instr(0xF7, 7, src, 0, 0, w) }
+
+# Two-operand `imul2` and three-operand `imul3` keep only the low half, so
+# unlike `imul1` they work on any register. `0F AF /r` is `rd *= src`
+# (ModRM.reg = `rd`); `0x6B /r ib` / `0x69 /r id` is `rd = rs * imm`, picking
+# the imm8 form when the immediate fits, like `addr_mode`'s disp8. The Intel
+# dialect spells all three `imul`. They're numbered by operand count here
+# because `imul3(rd, rs, imm)` and a `w`-taking two-operand form would have the
+# same `(Reg, Reg, int)` signature.
+pub macro imul2(
+    rd: Reg,
+    rs: Reg,
+    w: int
+) -> Bytes<...> { @emit reg_reg_instr_ex(1, 0xAF, rs, rd, w, 0) }
+pub macro imul2(
+    rd: Reg,
+    src: MemOperand,
+    w: int
+) -> Bytes<...> { @emit mem_reg_instr_ex(1, 0xAF, src, rd, w, 0) }
+pub macro imul3(
+    rd: Reg,
+    rs: Reg,
+    imm: int,
+    w: int
+) -> Bytes<...> {
+    const need_rex = w == 1 || reg_ext(rd) == 1 || reg_ext(rs) == 1
+    const rex = rex_byte(w, reg_ext(rd), 0, reg_ext(rs))
+    const modrm = modrm_byte(0b11, reg_field(rd), reg_field(rs))
+    @if fits_disp8(imm) {
+        @emit instr(need_rex, rex, 0, Byte(0x6B), 1, modrm, imm, 1)
+    } @else {
+        @emit instr(need_rex, rex, 0, Byte(0x69), 1, modrm, imm, 4)
+    }
+}
+
+# `cqo` (`REX.W 99`) sign-extends `rax` into `rdx:rax`; `cdq` (`99`) sign-
+# extends `eax` into `edx:eax`.
+pub macro cqo() -> Bytes<2> {
+    @emit Bytes<2> { __el0: Byte(0x48), __el1: Byte(0x99) }
+}
+pub macro cdq() -> Byte {
+    @emit Byte(0x99)
+}
+
+# =================
 # push/pop (Phase 5)
 # =================
 # `0x50+reg`/`0x58+reg` — the same "register number folded into the opcode's own
@@ -1219,14 +1488,14 @@ pub macro push(rd: Reg) -> Bytes<...> {
     const need_rex = reg_ext(rd) == 1
     const rex = rex_byte(0, 0, 0, reg_ext(rd))
     const opcode = Byte(0x50 + reg_field(rd))
-    @emit instr(need_rex, rex, opcode, 0, Byte(0), 0, 0)
+    @emit instr(need_rex, rex, 0, opcode, 0, Byte(0), 0, 0)
 }
 
 pub macro pop(rd: Reg) -> Bytes<...> {
     const need_rex = reg_ext(rd) == 1
     const rex = rex_byte(0, 0, 0, reg_ext(rd))
     const opcode = Byte(0x58 + reg_field(rd))
-    @emit instr(need_rex, rex, opcode, 0, Byte(0), 0, 0)
+    @emit instr(need_rex, rex, 0, opcode, 0, Byte(0), 0, 0)
 }
 
 # =================

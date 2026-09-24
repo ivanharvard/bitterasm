@@ -1,0 +1,29 @@
+# Strings far longer than the 32-deep macro call limit: every std.string walk
+# must stay well under it however long its input is.
+from std.string import AsciiString, Utf8String, string_from_struct, validate_ascii, validate_utf8, ascii_upper, utf8_codepoint_count, utf8_is_ascii
+from std.binary import Endian
+
+macro verify(_unused: int) {
+    const text = "The quick brown fox jumps over the lazy dog, again and again and again.\n"
+    const raw = string_from_struct(text)
+    @assert raw.len == 72
+    @assert validate_ascii(raw.value, raw.len, Endian.Big)
+    @assert (raw.value >> ((raw.len - 1) * 8)) == 'T'
+    @assert (raw.value & 0xFF) == 10
+
+    const ascii = raw as AsciiString<72, Endian.Big>
+    const upper = ascii_upper(ascii)
+    @assert upper.value == string_from_struct("THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG, AGAIN AND AGAIN AND AGAIN.\n").value
+
+    const mixed = string_from_struct("€uro-€uro-€uro-€uro-€uro-€uro-€uro-€uro-€uro-€uro-𝄞")
+    @assert mixed.len == 10 * 3 + 40 + 4
+    @assert validate_utf8(mixed.value, mixed.len, Endian.Big)
+    const utf8 = mixed as Utf8String<74, Endian.Big>
+    @assert utf8_codepoint_count(utf8) == 51
+    @assert !utf8_is_ascii(utf8)
+    @assert utf8_is_ascii(raw as Utf8String<72, Endian.Big>)
+
+    @emit utf8
+}
+
+verify 0

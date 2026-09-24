@@ -281,3 +281,75 @@ fn shift_lea_stack_encodes_correctly() {
 
     assert_case_encodes_to("shift_lea_stack", expected);
 }
+
+#[test]
+fn byte_mul_div_encodes_correctly() {
+    // Cross-checked against GNU objdump (`-b binary -mi386:x86-64 -M intel`),
+    // which decodes each line back to the fixture's own instruction. The
+    // `_intel` fixture writes the same instructions in Intel syntax.
+    #[rustfmt::skip]
+    let expected: &[u8] = &[
+        // mov al, bl — 0x88 /r, no REX for registers 0-3
+        0x88, 0xD8,
+        // mov sil, dl — bare REX 0x40 selects sil over dh
+        0x40, 0x88, 0xD6,
+        // mov r9b, dil — REX.B for r9, which also covers dil
+        0x41, 0x88, 0xF9,
+        // mov al, 0x41 — 0xB0+reg ib
+        0xB0, 0x41,
+        // mov dil, 7 — forced REX, 0xB0+7
+        0x40, 0xB7, 0x07,
+        // mov r10b, 1 — REX.B, 0xB0+2
+        0x41, 0xB2, 0x01,
+        // mov dl, [rax] — 0x8A /r
+        0x8A, 0x10,
+        // mov sil, [rbx+8] — forced REX, disp8
+        0x40, 0x8A, 0x73, 0x08,
+        // mov [rdi], r8b — 0x88 /r, REX.R
+        0x44, 0x88, 0x07,
+        // mov [rsp], bpl — forced REX, SIB for rsp
+        0x40, 0x88, 0x2C, 0x24,
+        // mov byte [rax+3], 0x7F — 0xC6 /0 ib
+        0xC6, 0x40, 0x03, 0x7F,
+        // movzx edx, byte [rax] — 0F B6 /r
+        0x0F, 0xB6, 0x10,
+        // movzx rax, sil — REX.W before the 0F escape
+        0x48, 0x0F, 0xB6, 0xC6,
+        // movzx r11, r12b — REX.WRB
+        0x4D, 0x0F, 0xB6, 0xDC,
+        // movzx rcx, word [rbx+2] — 0F B7 /r
+        0x48, 0x0F, 0xB7, 0x4B, 0x02,
+        // inc rax — 0xFF /0
+        0x48, 0xFF, 0xC0,
+        // dec ecx — 0xFF /1
+        0xFF, 0xC9,
+        // inc r9
+        0x49, 0xFF, 0xC1,
+        // inc qword [rax]
+        0x48, 0xFF, 0x00,
+        // dec dword [rbx+rcx*8+16]
+        0xFF, 0x4C, 0xCB, 0x10,
+        // mul rcx — 0xF7 /4
+        0x48, 0xF7, 0xE1,
+        // imul r8 — 0xF7 /5
+        0x49, 0xF7, 0xE8,
+        // div rbx — 0xF7 /6
+        0x48, 0xF7, 0xF3,
+        // idiv qword [rsp+8] — 0xF7 /7
+        0x48, 0xF7, 0x7C, 0x24, 0x08,
+        // imul rcx, rdx — 0F AF /r, ModRM.reg = rcx
+        0x48, 0x0F, 0xAF, 0xCA,
+        // imul r9, [rax] — REX.WR
+        0x4C, 0x0F, 0xAF, 0x08,
+        // imul rcx, rcx, 10 — 0x6B /r ib
+        0x48, 0x6B, 0xC9, 0x0A,
+        // imul eax, r15d, 1000 — 0x69 /r id, REX.B only
+        0x41, 0x69, 0xC7, 0xE8, 0x03, 0x00, 0x00,
+        // cqo, cdq
+        0x48, 0x99,
+        0x99,
+    ];
+
+    assert_case_encodes_to("byte_mul_div", expected);
+    assert_case_encodes_to("byte_mul_div_intel", expected);
+}

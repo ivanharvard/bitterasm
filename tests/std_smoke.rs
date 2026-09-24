@@ -54,3 +54,15 @@ fn pdp10_all_instructions_fixture_checks_cleanly() {
 fn pdp10_registers_fixture_checks_cleanly() {
     assert_checks_cleanly("tests/fixtures/pdp10/registers.basm");
 }
+
+#[test]
+fn string_ops_fixture_checks_cleanly() {
+    assert_checks_cleanly("tests/fixtures/emit/string_ops.basm");
+}
+
+// Every `std.string` walk must stay under the 32-deep macro call limit
+// however long the string is (see that file's header).
+#[test]
+fn long_strings_fixture_checks_cleanly() {
+    assert_checks_cleanly("tests/fixtures/emit/long_strings.basm");
+}

@@ -1,0 +1,118 @@
+# Fibonacci for Linux x86-64, written in BitterASM.
+#
+# Build and run (from the repository root):
+# bitter build examples/x86_64/fib.basm -o /tmp/fib --entry _start --format elf
+# /tmp/fib <number>
+
+from std.x86_64.nasm import *
+from std.string import string_from_struct, validate_ascii
+from std.binary import Endian
+
+const WORD_SIZE = 8
+const MAX_FIB = 93      # fib(93) is the largest that fits in 64 bits (unsigned)
+const MAX_DIGITS = 2
+const BUF_SIZE = 32     # room for 20 digits and a newline
+
+section .rodata
+err_msg:
+    const usage = "Usage: fib <number> (0 <= number <= 93)\n"
+    validate_ascii string_from_struct(usage).value, usage.len, Endian.Little
+    db usage
+
+section .text
+pub _start:
+    mov rax, [rsp]                  # argc
+    cmp rax, 2
+    jne .error
+    mov rax, [rsp+WORD_SIZE*2]      # argv[1]
+    call .str_to_int                # rax = N (exits on bad input)
+    cmp rax, MAX_FIB
+    ja .error
+
+    mov rdi, rax
+    call .fib                       # rax = fib(N)
+    call .print_u64
+
+    mov eax, 60                     # sys_exit
+    xor edi, edi
+    syscall
+
+# rdi = N, returns rax = fib(N). Iterative: the naive recursion makes about
+# fib(N) calls, far too many for N = 93. Clobbers rcx, rdx, rdi.
+.fib:
+    xor eax, eax                    # a = fib(0)
+    mov ecx, 1                      # b = fib(1)
+.fib_loop:
+    test rdi, rdi
+    jz .fib_done
+    mov rdx, rax                    # (a, b) = (b, a + b)
+    add rdx, rcx
+    mov rax, rcx
+    mov rcx, rdx
+    dec rdi
+    jmp .fib_loop
+.fib_done:
+    ret
+
+# rax = pointer to a NUL-terminated string, returns rax = its value. Exits on
+# an empty string, a non-digit, or more than MAX_DIGITS digits (which also
+# rules out overflow).
+.str_to_int:
+    xor ecx, ecx                    # accumulator
+    xor r8d, r8d                    # digit count
+.parse_loop:
+    movzx edx, byte [rax]
+    test edx, edx
+    jz .parse_done
+    sub edx, '0'
+    cmp edx, 9
+    ja .error                       # unsigned: catches bytes below '0' too
+    cmp r8d, MAX_DIGITS
+    jae .error
+    imul rcx, rcx, 10
+    add rcx, rdx
+    inc r8d
+    inc rax
+    jmp .parse_loop
+.parse_done:
+    test r8d, r8d
+    jz .error
+    mov rax, rcx
+    ret
+
+# Writes rax (unsigned) and a newline to stdout. Digits are produced least
+# significant first, so they fill a stack buffer from its end.
+.print_u64:
+    sub rsp, BUF_SIZE
+    lea rsi, [rsp+BUF_SIZE]         # one past the buffer's end
+    dec rsi
+    mov byte [rsi], 10              # '\n'
+    mov ecx, 10
+.digit_loop:
+    xor edx, edx                    # div takes its dividend from rdx:rax
+    div rcx
+    add edx, '0'
+    dec rsi
+    mov [rsi], dl
+    test rax, rax
+    jnz .digit_loop
+
+    mov eax, 1                      # sys_write
+    mov edi, 1                      # stdout
+    lea rdx, [rsp+BUF_SIZE]
+    sub rdx, rsi                    # length
+    syscall
+
+    add rsp, BUF_SIZE
+    ret
+
+.error:
+    mov eax, 1                      # sys_write
+    mov edi, 2                      # stderr
+    lea rsi, [rel err_msg]
+    mov edx, usage.len
+    syscall
+
+    mov eax, 60                     # sys_exit
+    mov edi, 1
+    syscall
