@@ -15,6 +15,7 @@ mod facets;
 mod generated;
 mod macro_body;
 mod metas;
+mod overloads;
 mod structs;
 mod symbols;
 mod toplevel;
@@ -295,6 +296,15 @@ pub enum ResolveError {
         span: Span,
     },
 
+    /// Two same-named macros declare the same parameter types in the same
+    /// order (differing at most in parameter names or return type). `span`
+    /// is the later declaration's.
+    DuplicateMacroOverload {
+        name: String,
+        params: Vec<String>,
+        span: Span,
+    },
+
     /// More than one overload has the same parameter types for this call.
     AmbiguousMacroOverload {
         name: String,
@@ -466,6 +476,7 @@ impl ResolveError {
             | Self::UnsupportedMacroStatement { span, .. } | Self::UnsupportedSpliceValue { span }
             | Self::UnsupportedCallExpression { span } | Self::UnknownMacro { span, .. }
             | Self::ExpectedMacro { span, .. } | Self::NoMatchingMacroOverload { span, .. }
+            | Self::DuplicateMacroOverload { span, .. }
             | Self::AmbiguousMacroOverload { span, .. } | Self::MacroCallDepthExceeded { span, .. }
             | Self::MacroTailCallLimitExceeded { span, .. } | Self::UnresolvedMacroGenericParam { span, .. }
             | Self::AmbiguousMacroValue { span, .. } | Self::GenericMacroAsValue { span, .. }

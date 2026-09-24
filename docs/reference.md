@@ -92,6 +92,29 @@ one of `SomeEnum`'s valid discriminants) — that's membership against a
 one `@for`/`in` share, so it's deliberately out of scope rather than
 overloading the same keyword with a second meaning.
 
+## Macro overloading
+
+Macros that share a name form an overload set. Each member must differ from every
+other in the number, types, or order of its parameters:
+
+```text
+macro put(value: int) { ... }                # ok
+macro put(value: int, width: int) { ... }    # ok: a different number of parameters
+macro put(r: Reg) { ... }                    # ok: a different type
+macro put(r: Reg, value: int) { ... }        # ok
+macro put(value: int, r: Reg) { ... }        # ok: the same types in a different order
+macro put(v: int) -> int { ... }             # error: only the name and return type differ
+```
+
+Parameter names and return types don't distinguish overloads, since a call picks its
+overload from its arguments alone. A plain `type` alias is the same type as its
+target, so `r: Reg` and `r: bits<4>` clash. Generic parameters compare by where they
+first appear, not by name: `f<S>(a: S)` and `f<T>(b: T)` clash, while
+`f<A>(x: A, y: A)` and `f<A, B>(x: A, y: B)` don't. A clashing declaration fails with
+`DuplicateMacroOverload` even if nothing calls it. Two distinct overloads can still
+both accept one particular call (for example `bits` and `bits<4>`, or through a
+defaulted parameter); that call fails with `AmbiguousMacroOverload`.
+
 ## Macro defaults
 
 Trailing macro parameters may provide default value expressions:

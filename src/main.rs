@@ -482,6 +482,7 @@ fn resolve_and_expand(path: &Path, verbose: Option<&VerboseReporter>) -> Result<
 /// expansions either.
 fn resolve_structs_and_aliases(alias_resolver: &mut resolver::AliasResolver) -> Result<(), resolver::ResolveError> {
     alias_resolver.resolve_all_structs()?;
+    alias_resolver.check_macro_overloads()?;
     let aliases = alias_resolver.resolve_all()?;
 
     for ty in aliases.values() {

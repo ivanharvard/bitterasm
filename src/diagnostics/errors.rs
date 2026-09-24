@@ -54,6 +54,7 @@ pub fn resolve_error(error: ResolveError, source: Option<SourceId>) -> Diagnosti
         UnknownMacro { name, span } => (format!("unknown macro `{name}`"), span),
         ExpectedMacro { name, span } => (format!("expected `{name}` to name a macro"), span),
         NoMatchingMacroOverload { name, actual, span } => (format!("no overload of `{name}` accepts ({})", actual.join(", ")), span),
+        DuplicateMacroOverload { name, params, span } => (format!("`{name}` is already declared with parameters ({}); overloads must differ in the number, types, or order of their parameters, not only in names or return type", params.join(", ")), span),
         AmbiguousMacroOverload { name, actual, span } => (format!("multiple overloads of `{name}` accept ({})", actual.join(", ")), span),
         MacroCallDepthExceeded { call_chain, max_depth, span } => (format!("macro call depth exceeded {max_depth}: {}", call_chain.join(" -> ")), span),
         MacroTailCallLimitExceeded { name, max_iterations, span } => (format!("tail call in `{name}` exceeded {max_iterations} iterations"), span),
