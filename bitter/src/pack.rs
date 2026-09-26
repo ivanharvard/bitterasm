@@ -82,11 +82,22 @@ pub fn byte_offset_of(values: &[EmittedValue], index: usize) -> Result<usize, St
 // value's `value` field is walked like any other struct's one field, which
 // yields the same width `pack_value` would separately verify against its
 // declared `width` argument.
+/// The `.em` ids (module path + name, see `bitterasm::emit::TypeIds`) of
+/// the std types `bitter` gives meaning to. Anything else is packed as a
+/// plain struct, whatever its name — a user's own `bits` elsewhere is just
+/// a struct.
+pub const BITS: &str = "std.binary.bits";
+pub const POSITIONED: &str = "std.bitter.deferred.Positioned";
+pub const LITTLE_ENDIAN: &str = "std.bitter.byte_order.LittleEndian";
+pub const DEFERRED: &str = "std.bitter.deferred.Deferred";
+pub const BIN_OP: &str = "std.bitter.deferred.BinOp";
+pub const OP: &str = "std.bitter.deferred.Op";
+
 fn structural_width_bits(value: &EmittedValue) -> Result<usize, String> {
     match value {
-        EmittedValue::Struct { name, args, .. } if name == "bits" => bits_width(args),
+        EmittedValue::Struct { id, args, .. } if id == BITS => bits_width(args),
 
-        EmittedValue::Struct { name, args, .. } if name == "Positioned" => bits_width(args),
+        EmittedValue::Struct { id, args, .. } if id == POSITIONED => bits_width(args),
 
         EmittedValue::Struct { fields, .. } => {
             let mut width_bits = 0usize;
@@ -101,8 +112,8 @@ fn structural_width_bits(value: &EmittedValue) -> Result<usize, String> {
              wrap it in a `bits<N>` struct"
         )),
 
-        EmittedValue::Enum { name, variant, .. } => Err(format!(
-            "can't infer a machine-code layout for enum value `{name}.{variant}`"
+        EmittedValue::Enum { id, variant, .. } => Err(format!(
+            "can't infer a machine-code layout for enum value `{id}.{variant}`"
         )),
 
         EmittedValue::Deferred { file, symbol } => Err(unresolved_deferred_error(file, symbol)),
@@ -134,7 +145,7 @@ fn unresolved_deferred_error(file: &str, symbol: &str) -> String {
 // it was emitted as part of.
 fn pack_value(value: &EmittedValue, here_index: usize, byte_widths: &[usize]) -> Result<Packed, String> {
     match value {
-        EmittedValue::Struct { name, args, fields } if name == "bits" => {
+        EmittedValue::Struct { id, args, fields } if id == BITS => {
             let width_bits = bits_width(args)?;
 
             let (_, inner) = fields
@@ -172,7 +183,7 @@ fn pack_value(value: &EmittedValue, here_index: usize, byte_widths: &[usize]) ->
         // (never a plain Int; that's the point of `here()`) paired with
         // the bit width it's meant to occupy. Resolved against this call's
         // `here_index`, then masked exactly like a `bits<N>` leaf.
-        EmittedValue::Struct { name, args, fields } if name == "Positioned" => {
+        EmittedValue::Struct { id, args, fields } if id == POSITIONED => {
             let width_bits = bits_width(args)?;
 
             let (_, deferred) = fields
@@ -193,7 +204,7 @@ fn pack_value(value: &EmittedValue, here_index: usize, byte_widths: &[usize]) ->
         // `width`-wide result is byte-reversed. This is the only place in
         // this whole module that ever reorders bytes; nothing else here has
         // an opinion about byte order at all.
-        EmittedValue::Struct { name, args, fields } if name == "LittleEndian" => {
+        EmittedValue::Struct { id, args, fields } if id == LITTLE_ENDIAN => {
             let declared_width = const_width_arg(args)?;
 
             let (_, inner) = fields
@@ -239,8 +250,8 @@ fn pack_value(value: &EmittedValue, here_index: usize, byte_widths: &[usize]) ->
              wrap it in a `bits<N>` struct"
         )),
 
-        EmittedValue::Enum { name, variant, .. } => Err(format!(
-            "can't infer a machine-code layout for enum value `{name}.{variant}`"
+        EmittedValue::Enum { id, variant, .. } => Err(format!(
+            "can't infer a machine-code layout for enum value `{id}.{variant}`"
         )),
 
         EmittedValue::Deferred { file, symbol } => Err(unresolved_deferred_error(file, symbol)),
@@ -257,11 +268,11 @@ fn pack_value(value: &EmittedValue, here_index: usize, byte_widths: &[usize]) ->
 // — this guarantees identical behavior (negative-offset shifts included)
 // to what the resolver used to compute eagerly for `@here`-based offsets.
 fn resolve_deferred(deferred: &EmittedValue, here_index: usize, byte_widths: &[usize]) -> Result<BigInt, String> {
-    let EmittedValue::Enum { name, variant, payload, .. } = deferred else {
+    let EmittedValue::Enum { id, variant, payload, .. } = deferred else {
         return Err(format!("expected a `Deferred` value, found {deferred:?}"));
     };
-    if name != "Deferred" {
-        return Err(format!("expected a `Deferred` value, found enum `{name}`"));
+    if id != DEFERRED {
+        return Err(format!("expected a `Deferred` value, found enum `{id}`"));
     }
 
     match variant.as_str() {
@@ -296,11 +307,11 @@ fn resolve_deferred(deferred: &EmittedValue, here_index: usize, byte_widths: &[u
             let Some(payload) = payload else {
                 return Err("`Deferred.Node` is missing its payload".to_string());
             };
-            let EmittedValue::Struct { name, fields, .. } = payload.as_ref() else {
+            let EmittedValue::Struct { id, fields, .. } = payload.as_ref() else {
                 return Err(format!("`Deferred.Node`'s payload should be a `BinOp` struct, found {payload:?}"));
             };
-            if name != "BinOp" {
-                return Err(format!("`Deferred.Node`'s payload should be a `BinOp` struct, found `{name}`"));
+            if id != BIN_OP {
+                return Err(format!("`Deferred.Node`'s payload should be a `BinOp` struct, found `{id}`"));
             }
 
             let field = |field_name: &str| {
@@ -311,11 +322,11 @@ fn resolve_deferred(deferred: &EmittedValue, here_index: usize, byte_widths: &[u
                     .ok_or_else(|| format!("a `BinOp` value is missing its `{field_name}` field"))
             };
 
-            let EmittedValue::Enum { name: op_name, variant: op_variant, .. } = field("op")? else {
+            let EmittedValue::Enum { id: op_id, variant: op_variant, .. } = field("op")? else {
                 return Err(format!("a `BinOp`'s `op` field should be an `Op` enum, found {:?}", field("op")?));
             };
-            if op_name != "Op" {
-                return Err(format!("a `BinOp`'s `op` field should be an `Op` enum, found `{op_name}`"));
+            if op_id != OP {
+                return Err(format!("a `BinOp`'s `op` field should be an `Op` enum, found `{op_id}`"));
             }
 
             // `Span` isn't ordinary arithmetic on two already-resolved
@@ -454,7 +465,7 @@ mod tests {
 
     fn bits(width: &str, value: &str) -> EmittedValue {
         EmittedValue::Struct {
-            name: "bits".to_string(),
+            id: BITS.to_string(),
             args: vec![EmittedGenericArg::Const { value: width.to_string() }],
             fields: vec![("value".to_string(), EmittedValue::Int { value: value.to_string() })],
         }
@@ -462,7 +473,7 @@ mod tests {
 
     fn r_type(funct7: &str, rs2: &str, rs1: &str, funct3: &str, rd: &str, opcode: &str) -> EmittedValue {
         EmittedValue::Struct {
-            name: "RType".to_string(),
+            id: "test.RType".to_string(),
             args: vec![],
             fields: vec![
                 ("funct7".to_string(), bits("7", funct7)),
@@ -477,9 +488,9 @@ mod tests {
 
     fn little_endian(width: &str, value: EmittedValue) -> EmittedValue {
         EmittedValue::Struct {
-            name: "LittleEndian".to_string(),
+            id: LITTLE_ENDIAN.to_string(),
             args: vec![
-                EmittedGenericArg::Type(bitterasm::emit::EmittedType::Struct { name: "RType".to_string(), args: vec![] }),
+                EmittedGenericArg::Type(bitterasm::emit::EmittedType::Struct { id: "test.RType".to_string(), args: vec![] }),
                 EmittedGenericArg::Const { value: width.to_string() },
             ],
             fields: vec![("value".to_string(), value)],
@@ -546,7 +557,7 @@ mod tests {
 
     fn pdp10_instr(opcode: &str, ac: &str, i: &str, x: &str, y: &str) -> EmittedValue {
         EmittedValue::Struct {
-            name: "Instr".to_string(),
+            id: "test.Instr".to_string(),
             args: vec![],
             fields: vec![
                 ("opcode".to_string(), bits("9", opcode)),
@@ -602,7 +613,7 @@ mod tests {
     #[test]
     fn rejects_an_unresolved_extern_label_as_a_bits_n_value() {
         let value = EmittedValue::Struct {
-            name: "bits".to_string(),
+            id: BITS.to_string(),
             args: vec![EmittedGenericArg::Const { value: "32".to_string() }],
             fields: vec![("value".to_string(), extern_label("other.basm", "target"))],
         };
@@ -619,7 +630,7 @@ mod tests {
 
     fn deferred_leaf_value(payload: EmittedValue) -> EmittedValue {
         EmittedValue::Enum {
-            name: "Deferred".to_string(),
+            id: DEFERRED.to_string(),
             args: vec![],
             variant: "Leaf".to_string(),
             payload: Some(Box::new(payload)),
@@ -628,7 +639,7 @@ mod tests {
 
     fn deferred_here() -> EmittedValue {
         EmittedValue::Enum {
-            name: "Deferred".to_string(),
+            id: DEFERRED.to_string(),
             args: vec![],
             variant: "Here".to_string(),
             payload: None,
@@ -637,17 +648,17 @@ mod tests {
 
     fn deferred_node(op: &str, left: EmittedValue, right: EmittedValue) -> EmittedValue {
         EmittedValue::Enum {
-            name: "Deferred".to_string(),
+            id: DEFERRED.to_string(),
             args: vec![],
             variant: "Node".to_string(),
             payload: Some(Box::new(EmittedValue::Struct {
-                name: "BinOp".to_string(),
+                id: BIN_OP.to_string(),
                 args: vec![],
                 fields: vec![
                     (
                         "op".to_string(),
                         EmittedValue::Enum {
-                            name: "Op".to_string(),
+                            id: OP.to_string(),
                             args: vec![],
                             variant: op.to_string(),
                             payload: None,
@@ -662,7 +673,7 @@ mod tests {
 
     fn positioned(width: &str, value: EmittedValue) -> EmittedValue {
         EmittedValue::Struct {
-            name: "Positioned".to_string(),
+            id: POSITIONED.to_string(),
             args: vec![EmittedGenericArg::Const { value: width.to_string() }],
             fields: vec![("value".to_string(), value)],
         }
@@ -727,7 +738,7 @@ mod tests {
     #[test]
     fn rejects_a_deferred_value_with_an_unknown_variant() {
         let bogus = EmittedValue::Enum {
-            name: "Deferred".to_string(),
+            id: DEFERRED.to_string(),
             args: vec![],
             variant: "Bogus".to_string(),
             payload: None,

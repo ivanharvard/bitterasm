@@ -166,6 +166,7 @@ pub fn load_program(entry: &Path) -> Result<Program, LoadError> {
 pub struct ModuleOrigins {
     module_of_statement: Vec<usize>,
     paths: Vec<PathBuf>,
+    module_paths: Vec<String>,
     entry_module: usize,
 }
 
@@ -182,6 +183,12 @@ impl ModuleOrigins {
 
     pub fn path(&self, module: usize) -> &Path {
         &self.paths[module]
+    }
+
+    /// Every module's module path (see [`module_path_of`]), indexed by
+    /// module id.
+    pub fn module_paths(&self) -> &[String] {
+        &self.module_paths
     }
 
     /// The module id of the file originally passed to
@@ -249,9 +256,11 @@ pub fn load_program_with_modules(entry: &Path) -> Result<(Program, ModuleOrigins
         paths[module.module_id] = path.clone();
     }
 
+    let module_paths = paths.iter().map(|path| module_path_of(path)).collect();
+
     Ok((
         Program { statements, span },
-        ModuleOrigins { module_of_statement, paths, entry_module: entry_module_id },
+        ModuleOrigins { module_of_statement, paths, module_paths, entry_module: entry_module_id },
     ))
 }
 
@@ -1074,6 +1083,52 @@ pub fn search_roots() -> Vec<PathBuf> {
     }
 
     roots
+}
+
+/// A file's module path, the name `.em` identifies its declarations by
+/// (`std.binary` for `std/binary.basm`): its path relative to the deepest
+/// search root that contains it, with `.` between segments and no
+/// extension. The deepest root, not the first: with the working directory
+/// at `~`, `~/.bitterasm/std/binary.basm` is `std.binary` (how it's
+/// imported), not `.bitterasm.std.binary`. A file under no root is named
+/// relative to the working directory, with one leading `.` per step up
+/// plus one — the spelling a relative import from there would use
+/// (`..shared.util` for `../shared/util.basm`).
+pub fn module_path_of(path: &Path) -> String {
+    let path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+
+    let deepest = search_roots()
+        .into_iter()
+        .filter_map(|root| fs::canonicalize(&root).ok())
+        .filter(|root| path.starts_with(root))
+        .max_by_key(|root| root.components().count());
+
+    if let Some(root) = deepest {
+        return dotted(path.strip_prefix(&root).expect("filtered on starts_with"));
+    }
+
+    let cwd = std::env::current_dir()
+        .and_then(fs::canonicalize)
+        .unwrap_or_else(|_| PathBuf::from("."));
+    let common = cwd
+        .components()
+        .zip(path.components())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let ups = cwd.components().count() - common;
+    let rest: PathBuf = path.components().skip(common).collect();
+
+    format!("{}{}", ".".repeat(ups + 1), dotted(&rest))
+}
+
+// `a/b/c.basm` -> `a.b.c`
+fn dotted(relative: &Path) -> String {
+    relative
+        .with_extension("")
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(".")
 }
 
 fn module_base_dirs(module: &ModulePath, importer: &Path) -> Vec<PathBuf> {

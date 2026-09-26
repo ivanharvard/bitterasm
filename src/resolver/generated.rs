@@ -192,7 +192,7 @@ impl<'a> AliasResolver<'a> {
             i += Int::from(1);
         }
 
-        let name = format!("__range#{}", self.generated_symbols.len());
+        let name = format!("__range${}", self.generated_symbols.len());
 
         let decl = Statement::Struct(StructDeclaration {
             name: vec![crate::ast::NamePart::Literal(name.clone())],
@@ -267,7 +267,7 @@ impl<'a> AliasResolver<'a> {
         }));
         values.push(("len".to_string(), Value::Int(Int::from(len))));
 
-        let name = format!("__string#{}", self.generated_symbols.len());
+        let name = format!("__string${}", self.generated_symbols.len());
 
         let decl = Statement::Struct(StructDeclaration {
             name: vec![crate::ast::NamePart::Literal(name.clone())],

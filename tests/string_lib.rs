@@ -9,7 +9,7 @@ use common::compile_entries;
 // Every `bits<N>` leaf in `value`, in order, as bytes.
 fn bytes_of(value: &EmittedValue, out: &mut Vec<u8>) {
     match value {
-        EmittedValue::Struct { name, fields, .. } if name == "bits" => {
+        EmittedValue::Struct { id, fields, .. } if id == "std.binary.bits" => {
             let (_, EmittedValue::Int { value }) = &fields[0] else { panic!("bits holds an Int") };
             out.push(value.parse().expect("a byte"));
         }

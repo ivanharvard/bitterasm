@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::resolver::{BuiltinType, ResolvedGenericArg, ResolvedType, SymbolTable, Value};
+use crate::resolver::{BuiltinType, ResolvedGenericArg, ResolvedType, SymbolId, SymbolTable, Value};
 
 /// One `.em` entry: a reified value plus which section was active when it
 /// was `@emit`'d. `section` is flattened into the same JSON object as
@@ -37,13 +37,15 @@ pub enum EmittedValue {
     // every value an Int can.
     Int { value: String },
 
+    /// `id` is the struct's module path + name (`std.binary.bits`) — see
+    /// [`TypeIds`].
     Struct {
-        name: String,
+        id: String,
         args: Vec<EmittedGenericArg>,
         fields: Vec<(String, EmittedValue)>,
     },
     Enum {
-        name: String,
+        id: String,
         args: Vec<EmittedGenericArg>,
         variant: String,
         payload: Option<Box<EmittedValue>>,
@@ -78,11 +80,36 @@ pub enum EmittedGenericArg {
 #[serde(tag = "type_kind")]
 pub enum EmittedType {
     Builtin { name: String },
-    Struct { name: String, args: Vec<EmittedGenericArg> },
-    Enum { name: String, args: Vec<EmittedGenericArg> },
+    Struct { id: String, args: Vec<EmittedGenericArg> },
+    Enum { id: String, args: Vec<EmittedGenericArg> },
 }
 
-pub fn reify_value(symbols: &SymbolTable, value: &Value) -> EmittedValue {
+/// How `.em` identifies a struct, enum or type: its declaring module's
+/// module path plus its declared name, e.g. `std.binary.bits`
+/// ([`crate::loader::module_path_of`]). Unique within one program: a
+/// module can't declare a name twice, and generated names are already
+/// unique program-wide. The loader's internal `name#module` spelling for a
+/// private declaration never reaches `.em`; a synthesized struct
+/// (`__range$3`) keeps its counter, which is what tells two apart.
+pub struct TypeIds<'a> {
+    symbols: &'a SymbolTable,
+    module_paths: &'a [String],
+}
+
+impl<'a> TypeIds<'a> {
+    /// `module_paths` is indexed by the module ids `symbols` records.
+    pub fn new(symbols: &'a SymbolTable, module_paths: &'a [String]) -> Self {
+        Self { symbols, module_paths }
+    }
+
+    pub fn id(&self, symbol: SymbolId) -> String {
+        let symbol = self.symbols.get(symbol);
+        let name = symbol.name.split_once('#').map_or(symbol.name.as_str(), |(base, _)| base);
+        format!("{}.{name}", self.module_paths[symbol.module])
+    }
+}
+
+pub fn reify_value(ids: &TypeIds, value: &Value) -> EmittedValue {
     match value {
         Value::Int(int) => EmittedValue::Int { value: int.to_string() },
 
@@ -90,18 +117,18 @@ pub fn reify_value(symbols: &SymbolTable, value: &Value) -> EmittedValue {
         // by the time anything reaches emission) — same reasoning as
         // `reify_type`'s `ResolvedType::Alias` handling just below.
         Value::Struct { symbol, args, fields, .. } => EmittedValue::Struct {
-            name: symbols.get(*symbol).name.clone(),
-            args: args.iter().map(|arg| reify_generic_arg(symbols, arg)).collect(),
+            id: ids.id(*symbol),
+            args: args.iter().map(|arg| reify_generic_arg(ids, arg)).collect(),
             fields: fields
                 .iter()
-                .map(|(name, value)| (name.clone(), reify_value(symbols, value)))
+                .map(|(name, value)| (name.clone(), reify_value(ids, value)))
                 .collect(),
         },
         Value::Enum { symbol, args, variant, payload } => EmittedValue::Enum {
-            name: symbols.get(*symbol).name.clone(),
-            args: args.iter().map(|arg| reify_generic_arg(symbols, arg)).collect(),
+            id: ids.id(*symbol),
+            args: args.iter().map(|arg| reify_generic_arg(ids, arg)).collect(),
             variant: variant.clone(),
-            payload: payload.as_ref().map(|value| Box::new(reify_value(symbols, value))),
+            payload: payload.as_ref().map(|value| Box::new(reify_value(ids, value))),
         },
 
         // Compile-time-only metaprogramming machinery, not data — see
@@ -126,11 +153,11 @@ pub fn reify_value(symbols: &SymbolTable, value: &Value) -> EmittedValue {
     }
 }
 
-fn reify_generic_arg(symbols: &SymbolTable, arg: &ResolvedGenericArg) -> EmittedGenericArg {
+fn reify_generic_arg(ids: &TypeIds, arg: &ResolvedGenericArg) -> EmittedGenericArg {
     match arg {
         ResolvedGenericArg::Const(int) => EmittedGenericArg::Const { value: int.to_string() },
 
-        ResolvedGenericArg::Type(ty) => EmittedGenericArg::Type(reify_type(symbols, ty)),
+        ResolvedGenericArg::Type(ty) => EmittedGenericArg::Type(reify_type(ids, ty)),
 
         // A concrete Value only ever comes from naming a fully-resolved
         // type at a call site (`eval_call_value` in resolver/values.rs) —
@@ -144,17 +171,17 @@ fn reify_generic_arg(symbols: &SymbolTable, arg: &ResolvedGenericArg) -> Emitted
     }
 }
 
-fn reify_type(symbols: &SymbolTable, ty: &ResolvedType) -> EmittedType {
+fn reify_type(ids: &TypeIds, ty: &ResolvedType) -> EmittedType {
     match ty {
         ResolvedType::Builtin(BuiltinType::Int) => EmittedType::Builtin { name: "int".to_string() },
 
         ResolvedType::Struct { symbol, args } => EmittedType::Struct {
-            name: symbols.get(*symbol).name.clone(),
-            args: args.iter().map(|arg| reify_generic_arg(symbols, arg)).collect(),
+            id: ids.id(*symbol),
+            args: args.iter().map(|arg| reify_generic_arg(ids, arg)).collect(),
         },
         ResolvedType::Enum { symbol, args } => EmittedType::Enum {
-            name: symbols.get(*symbol).name.clone(),
-            args: args.iter().map(|arg| reify_generic_arg(symbols, arg)).collect(),
+            id: ids.id(*symbol),
+            args: args.iter().map(|arg| reify_generic_arg(ids, arg)).collect(),
         },
 
         // Same reasoning as `ConstParam` above, one level up: a concrete
@@ -169,7 +196,7 @@ fn reify_type(symbols: &SymbolTable, ty: &ResolvedType) -> EmittedType {
         // invariant an alias carries has already been checked by the time
         // anything reaches emission, so the emitted shape just describes
         // the underlying structure `bitter` actually needs to encode.
-        ResolvedType::Alias { .. } => reify_type(symbols, ty.strip_alias()),
+        ResolvedType::Alias { .. } => reify_type(ids, ty.strip_alias()),
 
         // Same reasoning as `Value::Macro` in `reify_value` just above.
         ResolvedType::MacroType { .. } => unreachable!(
@@ -221,13 +248,13 @@ mod tests {
             collect_symbols(&Program { statements: vec![], span: Span::new(0, 0) }, &[]).unwrap();
 
         assert_eq!(
-            reify_value(&symbols, &Value::Int(Int::from(42))),
+            reify_value(&TypeIds::new(&symbols, &[]), &Value::Int(Int::from(42))),
             EmittedValue::Int { value: "42".to_string() },
         );
     }
 
     #[test]
-    fn reifies_a_struct_with_resolved_generic_args_by_name() {
+    fn reifies_a_struct_with_resolved_generic_args_by_id() {
         let program = parse_fixture("generic_alias.basm");
 
         let declaration = find_macro(&program, "make_byte");
@@ -245,12 +272,13 @@ mod tests {
             )
             .unwrap();
 
-        let emitted = reify_value(&symbols, &expansion.emitted[0]);
+        let module_paths = ["fixture".to_string()];
+        let emitted = reify_value(&TypeIds::new(&symbols, &module_paths), &expansion.emitted[0]);
 
         assert_eq!(
             emitted,
             EmittedValue::Struct {
-                name: "bits".to_string(),
+                id: "fixture.bits".to_string(),
                 args: vec![EmittedGenericArg::Const { value: "8".to_string() }],
                 fields: vec![("value".to_string(), EmittedValue::Int { value: "3".to_string() })],
             }

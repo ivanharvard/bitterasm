@@ -100,7 +100,7 @@ fn unroll_statements(
                     // Several accumulators: a generated struct with an
                     // `int` field per accumulator, constructed here. Its
                     // name can't be written in source, so it can't clash.
-                    let struct_name = format!("__fold#{name}");
+                    let struct_name = format!("__fold${name}");
                     out.push(Statement::Struct(fold_result_struct(&struct_name, &accumulators, decl.span)));
                     decl.value = Expr::Call {
                         callee: Box::new(Expr::Identifier { name: struct_name, span: decl.span }),

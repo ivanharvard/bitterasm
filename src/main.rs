@@ -253,6 +253,9 @@ fn collect_basm_files(path: &Path, files: &mut Vec<PathBuf>) -> Result<(), Strin
 /// already did before this was factored out.
 struct Expansion {
     symbols: SymbolTable,
+    // Each loaded module's module path, indexed by the module ids `symbols`
+    // records — what `.em` type ids are built from (`emit::TypeIds`).
+    module_paths: Vec<String>,
     emitted: Vec<Value>,
     // Index-aligned with `emitted` — which section (`None` for the
     // implicit default) was active when each value was `@emit`'d. See
@@ -411,7 +414,14 @@ fn resolve_and_expand(path: &Path, verbose: Option<&VerboseReporter>) -> Result<
         let pub_labels = pub_label_positions(&program, &symbols, discovery.label_positions());
         let sections = discovery.take_emitted_sections();
         let symbols = discovery.into_symbols_with_generated();
-        return Ok(Expansion { symbols, emitted, sections, generated, pub_label_positions: pub_labels });
+        return Ok(Expansion {
+            symbols,
+            module_paths: origins.module_paths().to_vec(),
+            emitted,
+            sections,
+            generated,
+            pub_label_positions: pub_labels,
+        });
     }
 
     // This pass's output turned out to be unusable after all (see below) —
@@ -471,7 +481,14 @@ fn resolve_and_expand(path: &Path, verbose: Option<&VerboseReporter>) -> Result<
     let pub_labels = pub_label_positions(&program, &symbols, alias_resolver.label_positions());
     let sections = alias_resolver.take_emitted_sections();
     let symbols = alias_resolver.into_symbols_with_generated();
-    Ok(Expansion { symbols, emitted, sections, generated, pub_label_positions: pub_labels })
+    Ok(Expansion {
+        symbols,
+        module_paths: origins.module_paths().to_vec(),
+        emitted,
+        sections,
+        generated,
+        pub_label_positions: pub_labels,
+    })
 }
 
 /// Resolves every struct/alias/const in the program up front (independent
@@ -715,12 +732,13 @@ fn compile(
     let reporter = verbose.then(VerboseReporter::new);
     let (expansion, _) = analyze(path, options, reporter.as_ref());
 
+    let ids = emit::TypeIds::new(&expansion.symbols, &expansion.module_paths);
     let emitted: Vec<emit::EmittedEntry> = expansion
         .emitted
         .iter()
         .zip(&expansion.sections)
         .map(|(value, section)| emit::EmittedEntry {
-            value: emit::reify_value(&expansion.symbols, value),
+            value: emit::reify_value(&ids, value),
             section: section.clone(),
         })
         .collect();

@@ -1,0 +1,10 @@
+# `Pair` is private to this module: the loader renames it internally, but
+# its id is still just `lib.shapes.Pair`.
+struct Pair {
+    pub a: int,
+    pub b: int,
+}
+
+pub macro make_pair(a: int, b: int) -> Pair {
+    @return Pair(a = a, b = b)
+}

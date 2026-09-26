@@ -194,7 +194,7 @@ impl Layout<'_> {
 /// it has in `bitter encode`'s unregrouped output.
 fn translate_positions_in_place(value: &mut EmittedValue, input_index: usize, layout: &Layout) -> Result<(), String> {
     match value {
-        EmittedValue::Enum { name, variant, payload, .. } if name == "Deferred" && variant == "Pos" => {
+        EmittedValue::Enum { id, variant, payload, .. } if id == crate::pack::DEFERRED && variant == "Pos" => {
             let Some(payload) = payload else { return Ok(()) };
             let EmittedValue::Int { value: raw } = payload.as_mut() else { return Ok(()) };
 
@@ -356,7 +356,7 @@ mod tests {
             "a.basm",
             vec![entry(
                 EmittedValue::Struct {
-                    name: "bits".to_string(),
+                    id: crate::pack::BITS.to_string(),
                     args: vec![],
                     fields: vec![(
                         "value".to_string(),
@@ -380,7 +380,7 @@ mod tests {
 
     fn pos(position: &str) -> EmittedValue {
         EmittedValue::Enum {
-            name: "Deferred".to_string(),
+            id: crate::pack::DEFERRED.to_string(),
             args: vec![],
             variant: "Pos".to_string(),
             payload: Some(Box::new(int(position))),

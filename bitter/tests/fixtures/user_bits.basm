@@ -1,0 +1,11 @@
+# A struct that happens to be called `bits`, outside std.binary. `bitter`
+# must treat it as an ordinary struct, not as std.binary.bits.
+struct bits<const width: int> {
+    pub value: int,
+}
+
+macro f() {
+    @emit bits<8> { value: 65 }
+}
+
+f

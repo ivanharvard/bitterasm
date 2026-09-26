@@ -1,0 +1,14 @@
+# Type ids: module path + declared name.
+from .lib.shapes import make_pair
+
+struct Local {
+    pub v: int,
+}
+
+macro emit_all() {
+    @emit Local(v = 1)
+    @emit make_pair(2, 3)
+    @emit 0..2
+}
+
+emit_all

@@ -131,13 +131,13 @@ impl<'a> AliasResolver<'a> {
     /// One accumulator's final value, or a struct of all of them — one
     /// `pub` field per accumulator, in declaration order, each typed by its
     /// own generic parameter so accumulators of any type fit. Synthesized
-    /// the same way `start..end` synthesizes a `__range#N` struct.
+    /// the same way `start..end` synthesizes a `__range$N` struct.
     fn fold_result(&mut self, mut accumulators: Vec<(String, Value)>, span: Span) -> Result<Value, ResolveError> {
         if accumulators.len() == 1 {
             return Ok(accumulators.pop().expect("checked length").1);
         }
 
-        let name = format!("__fold#{}", self.generated_symbols.len());
+        let name = format!("__fold${}", self.generated_symbols.len());
         let params: Vec<String> = (0..accumulators.len()).map(|index| format!("T{index}")).collect();
 
         let decl = Statement::Struct(StructDeclaration {

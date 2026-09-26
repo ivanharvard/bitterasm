@@ -3005,7 +3005,7 @@ mod tests {
         assert!(matches!(
             resolver.expand_invocation(invocation, &HashMap::new()),
             Err(ResolveError::NoMatchingMacroOverload { name, actual, .. })
-                if name == "choose" && actual == ["__string#0"]
+                if name == "choose" && actual == ["__string$0"]
         ));
     }
 
