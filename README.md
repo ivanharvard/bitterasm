@@ -59,7 +59,8 @@ make install    # or: ./install.sh
 
 This interactively builds and installs `bitterasm` (the compiler) and/or `bitter`
 (the binary evaluator) to `~/.bitterasm/bin`, and copies `std/` to `~/.bitterasm/std`.
-Add `~/.bitterasm/bin` to your `PATH` if prompted.
+Add `~/.bitterasm/bin` to your `PATH` if prompted. Pass `-y` to answer yes to
+every prompt, including those of the optional `bitterasm-lsp` install script.
 
 Absolute imports such as `from std.x86_64.nasm import *` are looked up, in
 order, under the current directory, each directory in `BITTERASM_PATH`
