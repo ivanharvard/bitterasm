@@ -51,10 +51,16 @@ pub fn pack_stream(values: &[EmittedValue]) -> Result<Vec<u8>, String> {
     let byte_widths = entry_byte_widths(values)?;
 
     let mut bytes = Vec::new();
+    let mut pad_to = Vec::new();
 
     for (here_index, value) in values.iter().enumerate() {
         if align_of(value)?.is_some() {
             bytes.resize(bytes.len() + byte_widths[here_index], 0);
+            continue;
+        }
+
+        if let Some(n) = pad_image_of(value)? {
+            pad_to.push(n);
             continue;
         }
 
@@ -63,7 +69,24 @@ pub fn pack_stream(values: &[EmittedValue]) -> Result<Vec<u8>, String> {
         bytes.extend(to_bytes(&packed.value, width_bytes));
     }
 
+    for n in pad_to {
+        bytes.resize(bytes.len().div_ceil(n) * n, 0);
+    }
+
     Ok(bytes)
+}
+
+/// `Some(n)` when `value` is a `PadImage<n>` entry.
+fn pad_image_of(value: &EmittedValue) -> Result<Option<usize>, String> {
+    let EmittedValue::Struct { id, args, .. } = value else { return Ok(None) };
+    if id != PAD_IMAGE {
+        return Ok(None);
+    }
+
+    match const_width_arg(args)? {
+        0 => Err("`PadImage<0>` can't pad to a multiple of zero bytes".to_string()),
+        n => Ok(Some(n)),
+    }
 }
 
 /// The byte offset at which entry `index` of `values` starts once packed —
@@ -83,6 +106,8 @@ fn entry_byte_widths(values: &[EmittedValue]) -> Result<Vec<usize>, String> {
     for value in values {
         let width = match align_of(value)? {
             Some(n) => (n - offset % n) % n,
+            // Applied to the finished image, not here.
+            None if pad_image_of(value)?.is_some() => 0,
             None => structural_width_bits(value)?.div_ceil(8),
         };
         offset += width;
@@ -123,6 +148,7 @@ pub const DEFERRED: &str = "std.bitter.deferred.Deferred";
 pub const BIN_OP: &str = "std.bitter.deferred.BinOp";
 pub const OP: &str = "std.bitter.deferred.Op";
 pub const ALIGN: &str = "std.bitter.layout.Align";
+pub const PAD_IMAGE: &str = "std.bitter.layout.PadImage";
 
 fn structural_width_bits(value: &EmittedValue) -> Result<usize, String> {
     match value {
@@ -130,9 +156,9 @@ fn structural_width_bits(value: &EmittedValue) -> Result<usize, String> {
 
         EmittedValue::Struct { id, args, .. } if id == POSITIONED => bits_width(args),
 
-        EmittedValue::Struct { id, .. } if id == ALIGN => Err(
-            "`Align` is only meaningful as a whole emitted entry, not inside another value".to_string(),
-        ),
+        EmittedValue::Struct { id, .. } if id == ALIGN || id == PAD_IMAGE => Err(format!(
+            "`{id}` is only meaningful as a whole emitted entry, not inside another value"
+        )),
 
         EmittedValue::Struct { fields, .. } => {
             let mut width_bits = 0usize;
@@ -544,6 +570,19 @@ mod tests {
         let header = positioned("8", deferred_node("Span", deferred_leaf("0"), deferred_leaf("3")));
         let values = [header, bits("8", "9"), align("8"), bits("8", "7")];
         assert_eq!(pack_stream(&values).unwrap(), [8, 9, 0, 0, 0, 0, 0, 0, 7]);
+    }
+
+    #[test]
+    fn pad_image_pads_the_end_and_takes_no_space_where_it_is() {
+        let pad = EmittedValue::Struct {
+            id: PAD_IMAGE.to_string(),
+            args: vec![EmittedGenericArg::Const { value: "4".to_string() }],
+            fields: vec![],
+        };
+        // `span(0, 3)` measures entries 0..3 without the padding: 1 + 0 + 1.
+        let header = positioned("8", deferred_node("Span", deferred_leaf("0"), deferred_leaf("3")));
+        let values = [header, pad, bits("8", "9")];
+        assert_eq!(pack_stream(&values).unwrap(), [2, 9, 0, 0]);
     }
 
     #[test]

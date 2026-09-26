@@ -1,0 +1,92 @@
+# Mach-O 64 executables, for macOS.
+#
+# Invoke the header macro first thing in the program's entry file, before
+# any `section` statement, so its bytes start the image:
+#
+#   from std.formats.macho import *
+#
+#   macho64_executable CPU_TYPE_X86_64, CPU_SUBTYPE_X86_64_ALL, _start
+#
+# The whole image is one `__TEXT` segment at `vm_address`, readable and
+# executable, and `entry` (a label in this file or imported from another
+# one) is where execution starts. A modern macOS kernel refuses an
+# executable without a dynamic linker even if it never calls a shared
+# library, so the header names `/usr/lib/dyld`; current macOS may still
+# refuse an unsigned binary depending on Gatekeeper policy.
+#
+# Not verified on macOS: this reproduces the Rust writer it replaced byte
+# for byte, and `llvm-readobj` accepts its output.
+
+from std.binary import bits
+from std.bitter.deferred import *
+from std.bitter.byte_order import LittleEndian
+from std.bitter.link import image_start, image_end
+
+# cputype / cpusubtype values.
+pub const CPU_TYPE_X86_64 = 0x01000007
+pub const CPU_SUBTYPE_X86_64_ALL = 3
+
+# A little-endian field `bytes` wide holding `value`.
+macro macho_field(value: int, bytes: int) {
+    const width = bytes * 8
+    @emit LittleEndian<bits<width>, width> { value: bits<width> { value: value } }
+}
+
+# The same, for a value only known once the image is laid out.
+macro macho_late_field(value: Deferred, bytes: int) {
+    const width = bytes * 8
+    @emit LittleEndian<Positioned<width>, width> { value: Positioned<width> { value: value } }
+}
+
+# `text`'s bytes, then zeros up to `bytes` in all.
+macro macho_name<S>(text: S, bytes: int) {
+    @for c in text {
+        macho_field c, 1
+    }
+    macho_field 0, bytes - text.len
+}
+
+# The header and its three load commands, 160 bytes.
+pub macro macho64_executable(
+    cpu_type: int,
+    cpu_subtype: int,
+    entry: int,
+    vm_address: int = 0x100000000
+) {
+    const file_size = span(image_start, image_end)
+
+    # mach_header_64
+    macho_field 0xFEEDFACF, 4                                   # magic: MH_MAGIC_64
+    macho_field cpu_type, 4
+    macho_field cpu_subtype, 4
+    macho_field 2, 4                                            # filetype: MH_EXECUTE
+    macho_field 3, 4                                            # ncmds
+    macho_field 128, 4                                          # sizeofcmds
+    macho_field 1, 4                                            # flags: MH_NOUNDEFS
+    macho_field 0, 4                                            # reserved
+
+    # LC_SEGMENT_64 __TEXT, mapping the whole file
+    macho_field 0x19, 4                                         # cmd
+    macho_field 72, 4                                           # cmdsize
+    macho_name "__TEXT", 16
+    macho_field vm_address, 8                                   # vmaddr
+    macho_late_field band(add(file_size, 0xFFF), 0 - 0x1000), 8 # vmsize
+    macho_field 0, 8                                            # fileoff
+    macho_late_field file_size, 8                               # filesize
+    macho_field 7, 4                                            # maxprot: rwx
+    macho_field 5, 4                                            # initprot: r-x
+    macho_field 0, 4                                            # nsects
+    macho_field 0, 4                                            # flags
+
+    # LC_LOAD_DYLINKER
+    macho_field 0xE, 4                                          # cmd
+    macho_field 32, 4                                           # cmdsize
+    macho_field 12, 4                                           # name offset
+    macho_name "/usr/lib/dyld", 20
+
+    # LC_MAIN
+    macho_field 0x80000028, 4                                   # cmd: LC_MAIN | LC_REQ_DYLD
+    macho_field 24, 4                                           # cmdsize
+    macho_late_field span(image_start, entry), 8                # entryoff
+    macho_field 0, 8                                            # stacksize: default
+}

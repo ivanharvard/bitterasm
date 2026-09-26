@@ -1,0 +1,45 @@
+# "Hello, world!" (Linux syscalls, so it only shows the container is right)
+# with a Mach-O header from `std.formats.macho`. hello_macho.golden is what
+# the Rust Mach-O writer this replaced produced for the same program.
+
+from std.x86_64.nasm import *
+from std.formats.macho import *
+from std.string import string_from_struct, validate_ascii
+from std.binary import Endian
+
+macho64_executable CPU_TYPE_X86_64, CPU_SUBTYPE_X86_64_ALL, _start
+
+section .rodata
+msg:
+    const text = "Hello, World!\n"
+    validate_ascii string_from_struct(text).value, text.len, Endian.Little
+    db text
+
+section .text
+pub _start:
+    lea rsi, [rel msg]
+    mov edx, text.len
+
+.write:
+    mov eax, 1      # sys_write
+    mov edi, 1      # stdout
+    syscall
+
+    cmp rax, -4     # -EINTR
+    je .write
+
+    test rax, rax
+    jle .error
+
+    add rsi, rax
+    sub rdx, rax
+    jnz .write
+
+    mov eax, 60      # sys_exit
+    xor edi, edi
+    syscall
+
+.error:
+    mov eax, 60
+    mov edi, 1
+    syscall

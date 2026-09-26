@@ -38,7 +38,7 @@ v1 module-path identity is what in-language executable headers build on.
 - [x] Phase E2 — Linker-provided image symbols
 - [x] Phase E3 — `Align<N>` packer primitive
 - [x] Phase E4 — `std/formats/elf.basm`
-- [ ] Phase E5 — `std/formats/pe.basm` and `std/formats/macho.basm`
+- [x] Phase E5 — `std/formats/pe.basm` and `std/formats/macho.basm`
 - [ ] Phase E6 — Remove `formats.rs`, `bitter exec`, `--format`, `--entry`
 
 Work through parts in order (A → E). Within a part, phases are in order.
@@ -645,6 +645,25 @@ runs.
 **Verification:** byte-for-byte match with the old Rust output for the same
 code; `objdump`/`file` accept them. (No Windows/macOS host to run them,
 same as today.)
+**As built (DONE):**
+- `pe64_executable machine, entry[, image_base]` and
+  `macho64_executable cpu_type, cpu_subtype, entry[, vm_address]`, with
+  `IMAGE_FILE_MACHINE_AMD64`, `CPU_TYPE_X86_64` and
+  `CPU_SUBTYPE_X86_64_ALL`. PE's rounded sizes are `band(add(len, 0x1FF),
+  0 - 0x200)`-style expressions; Mach-O's `vmsize` likewise.
+- **One more layout primitive, `pad_image n`** (`std.bitter.layout`):
+  PE's file must end padded to 512 bytes, and a header written at the
+  start of a (possibly multi-file, multi-section) program can't emit
+  anything at its end. Wherever `pad_image` is written, `bitter` pads the
+  finished image to a multiple of `n`. It takes no space where it appears,
+  so `image_end` and `span` measure the unpadded image. The header's own
+  512-byte padding is an ordinary `align 0x200`, since the header starts at
+  byte 0.
+- Tests (`bitter/tests/formats.rs`): both are byte-for-byte the old Rust
+  writers' output for the hello program (goldens `hello_pe.golden`,
+  `hello_macho.golden`), and `llvm-readobj` parses both with the expected
+  entry point and sizes; `pad_image` has a packer unit test. Still no
+  Windows or macOS host to run them.
 
 #### Phase E6 — Remove `formats.rs`, `bitter exec`, `--format`, `--entry`
 **Deliverable:** `bitter build` writes bytes and sets `+x`; examples import

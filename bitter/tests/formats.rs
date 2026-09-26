@@ -93,3 +93,43 @@ fn elf32_riscv_header_and_code() {
         assert!(report.contains("LOAD           0x000000 0x00010000 0x00010000 0x00060 0x00060 R E 0x1000"), "{report}");
     }
 }
+
+// `llvm-readobj` with `args`, if it's installed.
+fn llvm_readobj(path: &Path, args: &[&str]) -> Option<String> {
+    let output = Command::new("llvm-readobj").args(args).arg(path).output().ok()?;
+    assert!(output.status.success(), "llvm-readobj rejected {}: {}", path.display(), String::from_utf8_lossy(&output.stderr));
+    assert!(output.stderr.is_empty(), "llvm-readobj warned about {}: {}", path.display(), String::from_utf8_lossy(&output.stderr));
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+#[test]
+fn pe64_matches_the_rust_writer_it_replaced() {
+    let pe = build("hello_pe");
+    let golden = workspace().join("bitter/tests/fixtures/formats/hello_pe.golden");
+    let bytes = std::fs::read(&pe).unwrap();
+    assert_eq!(bytes, std::fs::read(golden).unwrap());
+
+    // Headers padded to 0x200, then 93 bytes of code padded to 0x200 more.
+    assert_eq!(bytes.len(), 1024);
+
+    if let Some(report) = llvm_readobj(&pe, &["--file-headers", "--sections"]) {
+        assert!(report.contains("Format: COFF-x86-64"), "{report}");
+        // RVA 0x1000 + the 14-byte message before `_start`.
+        assert!(report.contains("AddressOfEntryPoint: 0x100E"), "{report}");
+        assert!(report.contains("SizeOfImage: 8192"), "{report}");
+        assert!(report.contains("VirtualSize: 0x5D"), "{report}");
+    }
+}
+
+#[test]
+fn macho64_matches_the_rust_writer_it_replaced() {
+    let macho = build("hello_macho");
+    let golden = workspace().join("bitter/tests/fixtures/formats/hello_macho.golden");
+    assert_eq!(std::fs::read(&macho).unwrap(), std::fs::read(golden).unwrap());
+
+    if let Some(report) = llvm_readobj(&macho, &["--file-headers", "--macho-segment"]) {
+        assert!(report.contains("Format: Mach-O 64-bit x86-64"), "{report}");
+        assert!(report.contains("NumOfLoadCommands: 3"), "{report}");
+        assert!(report.contains("filesize: 253"), "{report}");
+    }
+}

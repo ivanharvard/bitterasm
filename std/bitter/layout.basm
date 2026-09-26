@@ -16,3 +16,18 @@ pub struct Align<const n: int>
 pub macro align(n: int) {
     @emit Align<n> {}
 }
+
+# `pad_image n` pads the finished image with zeros to a multiple of `n`
+# bytes, wherever it's written — for a file format whose size must be
+# rounded up (PE rounds its sections to 512 bytes), since a header written
+# at the start of the program can't emit anything at the end of it. It
+# takes no space where it appears, so `span` and `std.bitter.link`'s
+# `image_end` measure the image without this padding.
+pub struct PadImage<const n: int>
+    | invariant n > 0
+{
+}
+
+pub macro pad_image(n: int) {
+    @emit PadImage<n> {}
+}

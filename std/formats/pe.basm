@@ -1,0 +1,117 @@
+# PE32+ (64-bit Windows) console executables.
+#
+# Invoke the header macro first thing in the program's entry file, before
+# any `section` statement, so its bytes start the image:
+#
+#   from std.formats.pe import *
+#
+#   pe64_executable IMAGE_FILE_MACHINE_AMD64, _start
+#
+# The image is the headers (padded to 512 bytes), then everything after
+# them as one read+execute `.text` section at RVA 0x1000, padded to 512
+# bytes at the end. `entry` is a label in this file or imported from
+# another one. No imports, exports or relocations: a program that calls into
+# Windows DLLs needs more than this provides.
+#
+# Not verified on Windows: this reproduces the Rust writer it replaced
+# byte for byte, and `llvm-readobj` accepts its output.
+
+from std.binary import bits
+from std.bitter.deferred import *
+from std.bitter.byte_order import LittleEndian
+from std.bitter.link import image_start, image_end
+from std.bitter.layout import align, pad_image
+
+# COFF Machine values.
+pub const IMAGE_FILE_MACHINE_AMD64 = 0x8664
+
+# A little-endian field `bytes` wide holding `value`.
+macro pe_field(value: int, bytes: int) {
+    const width = bytes * 8
+    @emit LittleEndian<bits<width>, width> { value: bits<width> { value: value } }
+}
+
+# The same, for a value only known once the image is laid out.
+macro pe_late_field(value: Deferred, bytes: int) {
+    const width = bytes * 8
+    @emit LittleEndian<Positioned<width>, width> { value: Positioned<width> { value: value } }
+}
+
+# The headers plus the `.text` section header, 368 bytes.
+pub macro pe64_executable(
+    machine: int,
+    entry: int,
+    image_base: int = 0x140000000
+) {
+    # Everything after the 0x200 bytes of headers is the one section.
+    const code_len = sub(span(image_start, image_end), 0x200)
+    const raw_size = band(add(code_len, 0x1FF), 0 - 0x200)
+
+    # IMAGE_DOS_HEADER: only e_magic and e_lfanew matter.
+    pe_field 'M', 1
+    pe_field 'Z', 1
+    pe_field 0, 58
+    pe_field 64, 4                                              # e_lfanew
+
+    pe_field 'P', 1
+    pe_field 'E', 1
+    pe_field 0, 2
+
+    # IMAGE_FILE_HEADER
+    pe_field machine, 2
+    pe_field 1, 2                                               # NumberOfSections
+    pe_field 0, 4                                               # TimeDateStamp
+    pe_field 0, 4                                               # PointerToSymbolTable
+    pe_field 0, 4                                               # NumberOfSymbols
+    pe_field 240, 2                                             # SizeOfOptionalHeader
+    pe_field 0x22, 2                                            # EXECUTABLE_IMAGE | LARGE_ADDRESS_AWARE
+
+    # IMAGE_OPTIONAL_HEADER64
+    pe_field 0x20B, 2                                           # Magic: PE32+
+    pe_field 0, 2                                               # linker version
+    pe_late_field raw_size, 4                                   # SizeOfCode
+    pe_field 0, 4                                               # SizeOfInitializedData
+    pe_field 0, 4                                               # SizeOfUninitializedData
+    pe_late_field add(span(image_start, entry), 0x1000 - 0x200), 4  # AddressOfEntryPoint
+    pe_field 0x1000, 4                                          # BaseOfCode
+    pe_field image_base, 8                                      # ImageBase
+    pe_field 0x1000, 4                                          # SectionAlignment
+    pe_field 0x200, 4                                           # FileAlignment
+    pe_field 6, 2                                               # MajorOperatingSystemVersion
+    pe_field 0, 2
+    pe_field 0, 2                                               # image version
+    pe_field 0, 2
+    pe_field 6, 2                                               # MajorSubsystemVersion
+    pe_field 0, 2
+    pe_field 0, 4                                               # Win32VersionValue
+    pe_late_field band(add(code_len, 0x1FFF), 0 - 0x1000), 4   # SizeOfImage
+    pe_field 0x200, 4                                           # SizeOfHeaders
+    pe_field 0, 4                                               # CheckSum
+    pe_field 3, 2                                               # Subsystem: WINDOWS_CUI
+    pe_field 0, 2                                               # DllCharacteristics
+    pe_field 0x100000, 8                                        # SizeOfStackReserve
+    pe_field 0x1000, 8                                          # SizeOfStackCommit
+    pe_field 0x100000, 8                                        # SizeOfHeapReserve
+    pe_field 0x1000, 8                                          # SizeOfHeapCommit
+    pe_field 0, 4                                               # LoaderFlags
+    pe_field 16, 4                                              # NumberOfRvaAndSizes
+    pe_field 0, 128                                             # 16 empty data directories
+
+    # IMAGE_SECTION_HEADER for .text
+    @for c in ".text" {
+        pe_field c, 1
+    }
+    pe_field 0, 3
+    pe_late_field code_len, 4                                   # VirtualSize
+    pe_field 0x1000, 4                                          # VirtualAddress
+    pe_late_field raw_size, 4                                   # SizeOfRawData
+    pe_field 0x200, 4                                           # PointerToRawData
+    pe_field 0, 4                                               # PointerToRelocations
+    pe_field 0, 4                                               # PointerToLinenumbers
+    pe_field 0, 2                                               # NumberOfRelocations
+    pe_field 0, 2                                               # NumberOfLinenumbers
+    pe_field 0x60000020, 4                                      # CODE | MEM_EXECUTE | MEM_READ
+
+    align 0x200
+    pad_image 0x200
+}
