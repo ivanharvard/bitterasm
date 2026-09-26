@@ -107,3 +107,21 @@ fn em_exports_every_pub_labels_position_and_omits_private_ones() {
     assert_eq!(file.exports.get("target"), Some(&0));
     assert!(!file.exports.contains_key("private_marker"));
 }
+
+#[test]
+fn a_librarys_macro_can_use_a_label_the_library_imported() {
+    // The library's own `from .labels import marker` travels with its
+    // declarations, and the entry file importing the same label too is
+    // still one extern label.
+    let out = std::env::temp_dir().join(format!("bitterasm-extern-transitive-{}.em", std::process::id()));
+    let output = bitterasm_compile("tests/fixtures/extern_transitive/main.basm", &out);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+
+    let json = std::fs::read_to_string(&out).expect(".em file should exist");
+    let file = bitterasm::emit::EmFile::parse(&json, bitterasm::emit::features::ALL).expect("a valid .em file");
+    let deferred = EmittedValue::Deferred {
+        module: "tests.fixtures.extern_transitive.labels".to_string(),
+        symbol: "marker".to_string(),
+    };
+    assert_eq!(file.entries.iter().map(|entry| entry.value.clone()).collect::<Vec<_>>(), [deferred.clone(), deferred]);
+}

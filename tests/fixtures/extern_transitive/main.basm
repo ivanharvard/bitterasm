@@ -1,0 +1,11 @@
+# Uses the library's macro, and also imports the same label directly: one
+# extern label, not a duplicate declaration.
+from .lib import read_marker
+from .labels import marker
+
+macro show() {
+    @emit read_marker()
+    @emit marker
+}
+
+show

@@ -251,6 +251,17 @@ pub fn load_program_with_modules(entry: &Path) -> Result<(Program, ModuleOrigins
         }
     }
 
+    // Several modules may import the same label; it's one declaration.
+    let mut seen_labels: HashSet<(String, String)> = HashSet::new();
+    let (statements, module_of_statement): (Vec<_>, Vec<_>) = statements
+        .into_iter()
+        .zip(module_of_statement)
+        .filter(|(statement, _)| match statement {
+            Statement::ExternLabel(label) => seen_labels.insert((label.name.clone(), label.module.clone())),
+            _ => true,
+        })
+        .unzip();
+
     let mut paths: Vec<PathBuf> = vec![PathBuf::new(); cache.len()];
     for (path, module) in &cache {
         paths[module.module_id] = path.clone();
@@ -486,51 +497,9 @@ fn splice_import(
 
     let target_paths: Vec<PathBuf> = match resolve_import_paths(import, importer)? {
         ImportResolution::Plain(target_path) => {
-            // Only a plain import's names are "declarations inside one
-            // target file" that can be validated this way — a package
-            // import's names were already each individually resolved to
-            // their own whole file by `resolve_import_paths`, so there's
-            // nothing further to check here for those.
-            if let ImportItems::Names(names) = &import.items {
-                let target = &cache[&target_path];
-                let declared: HashSet<String> = target
-                    .statements
-                    .iter()
-                    .filter_map(declaration_name)
-                    .filter(|(_, is_pub)| *is_pub)
-                    .map(|(name, _)| name)
-                    .collect();
-
-                let pub_labels: HashSet<&str> = target
-                    .statements
-                    .iter()
-                    .filter_map(|statement| match statement {
-                        Statement::Label(label) if label.is_pub => Some(label.name.as_str()),
-                        _ => None,
-                    })
-                    .collect();
-
-                for name in names {
-                    if declared.contains(name.as_str()) {
-                        continue;
-                    }
-
-                    if pub_labels.contains(name.as_str()) {
-                        extern_labels.push(crate::ast::ExternLabel {
-                            name: name.clone(),
-                            file: target_path.display().to_string(),
-                            module: module_path_of(&target_path),
-                            span: import.span,
-                        });
-                        extern_label_modules.push(target.module_id);
-                        continue;
-                    }
-
-                    return Err(LoadError::UnknownImportedName {
-                        module: module_display(&import.module),
-                        name: name.clone(),
-                    });
-                }
+            for (extern_label, module_id) in imported_labels(import, &target_path, cache)? {
+                extern_labels.push(extern_label);
+                extern_label_modules.push(module_id);
             }
 
             vec![target_path]
@@ -557,6 +526,65 @@ fn splice_import(
     Ok(out)
 }
 
+// The `pub` labels a plain `from file import a, b` names, as extern labels
+// (with the declaring module's id), after checking every name is a `pub`
+// declaration or `pub` label in `target_path`. Only a plain import's names
+// can be checked this way — a package import's names were each already
+// resolved to a whole file by `resolve_import_paths`.
+fn imported_labels(
+    import: &ImportStatement,
+    target_path: &Path,
+    cache: &HashMap<PathBuf, LoadedModule>,
+) -> Result<Vec<(crate::ast::ExternLabel, usize)>, LoadError> {
+    let ImportItems::Names(names) = &import.items else { return Ok(Vec::new()) };
+
+    let target = &cache[target_path];
+    let declared: HashSet<String> = target
+        .statements
+        .iter()
+        .filter_map(declaration_name)
+        .filter(|(_, is_pub)| *is_pub)
+        .map(|(name, _)| name)
+        .collect();
+
+    let pub_labels: HashSet<&str> = target
+        .statements
+        .iter()
+        .filter_map(|statement| match statement {
+            Statement::Label(label) if label.is_pub => Some(label.name.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    let mut labels = Vec::new();
+
+    for name in names {
+        if declared.contains(name.as_str()) {
+            continue;
+        }
+
+        if pub_labels.contains(name.as_str()) {
+            labels.push((
+                crate::ast::ExternLabel {
+                    name: name.clone(),
+                    file: target_path.display().to_string(),
+                    module: module_path_of(target_path),
+                    span: import.span,
+                },
+                target.module_id,
+            ));
+            continue;
+        }
+
+        return Err(LoadError::UnknownImportedName {
+            module: module_display(&import.module),
+            name: name.clone(),
+        });
+    }
+
+    Ok(labels)
+}
+
 fn collect_declarations(
     path: &Path,
     cache: &HashMap<PathBuf, LoadedModule>,
@@ -579,9 +607,18 @@ fn collect_declarations(
 
     for statement in &module.statements {
         match statement {
+            // A label this module imports is carried along like its other
+            // declarations: its macros may refer to it wherever they're
+            // called (e.g. `std.formats.elf` using `std.bitter.link`'s
+            // `image_end`).
             Statement::Import(nested) => {
                 let nested_path = resolve_module_path(&nested.module, path)?;
                 collect_declarations(&nested_path, cache, spliced, out, out_modules)?;
+
+                for (extern_label, module_id) in imported_labels(nested, &nested_path, cache)? {
+                    out.push(Statement::ExternLabel(extern_label));
+                    out_modules.push(module_id);
+                }
             }
 
             // A top-level `@for`/`@if`/`@match` (see `resolver::toplevel`'s
@@ -612,12 +649,9 @@ fn collect_declarations(
             // declaration either — its effect already happened at parse
             // time, propagated via `ParserSeed`, not by being spliced into
             // an importer's statement list. `ExternLabel` is never present
-            // in a *loaded* module's own `statements` in the first place —
-            // it only ever exists as something `splice_import` synthesizes
-            // directly into `out` for the file that wrote the `from ...
-            // import label_name`, so re-exporting it transitively through a
-            // second file's own import isn't a case Phase 5 needs to
-            // support; matched here only for exhaustiveness.
+            // in a *loaded* module's own `statements` — it's synthesized
+            // from an import (see the `Import` arm above) — so it's
+            // matched here only for exhaustiveness.
             Statement::Label(_) | Statement::Section(_) | Statement::Invocation(_)
             | Statement::SyntaxOverride(_) | Statement::ExternLabel(_) => {}
         }

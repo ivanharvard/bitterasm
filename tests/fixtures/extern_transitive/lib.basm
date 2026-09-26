@@ -1,0 +1,6 @@
+# A library whose macro refers to a label the library itself imports.
+from .labels import marker
+
+pub macro read_marker() -> int {
+    @return marker
+}
