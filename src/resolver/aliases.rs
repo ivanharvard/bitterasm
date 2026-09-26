@@ -81,6 +81,11 @@ pub struct AliasResolver<'a> {
     pub(super) macro_call_stack: Vec<SymbolId>,
     pub(super) pending_tail_call: Option<Vec<super::Value>>,
 
+    // A `@next` waiting for its `@fold` to apply it, and where a `@next`
+    // reached right now would go — see `super::fold`.
+    pub(super) pending_next: Option<super::fold::PendingNext>,
+    pub(super) next_target: super::fold::NextTarget,
+
     pub(super) generic_scope: HashMap<String, GenericBinding>,
 
     // How many values have been `@emit`'d so far, in whole-program
@@ -221,6 +226,8 @@ impl<'a> AliasResolver<'a> {
             const_value_stack: Vec::new(),
             macro_call_stack: Vec::new(),
             pending_tail_call: None,
+            pending_next: None,
+            next_target: super::fold::NextTarget::None,
             generic_scope: HashMap::new(),
             values_emitted: Int::from(0),
             label_positions: known_label_positions,

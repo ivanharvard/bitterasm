@@ -12,6 +12,7 @@
 mod aliases;
 mod consts;
 mod facets;
+mod fold;
 mod generated;
 mod macro_body;
 mod metas;

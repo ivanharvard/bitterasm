@@ -1,0 +1,9 @@
+macro sum_to(n: int) {
+    const total = @fold acc = 0 @for i in 0..n {
+        @next acc + i
+    }
+    @emit total
+}
+
+sum_to 5
+sum_to 100000

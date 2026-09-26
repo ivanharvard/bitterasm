@@ -1,0 +1,20 @@
+# A macro call as a `const`'s whole value keeps its emits (they used to be
+# dropped while still shifting later labels).
+macro side() -> int {
+    @emit 111
+    @emit 222
+    @return 5
+}
+
+macro user() {
+    const v = side()
+    @emit v
+}
+
+macro show(position: int) {
+    @emit position
+}
+
+user
+here_label:
+show here_label

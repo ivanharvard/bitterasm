@@ -1,0 +1,15 @@
+# Labels after a fold that emits land after its values.
+macro three() {
+    @fold a = 0 @for i in 0..3 {
+        @emit i
+        @next a
+    }
+}
+
+macro show(position: int) {
+    @emit position
+}
+
+three
+after:
+show after

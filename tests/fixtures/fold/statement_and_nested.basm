@@ -1,0 +1,13 @@
+# A statement fold keeps its emits; folds nest, each `@next` going to the
+# innermost one.
+macro grid() {
+    @fold row_start = 0 @for r in 0..3 {
+        const width = @fold w = 0 @for c in 0..r {
+            @next w + 1
+        }
+        @emit row_start
+        @next row_start + width
+    }
+}
+
+grid

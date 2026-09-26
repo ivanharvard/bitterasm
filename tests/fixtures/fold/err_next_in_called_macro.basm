@@ -1,0 +1,11 @@
+macro g() {
+    @next 1
+}
+
+macro f() {
+    @fold a = 0 @for i in 0..2 {
+        g
+    }
+}
+
+f

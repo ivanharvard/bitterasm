@@ -1,0 +1,7 @@
+macro f() {
+    @emit 1 + @fold a = 0 @for i in 0..2 {
+        @return 3
+    }
+}
+
+f

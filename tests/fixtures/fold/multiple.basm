@@ -1,0 +1,13 @@
+# Two accumulators; `@next` names what changes and the rest stay put.
+macro stats() {
+    const r = @fold evens = 0, odds = 0 @for i in 0..7 {
+        @if i % 2 == 0 {
+            @next evens = evens + 1
+        }
+        @next odds = odds + i
+    }
+    @emit r.evens
+    @emit r.odds
+}
+
+stats

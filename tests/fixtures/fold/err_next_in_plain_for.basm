@@ -1,0 +1,9 @@
+macro f() {
+    @fold a = 0 @for i in 0..2 {
+        @for j in 0..2 {
+            @next a + j
+        }
+    }
+}
+
+f

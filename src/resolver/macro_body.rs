@@ -68,6 +68,7 @@ use crate::token::Span;
 use crate::types::{FnBound, GenericParameter, TypeArgument, TypeExpr};
 
 use super::aliases::{AliasResolver, GenericBinding};
+use super::fold::{KeptValue, NextTarget};
 use super::structs::{describe_type, param_name};
 use super::symbols::SymbolId;
 use super::types::{ResolvedGenericArg, ResolvedType};
@@ -269,6 +270,9 @@ impl<'a> AliasResolver<'a> {
         // `macro_call_stack` already uses — correctly nests across a
         // recursive/nested macro call, generic or not.
         let previous_generic_scope = std::mem::take(&mut self.generic_scope);
+        // A `@next` in this macro's own body never reaches a fold in the
+        // caller's.
+        let previous_next_target = std::mem::take(&mut self.next_target);
         let previous_module = self.current_module;
         self.current_module = self.symbol_module(symbol);
 
@@ -354,6 +358,7 @@ impl<'a> AliasResolver<'a> {
 
         self.macro_call_stack.pop();
         self.generic_scope = previous_generic_scope;
+        self.next_target = previous_next_target;
         self.current_module = previous_module;
         if !leaks_section {
             self.current_section = previous_section;
@@ -652,7 +657,7 @@ impl<'a> AliasResolver<'a> {
         self.run_macro_body_inner(hook_symbol, &hook, values)
     }
 
-    fn walk_macro_body(
+    pub(super) fn walk_macro_body(
         &mut self,
         body: &[Statement],
         initial_scope: &HashMap<String, Value>,
@@ -725,7 +730,18 @@ impl<'a> AliasResolver<'a> {
                         }
                         let value = match meta.args.as_slice() {
                             [] => None,
-                            [expr] => Some(self.eval_value(expr, &scope)?),
+                            [expr] => match self.eval_value_keeping_emits(
+                                expr,
+                                &scope,
+                                allowed_emits,
+                                &mut emitted,
+                                &mut generated,
+                            )? {
+                                KeptValue::Value(value) => Some(value),
+                                KeptValue::Exited(returned) => {
+                                    return Ok(MacroExpansion { emitted, generated, returned });
+                                }
+                            },
 
                             other => {
                                 return Err(ResolveError::InvalidArgumentCount {
@@ -763,7 +779,10 @@ impl<'a> AliasResolver<'a> {
                             emitted.extend(nested.emitted);
                             generated.extend(nested.generated);
 
-                            if nested.returned.is_some() || self.pending_tail_call.is_some() {
+                            if nested.returned.is_some()
+                                || self.pending_tail_call.is_some()
+                                || self.pending_next.is_some()
+                            {
                                 return Ok(MacroExpansion {
                                     emitted,
                                     generated,
@@ -808,7 +827,10 @@ impl<'a> AliasResolver<'a> {
                             let nested = self.walk_macro_body(chosen_body, &arm_scope, allowed_emits)?;
                             emitted.extend(nested.emitted);
                             generated.extend(nested.generated);
-                            if nested.returned.is_some() || self.pending_tail_call.is_some() {
+                            if nested.returned.is_some()
+                                || self.pending_tail_call.is_some()
+                                || self.pending_next.is_some()
+                            {
                                 return Ok(MacroExpansion {
                                     emitted,
                                     generated,
@@ -850,11 +872,20 @@ impl<'a> AliasResolver<'a> {
                             let mut iter_scope = scope.clone();
                             iter_scope.to_mut().insert(var_name.clone(), value);
 
-                            let nested = self.walk_macro_body(for_body, &iter_scope, allowed_emits)?;
+                            let outer_target = self.next_target;
+                            if outer_target != NextTarget::None {
+                                self.next_target = NextTarget::ForInsideFold;
+                            }
+                            let nested = self.walk_macro_body(for_body, &iter_scope, allowed_emits);
+                            self.next_target = outer_target;
+                            let nested = nested?;
                             emitted.extend(nested.emitted);
                             generated.extend(nested.generated);
 
-                            if nested.returned.is_some() || self.pending_tail_call.is_some() {
+                            if nested.returned.is_some()
+                                || self.pending_tail_call.is_some()
+                                || self.pending_next.is_some()
+                            {
                                 return Ok(MacroExpansion {
                                     emitted,
                                     generated,
@@ -862,6 +893,24 @@ impl<'a> AliasResolver<'a> {
                                 });
                             }
                         }
+                    }
+
+                    // A statement fold keeps its emits and discards its value.
+                    "fold" => {
+                        let outcome = self.run_fold(meta, &scope, allowed_emits)?;
+                        emitted.extend(outcome.emitted);
+                        generated.extend(outcome.generated);
+
+                        if let Some(returned) = outcome.exited {
+                            return Ok(MacroExpansion { emitted, generated, returned });
+                        }
+                    }
+
+                    // Ends this iteration of the enclosing fold, the way
+                    // `@return` ends the body — `run_fold` applies it.
+                    "next" => {
+                        self.record_next(meta, &scope)?;
+                        return Ok(MacroExpansion { emitted, generated, returned: None });
                     }
 
                     other => {
@@ -900,7 +949,18 @@ impl<'a> AliasResolver<'a> {
                 }
 
                 Statement::Const(decl) => {
-                    let value = self.eval_value(&decl.value, &scope)?;
+                    let value = match self.eval_value_keeping_emits(
+                        &decl.value,
+                        &scope,
+                        allowed_emits,
+                        &mut emitted,
+                        &mut generated,
+                    )? {
+                        KeptValue::Value(value) => value,
+                        KeptValue::Exited(returned) => {
+                            return Ok(MacroExpansion { emitted, generated, returned });
+                        }
+                    };
 
                     let value = match &decl.ty {
                         Some(ty) => {

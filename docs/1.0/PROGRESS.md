@@ -19,7 +19,7 @@ v1 module-path identity is what in-language executable headers build on.
 
 **Part B — `@fold`**
 - [x] Phase B1 — Syntax: parser, AST, printer, formatter
-- [ ] Phase B2 — Macro bodies
+- [x] Phase B2 — Macro bodies
 - [ ] Phase B3 — Construct literals and struct bodies
 - [ ] Phase B4 — Top level
 - [ ] Phase B5 — Reference docs + `@next` lint
@@ -248,12 +248,13 @@ Parts A–C are language work and don't depend on D–E. D must precede E.
 - **Constants in a `@for` body are per-iteration** (`walk_macro_body`,
   `iter_scope`); `pub const`s in a macro body are instead registered
   globally as generated declarations.
-- **Expression-position macro calls keep the return value and drop the
-  `@emit`s** (`values.rs`, `eval_macro_call` → `.returned`). The dropped
-  `@emit`s still advance `values_emitted` and push onto `emitted_sections`,
-  which may shift the positions of labels after them. **Verify this during
-  Phase B2 and fix or reject it**, because `@fold`'s emit rule depends on
-  the same question.
+- **Expression-position macro calls used to keep the return value and
+  drop the `@emit`s** (`values.rs`, `eval_macro_call` → `.returned`), while
+  the dropped `@emit`s still advanced `values_emitted` and pushed onto
+  `emitted_sections`. Verified in Phase B2: after `const v = side()` where
+  `side` emits two values, a following label resolved to 3 with only one
+  value before it. **Fixed in B2** by giving macro calls the same rule as
+  `@fold` (see Phase B2's "As built").
 - **`@for` has four implementations**: macro bodies (`macro_body.rs`,
   `"for"`), construct literals (`values.rs`, `ConstructItem::For`), struct
   bodies (`structs.rs`, `StructBodyItem::For`) and top level
@@ -363,6 +364,33 @@ nested-`@for` error. Settle the expression-position emit question from
 **Verification:** emit fixtures for each rule, including a 100,000-element
 fold (proves no depth or tail-call cap applies) and label positions after a
 fold that emits.
+**As built (DONE):**
+- `src/resolver/fold.rs`: `run_fold` walks the source like `@for`, binding
+  the loop variable and every accumulator in each iteration's scope.
+  `@next` evaluates its values and parks them in
+  `AliasResolver::pending_next`, then returns early from `walk_macro_body`
+  like `@return` does; `@if`/`@match` propagate it upward, and `run_fold`
+  applies it. `AliasResolver::next_target` (`None` / `Fold` /
+  `ForInsideFold`) is saved and restored around every fold body, plain
+  `@for` body and macro call, which is what makes `@next` belong to the
+  innermost fold of its own macro body and gives the two `@next` errors.
+- Several accumulators produce a synthesized `__fold#N<T0, T1, ...>` struct
+  with one `pub` field per accumulator, each typed by its own generic
+  parameter, so accumulators of any type (structs included) fit.
+- **The emit rule is shared with macro calls** (a decision made during
+  B2; the old behavior was the label-shifting bug in "Established facts").
+  `AliasResolver::eval_value_keeping_emits` handles a `@fold` or a macro
+  call that is a statement, a `const`'s whole value, or `@return`'s whole
+  value: its `@emit`s and generated declarations are kept. Anywhere else
+  in an expression, one that emits is an error
+  (`reject_expression_emits`). So `const v = side()` now emits `side`'s
+  values where it used to drop them; nothing in `std` or the tests relied
+  on the old dropping.
+- Generated declarations from a call or fold inside a larger expression
+  are still dropped, as before; only emits are rejected there.
+- Tests: `tests/fold.rs` + `tests/fixtures/fold/` (every rule and error,
+  a 100,000-iteration fold, label positions after an emitting fold, a
+  struct-valued accumulator, and the `const v = side()` regression).
 
 #### Phase B3 — Construct literals and struct bodies
 **Deliverable:** `@fold` inside `Type { ... }` literals and struct

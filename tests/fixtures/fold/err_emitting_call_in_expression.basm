@@ -1,0 +1,11 @@
+macro side() -> int {
+    @emit 1
+    @return 2
+}
+
+macro f() {
+    const v = side() + 1
+    @emit v
+}
+
+f

@@ -1,0 +1,17 @@
+# `@return` inside a fold body returns from the enclosing macro.
+macro first_over(limit: int) -> int {
+    @fold acc = 0 @for i in 0..10 {
+        @if acc > limit {
+            @return i
+        }
+        @next acc + i
+    }
+    @return 0 - 1
+}
+
+macro show(limit: int) {
+    @emit first_over(limit)
+}
+
+show 5
+show 1000

@@ -1,0 +1,5 @@
+macro f() {
+    @next 1
+}
+
+f

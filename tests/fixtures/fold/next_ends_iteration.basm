@@ -1,0 +1,13 @@
+# A bare `@next` keeps every accumulator and skips the rest of the body.
+macro f() {
+    const n = @fold count = 0 @for i in 0..4 {
+        @if i == 2 {
+            @next
+        }
+        @emit i
+        @next count + 1
+    }
+    @emit n
+}
+
+f

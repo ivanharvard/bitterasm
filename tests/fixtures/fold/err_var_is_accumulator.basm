@@ -1,0 +1,7 @@
+macro f() {
+    @fold i = 0 @for i in 0..2 {
+        @next i
+    }
+}
+
+f

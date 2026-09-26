@@ -1,0 +1,10 @@
+# The motivating example: emit each entry's offset, then the table's size.
+macro offsets() {
+    const table_size = @fold offset = 0 @for len in 0..4 {
+        @emit offset
+        @next offset + len
+    }
+    @emit table_size
+}
+
+offsets

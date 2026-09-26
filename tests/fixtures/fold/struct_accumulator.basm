@@ -1,0 +1,15 @@
+struct Point {
+    pub x: int,
+    pub y: int,
+}
+
+macro f() {
+    const r = @fold p = Point(x = 0, y = 0), n = 0 @for i in 0..3 {
+        @next p = Point(x = p.x + i, y = p.y + 10), n = n + 1
+    }
+    @emit r.p.x
+    @emit r.p.y
+    @emit r.n
+}
+
+f

@@ -391,10 +391,26 @@ impl<'a> AliasResolver<'a> {
             // idx in 0..len`. Anything else (a struct/array value) falls
             // back to `eval_for_source`, walking exactly the same `pub`,
             // non-`skip` fields `@for` would visit.
-            Expr::Fold { span, .. } => Err(ResolveError::Fold {
-                message: "`@fold` isn't supported here yet".to_string(),
-                span: *span,
-            }),
+            // A fold inside a larger expression: only its value is kept.
+            Expr::Fold { fold, span } => {
+                let outcome = self.run_fold(fold, scope, &[])?;
+                if outcome.exited.is_some() {
+                    return Err(ResolveError::Fold {
+                        message: "`@return` inside a `@fold` that's part of a larger expression has \
+                                  nothing to return from — use the fold as a statement, a `const`'s \
+                                  whole value, or `@return`'s whole value"
+                            .to_string(),
+                        span: *span,
+                    });
+                }
+                let expansion = super::macro_body::MacroExpansion {
+                    emitted: outcome.emitted,
+                    generated: outcome.generated,
+                    returned: None,
+                };
+                self.reject_expression_emits("this `@fold`", &expansion, *span)?;
+                Ok(outcome.value)
+            }
 
             Expr::In { value, source, .. } => {
                 if let Expr::Range { start, end, inclusive, .. } = source.as_ref() {
@@ -471,14 +487,41 @@ impl<'a> AliasResolver<'a> {
         if arguments.iter().any(|argument| argument.name.is_some()) {
             return Err(ResolveError::ExpectedValueExpression { span });
         }
+        let expansion = self.run_macro_call(name, None, arguments, span, scope)?;
+        self.reject_expression_emits(&format!("`{name}`"), &expansion, span)?;
+        expansion.returned.ok_or(ResolveError::ExpectedValueExpression { span })
+    }
+
+    /// Runs the macro a call expression names — `bound` when the callee is
+    /// a macro value in scope (`f` bound to a macro), else the top-level
+    /// macro `name`, picked by overload — and returns its whole expansion.
+    /// What happens to the expansion's `@emit`s is the caller's decision.
+    pub(super) fn run_macro_call(
+        &mut self,
+        name: &str,
+        bound: Option<SymbolId>,
+        arguments: &[CallArgument],
+        span: Span,
+        scope: &HashMap<String, Value>,
+    ) -> Result<super::macro_body::MacroExpansion, ResolveError> {
+        if arguments.iter().any(|argument| argument.name.is_some()) {
+            return Err(ResolveError::ExpectedValueExpression { span });
+        }
         let values = arguments
             .iter()
             .map(|argument| self.eval_value(&argument.value, scope))
             .collect::<Result<Vec<_>, _>>()?;
-        let (symbol, declaration) = self.resolve_macro_overload(name, &values, span)?;
-        self.run_macro_body_inner(symbol, &declaration, values)?
-            .returned
-            .ok_or(ResolveError::ExpectedValueExpression { span })
+
+        match bound {
+            Some(symbol) => {
+                let declaration = self.find_macro_declaration_rc(symbol)?;
+                self.run_macro_body_inner(symbol, &declaration, values)
+            }
+            None => {
+                let (symbol, declaration) = self.resolve_macro_overload(name, &values, span)?;
+                self.run_macro_body_inner(symbol, &declaration, values)
+            }
+        }
     }
 
     /// `f(x)` where `f: F` is already bound to `symbol` — the counterpart
@@ -498,14 +541,10 @@ impl<'a> AliasResolver<'a> {
         if arguments.iter().any(|argument| argument.name.is_some()) {
             return Err(ResolveError::ExpectedValueExpression { span });
         }
-        let values = arguments
-            .iter()
-            .map(|argument| self.eval_value(&argument.value, scope))
-            .collect::<Result<Vec<_>, _>>()?;
-        let declaration = self.find_macro_declaration_rc(symbol)?;
-        self.run_macro_body_inner(symbol, &declaration, values)?
-            .returned
-            .ok_or(ResolveError::ExpectedValueExpression { span })
+        let name = self.get_symbol(symbol).name.clone();
+        let expansion = self.run_macro_call(&name, Some(symbol), arguments, span, scope)?;
+        self.reject_expression_emits(&format!("`{name}`"), &expansion, span)?;
+        expansion.returned.ok_or(ResolveError::ExpectedValueExpression { span })
     }
 
     /// A bare macro name evaluated as a value, e.g. `square` in `mapped(arr,
