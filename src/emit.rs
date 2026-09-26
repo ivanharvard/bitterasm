@@ -60,7 +60,7 @@ pub enum EmittedValue {
     /// alone can never resolve one on its own, the same way it can't
     /// resolve a bare `here()`/`span()` value with no `Positioned<N>`
     /// around it either.
-    Deferred { file: String, symbol: String },
+    Deferred { module: String, symbol: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -147,8 +147,8 @@ pub fn reify_value(ids: &TypeIds, value: &Value) -> EmittedValue {
         // `.em` keeps visibly marking it unresolved rather than lying about
         // a value nobody actually knows yet (real resolution happens later,
         // at a `bitter build`/`bitter exec` link step).
-        Value::ExternLabel { file, name } => {
-            EmittedValue::Deferred { file: file.clone(), symbol: name.clone() }
+        Value::ExternLabel { module, name } => {
+            EmittedValue::Deferred { module: module.clone(), symbol: name.clone() }
         }
     }
 }

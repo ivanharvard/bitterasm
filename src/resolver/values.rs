@@ -83,7 +83,8 @@ pub enum Value {
     /// still visibly marks it as unresolved rather than lying about a
     /// value nobody actually knows yet.
     ExternLabel {
-        file: String,
+        /// The declaring file's module path — see `ast::ExternLabel`.
+        module: String,
         name: String,
     },
 }
@@ -1575,7 +1576,7 @@ impl<'a> AliasResolver<'a> {
     pub(super) fn resolve_extern_label_value(&mut self, id: SymbolId) -> Result<Value, ResolveError> {
         let extern_label = self.find_extern_label_declaration(id)?;
         Ok(Value::ExternLabel {
-            file: extern_label.file.clone(),
+            module: extern_label.module.clone(),
             name: extern_label.name.clone(),
         })
     }

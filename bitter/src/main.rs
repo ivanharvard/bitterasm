@@ -312,7 +312,9 @@ fn compile_input(path: &std::path::Path, unique: &str) -> link::LinkInput {
         std::process::exit(1);
     });
 
-    link::LinkInput { file, entries, labels }
+    let module = bitterasm::loader::module_path_of(&file);
+
+    link::LinkInput { file, module, entries, labels }
 }
 
 fn build(paths: &[PathBuf], output: Option<PathBuf>, format: Option<String>, entry: Option<String>) {

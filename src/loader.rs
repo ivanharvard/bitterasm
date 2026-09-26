@@ -519,6 +519,7 @@ fn splice_import(
                         extern_labels.push(crate::ast::ExternLabel {
                             name: name.clone(),
                             file: target_path.display().to_string(),
+                            module: module_path_of(&target_path),
                             span: import.span,
                         });
                         extern_label_modules.push(target.module_id);

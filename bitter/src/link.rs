@@ -3,7 +3,7 @@
 //! each one's `pub`-label-position manifest, concatenates same-named
 //! sections across all of them (in argument order — "Decided scope"),
 //! builds one combined symbol table of every `pub` label, and substitutes
-//! every `EmittedValue::Deferred { file, symbol }` (Phase 5) it finds —
+//! every `EmittedValue::Deferred { module, symbol }` (Phase 5) it finds —
 //! however deeply nested inside a `Struct`/`Enum` tree — with the concrete
 //! `EmittedValue::Int` its target actually resolved to.
 //!
@@ -36,6 +36,8 @@ use bitterasm::emit::{EmittedEntry, EmittedValue};
 /// "after every entry this file emits").
 pub struct LinkInput {
     pub file: PathBuf,
+    /// `file`'s module path — what a `Deferred` names it by.
+    pub module: String,
     pub entries: Vec<EmittedEntry>,
     pub labels: HashMap<String, usize>,
 }
@@ -98,23 +100,22 @@ pub fn link(inputs: Vec<LinkInput>) -> Result<Linked, String> {
     // not rejected" in the design doc confirms this, by analogy with a
     // real linker's "multiple definition" error), checked before anything
     // is substituted.
-    let mut symbols: HashMap<String, (PathBuf, usize)> = HashMap::new();
+    let mut symbols: HashMap<String, (String, usize)> = HashMap::new();
 
     for (input_index, input) in inputs.iter().enumerate() {
         for (name, &local_position) in &input.labels {
             let position = layout.global_position(input_index, local_position, name)?;
 
-            if let Some((existing_file, _)) = symbols.get(name)
-                && existing_file != &input.file
+            if let Some((existing_module, _)) = symbols.get(name)
+                && existing_module != &input.module
             {
                 return Err(format!(
-                    "duplicate `pub` label `{name}`: declared in both `{}` and `{}`",
-                    existing_file.display(),
-                    input.file.display(),
+                    "duplicate `pub` label `{name}`: declared in both `{existing_module}` and `{}`",
+                    input.module,
                 ));
             }
 
-            symbols.insert(name.clone(), (input.file.clone(), position));
+            symbols.insert(name.clone(), (input.module.clone(), position));
         }
     }
 
@@ -226,23 +227,22 @@ fn translate_positions_in_place(value: &mut EmittedValue, input_index: usize, la
 
 fn resolve_deferred_in_place(
     value: &mut EmittedValue,
-    symbols: &HashMap<String, (PathBuf, usize)>,
+    symbols: &HashMap<String, (String, usize)>,
 ) -> Result<(), String> {
     match value {
-        EmittedValue::Deferred { file, symbol } => {
-            let Some((declaring_file, position)) = symbols.get(symbol) else {
+        EmittedValue::Deferred { module, symbol } => {
+            let Some((declaring_module, position)) = symbols.get(symbol) else {
                 return Err(format!(
-                    "unresolved external symbol `{symbol}` from `{file}` — no linked input \
+                    "unresolved external symbol `{symbol}` from `{module}` — no linked input \
                      declares a `pub` label named `{symbol}`"
                 ));
             };
 
-            if declaring_file.display().to_string() != *file {
+            if declaring_module != module {
                 return Err(format!(
-                    "unresolved external symbol `{symbol}` from `{file}` — no linked input \
-                     compiles that file (`{symbol}` is declared in `{}` instead, which IS \
-                     linked, but that's not the file this reference names)",
-                    declaring_file.display(),
+                    "unresolved external symbol `{symbol}` from `{module}` — no linked input \
+                     is that module (`{symbol}` is declared in `{declaring_module}` instead, \
+                     which IS linked, but that's not the module this reference names)",
                 ));
             }
 
@@ -283,6 +283,7 @@ mod tests {
     fn input(file: &str, entries: Vec<EmittedEntry>, labels: &[(&str, usize)]) -> LinkInput {
         LinkInput {
             file: PathBuf::from(file),
+            module: file.trim_end_matches(".basm").to_string(),
             entries,
             labels: labels.iter().map(|(name, position)| (name.to_string(), *position)).collect(),
         }
@@ -319,7 +320,7 @@ mod tests {
     fn a_deferred_value_resolves_to_its_targets_real_global_position() {
         let a = input(
             "a.basm",
-            vec![entry(EmittedValue::Deferred { file: "b.basm".to_string(), symbol: "target".to_string() }, None)],
+            vec![entry(EmittedValue::Deferred { module: "b".to_string(), symbol: "target".to_string() }, None)],
             &[],
         );
         // `b`'s own entry precedes its `pub target:` label (position 1) —
@@ -339,7 +340,7 @@ mod tests {
     fn a_deferred_value_can_resolve_to_a_non_trailing_position() {
         let a = input(
             "a.basm",
-            vec![entry(EmittedValue::Deferred { file: "b.basm".to_string(), symbol: "target".to_string() }, None)],
+            vec![entry(EmittedValue::Deferred { module: "b".to_string(), symbol: "target".to_string() }, None)],
             &[],
         );
         // `target` sits *before* b's one entry this time (position 0).
@@ -360,7 +361,7 @@ mod tests {
                     args: vec![],
                     fields: vec![(
                         "value".to_string(),
-                        EmittedValue::Deferred { file: "b.basm".to_string(), symbol: "target".to_string() },
+                        EmittedValue::Deferred { module: "b".to_string(), symbol: "target".to_string() },
                     )],
                 },
                 None,
@@ -443,7 +444,7 @@ mod tests {
         let a = input(
             "a.basm",
             vec![entry(
-                EmittedValue::Deferred { file: "missing.basm".to_string(), symbol: "ghost".to_string() },
+                EmittedValue::Deferred { module: "missing".to_string(), symbol: "ghost".to_string() },
                 None,
             )],
             &[],
@@ -451,6 +452,6 @@ mod tests {
 
         let error = link(vec![a]).unwrap_err();
         assert!(error.contains("ghost"), "{error}");
-        assert!(error.contains("missing.basm"), "{error}");
+        assert!(error.contains("`missing`"), "{error}");
     }
 }

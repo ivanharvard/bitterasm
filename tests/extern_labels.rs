@@ -37,14 +37,15 @@ fn importing_a_pub_label_compiles_to_an_em_with_a_visibly_unresolved_deferred_en
         serde_json::from_str(&json).expect(".em file should be valid EmittedEntry JSON");
 
     assert_eq!(entries.len(), 1);
-    let EmittedValue::Deferred { file, symbol } = &entries[0].value else {
+    let EmittedValue::Deferred { module, symbol } = &entries[0].value else {
         panic!("expected a Deferred entry, got {:?}", entries[0].value);
     };
     assert_eq!(symbol, "target");
-    assert!(
-        file.ends_with("extern_label_dep.basm"),
-        "expected the declaring file's own path, got {file}"
-    );
+    // The declaring file's module path — not an absolute path, so `.em`
+    // doesn't depend on where the checkout lives (Phase D2 of
+    // `docs/1.0/PROGRESS.md`).
+    assert_eq!(module, "tests.fixtures.emit.extern_label_dep");
+    assert!(!json.contains(env!("CARGO_MANIFEST_DIR")), "{json}");
 }
 
 #[test]

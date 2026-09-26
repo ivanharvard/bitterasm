@@ -29,7 +29,7 @@ v1 module-path identity is what in-language executable headers build on.
 
 **Part D — `.em` v1**
 - [x] Phase D1 — Module identity (`id` = module path + name)
-- [ ] Phase D2 — `Deferred { module, symbol }`
+- [x] Phase D2 — `Deferred { module, symbol }`
 - [ ] Phase D3 — `exports` replaces `--labels`
 - [ ] Phase D4 — Versioned header; `bitter` matches on `id`
 
@@ -529,6 +529,13 @@ locations produces identical `.em`; a private struct's `id` has no `#N`.
 module path; `bitter`'s linker matches on it.
 **Verification:** existing multi-file link tests pass; `.em` contains no
 absolute paths.
+**As built (DONE):** `ast::ExternLabel` keeps `file` (the LSP's
+go-to-definition reads it) and gains `module`; `Value::ExternLabel` and
+`EmittedValue::Deferred` carry only `module`. `bitter`'s `LinkInput` gains
+`module`, computed for now with the same `loader::module_path_of` in the
+same working directory as the compile it just ran; D4's header makes that
+unnecessary. `tests/extern_labels.rs` checks the module path and that the
+`.em` text contains no absolute path.
 
 #### Phase D3 — `exports` replaces `--labels`
 **Deliverable:** `pub` label positions written into `.em`; `--labels`

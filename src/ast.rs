@@ -94,7 +94,9 @@ pub struct Label {
 /// instead of splice, since `label_name`'s numeric position isn't known
 /// here — only that it exists and is `pub`, checked at import time the
 /// same way any other imported name already is). `file` is the already-
-/// canonicalized absolute path of the file that declared `label_name`.
+/// canonicalized absolute path of the file that declared `label_name`, for
+/// tools; `module` is that file's module path
+/// (`crate::loader::module_path_of`), which is what reaches `.em`.
 /// Registered into the symbol table as `SymbolKind::ExternLabel`, never
 /// `SymbolKind::Label` — referencing it resolves to a
 /// `Value::ExternLabel`, not a plain `Value::Int`.
@@ -102,6 +104,7 @@ pub struct Label {
 pub struct ExternLabel {
     pub name: String,
     pub file: String,
+    pub module: String,
     pub span: Span,
 }
 

@@ -116,7 +116,7 @@ fn structural_width_bits(value: &EmittedValue) -> Result<usize, String> {
             "can't infer a machine-code layout for enum value `{id}.{variant}`"
         )),
 
-        EmittedValue::Deferred { file, symbol } => Err(unresolved_deferred_error(file, symbol)),
+        EmittedValue::Deferred { module, symbol } => Err(unresolved_deferred_error(module, symbol)),
     }
 }
 
@@ -127,9 +127,9 @@ fn structural_width_bits(value: &EmittedValue) -> Result<usize, String> {
 // clear, immediate error rather than a guess. Real resolution is `bitter
 // build`/`bitter exec`'s job (Phase 6, not yet built), once they can see
 // every linked file's own emitted stream.
-fn unresolved_deferred_error(file: &str, symbol: &str) -> String {
+fn unresolved_deferred_error(module: &str, symbol: &str) -> String {
     format!(
-        "can't encode standalone: `{symbol}` from `{file}` is an unresolved cross-file \
+        "can't encode standalone: `{symbol}` from `{module}` is an unresolved cross-file \
          reference — `bitter encode` only ever resolves a single, self-contained `.em` file; \
          link it with `bitter build`/`bitter exec` instead"
     )
@@ -164,8 +164,8 @@ fn pack_value(value: &EmittedValue, here_index: usize, byte_widths: &[usize]) ->
                 // actually pack it, that the missing final value becomes a
                 // problem. `Positioned<N>` (not `bits<N>`) is the wrapper
                 // meant for a value that isn't known yet.
-                EmittedValue::Deferred { file, symbol } => {
-                    return Err(unresolved_deferred_error(file, symbol))
+                EmittedValue::Deferred { module, symbol } => {
+                    return Err(unresolved_deferred_error(module, symbol))
                 }
 
                 other => {
@@ -254,7 +254,7 @@ fn pack_value(value: &EmittedValue, here_index: usize, byte_widths: &[usize]) ->
             "can't infer a machine-code layout for enum value `{id}.{variant}`"
         )),
 
-        EmittedValue::Deferred { file, symbol } => Err(unresolved_deferred_error(file, symbol)),
+        EmittedValue::Deferred { module, symbol } => Err(unresolved_deferred_error(module, symbol)),
     }
 }
 
@@ -295,7 +295,7 @@ fn resolve_deferred(deferred: &EmittedValue, here_index: usize, byte_widths: &[u
                 // program like `sub(imported_label, here())` actually
                 // produces, and needs the same clear error as a bare
                 // top-level one.
-                EmittedValue::Deferred { file, symbol } => Err(unresolved_deferred_error(file, symbol)),
+                EmittedValue::Deferred { module, symbol } => Err(unresolved_deferred_error(module, symbol)),
 
                 other => Err(format!("`Deferred.Leaf`'s payload should be an Int, found {other:?}")),
             }
@@ -597,8 +597,8 @@ mod tests {
     // `bitter encode` alone — every shape it could appear in should give a
     // clear "link required" error, never a panic or a wrong byte. ---
 
-    fn extern_label(file: &str, symbol: &str) -> EmittedValue {
-        EmittedValue::Deferred { file: file.to_string(), symbol: symbol.to_string() }
+    fn extern_label(module: &str, symbol: &str) -> EmittedValue {
+        EmittedValue::Deferred { module: module.to_string(), symbol: symbol.to_string() }
     }
 
     #[test]
