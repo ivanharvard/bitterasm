@@ -78,3 +78,16 @@ fn encode_rejects_an_unversioned_em_file() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn image_start_and_end_measure_the_encoded_image() {
+    let dir = scratch();
+    let em = compile_fixture("image_size", &dir);
+    let bin = dir.join("image_size.bin");
+
+    let output = encode(&em, &bin);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+
+    // 4 header bytes + 3 data bytes = 7, little-endian.
+    assert_eq!(std::fs::read(&bin).unwrap(), [7, 0, 0, 0, 0xAA, 0xBB, 0xCC]);
+}

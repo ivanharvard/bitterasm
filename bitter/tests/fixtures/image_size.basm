@@ -1,0 +1,20 @@
+# A 4-byte header holding the whole image's size, then three data bytes.
+from std.binary import bits
+from std.bitter.deferred import *
+from std.bitter.byte_order import LittleEndian
+from std.bitter.link import image_start, image_end
+
+macro size_header() {
+    @emit LittleEndian<Positioned<32>, 32> {
+        value: Positioned<32> { value: span(image_start, image_end) },
+    }
+}
+
+macro byte(v: int) {
+    @emit bits<8> { value: v }
+}
+
+size_header
+byte 0xAA
+byte 0xBB
+byte 0xCC

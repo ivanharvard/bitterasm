@@ -1,0 +1,20 @@
+# Positions `bitter` defines when it links a program, the way a linker
+# defines symbols like `_end`. Import them like any other `pub` label:
+#
+#   from std.bitter.link import image_start, image_end
+#
+# and `bitter` resolves them against the whole linked image:
+#
+#   image_start   the first entry of the image
+#   image_end     just past its last entry
+#
+# so `span(image_start, image_end)` is the image's size in bytes, and
+# `span(image_start, label)` is `label`'s offset into it — what an
+# executable header needs, however many files the program spans.
+#
+# The labels below only give importers something to name: this file is
+# never compiled as part of a program, and their positions here mean
+# nothing.
+
+pub image_start:
+pub image_end:

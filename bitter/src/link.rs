@@ -125,7 +125,7 @@ pub fn link(inputs: Vec<LinkInput>) -> Result<Linked, String> {
     let mut values = Vec::with_capacity(merged.len());
     for (input_index, mut value) in merged {
         translate_positions_in_place(&mut value, input_index, &layout)?;
-        resolve_deferred_in_place(&mut value, &symbols)?;
+        resolve_deferred_in_place(&mut value, &symbols, layout.merged_len)?;
         values.push(value);
     }
 
@@ -224,11 +224,30 @@ fn translate_positions_in_place(value: &mut EmittedValue, input_index: usize, la
     }
 }
 
+/// The module whose labels `bitter` defines itself (`std/bitter/link.basm`).
+pub const LINK_MODULE: &str = "std.bitter.link";
+
+// A position `bitter` defines, in merged-stream terms: see
+// `std/bitter/link.basm`.
+fn link_symbol(symbol: &str, merged_len: usize) -> Result<usize, String> {
+    match symbol {
+        "image_start" => Ok(0),
+        "image_end" => Ok(merged_len),
+        other => Err(format!("`{LINK_MODULE}` has no `{other}` — it defines `image_start` and `image_end`")),
+    }
+}
+
 fn resolve_deferred_in_place(
     value: &mut EmittedValue,
     symbols: &HashMap<String, (String, usize)>,
+    merged_len: usize,
 ) -> Result<(), String> {
     match value {
+        EmittedValue::Deferred { module, symbol } if module == LINK_MODULE => {
+            *value = EmittedValue::Int { value: link_symbol(symbol, merged_len)?.to_string() };
+            Ok(())
+        }
+
         EmittedValue::Deferred { module, symbol } => {
             let Some((declaring_module, position)) = symbols.get(symbol) else {
                 return Err(format!(
@@ -253,14 +272,14 @@ fn resolve_deferred_in_place(
 
         EmittedValue::Struct { fields, .. } => {
             for (_, field) in fields {
-                resolve_deferred_in_place(field, symbols)?;
+                resolve_deferred_in_place(field, symbols, merged_len)?;
             }
             Ok(())
         }
 
         EmittedValue::Enum { payload, .. } => {
             if let Some(payload) = payload {
-                resolve_deferred_in_place(payload, symbols)?;
+                resolve_deferred_in_place(payload, symbols, merged_len)?;
             }
             Ok(())
         }
@@ -436,6 +455,31 @@ mod tests {
         let error = link(vec![a, b]).unwrap_err();
         assert!(error.contains("duplicate"), "{error}");
         assert!(error.contains("target"), "{error}");
+    }
+
+    #[test]
+    fn image_start_and_end_span_the_whole_linked_image() {
+        let link_ref = |symbol: &str| {
+            EmittedValue::Deferred { module: LINK_MODULE.to_string(), symbol: symbol.to_string() }
+        };
+        let a = input("a.basm", vec![entry(link_ref("image_start"), None), entry(int("1"), None)], &[]);
+        let b = input("b.basm", vec![entry(link_ref("image_end"), None)], &[]);
+
+        let merged = link(vec![a, b]).unwrap().values;
+
+        // Three entries in all: image_start is 0, image_end is 3.
+        assert_eq!(merged, vec![int("0"), int("1"), int("3")]);
+    }
+
+    #[test]
+    fn an_unknown_link_symbol_is_a_clear_error() {
+        let a = input(
+            "a.basm",
+            vec![entry(EmittedValue::Deferred { module: LINK_MODULE.to_string(), symbol: "nope".to_string() }, None)],
+            &[],
+        );
+        let error = link(vec![a]).unwrap_err();
+        assert!(error.contains("has no `nope`"), "{error}");
     }
 
     #[test]

@@ -35,7 +35,7 @@ v1 module-path identity is what in-language executable headers build on.
 
 **Part E — executable containers in bitterasm**
 - [x] Phase E1 — `Deferred` `add`
-- [ ] Phase E2 — Linker-provided image symbols
+- [x] Phase E2 — Linker-provided image symbols
 - [ ] Phase E3 — `Align<N>` packer primitive
 - [ ] Phase E4 — `std/formats/elf.basm`
 - [ ] Phase E5 — `std/formats/pe.basm` and `std/formats/macho.basm`
@@ -586,6 +586,16 @@ still passes. Unit test `resolves_an_add_node` in `bitter/src/pack.rs`.
 the start and end of the linked image. No compiler change: they're ordinary
 extern labels.
 **Verification:** a two-file build whose header measures the whole image.
+**As built (DONE):** `std/bitter/link.basm` declares the two labels (so the
+import passes the usual existence check); `bitter/src/link.rs` resolves any
+`Deferred` into `LINK_MODULE` (`std.bitter.link`) itself: `image_start` is
+0 and `image_end` is the merged entry count, so `span(image_start,
+image_end)` is the image's size in bytes. Any other symbol there is an
+error. Because `bitter encode` links too (D4), this works for single-file
+encodes as well. Tests: `image_start_and_end_span_the_whole_linked_image`
+(two inputs) and `an_unknown_link_symbol_is_a_clear_error` in
+`bitter/src/link.rs`; `bitter/tests/em_format.rs` encodes a header holding
+the image size through the real pipeline.
 
 #### Phase E3 — `Align<N>` packer primitive
 **Deliverable:** an entry whose byte width pads up to the next multiple of
