@@ -443,6 +443,11 @@ pub fn substitute_expr(expr: &Expr, substitutions: &HashMap<String, Expr>) -> Ex
     match expr {
         Expr::Identifier { name, .. } => substitutions.get(name).cloned().unwrap_or_else(|| expr.clone()),
 
+        Expr::SplicedIdentifier { name, span } => Expr::SplicedIdentifier {
+            name: substitute_spliced_name(name, substitutions),
+            span: *span,
+        },
+
         Expr::Integer { .. } | Expr::String { .. } => expr.clone(),
 
         Expr::Member { object, member, span } => Expr::Member {

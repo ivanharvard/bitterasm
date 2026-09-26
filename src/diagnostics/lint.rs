@@ -448,6 +448,12 @@ fn collect_statement_identifiers(statement: &Statement, names: &mut HashSet<Stri
 fn collect_expr_identifiers(expr: &Expr, names: &mut HashSet<String>) {
     match expr {
         Expr::Identifier { name, .. } => { names.insert(name.clone()); }
+        Expr::SplicedIdentifier { name, .. } => {
+            if let Some(literal) = crate::ast::literal_spliced_name(name) { names.insert(literal); }
+            for part in name {
+                if let crate::ast::NamePart::Splice(expr) = part { collect_expr_identifiers(expr, names); }
+            }
+        }
         Expr::Member { object, .. } => collect_expr_identifiers(object, names),
         Expr::Call { callee, arguments, .. } => {
             collect_expr_identifiers(callee, names);

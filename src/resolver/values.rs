@@ -234,6 +234,22 @@ impl<'a> AliasResolver<'a> {
                 },
             },
 
+            // `` acc_`i` ``: settle the name, then read it exactly like an
+            // identifier. A private top-level name in this module was
+            // renamed to `name#module` by the loader, which couldn't
+            // rewrite a name it didn't know yet, so that spelling is tried
+            // first — the same precedence a plain reference gets.
+            Expr::SplicedIdentifier { name, span } => {
+                let name = self.resolve_spliced_name(name, scope)?;
+                let private = format!("{name}#{}", self.current_module);
+                let name = if !scope.contains_key(&name) && self.lookup_symbol(&private).is_some() {
+                    private
+                } else {
+                    name
+                };
+                self.eval_value(&Expr::Identifier { name, span: *span }, scope)
+            }
+
             Expr::Member { object, member, span } => {
                 let member = self.resolve_spliced_name(member, scope)?;
                 if let Expr::Identifier { name, .. } = object.as_ref() {

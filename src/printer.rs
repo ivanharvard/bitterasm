@@ -456,6 +456,7 @@ pub fn print_fn_bound(bound: &FnBound) -> String {
 pub fn print_expr(expr: &Expr) -> String {
     match expr {
         Expr::Identifier { name, .. } => name.clone(),
+        Expr::SplicedIdentifier { name, .. } => print_spliced_name(name),
         Expr::Integer { raw, .. } => raw.clone(),
         Expr::String { value, .. } => format!("{value:?}"),
 

@@ -1,0 +1,14 @@
+# Private (non-pub) consts are renamed by the loader; a spliced read in the
+# same module must still find them, from this module and from another's
+# macro called here.
+from .private_lib import read_lib
+
+const p0 = 7
+const p1 = 8
+
+macro read_own(i: int) {
+    @emit p`i`
+}
+
+read_own 1
+read_lib 0

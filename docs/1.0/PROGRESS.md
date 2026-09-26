@@ -15,7 +15,7 @@ v1 module-path identity is what in-language executable headers build on.
 ## Status
 
 **Part A — spliced-name reads**
-- [ ] Phase A1 — `` acc_`i` `` in expression position
+- [x] Phase A1 — `` acc_`i` `` in expression position
 
 **Part B — `@fold`**
 - [ ] Phase B1 — Syntax: parser, AST, printer, formatter
@@ -294,6 +294,27 @@ substitute inside the splice. Printer and formatter print it back verbatim.
 `@for`), a generated `pub const r`i`` read back by spliced name, whitespace
 (`` x `i` `` still an error), and an unknown spliced name giving the normal
 unknown-name error.
+**As built (DONE):**
+- `Expr::SplicedIdentifier` (`src/ast.rs`). The parser forms it only when
+  the backtick starts exactly where the identifier ends, and never while
+  already inside a splice's contents (`Parser::in_splice`): there, an
+  identifier followed by a backtick is the splice *closing* (`` r`i` ``).
+- Evaluation (`values.rs`) resolves the name, then tries the loader's
+  private spelling `name#<current module>` before the plain name. The
+  loader renames private top-level names before resolution and can't
+  rewrite a name it doesn't know yet, so without this a spliced read
+  couldn't see its own module's private constants.
+- Inside a generated declaration (`macro_body.rs`, `splice_expr`) the name
+  is settled at generation time and becomes a plain identifier, since the
+  macro's bindings won't exist where the declaration is resolved later.
+- `eval::eval` (top-level consts, top-level `@for` bounds) resolves it
+  against its int scope. `resolver::consts::referenced_identifiers` and the
+  lint's name collector record the name when every splice is an integer
+  literal (`ast::literal_spliced_name`), which is what top-level unrolling
+  leaves, plus whatever the splices themselves reference.
+- Tests: `tests/spliced_reads.rs` through the real CLI, fixtures in
+  `tests/fixtures/spliced/`. New shared helper `tests/common/mod.rs`
+  (compile a fixture, read its `.em` back) for tests added from here on.
 
 ### Part B — `@fold`
 

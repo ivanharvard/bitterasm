@@ -1,0 +1,9 @@
+# A spliced name reading a binding from the same @for iteration.
+macro table() {
+    @for i in 0..3 {
+        const v`i` = i * 10
+        @emit v`i` + 1
+    }
+}
+
+table

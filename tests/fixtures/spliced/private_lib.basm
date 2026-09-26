@@ -1,0 +1,5 @@
+const q0 = 40
+
+pub macro read_lib(i: int) {
+    @emit q`i`
+}

@@ -1,0 +1,14 @@
+# Top-level @for declares k0..k3; a top-level const and a macro read them
+# back by spliced name.
+@for i in 0..4 {
+    pub const k`i` = i * i
+}
+
+const total = k`2` + k`3`
+
+macro show(n: int) {
+    @emit k`n`
+    @emit total
+}
+
+show 1

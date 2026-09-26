@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use num_bigint::BigInt;
 
-use crate::ast::{BinaryOp, Expr, UnaryOp};
+use crate::ast::{BinaryOp, Expr, NamePart, UnaryOp};
 use crate::token::Span;
 
 pub type Int = BigInt;
@@ -47,6 +47,19 @@ pub fn eval(expr: &Expr, scope: &HashMap<String, Int>) -> Result<Int, EvalError>
                 span: *span,
             }
         }),
+
+        Expr::SplicedIdentifier { name, span } => {
+            let mut resolved = String::new();
+
+            for part in name {
+                match part {
+                    NamePart::Literal(text) => resolved.push_str(text),
+                    NamePart::Splice(expr) => resolved.push_str(&eval(expr, scope)?.to_string()),
+                }
+            }
+
+            scope.get(&resolved).cloned().ok_or(EvalError::UnknownConstant { name: resolved, span: *span })
+        }
 
         Expr::String { span, .. }
         | Expr::Member { span, .. }

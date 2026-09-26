@@ -913,6 +913,14 @@ fn rename_expr(expr: &mut Expr, renames: &HashMap<String, String>) {
             }
         }
 
+        Expr::SplicedIdentifier { name, .. } => {
+            for part in name {
+                if let NamePart::Splice(expr) = part {
+                    rename_expr(expr, renames);
+                }
+            }
+        }
+
         Expr::Integer { .. } | Expr::String { .. } => {}
 
         Expr::Member { object, .. } => rename_expr(object, renames),

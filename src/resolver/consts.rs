@@ -186,6 +186,19 @@ pub(super) fn referenced_identifiers(expr: &crate::ast::Expr) -> Vec<String> {
     while let Some(expr) = stack.pop() {
         match expr {
             Expr::Identifier { name, .. } => names.push(name.clone()),
+            // Which name it reads is only known statically once every
+            // splice is a literal; either way, the splices' own references
+            // are dependencies.
+            Expr::SplicedIdentifier { name, .. } => {
+                if let Some(literal) = crate::ast::literal_spliced_name(name) {
+                    names.push(literal);
+                }
+                for part in name {
+                    if let crate::ast::NamePart::Splice(expr) = part {
+                        stack.push(expr);
+                    }
+                }
+            }
             Expr::Integer { .. } | Expr::String { .. } => {}
             Expr::Member { object, .. } => stack.push(object),
             Expr::Call { callee, arguments, .. } => {

@@ -318,6 +318,18 @@ impl Parser {
             // literals
             // ============
 
+            // `` acc_`i` `` — only when the backtick touches the name, so
+            // `` x `y` `` keeps meaning two separate tokens.
+            TokenKind::Identifier(_)
+                if !self.in_splice && self.tokens.get(self.pos + 1).is_some_and(|next| {
+                    next.kind == TokenKind::Backtick && next.span.start == token.span.end
+                }) =>
+            {
+                let (name, span) = self.parse_spliced_name()?;
+
+                Ok(Expr::SplicedIdentifier { name, span })
+            }
+
             TokenKind::Identifier(name) => {
                 self.advance();
 
@@ -409,13 +421,16 @@ impl Parser {
                 // inside it can't be an enclosing `@if`/`@for` header's body.
                 let outer_closing_restriction = self.restrict_closing_ops;
                 let outer_brace_restriction = self.restrict_brace_construction;
+                let outer_in_splice = self.in_splice;
                 self.restrict_closing_ops = false;
                 self.restrict_brace_construction = false;
+                self.in_splice = true;
 
                 let result = self.parse_expr();
 
                 self.restrict_closing_ops = outer_closing_restriction;
                 self.restrict_brace_construction = outer_brace_restriction;
+                self.in_splice = outer_in_splice;
 
                 let inner = result?;
 
@@ -636,6 +651,7 @@ impl Parser {
 fn set_expr_span(expr: &mut Expr, new_span: Span) {
     match expr {
         Expr::Identifier { span, .. }
+        | Expr::SplicedIdentifier { span, .. }
         | Expr::Integer { span, .. }
         | Expr::String { span, .. }
         | Expr::Member { span, .. }

@@ -1,0 +1,7 @@
+# With a space before the backtick this is not a spliced name.
+macro m(i: int) {
+    const x0 = 1
+    @emit x `i`
+}
+
+m 0

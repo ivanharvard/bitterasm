@@ -130,6 +130,15 @@ pub enum Expr {
         span: Span,
     },
 
+    /// `` acc_`i` `` in expression position: a name built from literal
+    /// text and evaluated splices, read exactly like an [`Expr::Identifier`]
+    /// once its name is resolved. Only formed when the backtick touches
+    /// the identifier — `` acc `i` `` stays two separate tokens.
+    SplicedIdentifier {
+        name: SplicedName,
+        span: Span,
+    },
+
     Integer {
         raw: String,
         span: Span,
@@ -251,6 +260,7 @@ impl Expr {
     pub fn span(&self) -> Span {
         match self {
             Expr::Identifier { span, .. }
+            | Expr::SplicedIdentifier { span, .. }
             | Expr::Integer { span, .. }
             | Expr::String { span, .. }
             | Expr::Member { span, .. }
@@ -375,6 +385,24 @@ pub enum NamePart {
 }
 
 pub type SplicedName = Vec<NamePart>;
+
+/// The name `parts` spells when every splice is an integer literal — what
+/// top-level `@for` unrolling leaves behind (`` r`3` ``) — so a pass that
+/// runs before evaluation can still see which name it reads. `None` when a
+/// splice still needs evaluating.
+pub fn literal_spliced_name(parts: &[NamePart]) -> Option<String> {
+    let mut out = String::new();
+
+    for part in parts {
+        match part {
+            NamePart::Literal(text) => out.push_str(text),
+            NamePart::Splice(Expr::Integer { raw, .. }) => out.push_str(raw),
+            NamePart::Splice(_) => return None,
+        }
+    }
+
+    Some(out)
+}
 
 /// `Some(name)` if every part is a literal (i.e. there's nothing left to
 /// evaluate), `None` if a `Splice` remains — used to require an

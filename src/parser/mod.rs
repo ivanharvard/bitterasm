@@ -231,6 +231,11 @@ struct Parser {
     // parens for the same reason `restrict_closing_ops` is, so `@if (Foo {
     // x: 1 }).y { ... }` still allows construction there.
     pub(super) restrict_brace_construction: bool,
+
+    /// True while parsing a splice's contents (`` `...` `` or a spliced
+    /// name's `` `...` `` piece), where an identifier followed by a
+    /// backtick is that splice closing, not a spliced name starting.
+    pub(super) in_splice: bool,
 }
 
 impl Parser {
@@ -247,6 +252,7 @@ impl Parser {
             block_depth: 0,
             restrict_closing_ops: false,
             restrict_brace_construction: false,
+            in_splice: false,
         }
     }
 
@@ -440,7 +446,11 @@ impl Parser {
         {
             self.advance();
 
-            let inner = self.parse_expr_bp_until(0, Some(&TokenKind::Backtick))?;
+            let outer_in_splice = self.in_splice;
+            self.in_splice = true;
+            let inner = self.parse_expr_bp_until(0, Some(&TokenKind::Backtick));
+            self.in_splice = outer_in_splice;
+            let inner = inner?;
 
             let closing = self.current().clone();
             self.expect_simple(TokenKind::Backtick)?;

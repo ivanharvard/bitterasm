@@ -1,0 +1,5 @@
+macro m(i: int) {
+    @emit nothing_`i`
+}
+
+m 5

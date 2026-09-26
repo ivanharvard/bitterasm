@@ -1132,6 +1132,14 @@ impl<'a> AliasResolver<'a> {
                 Ok(expr.clone())
             }
 
+            // Its splices may read this macro's own bindings, which won't
+            // exist wherever the generated declaration is resolved later —
+            // so the name is settled now, leaving a plain identifier.
+            Expr::SplicedIdentifier { name, span } => Ok(Expr::Identifier {
+                name: self.resolve_spliced_name(name, scope)?,
+                span: *span,
+            }),
+
             Expr::Member { object, member, span } => Ok(Expr::Member {
                 object: Box::new(self.splice_expr(object, scope)?),
                 member: member.clone(),
