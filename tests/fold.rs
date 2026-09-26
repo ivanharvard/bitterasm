@@ -118,3 +118,32 @@ fn rejects_an_emitting_macro_call_inside_a_larger_expression() {
 fn rejects_return_inside_a_fold_in_a_larger_expression() {
     assert!(error("return_in_expression_fold").contains("nothing to return from"));
 }
+
+// ---------------------------------------------------------------------
+// construction literals and struct bodies (Phase B3)
+// ---------------------------------------------------------------------
+
+#[test]
+fn builds_an_offsets_table_in_a_construction() {
+    assert_eq!(ints("construct_table"), vec![0, 3, 8, 10]);
+}
+
+#[test]
+fn next_in_a_construction_skips_the_rest_of_the_iteration() {
+    assert_eq!(ints("construct_next_skips"), vec![100, 101, 202]);
+}
+
+#[test]
+fn computes_struct_field_names_with_a_fold() {
+    assert_eq!(ints("struct_body"), vec![10, 20, 30, 3]);
+}
+
+#[test]
+fn a_construction_next_cannot_reach_a_macro_body_fold() {
+    assert!(error("construct_next_escapes").contains("`@next` can only be used inside a `@fold` body"));
+}
+
+#[test]
+fn rejects_next_in_a_struct_body_without_a_fold() {
+    assert!(error("struct_next_outside").contains("`@next` can only be used inside a `@fold` body"));
+}

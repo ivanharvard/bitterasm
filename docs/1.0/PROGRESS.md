@@ -20,7 +20,7 @@ v1 module-path identity is what in-language executable headers build on.
 **Part B — `@fold`**
 - [x] Phase B1 — Syntax: parser, AST, printer, formatter
 - [x] Phase B2 — Macro bodies
-- [ ] Phase B3 — Construct literals and struct bodies
+- [x] Phase B3 — Construct literals and struct bodies
 - [ ] Phase B4 — Top level
 - [ ] Phase B5 — Reference docs + `@next` lint
 
@@ -397,6 +397,22 @@ fold that emits.
 declaration bodies, producing fields.
 **Verification:** an offsets table built as an `Array` literal with
 `@fold`; a struct declaration whose field names/count come from a fold.
+**As built (DONE):**
+- Construction literals (`values.rs`, `unroll_construct_items`): same
+  mechanism as macro bodies. A `ConstructItem::Next` parks its values in
+  `pending_next` and returns early; `@if` propagates it; the fold applies
+  it. Accumulators may be any value.
+- Struct bodies (`structs.rs`, `unroll_struct_body`): the loop variable and
+  accumulators are bound as generic consts, like struct-body `@for`'s
+  variable, so accumulators are integers there. A fold whose source or
+  initial values mention a still-unbound generic is skipped, as `@for` is.
+- Every construction and struct body starts with no reachable fold
+  (`AliasResolver::without_fold_target`). Both are evaluated from inside
+  macro bodies (and struct types resolve lazily), so without this a
+  `@next` in one could have landed on an enclosing macro-body fold.
+- Tests in `tests/fold.rs`: an offsets table as an `Array` literal, `@next`
+  skipping later items, plain and generic structs whose field names come
+  from a fold, and both escape/outside errors.
 
 #### Phase B4 — Top level
 **Deliverable:** `@fold` at top level in the unroll pass, int-only, plus

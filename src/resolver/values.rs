@@ -769,7 +769,7 @@ impl<'a> AliasResolver<'a> {
         };
 
         let declared = self.instantiate_struct_fields_named(symbol, &args)?;
-        let provided = self.unroll_construct_items(fields, scope)?;
+        let provided = self.without_fold_target(|this| this.unroll_construct_items(fields, scope))?;
 
         let required_count = declared.iter().filter(|(_, _, _, _, default)| default.is_none()).count();
 
@@ -1016,11 +1016,45 @@ impl<'a> AliasResolver<'a> {
                     fields.push((field_name, field_value));
                 }
 
-                ConstructItem::Fold { span, .. } | ConstructItem::Next { span, .. } => {
-                    return Err(ResolveError::Fold {
-                        message: "`@fold` isn't supported in a construction yet".to_string(),
-                        span: *span,
-                    });
+                ConstructItem::Fold { accumulators, var, source, body, .. } => {
+                    super::fold::check_accumulator_names(accumulators, var)?;
+
+                    let mut values = Vec::with_capacity(accumulators.len());
+                    for accumulator in accumulators {
+                        values.push((accumulator.name.clone(), self.eval_value(&accumulator.value, scope)?));
+                    }
+
+                    for (_, element) in self.eval_for_source(source, scope)? {
+                        let mut iter_scope = scope.clone();
+                        iter_scope.insert(var.clone(), element);
+                        for (name, value) in &values {
+                            iter_scope.insert(name.clone(), value.clone());
+                        }
+
+                        let outer = std::mem::replace(&mut self.next_target, super::fold::NextTarget::Fold);
+                        let nested = self.unroll_construct_items(body, &iter_scope);
+                        self.next_target = outer;
+                        fields.extend(nested?);
+
+                        if let Some(next) = self.pending_next.take() {
+                            super::fold::apply_next(&mut values, next)?;
+                        }
+                    }
+                }
+
+                // Ends this iteration of the enclosing fold: the items
+                // after it aren't produced.
+                ConstructItem::Next { value, updates, span } => {
+                    self.check_next_target(*span)?;
+
+                    let value = value.as_ref().map(|value| self.eval_value(value, scope)).transpose()?;
+                    let mut evaluated = Vec::with_capacity(updates.len());
+                    for update in updates {
+                        evaluated.push((update.name.clone(), self.eval_value(&update.value, scope)?, update.span));
+                    }
+
+                    self.pending_next = Some(super::fold::PendingNext { value, updates: evaluated, span: *span });
+                    return Ok(fields);
                 }
 
                 ConstructItem::For { var, source, body, .. } => {
@@ -1030,7 +1064,11 @@ impl<'a> AliasResolver<'a> {
                         let mut iter_scope = scope.clone();
                         iter_scope.insert(var.clone(), value);
 
-                        fields.extend(self.unroll_construct_items(body, &iter_scope)?);
+                        let outer = self.next_target;
+                        self.next_target = self.next_target_inside_for();
+                        let nested = self.unroll_construct_items(body, &iter_scope);
+                        self.next_target = outer;
+                        fields.extend(nested?);
                     }
                 }
 
@@ -1043,6 +1081,10 @@ impl<'a> AliasResolver<'a> {
 
                     if let Some(chosen) = chosen {
                         fields.extend(self.unroll_construct_items(chosen, scope)?);
+
+                        if self.pending_next.is_some() {
+                            return Ok(fields);
+                        }
                     }
                 }
             }

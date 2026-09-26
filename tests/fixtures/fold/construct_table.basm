@@ -1,0 +1,18 @@
+# An offsets table built as an Array literal: each entry is the running
+# sum of the lengths before it.
+from std.array import Array
+
+macro offsets() {
+    const lengths = Array<int, 4> { __el0: 3, __el1: 5, __el2: 2, __el3: 7 }
+    const table = Array<int, 4> {
+        @fold offset = 0 @for i in 0..4 {
+            __el`i`: offset,
+            @next offset + lengths.__el`i`
+        }
+    }
+    @for x in table {
+        @emit x
+    }
+}
+
+offsets

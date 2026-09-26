@@ -1,0 +1,25 @@
+# `@next` in a construction ends the iteration: the item after it isn't
+# produced for that iteration.
+struct Four {
+    pub a0: int,
+    pub a1: int,
+    pub b1: int,
+}
+
+macro f() {
+    const v = Four {
+        @fold k = 100 @for i in 0..2 {
+            a`i`: k,
+            @if i == 0 {
+                @next k + 1
+            }
+            b`i`: k * 2,
+            @next k + 1
+        }
+    }
+    @for x in v {
+        @emit x
+    }
+}
+
+f

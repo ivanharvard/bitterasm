@@ -1,0 +1,25 @@
+# Field names computed by a fold in a struct declaration, plain and generic.
+struct Layout {
+    @fold offset = 0 @for i in 0..3 {
+        pub f`offset`: int,
+        @next offset + i + 1
+    }
+}
+
+struct Spaced<const N: int> {
+    @fold at = 0 @for i in 0..N {
+        pub b`at`: int,
+        @next at + 2
+    }
+}
+
+macro f() {
+    const layout = Layout { f0: 10, f1: 20, f3: 30 }
+    @for x in layout {
+        @emit x
+    }
+    const spaced = Spaced<3> { b0: 1, b2: 2, b4: 3 }
+    @emit spaced.b4
+}
+
+f

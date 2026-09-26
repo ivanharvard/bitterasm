@@ -1,0 +1,11 @@
+struct S {
+    pub a: int,
+    @next 1
+}
+
+macro f() {
+    const s = S { a: 1 }
+    @emit s.a
+}
+
+f

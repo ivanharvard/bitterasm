@@ -184,23 +184,7 @@ impl<'a> AliasResolver<'a> {
         next: &MetaStatement,
         scope: &HashMap<String, Value>,
     ) -> Result<(), ResolveError> {
-        match self.next_target {
-            NextTarget::Fold => {}
-            NextTarget::None => {
-                return Err(ResolveError::Fold {
-                    message: "`@next` can only be used inside a `@fold` body".to_string(),
-                    span: next.span,
-                });
-            }
-            NextTarget::ForInsideFold => {
-                return Err(ResolveError::Fold {
-                    message: "`@next` can't be used inside a plain `@for` nested in a `@fold` — \
-                              it would have to end both loops' iterations at once"
-                        .to_string(),
-                    span: next.span,
-                });
-            }
-        }
+        self.check_next_target(next.span)?;
 
         let value = match next.args.as_slice() {
             [] => None,
@@ -221,6 +205,42 @@ impl<'a> AliasResolver<'a> {
 
         self.pending_next = Some(PendingNext { value, updates, span: next.span });
         Ok(())
+    }
+
+    /// Errors unless a `@next` reached right now has a fold to go to.
+    pub(super) fn check_next_target(&self, span: Span) -> Result<(), ResolveError> {
+        match self.next_target {
+            NextTarget::Fold => Ok(()),
+            NextTarget::None => Err(ResolveError::Fold {
+                message: "`@next` can only be used inside a `@fold` body".to_string(),
+                span,
+            }),
+            NextTarget::ForInsideFold => Err(ResolveError::Fold {
+                message: "`@next` can't be used inside a plain `@for` nested in a `@fold` — \
+                          it would have to end both loops' iterations at once"
+                    .to_string(),
+                span,
+            }),
+        }
+    }
+
+    /// Runs `f` as the start of a fresh body — a construction's or struct
+    /// declaration's items — where no enclosing fold is reachable by
+    /// `@next`, restoring the caller's state afterwards.
+    pub(super) fn without_fold_target<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        let outer = std::mem::take(&mut self.next_target);
+        let result = f(self);
+        self.next_target = outer;
+        result
+    }
+
+    /// Where a plain `@for` body's `@next` would go: nowhere new if it
+    /// wasn't reachable already, else blocked by the `@for`.
+    pub(super) fn next_target_inside_for(&self) -> NextTarget {
+        match self.next_target {
+            NextTarget::None => NextTarget::None,
+            NextTarget::Fold | NextTarget::ForInsideFold => NextTarget::ForInsideFold,
+        }
     }
 
     /// Evaluates `expr` somewhere its `@emit`s and generated declarations
@@ -300,7 +320,7 @@ impl<'a> AliasResolver<'a> {
     }
 }
 
-fn check_accumulator_names(accumulators: &[FoldBinding], var: &str) -> Result<(), ResolveError> {
+pub(super) fn check_accumulator_names(accumulators: &[FoldBinding], var: &str) -> Result<(), ResolveError> {
     for (index, accumulator) in accumulators.iter().enumerate() {
         if accumulator.name == var {
             return Err(ResolveError::Fold {
@@ -318,7 +338,7 @@ fn check_accumulator_names(accumulators: &[FoldBinding], var: &str) -> Result<()
     Ok(())
 }
 
-fn apply_next(accumulators: &mut [(String, Value)], next: PendingNext) -> Result<(), ResolveError> {
+pub(super) fn apply_next(accumulators: &mut [(String, Value)], next: PendingNext) -> Result<(), ResolveError> {
     if let Some(value) = next.value {
         if accumulators.len() != 1 {
             return Err(ResolveError::Fold {

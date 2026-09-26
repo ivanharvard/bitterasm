@@ -1,0 +1,13 @@
+from std.array import Array
+
+macro f() {
+    @fold a = 0 @for i in 0..2 {
+        const x = Array<int, 1> {
+            __el0: 1,
+            @next a + 1
+        }
+        @next a
+    }
+}
+
+f

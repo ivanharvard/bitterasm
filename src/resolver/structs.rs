@@ -149,7 +149,7 @@ impl<'a> AliasResolver<'a> {
 
         let previous = std::mem::replace(&mut self.generic_scope, scope);
 
-        let result = match self.unroll_struct_body(&declaration.fields) {
+        let result = match self.without_fold_target(|this| this.unroll_struct_body(&declaration.fields)) {
             Ok(fields) => fields
                 .into_iter()
                 .map(|field| {
@@ -285,7 +285,7 @@ impl<'a> AliasResolver<'a> {
 
         let previous = std::mem::replace(&mut self.generic_scope, scope);
 
-        let result = match self.unroll_struct_body(&declaration.fields) {
+        let result = match self.without_fold_target(|this| this.unroll_struct_body(&declaration.fields)) {
             Ok(fields) => match fields.into_iter().find(|field| field.name == field_name) {
                 Some(field) => self.resolve_type_expr(&field.ty),
 
@@ -313,7 +313,7 @@ impl<'a> AliasResolver<'a> {
 
         let previous = std::mem::replace(&mut self.generic_scope, scope);
 
-        let result = match self.unroll_struct_body(&declaration.fields) {
+        let result = match self.without_fold_target(|this| this.unroll_struct_body(&declaration.fields)) {
             Ok(fields) => fields.iter().map(|field| self.resolve_type_expr(&field.ty)).collect(),
             Err(error) => Err(error),
         };
@@ -352,11 +352,62 @@ impl<'a> AliasResolver<'a> {
                     });
                 }
 
-                StructBodyItem::Fold { span, .. } | StructBodyItem::Next { span, .. } => {
-                    return Err(ResolveError::Fold {
-                        message: "`@fold` isn't supported in a struct body yet".to_string(),
-                        span: *span,
-                    });
+                // Same const-generic world as the `@for` below: the loop
+                // variable and every accumulator are bound as generic
+                // consts, so accumulators are integers here.
+                StructBodyItem::Fold { accumulators, var, source, body, span } => {
+                    if references_unbound_generic(source, &self.generic_scope)
+                        || accumulators
+                            .iter()
+                            .any(|accumulator| references_unbound_generic(&accumulator.value, &self.generic_scope))
+                    {
+                        continue;
+                    }
+
+                    super::fold::check_accumulator_names(accumulators, var)?;
+
+                    let mut values = Vec::with_capacity(accumulators.len());
+                    for accumulator in accumulators {
+                        values.push((accumulator.name.clone(), Value::Int(self.eval_const_expr(&accumulator.value)?)));
+                    }
+
+                    let value_scope = self.const_value_scope();
+                    for (_, element) in self.eval_for_source(source, &value_scope)? {
+                        let Value::Int(i) = element else {
+                            return Err(ResolveError::ExpectedIntValue { span: *span });
+                        };
+
+                        let mut bound = vec![(var.clone(), i)];
+                        for (name, value) in &values {
+                            let Value::Int(value) = value else {
+                                return Err(ResolveError::ExpectedIntValue { span: *span });
+                            };
+                            bound.push((name.clone(), value.clone()));
+                        }
+
+                        let outer = std::mem::replace(&mut self.next_target, super::fold::NextTarget::Fold);
+                        let nested = self.with_const_bindings(bound, |this| this.unroll_struct_body(body));
+                        self.next_target = outer;
+                        fields.extend(nested?);
+
+                        if let Some(next) = self.pending_next.take() {
+                            super::fold::apply_next(&mut values, next)?;
+                        }
+                    }
+                }
+
+                // Ends this iteration of the enclosing fold.
+                StructBodyItem::Next { value, updates, span } => {
+                    self.check_next_target(*span)?;
+
+                    let value = value.as_ref().map(|value| self.eval_const_expr(value).map(Value::Int)).transpose()?;
+                    let mut evaluated = Vec::with_capacity(updates.len());
+                    for update in updates {
+                        evaluated.push((update.name.clone(), Value::Int(self.eval_const_expr(&update.value)?), update.span));
+                    }
+
+                    self.pending_next = Some(super::fold::PendingNext { value, updates: evaluated, span: *span });
+                    return Ok(fields);
                 }
 
                 StructBodyItem::For { var, source, body, span } => {
@@ -374,14 +425,7 @@ impl<'a> AliasResolver<'a> {
                     // struct-valued element doesn't fit this model (see
                     // `references_unbound_generic`'s doc for why this isn't
                     // extended further).
-                    let value_scope: HashMap<String, Value> = self
-                        .generic_scope
-                        .iter()
-                        .filter_map(|(name, binding)| match binding {
-                            GenericBinding::Const(Some(i)) => Some((name.clone(), Value::Int(i.clone()))),
-                            _ => None,
-                        })
-                        .collect();
+                    let value_scope = self.const_value_scope();
 
                     let bindings = self.eval_for_source(source, &value_scope)?;
 
@@ -390,20 +434,10 @@ impl<'a> AliasResolver<'a> {
                             return Err(ResolveError::ExpectedIntValue { span: *span });
                         };
 
-                        let previous = self
-                            .generic_scope
-                            .insert(var.clone(), GenericBinding::Const(Some(i)));
-
-                        let nested = self.unroll_struct_body(body);
-
-                        match previous {
-                            Some(previous) => {
-                                self.generic_scope.insert(var.clone(), previous);
-                            }
-                            None => {
-                                self.generic_scope.remove(var);
-                            }
-                        }
+                        let outer = self.next_target;
+                        self.next_target = self.next_target_inside_for();
+                        let nested = self.with_const_bindings(vec![(var.clone(), i)], |this| this.unroll_struct_body(body));
+                        self.next_target = outer;
 
                         fields.extend(nested?);
                     }
@@ -419,12 +453,57 @@ impl<'a> AliasResolver<'a> {
 
                     if let Some(chosen) = chosen {
                         fields.extend(self.unroll_struct_body(chosen)?);
+
+                        if self.pending_next.is_some() {
+                            return Ok(fields);
+                        }
                     }
                 }
             }
         }
 
         Ok(fields)
+    }
+
+    // A throwaway `Value` scope of every concrete generic const in
+    // `self.generic_scope` (`Type`/still-unbound entries have no `Value`
+    // form), for evaluating a struct-body loop's source.
+    fn const_value_scope(&self) -> HashMap<String, Value> {
+        self.generic_scope
+            .iter()
+            .filter_map(|(name, binding)| match binding {
+                GenericBinding::Const(Some(i)) => Some((name.clone(), Value::Int(i.clone()))),
+                _ => None,
+            })
+            .collect()
+    }
+
+    // Runs `f` with each `(name, value)` bound as a generic const in
+    // `self.generic_scope`, then puts back whatever those names were bound
+    // to before.
+    fn with_const_bindings<T>(&mut self, bindings: Vec<(String, Int)>, f: impl FnOnce(&mut Self) -> T) -> T {
+        let previous: Vec<(String, Option<GenericBinding>)> = bindings
+            .into_iter()
+            .map(|(name, value)| {
+                let previous = self.generic_scope.insert(name.clone(), GenericBinding::Const(Some(value)));
+                (name, previous)
+            })
+            .collect();
+
+        let result = f(self);
+
+        for (name, previous) in previous.into_iter().rev() {
+            match previous {
+                Some(previous) => {
+                    self.generic_scope.insert(name, previous);
+                }
+                None => {
+                    self.generic_scope.remove(&name);
+                }
+            }
+        }
+
+        result
     }
 
     // Resolves a struct field's (possibly spliced) name to a literal
