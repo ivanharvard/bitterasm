@@ -49,6 +49,7 @@ pub fn resolve_error(error: ResolveError, source: Option<SourceId>) -> Diagnosti
         ExpectedStructValue { span } => ("expected a struct value".into(), span),
         ExpectedValueExpression { span } => ("expected a value expression".into(), span),
         UnsupportedMacroStatement { kind, span } => (format!("unsupported `{kind}` statement in macro body"), span),
+        Fold { message, span } => (message.clone(), span),
         UnsupportedSpliceValue { span } => ("only integer values can be spliced into declarations".into(), span),
         UnsupportedCallExpression { span } => ("unsupported call expression".into(), span),
         UnknownMacro { name, span } => (format!("unknown macro `{name}`"), span),

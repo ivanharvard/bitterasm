@@ -136,7 +136,7 @@ impl Parser {
             }
 
             let item = self.parse_struct_body_item()?;
-            let is_generative = matches!(item, StructBodyItem::For { .. } | StructBodyItem::If { .. });
+            let is_generative = matches!(item, StructBodyItem::For { .. } | StructBodyItem::Fold { .. } | StructBodyItem::If { .. });
             items.push(item);
 
             self.skip_newlines();
@@ -178,8 +178,28 @@ impl Parser {
             "for" => self.parse_struct_for_item(start),
             "if" => self.parse_struct_if_item(start),
 
+            "fold" => {
+                let accumulators = self.parse_fold_accumulators()?;
+                let for_start = self.current().span.start;
+                self.expect_simple(TokenKind::At)?;
+                let for_token = self.current().clone();
+                if self.expect_identifier()? != "for" {
+                    return Err(ParseError::new("expected `@for` after `@fold`'s accumulators", for_token.span));
+                }
+                let StructBodyItem::For { var, source, body, span } = self.parse_struct_for_item(for_start)? else {
+                    unreachable!("parse_struct_for_item always returns a `For`");
+                };
+                Ok(StructBodyItem::Fold { accumulators, var, source, body, span: Span::new(start, span.end) })
+            }
+
+            "next" => {
+                let (value, updates) = self.parse_next_values()?;
+                let end = self.previous().span.end.max(name_token.span.end);
+                Ok(StructBodyItem::Next { value, updates, span: Span::new(start, end) })
+            }
+
             other => Err(ParseError::new(
-                format!("`@{other}` isn't valid inside a struct body — only `@for`/`@if` are"),
+                format!("`@{other}` isn't valid inside a struct body — only `@for`/`@fold`/`@if`/`@next` are"),
                 name_token.span,
             )),
         }

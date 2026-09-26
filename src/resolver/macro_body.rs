@@ -1128,7 +1128,9 @@ impl<'a> AliasResolver<'a> {
                 reify_value(&value, *span)
             }
 
-            Expr::Identifier { .. } | Expr::Integer { .. } | Expr::String { .. } => {
+            // A `@fold` is left as written, like any other expression here:
+            // to evaluate one now, splice it (`` `@fold ...` ``).
+            Expr::Identifier { .. } | Expr::Integer { .. } | Expr::String { .. } | Expr::Fold { .. } => {
                 Ok(expr.clone())
             }
 
@@ -1253,6 +1255,38 @@ impl<'a> AliasResolver<'a> {
                     var: var.clone(),
                     source: self.splice_expr(source, scope)?,
                     body: self.splice_construct_items(body, scope)?,
+                    span: *span,
+                }),
+
+                ConstructItem::Fold { accumulators, var, source, body, span } => Ok(ConstructItem::Fold {
+                    accumulators: accumulators
+                        .iter()
+                        .map(|accumulator| {
+                            Ok(crate::ast::FoldBinding {
+                                name: accumulator.name.clone(),
+                                value: self.splice_expr(&accumulator.value, scope)?,
+                                span: accumulator.span,
+                            })
+                        })
+                        .collect::<Result<_, ResolveError>>()?,
+                    var: var.clone(),
+                    source: self.splice_expr(source, scope)?,
+                    body: self.splice_construct_items(body, scope)?,
+                    span: *span,
+                }),
+
+                ConstructItem::Next { value, updates, span } => Ok(ConstructItem::Next {
+                    value: value.as_ref().map(|value| self.splice_expr(value, scope)).transpose()?,
+                    updates: updates
+                        .iter()
+                        .map(|update| {
+                            Ok(crate::ast::FoldBinding {
+                                name: update.name.clone(),
+                                value: self.splice_expr(&update.value, scope)?,
+                                span: update.span,
+                            })
+                        })
+                        .collect::<Result<_, ResolveError>>()?,
                     span: *span,
                 }),
 

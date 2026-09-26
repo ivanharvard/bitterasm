@@ -51,7 +51,7 @@ impl Parser {
             }
 
             let item = self.parse_construct_item()?;
-            let is_generative = matches!(item, ConstructItem::For { .. } | ConstructItem::If { .. });
+            let is_generative = matches!(item, ConstructItem::For { .. } | ConstructItem::Fold { .. } | ConstructItem::If { .. });
             items.push(item);
 
             self.skip_newlines();
@@ -93,8 +93,28 @@ impl Parser {
             "for" => self.parse_construct_for_item(start),
             "if" => self.parse_construct_if_item(start),
 
+            "fold" => {
+                let accumulators = self.parse_fold_accumulators()?;
+                let for_start = self.current().span.start;
+                self.expect_simple(TokenKind::At)?;
+                let for_token = self.current().clone();
+                if self.expect_identifier()? != "for" {
+                    return Err(ParseError::new("expected `@for` after `@fold`'s accumulators", for_token.span));
+                }
+                let ConstructItem::For { var, source, body, span } = self.parse_construct_for_item(for_start)? else {
+                    unreachable!("parse_construct_for_item always returns a `For`");
+                };
+                Ok(ConstructItem::Fold { accumulators, var, source, body, span: Span::new(start, span.end) })
+            }
+
+            "next" => {
+                let (value, updates) = self.parse_next_values()?;
+                let end = self.previous().span.end.max(name_token.span.end);
+                Ok(ConstructItem::Next { value, updates, span: Span::new(start, end) })
+            }
+
             other => Err(ParseError::new(
-                format!("`@{other}` isn't valid inside a brace-literal construction — only `@for`/`@if` are"),
+                format!("`@{other}` isn't valid inside a brace-literal construction — only `@for`/`@fold`/`@if`/`@next` are"),
                 name_token.span,
             )),
         }

@@ -254,6 +254,15 @@ pub enum Expr {
         source: Box<Expr>,
         span: Span,
     },
+
+    /// `@fold ... @for ... { ... }` in expression position (a `const`'s
+    /// value, `@return`'s value, ...). `fold` is the same `MetaStatement`
+    /// a statement-position `@fold` parses to (`name == "fold"`); its
+    /// value is the final accumulator, or a struct of all of them.
+    Fold {
+        fold: Box<MetaStatement>,
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -272,7 +281,8 @@ impl Expr {
             | Expr::Binary { span, .. }
             | Expr::Splice { span, .. }
             | Expr::Range { span, .. }
-            | Expr::In { span, .. } => *span,
+            | Expr::In { span, .. }
+            | Expr::Fold { span, .. } => *span,
         }
     }
 }
@@ -303,6 +313,23 @@ pub enum ConstructItem {
         var: String,
         source: Expr,
         body: Vec<ConstructItem>,
+        span: Span,
+    },
+
+    /// `@fold acc = init, ... @for var in source { items }` — a `For`
+    /// that also threads accumulators through its iterations.
+    Fold {
+        accumulators: Vec<FoldBinding>,
+        var: String,
+        source: Expr,
+        body: Vec<ConstructItem>,
+        span: Span,
+    },
+
+    /// `@next value` or `@next acc = value, ...` inside a `Fold`'s body.
+    Next {
+        value: Option<Expr>,
+        updates: Vec<FoldBinding>,
         span: Span,
     },
 
@@ -361,6 +388,19 @@ pub struct MetaStatement {
     /// `@match`'s ordered arms. A `None` pattern is Rust's `_` wildcard.
     /// Empty for every other meta statement.
     pub match_arms: Vec<MatchArm>,
+
+    /// `name = value` pairs: `@fold`'s accumulators with their initial
+    /// values, or a named `@next`'s updates. Empty for every other meta.
+    pub bindings: Vec<FoldBinding>,
+    pub span: Span,
+}
+
+/// One `name = value` in a `@fold` header (an accumulator and its initial
+/// value) or in a named `@next` (an accumulator and its next value).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FoldBinding {
+    pub name: String,
+    pub value: Expr,
     pub span: Span,
 }
 

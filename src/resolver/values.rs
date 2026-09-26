@@ -391,6 +391,11 @@ impl<'a> AliasResolver<'a> {
             // idx in 0..len`. Anything else (a struct/array value) falls
             // back to `eval_for_source`, walking exactly the same `pub`,
             // non-`skip` fields `@for` would visit.
+            Expr::Fold { span, .. } => Err(ResolveError::Fold {
+                message: "`@fold` isn't supported here yet".to_string(),
+                span: *span,
+            }),
+
             Expr::In { value, source, .. } => {
                 if let Expr::Range { start, end, inclusive, .. } = source.as_ref() {
                     let needle = self.eval_int(value, scope)?;
@@ -570,7 +575,8 @@ impl<'a> AliasResolver<'a> {
                 // generic-const scope their `@for`/`@if` would need to
                 // unroll against. Brace-literal construction is where that
                 // support belongs.
-                StructBodyItem::For { .. } | StructBodyItem::If { .. } => None,
+                StructBodyItem::For { .. } | StructBodyItem::If { .. }
+                | StructBodyItem::Fold { .. } | StructBodyItem::Next { .. } => None,
             })
             .collect();
 
@@ -969,6 +975,13 @@ impl<'a> AliasResolver<'a> {
                     let field_name = self.resolve_spliced_name(name, scope)?;
                     let field_value = self.eval_value(value, scope)?;
                     fields.push((field_name, field_value));
+                }
+
+                ConstructItem::Fold { span, .. } | ConstructItem::Next { span, .. } => {
+                    return Err(ResolveError::Fold {
+                        message: "`@fold` isn't supported in a construction yet".to_string(),
+                        span: *span,
+                    });
                 }
 
                 ConstructItem::For { var, source, body, .. } => {

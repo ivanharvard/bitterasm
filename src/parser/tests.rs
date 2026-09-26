@@ -1491,3 +1491,149 @@ fn pub_and_return_type_are_macro_signature_fields_not_facets() {
     assert!(parse(lex("macro encode()\n| pub\n{\n}\n").unwrap()).is_err());
     assert!(parse(lex("macro encode()\n| -> int\n{\n}\n").unwrap()).is_err());
 }
+
+// =============
+// @fold / @next (Phase B1, docs/1.0/PROGRESS.md)
+// =============
+
+fn first_macro_body(source: &str) -> Vec<Statement> {
+    let program = parse(lex(source).unwrap()).unwrap_or_else(|error| panic!("{source}\n{error:?}"));
+    let Statement::Macro(decl) = &program.statements[0] else {
+        panic!("expected a macro declaration");
+    };
+    decl.body.clone()
+}
+
+// Printing is the round-trip oracle: printing a parse of printed output
+// must reproduce that output exactly.
+fn assert_prints_stably(source: &str) {
+    let first = crate::printer::print_statements(&parse(lex(source).unwrap()).unwrap().statements, 0);
+    let second = crate::printer::print_statements(
+        &parse(lex(&format!("{first}\n")).unwrap()).unwrap_or_else(|error| panic!("{first}\n{error:?}")).statements,
+        0,
+    );
+    assert_eq!(first, second);
+}
+
+#[test]
+fn parses_a_statement_fold_with_one_accumulator() {
+    let body = first_macro_body(
+        "macro f() {\n    @fold offset = 0 @for s in 0..3 {\n        @emit offset\n        @next offset + s\n    }\n}\n",
+    );
+
+    let Statement::Meta(fold) = &body[0] else { panic!("expected a meta statement") };
+    assert_eq!(fold.name, "fold");
+    assert!(matches!(fold.args.as_slice(), [Expr::Identifier { name, .. }, Expr::Range { .. }] if name == "s"));
+    assert_eq!(fold.bindings.len(), 1);
+    assert_eq!(fold.bindings[0].name, "offset");
+    assert!(matches!(&fold.bindings[0].value, Expr::Integer { raw, .. } if raw == "0"));
+
+    let inner = fold.body.as_ref().unwrap();
+    let Statement::Meta(next) = &inner[1] else { panic!("expected `@next`") };
+    assert_eq!(next.name, "next");
+    assert!(matches!(next.args.as_slice(), [Expr::Binary { .. }]));
+    assert!(next.bindings.is_empty());
+}
+
+#[test]
+fn parses_several_accumulators_and_a_named_next() {
+    let body = first_macro_body(
+        "macro f() {\n    @fold a = 0, b = 1 @for i in 0..3 {\n        @next a = a + i, b = b * 2\n    }\n}\n",
+    );
+
+    let Statement::Meta(fold) = &body[0] else { panic!("expected a meta statement") };
+    let names: Vec<_> = fold.bindings.iter().map(|binding| binding.name.as_str()).collect();
+    assert_eq!(names, ["a", "b"]);
+
+    let Statement::Meta(next) = &fold.body.as_ref().unwrap()[0] else { panic!("expected `@next`") };
+    assert!(next.args.is_empty());
+    let updates: Vec<_> = next.bindings.iter().map(|binding| binding.name.as_str()).collect();
+    assert_eq!(updates, ["a", "b"]);
+}
+
+#[test]
+fn parses_a_bare_next() {
+    let body = first_macro_body("macro f() {\n    @fold a = 0 @for i in 0..3 {\n        @next\n    }\n}\n");
+    let Statement::Meta(fold) = &body[0] else { panic!("expected a meta statement") };
+    let Statement::Meta(next) = &fold.body.as_ref().unwrap()[0] else { panic!("expected `@next`") };
+    assert!(next.args.is_empty() && next.bindings.is_empty());
+}
+
+#[test]
+fn rejects_several_positional_next_values() {
+    let error = parse(
+        lex("macro f() {\n    @fold a = 0, b = 0 @for i in 0..3 {\n        @next 1, 2\n    }\n}\n").unwrap(),
+    )
+    .unwrap_err();
+    assert!(error.message.contains("positional `@next` takes one value"), "{error:?}");
+}
+
+#[test]
+fn parses_fold_as_a_const_value_and_a_return_value() {
+    let body = first_macro_body(
+        "macro f() -> int {\n    const n = @fold a = 0 @for i in 0..3 {\n        @next a + i\n    }\n    @return @fold b = n @for j in 0..2 {\n        @next b + j\n    }\n}\n",
+    );
+
+    let Statement::Const(decl) = &body[0] else { panic!("expected a const") };
+    assert!(matches!(&decl.value, Expr::Fold { fold, .. } if fold.name == "fold" && fold.bindings[0].name == "a"));
+
+    let Statement::Meta(ret) = &body[1] else { panic!("expected `@return`") };
+    assert_eq!(ret.name, "return");
+    assert!(matches!(ret.args.as_slice(), [Expr::Fold { .. }]));
+}
+
+#[test]
+fn parses_fold_in_a_construction_and_a_struct_body() {
+    let program = parse(
+        lex(concat!(
+            "struct S {\n",
+            "    @fold w = 1 @for i in 0..2 {\n",
+            "        pub f`i`: bits<8>,\n",
+            "        @next w * 2\n",
+            "    }\n",
+            "}\n",
+            "macro f() {\n",
+            "    @emit S {\n",
+            "        @fold w = 1 @for i in 0..2 {\n",
+            "            f`i`: w,\n",
+            "            @next w = w * 2\n",
+            "        }\n",
+            "    }\n",
+            "}\n",
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let Statement::Struct(decl) = &program.statements[0] else { panic!("expected a struct") };
+    let StructBodyItem::Fold { accumulators, body, .. } = &decl.fields[0] else { panic!("expected a struct-body fold") };
+    assert_eq!(accumulators[0].name, "w");
+    assert!(matches!(&body[1], StructBodyItem::Next { value: Some(_), .. }));
+
+    let Statement::Macro(mac) = &program.statements[1] else { panic!("expected a macro") };
+    let Statement::Meta(emit) = &mac.body[0] else { panic!("expected `@emit`") };
+    let Expr::Construct { fields, .. } = &emit.args[0] else { panic!("expected a construction") };
+    let crate::ast::ConstructItem::Fold { body, .. } = &fields[0] else { panic!("expected a construction fold") };
+    assert!(matches!(&body[1], crate::ast::ConstructItem::Next { value: None, updates, .. } if updates.len() == 1));
+}
+
+#[test]
+fn fold_and_for_print_back_to_parseable_source() {
+    assert_prints_stably(concat!(
+        "macro f() -> int {\n",
+        "    @for i in 0..2 {\n",
+        "        @emit i\n",
+        "    }\n",
+        "    @fold a = 0, b = 1 @for i in 0..3 {\n",
+        "        @if i > 0 {\n",
+        "            @next a = a + i\n",
+        "        }\n",
+        "        @next b = b * 2\n",
+        "    }\n",
+        "    const n = @fold c = 0 @for j in 0..2 {\n",
+        "        @next c + j\n",
+        "    }\n",
+        "    @return n\n",
+        "}\n",
+    ));
+}

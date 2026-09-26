@@ -352,6 +352,13 @@ impl<'a> AliasResolver<'a> {
                     });
                 }
 
+                StructBodyItem::Fold { span, .. } | StructBodyItem::Next { span, .. } => {
+                    return Err(ResolveError::Fold {
+                        message: "`@fold` isn't supported in a struct body yet".to_string(),
+                        span: *span,
+                    });
+                }
+
                 StructBodyItem::For { var, source, body, span } => {
                     if references_unbound_generic(source, &self.generic_scope) {
                         continue;

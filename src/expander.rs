@@ -256,6 +256,14 @@ fn substitute_statement(statement: &Statement, substitutions: &HashMap<String, E
                     Some(substitute_statements(body, &inner))
                 }
 
+                // The loop variable and every accumulator are bound inside.
+                (Some(body), "fold", Some(Expr::Identifier { name, .. })) => {
+                    let bound = std::iter::once(name.as_str())
+                        .chain(meta.bindings.iter().map(|binding| binding.name.as_str()));
+                    let inner = without_shadowed(substitutions, bound);
+                    Some(substitute_statements(body, &inner))
+                }
+
                 (Some(body), _, _) => Some(substitute_statements(body, substitutions)),
 
                 (None, _, _) => None,
@@ -278,10 +286,27 @@ fn substitute_statement(statement: &Statement, substitutions: &HashMap<String, E
                         span: arm.span,
                     })
                     .collect(),
+                bindings: substitute_fold_bindings(&meta.bindings, substitutions),
                 span: meta.span,
             })
         }
     }
+}
+
+// An accumulator's own name isn't substituted — it's a binding, like a
+// `@for` variable — only the value expression is.
+fn substitute_fold_bindings(
+    bindings: &[crate::ast::FoldBinding],
+    substitutions: &HashMap<String, Expr>,
+) -> Vec<crate::ast::FoldBinding> {
+    bindings
+        .iter()
+        .map(|binding| crate::ast::FoldBinding {
+            name: binding.name.clone(),
+            value: substitute_expr(&binding.value, substitutions),
+            span: binding.span,
+        })
+        .collect()
 }
 
 fn substitute_struct(decl: &StructDeclaration, substitutions: &HashMap<String, Expr>) -> StructDeclaration {
@@ -323,6 +348,26 @@ fn substitute_struct_body_items(
                     span: *span,
                 }
             }
+
+            StructBodyItem::Fold { accumulators, var, source, body, span } => {
+                let bound = std::iter::once(var.as_str())
+                    .chain(accumulators.iter().map(|accumulator| accumulator.name.as_str()));
+                let inner = without_shadowed(substitutions, bound);
+
+                StructBodyItem::Fold {
+                    accumulators: substitute_fold_bindings(accumulators, substitutions),
+                    var: var.clone(),
+                    source: substitute_expr(source, substitutions),
+                    body: substitute_struct_body_items(body, &inner),
+                    span: *span,
+                }
+            }
+
+            StructBodyItem::Next { value, updates, span } => StructBodyItem::Next {
+                value: value.as_ref().map(|value| substitute_expr(value, substitutions)),
+                updates: substitute_fold_bindings(updates, substitutions),
+                span: *span,
+            },
 
             StructBodyItem::If { condition, body, else_body, span } => StructBodyItem::If {
                 condition: substitute_expr(condition, substitutions),
@@ -534,6 +579,16 @@ pub fn substitute_expr(expr: &Expr, substitutions: &HashMap<String, Expr>) -> Ex
             source: Box::new(substitute_expr(source, substitutions)),
             span: *span,
         },
+
+        Expr::Fold { fold, span } => {
+            let Statement::Meta(fold) = substitute_statements(&[Statement::Meta(fold.as_ref().clone())], substitutions)
+                .pop()
+                .expect("substituting one statement yields one statement")
+            else {
+                unreachable!("substituting a meta statement yields a meta statement");
+            };
+            Expr::Fold { fold: Box::new(fold), span: *span }
+        }
     }
 }
 
@@ -560,6 +615,26 @@ fn substitute_construct_items(
                     span: *span,
                 }
             }
+
+            ConstructItem::Fold { accumulators, var, source, body, span } => {
+                let bound = std::iter::once(var.as_str())
+                    .chain(accumulators.iter().map(|accumulator| accumulator.name.as_str()));
+                let inner = without_shadowed(substitutions, bound);
+
+                ConstructItem::Fold {
+                    accumulators: substitute_fold_bindings(accumulators, substitutions),
+                    var: var.clone(),
+                    source: substitute_expr(source, substitutions),
+                    body: substitute_construct_items(body, &inner),
+                    span: *span,
+                }
+            }
+
+            ConstructItem::Next { value, updates, span } => ConstructItem::Next {
+                value: value.as_ref().map(|value| substitute_expr(value, substitutions)),
+                updates: substitute_fold_bindings(updates, substitutions),
+                span: *span,
+            },
 
             ConstructItem::If { condition, body, else_body, span } => ConstructItem::If {
                 condition: substitute_expr(condition, substitutions),

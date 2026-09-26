@@ -1,4 +1,4 @@
-use crate::ast::{literal_name, FacetPayload};
+use crate::ast::{literal_name, FacetPayload, FoldBinding};
 
 use super::*;
 
@@ -18,6 +18,25 @@ impl Parser {
 
         match name.as_str() {
             "for" => self.parse_for_meta(start),
+            "fold" => {
+                let fold = self.parse_fold_meta(start)?;
+                self.consume_trailing_newline();
+                Ok(fold)
+            }
+            "next" => {
+                let (value, updates) = self.parse_next_values()?;
+                let end = self.statement_end()?;
+
+                Ok(MetaStatement {
+                    name: "next".to_string(),
+                    args: value.into_iter().collect(),
+                    body: None,
+                    else_body: None,
+                    match_arms: Vec::new(),
+                    bindings: updates,
+                    span: Span::new(start, end),
+                })
+            }
             "if" => self.parse_if_meta(start),
             "match" => self.parse_match_meta(start),
 
@@ -41,6 +60,7 @@ impl Parser {
                     body: None,
                     else_body: None,
                     match_arms: Vec::new(),
+                    bindings: Vec::new(),
                     span: Span::new(start, end),
                 })
             }
@@ -55,6 +75,13 @@ impl Parser {
     // (see `resolver::generated::eval_for_source`) — `start..end` is just
     // the common case, `Expr::Range` sugar for a synthesized struct.
     fn parse_for_meta(&mut self, start: usize) -> Result<MetaStatement, ParseError> {
+        let meta = self.parse_for_header_and_body(start)?;
+        self.consume_trailing_newline();
+        Ok(meta)
+    }
+
+    // `var in source { body }`, with `@for` already consumed.
+    fn parse_for_header_and_body(&mut self, start: usize) -> Result<MetaStatement, ParseError> {
         let var_token = self.current().clone();
         let var_name = self.expect_identifier()?;
         let var = Expr::Identifier { name: var_name, span: var_token.span };
@@ -75,16 +102,105 @@ impl Parser {
         let (body, body_end) =
             self.parse_statement_block("unterminated `@for` body")?;
 
-        self.consume_trailing_newline();
-
         Ok(MetaStatement {
             name: "for".to_string(),
             args: vec![var, source],
             body: Some(body),
             else_body: None,
             match_arms: Vec::new(),
+            bindings: Vec::new(),
             span: Span::new(start, body_end),
         })
+    }
+
+    // `@fold acc = init, ... @for var in source { body }`, with the leading
+    // `@fold` already consumed. Parsed to the same `[var, source]` + `body`
+    // shape as `@for`, plus the accumulators in `bindings`. Leaves any
+    // trailing newline alone: in expression position (`const x = @fold
+    // ...`) the enclosing statement owns it.
+    pub(super) fn parse_fold_meta(&mut self, start: usize) -> Result<MetaStatement, ParseError> {
+        let accumulators = self.parse_fold_accumulators()?;
+
+        let for_start = self.current().span.start;
+        self.expect_simple(TokenKind::At)?;
+        let for_token = self.current().clone();
+        if self.expect_identifier()? != "for" {
+            return Err(ParseError::new("expected `@for` after `@fold`'s accumulators", for_token.span));
+        }
+
+        let for_meta = self.parse_for_header_and_body(for_start)?;
+
+        Ok(MetaStatement {
+            name: "fold".to_string(),
+            span: Span::new(start, for_meta.span.end),
+            bindings: accumulators,
+            ..for_meta
+        })
+    }
+
+    // `acc = init, acc = init` up to the `@for` that follows. At least one.
+    pub(super) fn parse_fold_accumulators(&mut self) -> Result<Vec<FoldBinding>, ParseError> {
+        let mut accumulators = Vec::new();
+
+        loop {
+            accumulators.push(self.parse_fold_binding()?);
+
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+                self.skip_newlines();
+            } else {
+                break;
+            }
+        }
+
+        self.skip_newlines();
+        Ok(accumulators)
+    }
+
+    fn parse_fold_binding(&mut self) -> Result<FoldBinding, ParseError> {
+        let name_token = self.current().clone();
+        let name = self.expect_identifier()?;
+        self.expect_simple(TokenKind::Equal)?;
+        let value = self.parse_expr()?;
+
+        Ok(FoldBinding { name, span: Span::new(name_token.span.start, value.span().end), value })
+    }
+
+    // What follows `@next`: nothing (every accumulator unchanged), one
+    // positional value, or `acc = value, ...`. Stops before the statement
+    // or item terminator, which the caller consumes.
+    pub(super) fn parse_next_values(&mut self) -> Result<(Option<Expr>, Vec<FoldBinding>), ParseError> {
+        if self.at_statement_end() || self.check(&TokenKind::Comma) {
+            return Ok((None, Vec::new()));
+        }
+
+        let named = matches!(self.current().kind, TokenKind::Identifier(_))
+            && self.tokens.get(self.pos + 1).is_some_and(|next| next.kind == TokenKind::Equal);
+
+        if !named {
+            let value = self.parse_expr()?;
+            if self.check(&TokenKind::Comma) && self.tokens.get(self.pos + 1).is_some_and(|next| {
+                !matches!(next.kind, TokenKind::Newline | TokenKind::RBrace)
+            }) {
+                return Err(ParseError::new(
+                    "a positional `@next` takes one value — name each accumulator \
+                     (`@next a = ..., b = ...`) to update several",
+                    self.current().span,
+                ));
+            }
+            return Ok((Some(value), Vec::new()));
+        }
+
+        let mut updates = vec![self.parse_fold_binding()?];
+        while self.check(&TokenKind::Comma)
+            && matches!(self.tokens.get(self.pos + 1).map(|t| &t.kind), Some(TokenKind::Identifier(_)))
+            && self.tokens.get(self.pos + 2).is_some_and(|next| next.kind == TokenKind::Equal)
+        {
+            self.advance();
+            updates.push(self.parse_fold_binding()?);
+        }
+
+        Ok((None, updates))
     }
 
     // `@if cond { body } [@else { body }]`.
@@ -128,6 +244,7 @@ impl Parser {
             body: Some(body),
             else_body,
             match_arms: Vec::new(),
+            bindings: Vec::new(),
             span: Span::new(start, end),
         })
     }
@@ -186,6 +303,7 @@ impl Parser {
             body: None,
             else_body: None,
             match_arms: arms,
+            bindings: Vec::new(),
             span: Span::new(start, end),
         })
     }

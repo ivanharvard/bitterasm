@@ -262,6 +262,13 @@ pub enum ResolveError {
     // generic args (`Reg<64>`, not just `Reg`), which `Expr::Call` has
     // nowhere to put. Only `Int`s can be spliced into generated
     // declarations today.
+    /// A `@fold`/`@next` used in a way its rules don't allow (see
+    /// `docs/1.0/PROGRESS.md`, "`@fold`").
+    Fold {
+        message: String,
+        span: Span,
+    },
+
     UnsupportedSpliceValue {
         span: Span,
     },
@@ -464,6 +471,7 @@ impl ResolveError {
             | Self::ExpectedStructCallee { span, .. } | Self::ExpectedIntValue { span }
             | Self::ExpectedStructValue { span } | Self::ExpectedValueExpression { span }
             | Self::UnsupportedMacroStatement { span, .. } | Self::UnsupportedSpliceValue { span }
+            | Self::Fold { span, .. }
             | Self::UnsupportedCallExpression { span } | Self::UnknownMacro { span, .. }
             | Self::ExpectedMacro { span, .. } | Self::NoMatchingMacroOverload { span, .. }
             | Self::AmbiguousMacroOverload { span, .. } | Self::MacroCallDepthExceeded { span, .. }

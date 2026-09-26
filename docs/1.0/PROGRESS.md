@@ -18,7 +18,7 @@ v1 module-path identity is what in-language executable headers build on.
 - [x] Phase A1 — `` acc_`i` `` in expression position
 
 **Part B — `@fold`**
-- [ ] Phase B1 — Syntax: parser, AST, printer, formatter
+- [x] Phase B1 — Syntax: parser, AST, printer, formatter
 - [ ] Phase B2 — Macro bodies
 - [ ] Phase B3 — Construct literals and struct bodies
 - [ ] Phase B4 — Top level
@@ -325,6 +325,34 @@ and formatter. No semantics yet: resolving one is an "unsupported" error.
 **Verification:** parser tests for one and several accumulators, both
 `@next` forms, statement vs `const`/`@return` value positions, and each of
 the four body kinds. `bitterasm format` is idempotent on them.
+**As built (DONE):**
+- Statement position: `MetaStatement { name: "fold", args: [var, source],
+  body, bindings }`, i.e. `@for`'s shape plus a new `bindings` field
+  (`ast::FoldBinding { name, value, span }`) holding the accumulators.
+  `@next` is `MetaStatement { name: "next" }` with its positional value in
+  `args` (zero or one) and named updates in `bindings`. Every other meta
+  has empty `bindings`.
+- Expression position: `Expr::Fold { fold: Box<MetaStatement> }`, parsed
+  in `parse_prefix_expr` on `@` + `fold`.
+- Construct and struct bodies: new `ConstructItem::Fold`/`Next` and
+  `StructBodyItem::Fold`/`Next` variants rather than an accumulators field
+  on `For`. That way every pass that handles `For` was forced by the
+  compiler to decide what a fold means, instead of silently treating one
+  as a plain `@for`.
+- Syntax-only passes handle folds fully: loader renaming, expander
+  substitution (the loop variable and accumulators shadow substitutions,
+  like a `@for` variable), printer, lint name collection, const
+  dependencies. The unreachable-code lint treats `@next` like `@return`.
+  Resolver sites return `ResolveError::Fold` ("isn't supported ... yet")
+  until B2–B4.
+- Fixed while here: the printer printed a statement `@for` as
+  `@for i, 0..3 { ... }` (its two args joined with a comma), which
+  `bitterasm expand` output and couldn't be re-parsed. It now prints
+  `@for i in 0..3`.
+- The formatter needed no change (it only handles indentation and
+  wrapping) and leaves fold source unchanged.
+- Tests: `src/parser/tests.rs` (every form, plus a print → parse → print
+  stability check).
 
 #### Phase B2 — Macro bodies
 **Deliverable:** full semantics in macro bodies: iteration, `@next` (both

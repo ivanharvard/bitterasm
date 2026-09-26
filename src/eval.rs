@@ -68,7 +68,8 @@ pub fn eval(expr: &Expr, scope: &HashMap<String, Int>) -> Result<Int, EvalError>
         | Expr::Construct { span, .. }
         | Expr::As { span, .. }
         | Expr::Range { span, .. }
-        | Expr::In { span, .. } => Err(EvalError::NotConstant { span: *span }),
+        | Expr::In { span, .. }
+        | Expr::Fold { span, .. } => Err(EvalError::NotConstant { span: *span }),
 
         Expr::Unary { op, operand, .. } => {
             let value = eval(operand, scope)?;

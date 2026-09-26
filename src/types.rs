@@ -178,6 +178,23 @@ pub enum StructBodyItem {
         span: Span,
     },
 
+    /// `@fold acc = init, ... @for var in source { items }` in a struct
+    /// declaration's body.
+    Fold {
+        accumulators: Vec<crate::ast::FoldBinding>,
+        var: String,
+        source: Expr,
+        body: Vec<StructBodyItem>,
+        span: Span,
+    },
+
+    /// `@next value` or `@next acc = value, ...` inside a `Fold`'s body.
+    Next {
+        value: Option<Expr>,
+        updates: Vec<crate::ast::FoldBinding>,
+        span: Span,
+    },
+
     If {
         condition: Expr,
         body: Vec<StructBodyItem>,

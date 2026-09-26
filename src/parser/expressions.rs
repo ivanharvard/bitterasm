@@ -407,6 +407,39 @@ impl Parser {
             }
 
             // ============
+            // `@fold ... @for ... { ... }` as a value
+            // ============
+
+            TokenKind::At
+                if matches!(
+                    self.tokens.get(self.pos + 1).map(|next| &next.kind),
+                    Some(TokenKind::Identifier(name)) if name == "fold"
+                ) =>
+            {
+                let start = token.span.start;
+                self.advance(); // `@`
+                self.advance(); // `fold`
+
+                // The body's `{` belongs to the fold, and its contents are
+                // ordinary statements, whatever restrictions the
+                // surrounding expression was parsed under.
+                let outer_closing_restriction = self.restrict_closing_ops;
+                let outer_brace_restriction = self.restrict_brace_construction;
+                self.restrict_closing_ops = false;
+                self.restrict_brace_construction = false;
+
+                let fold = self.parse_fold_meta(start);
+
+                self.restrict_closing_ops = outer_closing_restriction;
+                self.restrict_brace_construction = outer_brace_restriction;
+
+                let fold = fold?;
+                let span = fold.span;
+
+                Ok(Expr::Fold { fold: Box::new(fold), span })
+            }
+
+            // ============
             // `expr` — evaluate and splice
             // ============
 
@@ -663,7 +696,8 @@ fn set_expr_span(expr: &mut Expr, new_span: Span) {
         | Expr::Binary { span, .. }
         | Expr::Splice { span, .. }
         | Expr::Range { span, .. }
-        | Expr::In { span, .. } => {
+        | Expr::In { span, .. }
+        | Expr::Fold { span, .. } => {
             *span = new_span;
         }
     }

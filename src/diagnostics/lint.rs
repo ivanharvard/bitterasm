@@ -206,6 +206,7 @@ fn collect_program_statement_references(statement: &Statement, names: &mut HashS
         }
         Statement::Meta(meta) => {
             meta.args.iter().for_each(|expr| collect_expr_identifiers(expr, names));
+            meta.bindings.iter().for_each(|binding| collect_expr_identifiers(&binding.value, names));
             if let Some(body) = &meta.body { body.iter().for_each(|item| collect_program_statement_references(item, names)); }
             if let Some(body) = &meta.else_body { body.iter().for_each(|item| collect_program_statement_references(item, names)); }
             for arm in &meta.match_arms {
@@ -225,6 +226,15 @@ fn collect_struct_item_references(item: &StructBodyItem, names: &mut HashSet<Str
         StructBodyItem::For { source, body, .. } => {
             collect_expr_identifiers(source, names);
             body.iter().for_each(|item| collect_struct_item_references(item, names));
+        }
+        StructBodyItem::Fold { accumulators, source, body, .. } => {
+            accumulators.iter().for_each(|accumulator| collect_expr_identifiers(&accumulator.value, names));
+            collect_expr_identifiers(source, names);
+            body.iter().for_each(|item| collect_struct_item_references(item, names));
+        }
+        StructBodyItem::Next { value, updates, .. } => {
+            if let Some(value) = value { collect_expr_identifiers(value, names); }
+            updates.iter().for_each(|update| collect_expr_identifiers(&update.value, names));
         }
         StructBodyItem::If { condition, body, else_body, .. } => {
             collect_expr_identifiers(condition, names);
@@ -404,7 +414,8 @@ fn lint_unreachable_block(
             for arm in &meta.match_arms {
                 lint_unreachable_block(&arm.body, source, level, occurred, diagnostics);
             }
-            returned = meta.name == "return";
+            // `@next` ends a fold iteration the way `@return` ends a body.
+            returned = meta.name == "return" || meta.name == "next";
         }
     }
 }
@@ -430,23 +441,27 @@ fn collect_statement_identifiers(statement: &Statement, names: &mut HashSet<Stri
     match statement {
         Statement::Const(value) => collect_expr_identifiers(&value.value, names),
         Statement::Invocation(value) => value.operands.iter().for_each(|expr| collect_expr_identifiers(expr, names)),
-        Statement::Meta(value) => {
-            value.args.iter().for_each(|expr| collect_expr_identifiers(expr, names));
-            if let Some(body) = &value.body { body.iter().for_each(|item| collect_statement_identifiers(item, names)); }
-            if let Some(body) = &value.else_body { body.iter().for_each(|item| collect_statement_identifiers(item, names)); }
-            for arm in &value.match_arms {
-                if let Some(pattern) = &arm.pattern { collect_expr_identifiers(pattern, names); }
-                arm.body.iter().for_each(|item| collect_statement_identifiers(item, names));
-            }
-        }
+        Statement::Meta(value) => collect_meta_identifiers(value, names),
         Statement::Struct(_) | Statement::Enum(_) | Statement::TypeAlias(_) |
         Statement::Import(_) | Statement::Label(_) | Statement::ExternLabel(_) | Statement::Section(_) |
         Statement::Macro(_) | Statement::SyntaxOverride(_) => {}
     }
 }
 
+fn collect_meta_identifiers(value: &crate::ast::MetaStatement, names: &mut HashSet<String>) {
+    value.args.iter().for_each(|expr| collect_expr_identifiers(expr, names));
+    value.bindings.iter().for_each(|binding| collect_expr_identifiers(&binding.value, names));
+    if let Some(body) = &value.body { body.iter().for_each(|item| collect_statement_identifiers(item, names)); }
+    if let Some(body) = &value.else_body { body.iter().for_each(|item| collect_statement_identifiers(item, names)); }
+    for arm in &value.match_arms {
+        if let Some(pattern) = &arm.pattern { collect_expr_identifiers(pattern, names); }
+        arm.body.iter().for_each(|item| collect_statement_identifiers(item, names));
+    }
+}
+
 fn collect_expr_identifiers(expr: &Expr, names: &mut HashSet<String>) {
     match expr {
+        Expr::Fold { fold, .. } => collect_meta_identifiers(fold, names),
         Expr::Identifier { name, .. } => { names.insert(name.clone()); }
         Expr::SplicedIdentifier { name, .. } => {
             if let Some(literal) = crate::ast::literal_spliced_name(name) { names.insert(literal); }
@@ -512,6 +527,15 @@ fn collect_construct_identifiers(
             crate::ast::ConstructItem::For { source, body, .. } => {
                 collect_expr_identifiers(source, names);
                 collect_construct_identifiers(body, names);
+            }
+            crate::ast::ConstructItem::Fold { accumulators, source, body, .. } => {
+                accumulators.iter().for_each(|accumulator| collect_expr_identifiers(&accumulator.value, names));
+                collect_expr_identifiers(source, names);
+                collect_construct_identifiers(body, names);
+            }
+            crate::ast::ConstructItem::Next { value, updates, .. } => {
+                if let Some(value) = value { collect_expr_identifiers(value, names); }
+                updates.iter().for_each(|update| collect_expr_identifiers(&update.value, names));
             }
             crate::ast::ConstructItem::If { condition, body, else_body, .. } => {
                 collect_expr_identifiers(condition, names);

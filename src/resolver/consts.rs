@@ -255,10 +255,33 @@ pub(super) fn referenced_identifiers(expr: &crate::ast::Expr) -> Vec<String> {
                 stack.push(value);
                 stack.push(source);
             }
+
+            Expr::Fold { fold, .. } => push_meta_exprs(fold, &mut stack),
         }
     }
 
     names
+}
+
+// Every expression a meta statement (and the statements nested in its
+// bodies) contains — what an `Expr::Fold`'s value can depend on. Over-
+// approximates: the fold's own loop variable and accumulators show up too,
+// and simply match no top-level const.
+fn push_meta_exprs<'a>(meta: &'a crate::ast::MetaStatement, stack: &mut Vec<&'a Expr>) {
+    stack.extend(meta.args.iter());
+    stack.extend(meta.bindings.iter().map(|binding| &binding.value));
+
+    let bodies = meta.body.iter().chain(meta.else_body.iter()).chain(meta.match_arms.iter().map(|arm| &arm.body));
+    for body in bodies {
+        for statement in body {
+            match statement {
+                crate::ast::Statement::Const(decl) => stack.push(&decl.value),
+                crate::ast::Statement::Invocation(invocation) => stack.extend(invocation.operands.iter()),
+                crate::ast::Statement::Meta(nested) => push_meta_exprs(nested, stack),
+                _ => {}
+            }
+        }
+    }
 }
 
 // `referenced_identifiers`'s stack is `Vec<&Expr>`, so a `ConstructItem`
@@ -274,6 +297,17 @@ fn push_construct_item_exprs<'a>(items: &'a [ConstructItem], stack: &mut Vec<&'a
             ConstructItem::For { source, body, .. } => {
                 stack.push(source);
                 push_construct_item_exprs(body, stack);
+            }
+
+            ConstructItem::Fold { accumulators, source, body, .. } => {
+                stack.extend(accumulators.iter().map(|accumulator| &accumulator.value));
+                stack.push(source);
+                push_construct_item_exprs(body, stack);
+            }
+
+            ConstructItem::Next { value, updates, .. } => {
+                stack.extend(value.iter());
+                stack.extend(updates.iter().map(|update| &update.value));
             }
 
             ConstructItem::If { condition, body, else_body, .. } => {

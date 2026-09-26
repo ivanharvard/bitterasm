@@ -787,6 +787,10 @@ fn rename_meta_statement(meta: &mut MetaStatement, renames: &HashMap<String, Str
         rename_expr(arg, renames);
     }
 
+    for binding in &mut meta.bindings {
+        rename_expr(&mut binding.value, renames);
+    }
+
     if let Some(body) = &mut meta.body {
         for statement in body {
             rename_statement(statement, renames);
@@ -820,6 +824,23 @@ fn rename_struct_body_items(items: &mut [StructBodyItem], renames: &HashMap<Stri
             StructBodyItem::For { source, body, .. } => {
                 rename_expr(source, renames);
                 rename_struct_body_items(body, renames);
+            }
+
+            StructBodyItem::Fold { accumulators, source, body, .. } => {
+                for accumulator in accumulators {
+                    rename_expr(&mut accumulator.value, renames);
+                }
+                rename_expr(source, renames);
+                rename_struct_body_items(body, renames);
+            }
+
+            StructBodyItem::Next { value, updates, .. } => {
+                if let Some(value) = value {
+                    rename_expr(value, renames);
+                }
+                for update in updates {
+                    rename_expr(&mut update.value, renames);
+                }
             }
 
             StructBodyItem::If { condition, body, else_body, .. } => {
@@ -986,6 +1007,8 @@ fn rename_expr(expr: &mut Expr, renames: &HashMap<String, String>) {
             rename_expr(value, renames);
             rename_expr(source, renames);
         }
+
+        Expr::Fold { fold, .. } => rename_meta_statement(fold, renames),
     }
 }
 
@@ -1000,6 +1023,23 @@ fn rename_construct_items(items: &mut [ConstructItem], renames: &HashMap<String,
             ConstructItem::For { source, body, .. } => {
                 rename_expr(source, renames);
                 rename_construct_items(body, renames);
+            }
+
+            ConstructItem::Fold { accumulators, source, body, .. } => {
+                for accumulator in accumulators {
+                    rename_expr(&mut accumulator.value, renames);
+                }
+                rename_expr(source, renames);
+                rename_construct_items(body, renames);
+            }
+
+            ConstructItem::Next { value, updates, .. } => {
+                if let Some(value) = value {
+                    rename_expr(value, renames);
+                }
+                for update in updates {
+                    rename_expr(&mut update.value, renames);
+                }
             }
 
             ConstructItem::If { condition, body, else_body, .. } => {

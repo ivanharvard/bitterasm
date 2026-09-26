@@ -129,6 +129,12 @@ pub fn print_statement(statement: &Statement, indent: usize) -> String {
             pattern = print_pattern_segments(&override_statement.pattern.segments),
         ),
 
+        Statement::Meta(meta) if meta.name == "for" || meta.name == "fold" => {
+            format!("{pad}{}", print_loop_meta(meta, indent))
+        }
+
+        Statement::Meta(meta) if meta.name == "next" => format!("{pad}{}", print_next(meta.args.first(), &meta.bindings)),
+
         Statement::Meta(meta) => {
             let args = meta.args.iter().map(print_expr).collect::<Vec<_>>().join(", ");
 
@@ -209,6 +215,15 @@ fn print_struct_body_item(item: &StructBodyItem, indent: usize) -> String {
             source = print_expr(source),
             body = print_struct_body_items(body, indent + 1),
         ),
+
+        StructBodyItem::Fold { accumulators, var, source, body, .. } => format!(
+            "{pad}{prefix}@for {var} in {source} {{\n{body}\n{pad}}}",
+            prefix = print_fold_prefix(accumulators),
+            source = print_expr(source),
+            body = print_struct_body_items(body, indent + 1),
+        ),
+
+        StructBodyItem::Next { value, updates, .. } => format!("{pad}{}", print_next(value.as_ref(), updates)),
 
         StructBodyItem::If { condition, body, else_body, .. } => {
             let then_block = format!(
@@ -453,6 +468,49 @@ pub fn print_fn_bound(bound: &FnBound) -> String {
     }
 }
 
+// `@for var in source { ... }` or `@fold acc = init, ... @for var in source
+// { ... }`, without leading indentation (the caller adds it) — `indent` is
+// the level the header sits at, which the body is printed one deeper than.
+fn print_loop_meta(meta: &crate::ast::MetaStatement, indent: usize) -> String {
+    let pad = INDENT.repeat(indent);
+    let (var, source) = match meta.args.as_slice() {
+        [var, source] => (print_expr(var), print_expr(source)),
+        other => (other.iter().map(print_expr).collect::<Vec<_>>().join(", "), String::new()),
+    };
+    let body = meta.body.as_deref().map(|body| print_statements(body, indent + 1)).unwrap_or_default();
+
+    format!(
+        "{}@for {var} in {source} {{\n{body}\n{pad}}}",
+        print_fold_prefix(&meta.bindings),
+    )
+}
+
+// `@fold acc = init, ... ` (with its trailing space), or nothing for a
+// plain `@for`.
+fn print_fold_prefix(accumulators: &[crate::ast::FoldBinding]) -> String {
+    if accumulators.is_empty() {
+        String::new()
+    } else {
+        format!("@fold {} ", print_fold_bindings(accumulators))
+    }
+}
+
+fn print_fold_bindings(bindings: &[crate::ast::FoldBinding]) -> String {
+    bindings
+        .iter()
+        .map(|binding| format!("{} = {}", binding.name, print_expr(&binding.value)))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn print_next(value: Option<&Expr>, updates: &[crate::ast::FoldBinding]) -> String {
+    match (value, updates.is_empty()) {
+        (Some(value), _) => format!("@next {}", print_expr(value)),
+        (None, false) => format!("@next {}", print_fold_bindings(updates)),
+        (None, true) => "@next".to_string(),
+    }
+}
+
 pub fn print_expr(expr: &Expr) -> String {
     match expr {
         Expr::Identifier { name, .. } => name.clone(),
@@ -501,6 +559,8 @@ pub fn print_expr(expr: &Expr) -> String {
         }
 
         Expr::In { value, source, .. } => format!("{} in {}", print_expr(value), print_expr(source)),
+
+        Expr::Fold { fold, .. } => print_loop_meta(fold, 0),
     }
 }
 
@@ -533,6 +593,15 @@ fn print_construct_item(item: &ConstructItem) -> String {
             print_expr(source),
             body.iter().map(print_construct_item).collect::<Vec<_>>().join(", "),
         ),
+
+        ConstructItem::Fold { accumulators, var, source, body, .. } => format!(
+            "{}@for {var} in {} {{ {} }}",
+            print_fold_prefix(accumulators),
+            print_expr(source),
+            body.iter().map(print_construct_item).collect::<Vec<_>>().join(", "),
+        ),
+
+        ConstructItem::Next { value, updates, .. } => print_next(value.as_ref(), updates),
 
         ConstructItem::If { condition, body, else_body, .. } => {
             let then_block = format!(
