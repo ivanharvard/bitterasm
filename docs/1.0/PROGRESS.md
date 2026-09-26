@@ -22,7 +22,7 @@ v1 module-path identity is what in-language executable headers build on.
 - [x] Phase B2 — Macro bodies
 - [x] Phase B3 — Construct literals and struct bodies
 - [x] Phase B4 — Top level
-- [ ] Phase B5 — Reference docs + `@next` lint
+- [x] Phase B5 — Reference docs + `@next` lint
 
 **Part C — long strings**
 - [ ] Phase C1 — Rewrite `std/string.basm`'s walkers with `@fold`
@@ -443,6 +443,14 @@ clear error for a non-range source or a non-int accumulator.
 #### Phase B5 — Reference docs + `@next` lint
 **Deliverable:** a `@fold` section in `docs/reference.md`; a lint warning
 when a fold body contains no `@next` at all.
+**As built (DONE):** `docs/reference.md` gained "Spliced names" and
+"`@fold`: loops that carry values" (including "Where emits can go"); its
+`@fold` example was compiled to check the stated output. The lint is
+`fold_without_next` (`src/diagnostics/lint.rs`, `FoldLint`), in the `all`
+group, warning by default. It checks folds in macro bodies (honoring the
+macro's lint facets), top-level statements, struct bodies and construction
+literals. A `@next` inside a nested `@fold` belongs to that fold and doesn't
+count for the outer one.
 
 ### Part C — long strings
 

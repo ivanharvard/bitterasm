@@ -17,6 +17,7 @@ impl LintName {
     pub const UNREACHABLE_CODE: Self = Self("unreachable_code");
     pub const GENERATED_DECLARATIONS: Self = Self("generated_declarations");
     pub const UNFULFILLED_EXPECTATION: Self = Self("unfulfilled_lint_expectation");
+    pub const FOLD_WITHOUT_NEXT: Self = Self("fold_without_next");
 
     pub const fn as_str(self) -> &'static str { self.0 }
 
@@ -27,6 +28,7 @@ impl LintName {
             "unreachable_code" => Some(Self::UNREACHABLE_CODE),
             "generated_declarations" => Some(Self::GENERATED_DECLARATIONS),
             "unfulfilled_lint_expectation" => Some(Self::UNFULFILLED_EXPECTATION),
+            "fold_without_next" => Some(Self::FOLD_WITHOUT_NEXT),
             _ => None,
         }
     }
@@ -40,6 +42,7 @@ impl LintName {
                 Self::UNREACHABLE_CODE,
                 Self::GENERATED_DECLARATIONS,
                 Self::UNFULFILLED_EXPECTATION,
+                Self::FOLD_WITHOUT_NEXT,
             ]),
             _ => None,
         }
@@ -154,6 +157,13 @@ pub fn lint_program(program: &Program, source: SourceId, config: &LintConfig) ->
             lint_macro(declaration, source, config, &mut diagnostics);
         }
     }
+    let mut folds = FoldLint {
+        source,
+        level: config.level(LintName::FOLD_WITHOUT_NEXT),
+        occurred: HashSet::new(),
+        diagnostics: &mut diagnostics,
+    };
+    folds.statements(&program.statements);
     diagnostics
 }
 
@@ -307,6 +317,15 @@ fn lint_macro(
         diagnostics,
     );
 
+    let mut folds = FoldLint {
+        source,
+        level: effective_level(LintName::FOLD_WITHOUT_NEXT, global, &directives),
+        occurred: HashSet::new(),
+        diagnostics,
+    };
+    folds.statements(&declaration.body);
+    occurred.extend(folds.occurred);
+
     for (lint, level, span) in directives {
         if level == LintLevel::Expect && !occurred.contains(&lint) {
             emit_lint(
@@ -379,6 +398,161 @@ fn facet_directives(facets: &[Facet]) -> Vec<(LintName, LintLevel, Span)> {
         }
     }
     directives
+}
+
+// `fold_without_next`: a `@fold` whose body never uses `@next` never
+// changes its accumulators, so it's a `@for` in disguise — most likely a
+// forgotten `@next`, since a missing one silently means "unchanged".
+struct FoldLint<'a> {
+    source: SourceId,
+    level: LintLevel,
+    occurred: HashSet<LintName>,
+    diagnostics: &'a mut Vec<Diagnostic>,
+}
+
+impl FoldLint<'_> {
+    fn report(&mut self, span: Span) {
+        self.occurred.insert(LintName::FOLD_WITHOUT_NEXT);
+        emit_lint(
+            Diagnostic::warning(LintName::FOLD_WITHOUT_NEXT, "this `@fold` never uses `@next`")
+                .primary(self.source, span, "its accumulators never change")
+                .help("add a `@next` with the next values, or use a plain `@for`"),
+            self.level,
+            self.diagnostics,
+        );
+    }
+
+    // Every fold in `statements`, not descending into nested macro
+    // declarations (each is linted on its own, under its own facets).
+    fn statements(&mut self, statements: &[Statement]) {
+        for statement in statements {
+            match statement {
+                Statement::Meta(meta) => {
+                    if meta.name == "fold" {
+                        self.check_statement_fold(meta);
+                    }
+                    meta.args.iter().for_each(|expr| self.expr(expr));
+                    meta.bindings.iter().for_each(|binding| self.expr(&binding.value));
+                    if let Some(body) = &meta.body { self.statements(body); }
+                    if let Some(body) = &meta.else_body { self.statements(body); }
+                    for arm in &meta.match_arms { self.statements(&arm.body); }
+                }
+                Statement::Const(declaration) => self.expr(&declaration.value),
+                Statement::Invocation(invocation) => invocation.operands.iter().for_each(|expr| self.expr(expr)),
+                Statement::Struct(declaration) => self.struct_items(&declaration.fields),
+                _ => {}
+            }
+        }
+    }
+
+    fn check_statement_fold(&mut self, fold: &crate::ast::MetaStatement) {
+        if !statements_contain_next(fold.body.as_deref().unwrap_or_default()) {
+            self.report(fold.span);
+        }
+    }
+
+    fn expr(&mut self, expr: &Expr) {
+        match expr {
+            Expr::Fold { fold, .. } => {
+                self.check_statement_fold(fold);
+                self.statements(fold.body.as_deref().unwrap_or_default());
+            }
+            Expr::Construct { fields, .. } => self.construct_items(fields),
+            Expr::Call { callee, arguments, .. } => {
+                self.expr(callee);
+                arguments.iter().for_each(|argument| self.expr(&argument.value));
+            }
+            Expr::Member { object, .. } => self.expr(object),
+            Expr::Unary { operand, .. } => self.expr(operand),
+            Expr::Binary { left, right, .. } => {
+                self.expr(left);
+                self.expr(right);
+            }
+            Expr::Splice { inner, .. } => self.expr(inner),
+            _ => {}
+        }
+    }
+
+    fn construct_items(&mut self, items: &[crate::ast::ConstructItem]) {
+        use crate::ast::ConstructItem;
+        for item in items {
+            match item {
+                ConstructItem::Field { value, .. } => self.expr(value),
+                ConstructItem::Fold { body, span, .. } => {
+                    if !construct_items_contain_next(body) {
+                        self.report(*span);
+                    }
+                    self.construct_items(body);
+                }
+                ConstructItem::For { body, .. } => self.construct_items(body),
+                ConstructItem::If { body, else_body, .. } => {
+                    self.construct_items(body);
+                    if let Some(else_body) = else_body { self.construct_items(else_body); }
+                }
+                ConstructItem::Next { .. } => {}
+            }
+        }
+    }
+
+    fn struct_items(&mut self, items: &[StructBodyItem]) {
+        for item in items {
+            match item {
+                StructBodyItem::Fold { body, span, .. } => {
+                    if !struct_items_contain_next(body) {
+                        self.report(*span);
+                    }
+                    self.struct_items(body);
+                }
+                StructBodyItem::For { body, .. } => self.struct_items(body),
+                StructBodyItem::If { body, else_body, .. } => {
+                    self.struct_items(body);
+                    if let Some(else_body) = else_body { self.struct_items(else_body); }
+                }
+                StructBodyItem::Field(_) | StructBodyItem::Next { .. } => {}
+            }
+        }
+    }
+}
+
+// Whether a fold body reaches a `@next` of its own — not counting one inside
+// a nested `@fold`, which belongs to that fold. One inside a plain `@for`
+// counts: it's an error of its own, and reporting it twice helps no one.
+fn statements_contain_next(statements: &[Statement]) -> bool {
+    statements.iter().any(|statement| match statement {
+        Statement::Meta(meta) => match meta.name.as_str() {
+            "next" => true,
+            "fold" => false,
+            _ => {
+                meta.body.as_deref().is_some_and(statements_contain_next)
+                    || meta.else_body.as_deref().is_some_and(statements_contain_next)
+                    || meta.match_arms.iter().any(|arm| statements_contain_next(&arm.body))
+            }
+        },
+        _ => false,
+    })
+}
+
+fn construct_items_contain_next(items: &[crate::ast::ConstructItem]) -> bool {
+    use crate::ast::ConstructItem;
+    items.iter().any(|item| match item {
+        ConstructItem::Next { .. } => true,
+        ConstructItem::For { body, .. } => construct_items_contain_next(body),
+        ConstructItem::If { body, else_body, .. } => {
+            construct_items_contain_next(body) || else_body.as_deref().is_some_and(construct_items_contain_next)
+        }
+        ConstructItem::Field { .. } | ConstructItem::Fold { .. } => false,
+    })
+}
+
+fn struct_items_contain_next(items: &[StructBodyItem]) -> bool {
+    items.iter().any(|item| match item {
+        StructBodyItem::Next { .. } => true,
+        StructBodyItem::For { body, .. } => struct_items_contain_next(body),
+        StructBodyItem::If { body, else_body, .. } => {
+            struct_items_contain_next(body) || else_body.as_deref().is_some_and(struct_items_contain_next)
+        }
+        StructBodyItem::Field(_) | StructBodyItem::Fold { .. } => false,
+    })
 }
 
 fn is_lint_facet(name: &str) -> bool {
@@ -613,6 +787,50 @@ mod tests {
         );
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].lint, Some(LintName::UNREACHABLE_CODE));
+    }
+
+    #[test]
+    fn fold_without_next_is_reported_everywhere_a_fold_can_be() {
+        let diagnostics = lint(
+            concat!(
+                "struct S {\n    @fold a = 0 @for i in 0..2 {\n        pub f`i`: int\n    }\n}\n",
+                "@fold a = 0 @for i in 0..2 {\n    show i\n}\n",
+                "macro f() -> int {\n",
+                "    const n = @fold a = 0 @for i in 0..2 {\n        @emit i\n    }\n",
+                "    @emit S { @fold a = 0 @for i in 0..2 { f`i`: a } }\n",
+                "    @return n\n",
+                "}\n",
+            ),
+            &LintConfig::default(),
+        );
+        let lints: Vec<_> = diagnostics.iter().map(|diagnostic| diagnostic.lint).collect();
+        assert_eq!(lints, vec![Some(LintName::FOLD_WITHOUT_NEXT); 4], "{diagnostics:?}");
+    }
+
+    #[test]
+    fn a_next_counts_for_its_own_fold_only() {
+        let diagnostics = lint(
+            concat!(
+                "macro f() {\n",
+                "    @fold outer = 0 @for i in 0..2 {\n",
+                "        @if i > 0 {\n            @next outer + 1\n        }\n",
+                "        @fold inner = 0 @for j in 0..2 {\n            @emit j\n        }\n",
+                "    }\n",
+                "}\n",
+            ),
+            &LintConfig::default(),
+        );
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert_eq!(diagnostics[0].lint, Some(LintName::FOLD_WITHOUT_NEXT));
+    }
+
+    #[test]
+    fn fold_without_next_honors_a_macro_facet() {
+        let diagnostics = lint(
+            "macro f() | allow fold_without_next {\n    @fold a = 0 @for i in 0..2 {\n        @emit i\n    }\n}\n",
+            &LintConfig::default(),
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }
 
     #[test]

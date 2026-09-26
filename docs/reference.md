@@ -1,7 +1,7 @@
 # CLI and language reference
 
-Details on macro-default semantics, struct-field visibility, the formatter,
-and diagnostics/lints — split out of the README so that stays a high-level
+Details on macro-default semantics, struct-field visibility, spliced names,
+`@fold`, the formatter, and diagnostics/lints — split out of the README so that stays a high-level
 overview.
 
 ## Struct fields: `pub` and `skip`
@@ -92,6 +92,94 @@ one of `SomeEnum`'s valid discriminants) — that's membership against a
 one `@for`/`in` share, so it's deliberately out of scope rather than
 overloading the same keyword with a second meaning.
 
+## Spliced names
+
+`` r`id` `` builds a name from literal text and evaluated pieces: `r`
+followed by `id`'s value, so `` r`3` `` is `r3`. It works in declarations
+(`` pub const r`i` = ... ``), in field names (`` __el`i`: ... ``), after a
+`.` (`` arr.__el`i` ``), and in expressions, where it reads whatever that
+name refers to:
+
+```text
+@for i in 0..4 {
+    pub const k`i` = i * i
+}
+
+macro show(n: int) {
+    @emit k`n`
+}
+```
+
+In an expression the backtick must touch the name: `` k`n` `` is a spliced
+name, while `` k `n` `` is `k` followed by a separate splice. A spliced read
+finds a module's own non-`pub` constants as well as `pub` ones.
+
+A `const` declared inside a `@for` body only exists for that iteration, so
+a spliced name can't carry a value from one iteration to the next. Use
+`@fold` for that.
+
+## `@fold`: loops that carry values
+
+`@fold` puts accumulators in front of an ordinary `@for`. Each iteration
+sees the accumulators' current values, and `@next` gives the values for the
+next iteration:
+
+```text
+from std.array import Array
+
+macro offsets<const N: int>(lengths: Array<int, N>) {
+    const table_size = @fold offset = 0 @for len in lengths {
+        @emit offset
+        @next offset + len
+    }
+    @emit table_size
+}
+```
+
+`offsets Array<int, 3> { __el0: 4, __el1: 2, __el2: 5 }` emits `0`, `4`,
+`6` (each entry's offset), then `11` (the table's size).
+
+- **`@next` ends the iteration**, like `continue`, carrying new values.
+  With one accumulator, write `@next value`. With several, name the ones
+  that change (`@next offset = offset + 1, count = count + 1`).
+- **Anything `@next` doesn't name keeps its value**, and an iteration that
+  reaches no `@next` at all keeps every value. So a filter needs no `@else`:
+  `@if len > 0 { @next offset + len }`. The `fold_without_next` lint
+  warns about a fold whose body has no `@next` anywhere.
+- **Nothing is mutated.** Each iteration binds fresh values, the same way
+  `@for` binds its loop variable.
+- **The value** is the final accumulator with one accumulator, or a struct
+  with one `pub` field per accumulator with several:
+  `const r = @fold a = 0, b = 0 @for ... { ... }`, then `r.a` and `r.b`.
+- **It's a statement or an expression.** As a statement its value is
+  unused, which is what you want when the body only `@emit`s.
+- **`@return` inside the body** returns from the enclosing macro.
+- **`@next` belongs to the innermost `@fold`** in the same macro body. It's
+  an error inside a plain `@for` nested in the fold, and in a macro called
+  from the fold's body.
+- **No depth limit.** A fold runs as many iterations as its source has
+  elements (up to `@for`'s limit of 1,000,000), unlike recursion, which is
+  limited to 32 nested calls or 4,096 tail calls.
+
+`@fold` works everywhere `@for` does:
+
+- **Construction literals**, producing fields:
+  `Array<int, 4> { @fold offset = 0 @for i in 0..4 { __el`i`: offset, @next offset + lengths.__el`i` } }`.
+- **Struct declarations**, where accumulators are integers (like a
+  struct-body `@for`'s variable), e.g. to compute field names.
+- **Top level**, where it unrolls before anything else is resolved, like
+  top-level `@for`: the source must be a literal range, and accumulators are
+  integer constants. `const x = @fold ...` binds the final value, so `x`
+  can bound a later top-level `@for`.
+
+### Where emits can go
+
+A `@fold`, or a macro call, whose body `@emit`s may be used as a statement,
+as a `const`'s whole value, or as `@return`'s whole value: its emitted
+values are kept, in order, where it appears. Inside a larger expression
+(`@emit 1 + side()`), emitting is an error, because the values would have
+nowhere to go.
+
 ## Macro defaults
 
 Trailing macro parameters may provide default value expressions:
@@ -160,9 +248,9 @@ diagnostic model and renderer as warnings. Source-backed failures include a
 path, line and column, excerpt, and primary label; JSON output exposes the
 same information for editor and build-tool integrations.
 
-Compiler warnings are structured lints. The initial lint set is
-`unused_import`, `unused_parameter`, `unreachable_code`, `generated_declarations`, and
-`unfulfilled_lint_expectation`; `unused` and `all` are lint groups.
+Compiler warnings are structured lints: `unused_import`, `unused_parameter`,
+`unreachable_code`, `generated_declarations`, `fold_without_next`, and
+`unfulfilled_lint_expectation`. `unused` and `all` are lint groups.
 
 Configure a declaration with facets:
 
