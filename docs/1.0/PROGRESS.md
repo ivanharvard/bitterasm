@@ -34,7 +34,7 @@ v1 module-path identity is what in-language executable headers build on.
 - [x] Phase D4 — Versioned header; `bitter` matches on `id`
 
 **Part E — executable containers in bitterasm**
-- [ ] Phase E1 — `Deferred` `add`
+- [x] Phase E1 — `Deferred` `add`
 - [ ] Phase E2 — Linker-provided image symbols
 - [ ] Phase E3 — `Align<N>` packer primitive
 - [ ] Phase E4 — `std/formats/elf.basm`
@@ -574,6 +574,11 @@ exactly the features used.
 #### Phase E1 — `Deferred` `add`
 **Deliverable:** `add` overloads in `std/bitter/deferred.basm` and `Op.Add`
 in the packer.
+**As built (DONE):** all four `(int|Deferred, int|Deferred)` overloads, like
+`sub`/`mul`. The ISA packages that splice in `std.bitter.deferred` define
+their own `add` instructions; overload resolution keeps them apart (their
+parameters are register types, not `int`), and every ISA encoding test
+still passes. Unit test `resolves_an_add_node` in `bitter/src/pack.rs`.
 
 #### Phase E2 — Linker-provided image symbols
 **Deliverable:** `std/bitter/link.basm` declaring `pub image_start:` and

@@ -1,4 +1,4 @@
-pub enum Op { Sub, Mul, Shr, Band, Span }
+pub enum Op { Add, Sub, Mul, Shr, Band, Span }
 
 pub struct BinOp {
     pub op: Op,
@@ -21,6 +21,46 @@ pub enum Deferred {
 
 pub macro here() -> Deferred {
     @return Deferred.Here
+}
+
+# ---------------------------------------------------------------
+# add
+# ---------------------------------------------------------------
+
+pub macro add(
+    a: int,
+    b: int
+) -> int {
+    @return a + b
+}
+
+pub macro add(
+    a: Deferred,
+    b: int
+) -> Deferred {
+    @return Deferred.Node(BinOp(
+            op = Op.Add,
+            left = a,
+            right = Deferred.Leaf(b)
+        ))
+}
+
+pub macro add(
+    a: int,
+    b: Deferred
+) -> Deferred {
+    @return Deferred.Node(BinOp(
+            op = Op.Add,
+            left = Deferred.Leaf(a),
+            right = b
+        ))
+}
+
+pub macro add(
+    a: Deferred,
+    b: Deferred
+) -> Deferred {
+    @return Deferred.Node(BinOp(op = Op.Add, left = a, right = b))
 }
 
 # ---------------------------------------------------------------

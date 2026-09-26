@@ -330,7 +330,7 @@ fn resolve_deferred(deferred: &EmittedValue, here_index: usize, byte_widths: &[u
             }
 
             // `Span` isn't ordinary arithmetic on two already-resolved
-            // integers the way `Sub`/`Mul`/`Shr`/`Band` are — it looks up
+            // integers the way `Add`/`Sub`/`Mul`/`Shr`/`Band` are — it looks up
             // structurally-known widths instead, so it's resolved on its
             // own rather than routed through `bitterasm::eval::eval`.
             if op_variant == "Span" {
@@ -340,6 +340,7 @@ fn resolve_deferred(deferred: &EmittedValue, here_index: usize, byte_widths: &[u
             }
 
             let op = match op_variant.as_str() {
+                "Add" => BinaryOp::Add,
                 "Sub" => BinaryOp::Subtract,
                 "Mul" => BinaryOp::Multiply,
                 "Shr" => BinaryOp::ShiftRight,
@@ -725,6 +726,17 @@ mod tests {
         // -24 >> 1 = -12; -12 & 0b1111 (two's-complement) = 0b0100, then
         // masked again to 4 bits by `pack_value` itself (a no-op here).
         assert_eq!(pack_value(&value, 9, &[]).unwrap().value, BigInt::from(0b0100));
+    }
+
+    #[test]
+    fn resolves_an_add_node() {
+        // `add(sub(target, here()), 0x400000)`: a load address plus an
+        // offset, as an executable header's entry point is computed.
+        let value = positioned(
+            "32",
+            deferred_node("Add", deferred_node("Sub", deferred_leaf("7"), deferred_here()), deferred_leaf("4194304")),
+        );
+        assert_eq!(pack_value(&value, 2, &[]).unwrap().value, BigInt::from(0x400000 + 5));
     }
 
     #[test]
