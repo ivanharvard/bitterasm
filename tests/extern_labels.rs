@@ -8,7 +8,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use bitterasm::emit::{EmittedEntry, EmittedValue};
+use bitterasm::emit::EmittedValue;
 
 fn bitterasm_compile(fixture: &str, out: &Path) -> std::process::Output {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
@@ -33,8 +33,9 @@ fn importing_a_pub_label_compiles_to_an_em_with_a_visibly_unresolved_deferred_en
     );
 
     let json = std::fs::read_to_string(&out).expect(".em file should exist");
-    let entries: Vec<EmittedEntry> =
-        serde_json::from_str(&json).expect(".em file should be valid EmittedEntry JSON");
+    let file = bitterasm::emit::EmFile::parse(&json, bitterasm::emit::features::ALL).expect("a valid .em file");
+    assert_eq!(file.requires, ["extern-labels"]);
+    let entries = file.entries;
 
     assert_eq!(entries.len(), 1);
     let EmittedValue::Deferred { module, symbol } = &entries[0].value else {
@@ -75,26 +76,18 @@ fn importing_a_name_that_doesnt_exist_at_all_fails_the_same_way_a_typod_macro_im
 }
 
 #[test]
-fn compile_labels_flag_writes_every_pub_labels_position_and_omits_private_ones() {
-    // Phase 6 (`docs/sections-and-linking/PROGRESS.md`): `bitter build`'s
-    // multi-file linking needs a way to ask, standalone, "where did this
-    // file's own `pub` labels resolve to" — `compile --labels` is that
-    // opt-in escape hatch. `.em`'s own shape is untouched either way (see
-    // `tests/sections.rs`'s byte-identity bar, still passing unchanged).
+fn em_exports_every_pub_labels_position_and_omits_private_ones() {
+    // `bitter build`'s multi-file linking needs to know, from each input's
+    // own `.em`, where its `pub` labels resolved to: the header's
+    // `exports` (Phase D3 of `docs/1.0/PROGRESS.md`).
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let bitterasm = env!("CARGO_BIN_EXE_bitterasm");
     let source = Path::new(manifest_dir).join("tests/fixtures/emit/extern_label_dep.basm");
-    let em_out = std::env::temp_dir().join("bitterasm-labels-flag.em");
-    let labels_out = std::env::temp_dir().join("bitterasm-labels-flag.labels.json");
+    let em_out = std::env::temp_dir().join(format!("bitterasm-exports-{}.em", std::process::id()));
 
     let output = Command::new(bitterasm)
         .current_dir(manifest_dir)
-        .args([
-            "compile",
-            &source.display().to_string(),
-            "-o", &em_out.display().to_string(),
-            "--labels", &labels_out.display().to_string(),
-        ])
+        .args(["compile", &source.display().to_string(), "-o", &em_out.display().to_string()])
         .output()
         .expect("bitterasm compile should run");
     assert!(
@@ -103,14 +96,14 @@ fn compile_labels_flag_writes_every_pub_labels_position_and_omits_private_ones()
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let json = std::fs::read_to_string(&labels_out).expect(".labels.json file should exist");
-    let labels: std::collections::HashMap<String, String> =
-        serde_json::from_str(&json).expect(".labels.json should be valid JSON");
+    let json = std::fs::read_to_string(&em_out).expect(".em file should exist");
+    let file = bitterasm::emit::EmFile::parse(&json, bitterasm::emit::features::ALL).expect("a valid .em file");
 
     // `extern_label_dep.basm` declares `pub target:` then `private_marker:`
     // with nothing emitted at all — both at position 0 (trailing: nothing
     // precedes either), but only the `pub` one should appear.
-    assert_eq!(labels.len(), 1);
-    assert_eq!(labels.get("target"), Some(&"0".to_string()));
-    assert!(!labels.contains_key("private_marker"));
+    assert_eq!(file.module, "tests.fixtures.emit.extern_label_dep");
+    assert_eq!(file.exports.len(), 1);
+    assert_eq!(file.exports.get("target"), Some(&0));
+    assert!(!file.exports.contains_key("private_marker"));
 }

@@ -27,7 +27,12 @@ fn compile_to_emitted(fixture: &str) -> Vec<EmittedValue> {
     assert!(status.success(), "bitterasm compile failed for {fixture}");
 
     let json = std::fs::read_to_string(&out).expect(".em file should exist");
-    serde_json::from_str(&json).expect(".em file should be valid EmittedValue JSON")
+    bitterasm::emit::EmFile::parse(&json, bitterasm::emit::features::ALL)
+        .expect("a valid .em file")
+        .entries
+        .into_iter()
+        .map(|entry| entry.value)
+        .collect()
 }
 
 fn int(value: &str) -> EmittedValue {

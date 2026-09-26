@@ -5,13 +5,122 @@
 //!
 //! The one thing that actually needs rewriting is `Value::Struct`'s
 //! [`SymbolId`] — it only means anything against the [`SymbolTable`] that
-//! produced it, so [`reify_value`] resolves it to the struct's own name
+//! produced it, so [`reify_value`] resolves it to the struct's `.em` id
 //! once, here, rather than asking every later reader to carry a
 //! `SymbolTable` around just to make sense of an id.
+//!
+//! A whole `.em` file is an [`EmFile`]: a versioned header around the
+//! entries. `docs/reference.md` ("The `.em` format") is its specification.
+
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
 use crate::resolver::{BuiltinType, ResolvedGenericArg, ResolvedType, SymbolId, SymbolTable, Value};
+
+/// The `.em` format version this crate writes and reads. Goes up only on an
+/// incompatible change to the file's structure.
+pub const EM_VERSION: u64 = 1;
+
+/// Language features a `.em` file can require its reader to understand —
+/// see [`EmFile::requires`].
+pub mod features {
+    /// Some entry carries a `section`: the reader must group entries by
+    /// section (in first-appearance order) before laying them out.
+    pub const SECTIONS: &str = "sections";
+    /// Some value is a `Deferred` reference to another file's `pub` label,
+    /// which only a linker can resolve.
+    pub const EXTERN_LABELS: &str = "extern-labels";
+
+    /// Every feature this version of the format defines.
+    pub const ALL: &[&str] = &[SECTIONS, EXTERN_LABELS];
+}
+
+/// A whole `.em` file.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EmFile {
+    /// Always [`EM_VERSION`] when written by this crate.
+    pub version: u64,
+
+    /// The language features this program actually uses (see
+    /// [`features`]). A reader must refuse a file that requires a feature
+    /// it doesn't know — ignoring one would produce wrong output silently.
+    pub requires: Vec<String>,
+
+    /// The compiled file's own module path, which other files'
+    /// `Deferred { module, .. }` references name it by.
+    pub module: String,
+
+    /// Every top-level `pub` label's position: how many entries precede
+    /// it, counted in `entries`.
+    pub exports: BTreeMap<String, u64>,
+
+    pub entries: Vec<EmittedEntry>,
+}
+
+impl EmFile {
+    /// A file for `entries`, requiring exactly the features they use.
+    pub fn new(module: String, exports: BTreeMap<String, u64>, entries: Vec<EmittedEntry>) -> Self {
+        let mut requires = Vec::new();
+        if entries.iter().any(|entry| entry.section.is_some()) {
+            requires.push(features::SECTIONS.to_string());
+        }
+        if entries.iter().any(|entry| contains_deferred(&entry.value)) {
+            requires.push(features::EXTERN_LABELS.to_string());
+        }
+
+        Self { version: EM_VERSION, requires, module, exports, entries }
+    }
+
+    /// Reads a `.em` file, refusing one this reader can't handle correctly:
+    /// the pre-v1 plain-list format, another `version`, or a required
+    /// feature not in `supported`.
+    pub fn parse(json: &str, supported: &[&str]) -> Result<Self, String> {
+        let raw: serde_json::Value = serde_json::from_str(json).map_err(|error| error.to_string())?;
+
+        let object = match &raw {
+            serde_json::Value::Object(object) => object,
+            serde_json::Value::Array(_) => {
+                return Err(format!(
+                    "this is an unversioned `.em` file from before `.em` version {EM_VERSION}; \
+                     recompile its source with this `bitterasm`"
+                ));
+            }
+            _ => return Err("a `.em` file must be a JSON object".to_string()),
+        };
+
+        match object.get("version").and_then(serde_json::Value::as_u64) {
+            Some(EM_VERSION) => {}
+            Some(other) => {
+                return Err(format!(
+                    "`.em` version {other} isn't supported; this reader understands version {EM_VERSION}"
+                ));
+            }
+            None => return Err("this `.em` file has no `version`".to_string()),
+        }
+
+        let file: EmFile = serde_json::from_value(raw).map_err(|error| error.to_string())?;
+
+        for feature in &file.requires {
+            if !supported.contains(&feature.as_str()) {
+                return Err(format!(
+                    "this `.em` file requires `{feature}`, which this reader doesn't support"
+                ));
+            }
+        }
+
+        Ok(file)
+    }
+}
+
+fn contains_deferred(value: &EmittedValue) -> bool {
+    match value {
+        EmittedValue::Deferred { .. } => true,
+        EmittedValue::Int { .. } => false,
+        EmittedValue::Struct { fields, .. } => fields.iter().any(|(_, field)| contains_deferred(field)),
+        EmittedValue::Enum { payload, .. } => payload.as_deref().is_some_and(contains_deferred),
+    }
+}
 
 /// One `.em` entry: a reified value plus which section was active when it
 /// was `@emit`'d. `section` is flattened into the same JSON object as
@@ -240,6 +349,53 @@ mod tests {
                 _ => None,
             })
             .unwrap_or_else(|| panic!("expected a macro named `{name}`"))
+    }
+
+    fn int_entry(section: Option<&str>) -> EmittedEntry {
+        EmittedEntry { value: EmittedValue::Int { value: "1".to_string() }, section: section.map(str::to_string) }
+    }
+
+    #[test]
+    fn requires_lists_exactly_the_features_used() {
+        let plain = EmFile::new("m".to_string(), Default::default(), vec![int_entry(None)]);
+        assert!(plain.requires.is_empty());
+
+        let sectioned = EmFile::new("m".to_string(), Default::default(), vec![int_entry(Some(".text"))]);
+        assert_eq!(sectioned.requires, [features::SECTIONS]);
+
+        // A `Deferred` nested inside a struct still counts.
+        let nested = EmittedValue::Struct {
+            id: "m.S".to_string(),
+            args: Vec::new(),
+            fields: vec![(
+                "target".to_string(),
+                EmittedValue::Deferred { module: "other".to_string(), symbol: "label".to_string() },
+            )],
+        };
+        let linked = EmFile::new("m".to_string(), Default::default(), vec![EmittedEntry { value: nested, section: None }]);
+        assert_eq!(linked.requires, [features::EXTERN_LABELS]);
+    }
+
+    #[test]
+    fn parse_round_trips_what_new_writes() {
+        let file = EmFile::new("m".to_string(), [("start".to_string(), 0)].into(), vec![int_entry(Some(".text"))]);
+        let json = serde_json::to_string(&file).unwrap();
+        assert_eq!(EmFile::parse(&json, features::ALL).unwrap(), file);
+    }
+
+    #[test]
+    fn parse_rejects_what_it_cant_read_correctly() {
+        let error = |json: &str, supported: &[&str]| EmFile::parse(json, supported).unwrap_err();
+
+        assert!(error("[]", features::ALL).contains("unversioned `.em` file"));
+        assert!(error(r#"{"requires": [], "module": "m", "exports": {}, "entries": []}"#, features::ALL)
+            .contains("no `version`"));
+        assert!(error(r#"{"version": 2, "requires": [], "module": "m", "exports": {}, "entries": []}"#, features::ALL)
+            .contains("version 2 isn't supported"));
+        assert!(error(r#"{"version": 1, "requires": ["sections"], "module": "m", "exports": {}, "entries": []}"#, &[])
+            .contains("requires `sections`"));
+        assert!(error(r#"{"version": 1, "requires": ["teleport"], "module": "m", "exports": {}, "entries": []}"#, features::ALL)
+            .contains("requires `teleport`"));
     }
 
     #[test]

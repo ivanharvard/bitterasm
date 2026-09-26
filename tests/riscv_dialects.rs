@@ -32,8 +32,13 @@ fn c_like_and_native_dialects_compile_to_identical_output() {
         assert!(status.success(), "bitterasm compile failed for {}", source.display());
     }
 
-    let native_bytes = std::fs::read(&native_out).expect("native .em should exist");
-    let c_like_bytes = std::fs::read(&c_like_out).expect("c_like .em should exist");
+    // Entries, not whole files: the header names each file's own module.
+    let native_bytes = bitterasm::emit::EmFile::parse(&std::fs::read_to_string(&native_out).expect(".em should exist"), bitterasm::emit::features::ALL)
+        .expect("a valid .em file")
+        .entries;
+    let c_like_bytes = bitterasm::emit::EmFile::parse(&std::fs::read_to_string(&c_like_out).expect(".em should exist"), bitterasm::emit::features::ALL)
+        .expect("a valid .em file")
+        .entries;
 
     assert_eq!(
         native_bytes, c_like_bytes,

@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use bitterasm::emit::EmittedValue;
 use clap::{Parser, Subcommand};
 
 mod formats;
@@ -176,11 +175,22 @@ fn encode(path: &PathBuf, output: Option<PathBuf>) {
         }
     };
 
-    let values: Vec<EmittedValue> = match serde_json::from_str(&json) {
-        Ok(values) => values,
+    let file = read_em(path, &json);
+
+    // Laid out exactly as `bitter build` lays out one input: grouped by
+    // section, with label positions translated to match. A cross-file
+    // reference has no input to resolve against here and is an error.
+    let input = link::LinkInput {
+        file: path.clone(),
+        module: file.module,
+        entries: file.entries,
+        labels: exports_as_positions(file.exports),
+    };
+    let values = match link::link(vec![input]) {
+        Ok(linked) => linked.values,
 
         Err(error) => {
-            eprintln!("failed to parse {}: {error}", path.display());
+            eprintln!("failed to encode {}: {error}", path.display());
             std::process::exit(1);
         }
     };
@@ -229,25 +239,33 @@ fn exec(path: &PathBuf, output: Option<PathBuf>, format: Option<String>, entry: 
     );
 }
 
-/// Runs `bitterasm compile <path> -o <em_path> --labels <labels_path>` as a
-/// subprocess (the same sibling-binary lookup `delegate_to_bitterasm`
-/// uses), the way a real `cc`-style driver shells out to a separate
-/// compiler pass rather than re-implementing it — `bitter` already depends
-/// on `bitterasm` as a library for `EmittedValue`'s own type, but
-/// resolving/expanding a program is `bitterasm compile`'s job, not this
-/// crate's. `--labels` is the opt-in manifest (Phase 6, `docs/sections-
-/// and-linking/PROGRESS.md`) `link::link` needs to resolve a `Deferred`
-/// cross-unit reference (Phase 5) against `path`'s own `pub` labels.
-fn run_bitterasm_compile(path: &std::path::Path, em_path: &std::path::Path, labels_path: &std::path::Path) {
+/// The `.em` features `bitter` understands — every one the format defines.
+const SUPPORTED_FEATURES: &[&str] = bitterasm::emit::features::ALL;
+
+/// Parses a `.em` file, exiting with the reason if `bitter` can't read it.
+fn read_em(path: &std::path::Path, json: &str) -> bitterasm::emit::EmFile {
+    bitterasm::emit::EmFile::parse(json, SUPPORTED_FEATURES).unwrap_or_else(|error| {
+        eprintln!("can't read {}: {error}", path.display());
+        std::process::exit(1);
+    })
+}
+
+fn exports_as_positions(exports: std::collections::BTreeMap<String, u64>) -> std::collections::HashMap<String, usize> {
+    exports
+        .into_iter()
+        .map(|(name, position)| (name, usize::try_from(position).expect("a label position fits in usize")))
+        .collect()
+}
+
+/// Runs `bitterasm compile <path> -o <em_path>` as a subprocess (the same
+/// sibling-binary lookup `delegate_to_bitterasm` uses), the way a real
+/// `cc`-style driver shells out to a separate compiler pass rather than
+/// re-implementing it.
+fn run_bitterasm_compile(path: &std::path::Path, em_path: &std::path::Path) {
     let bitterasm = bitterasm_path();
 
     let status = std::process::Command::new(&bitterasm)
-        .args([
-            "compile",
-            &path.display().to_string(),
-            "-o", &em_path.display().to_string(),
-            "--labels", &labels_path.display().to_string(),
-        ])
+        .args(["compile", &path.display().to_string(), "-o", &em_path.display().to_string()])
         .status();
 
     match status {
@@ -261,17 +279,13 @@ fn run_bitterasm_compile(path: &std::path::Path, em_path: &std::path::Path, labe
     }
 }
 
-/// Compiles one `bitter build` input, then reads back both files
-/// `run_bitterasm_compile` produced into a `link::LinkInput` — `file` is
-/// `path`, canonicalized the same way `bitterasm`'s own loader
-/// canonicalizes a `from file import label_name` target
-/// (`ast::ExternLabel::file`), so a `Deferred` value's own `file` field
-/// can be matched against it exactly.
+/// Compiles one `bitter build` input and reads its `.em` back as a
+/// `link::LinkInput`: its entries, its module path (what other inputs'
+/// `Deferred` references name it by) and its exported `pub` labels.
 fn compile_input(path: &std::path::Path, unique: &str) -> link::LinkInput {
     let em_path = std::env::temp_dir().join(format!("bitter-build-{unique}.em"));
-    let labels_path = std::env::temp_dir().join(format!("bitter-build-{unique}.labels.json"));
 
-    run_bitterasm_compile(path, &em_path, &labels_path);
+    run_bitterasm_compile(path, &em_path);
 
     let em_json = std::fs::read_to_string(&em_path).unwrap_or_else(|error| {
         eprintln!("failed to read {}: {error}", em_path.display());
@@ -279,42 +293,14 @@ fn compile_input(path: &std::path::Path, unique: &str) -> link::LinkInput {
     });
     let _ = std::fs::remove_file(&em_path);
 
-    let entries: Vec<bitterasm::emit::EmittedEntry> = serde_json::from_str(&em_json).unwrap_or_else(|error| {
-        eprintln!("failed to parse {}: {error}", em_path.display());
-        std::process::exit(1);
-    });
+    let file = read_em(&em_path, &em_json);
 
-    let labels_json = std::fs::read_to_string(&labels_path).unwrap_or_else(|error| {
-        eprintln!("failed to read {}: {error}", labels_path.display());
-        std::process::exit(1);
-    });
-    let _ = std::fs::remove_file(&labels_path);
-
-    let raw_labels: std::collections::HashMap<String, String> =
-        serde_json::from_str(&labels_json).unwrap_or_else(|error| {
-            eprintln!("failed to parse {}: {error}", labels_path.display());
-            std::process::exit(1);
-        });
-
-    let labels: std::collections::HashMap<String, usize> = raw_labels
-        .into_iter()
-        .map(|(name, position)| {
-            let position: usize = position.parse().unwrap_or_else(|error| {
-                eprintln!("{}: `{name}`'s position `{position}` isn't a valid index: {error}", labels_path.display());
-                std::process::exit(1);
-            });
-            (name, position)
-        })
-        .collect();
-
-    let file = std::fs::canonicalize(path).unwrap_or_else(|error| {
-        eprintln!("failed to resolve {}: {error}", path.display());
-        std::process::exit(1);
-    });
-
-    let module = bitterasm::loader::module_path_of(&file);
-
-    link::LinkInput { file, module, entries, labels }
+    link::LinkInput {
+        file: path.to_path_buf(),
+        module: file.module,
+        entries: file.entries,
+        labels: exports_as_positions(file.exports),
+    }
 }
 
 fn build(paths: &[PathBuf], output: Option<PathBuf>, format: Option<String>, entry: Option<String>) {

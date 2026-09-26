@@ -41,17 +41,6 @@ enum Command {
         #[arg(short, long)]
         output: Option<PathBuf>,
 
-        /// Also write every top-level `pub` label's resolved position, as
-        /// `{"name": "decimal position", ...}`, to this path. An advanced,
-        /// opt-in escape hatch for `bitter build`'s multi-file linking
-        /// (Phase 6, `docs/sections-and-linking/PROGRESS.md`) to resolve a
-        /// `Deferred { file, symbol }` cross-unit reference (Phase 5)
-        /// against this file's own compiled output — ordinary `bitterasm
-        /// compile` use never needs this, and `.em`'s own shape is
-        /// unaffected either way.
-        #[arg(long)]
-        labels: Option<PathBuf>,
-
         /// Print an animated, per-invocation status line to stderr as each
         /// top-level invocation is expanded, with its elapsed time and
         /// memory usage once it finishes.
@@ -123,8 +112,8 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Compile { path, output, labels, verbose, diagnostics } => {
-            compile(&path, output, labels, verbose, diagnostics)
+        Command::Compile { path, output, verbose, diagnostics } => {
+            compile(&path, output, verbose, diagnostics)
         }
 
         Command::Check { path, diagnostics } => check(&path, diagnostics),
@@ -256,6 +245,8 @@ struct Expansion {
     // Each loaded module's module path, indexed by the module ids `symbols`
     // records — what `.em` type ids are built from (`emit::TypeIds`).
     module_paths: Vec<String>,
+    // Which of those is the compiled file itself.
+    entry_module: usize,
     emitted: Vec<Value>,
     // Index-aligned with `emitted` — which section (`None` for the
     // implicit default) was active when each value was `@emit`'d. See
@@ -264,9 +255,9 @@ struct Expansion {
     generated: Vec<Statement>,
 
     // Every top-level `pub` label's resolved position, keyed by name — see
-    // `pub_label_positions`'s own doc. Only ever consumed by `compile`'s
-    // `--labels` flag (Phase 6, `docs/sections-and-linking/PROGRESS.md`);
-    // every other caller of `resolve_and_expand`/`analyze` ignores it.
+    // `pub_label_positions`'s own doc. Written as the `.em` file's
+    // `exports`; every other caller of `resolve_and_expand`/`analyze`
+    // ignores it.
     pub_label_positions: HashMap<String, eval::Int>,
 }
 
@@ -417,6 +408,7 @@ fn resolve_and_expand(path: &Path, verbose: Option<&VerboseReporter>) -> Result<
         return Ok(Expansion {
             symbols,
             module_paths: origins.module_paths().to_vec(),
+            entry_module,
             emitted,
             sections,
             generated,
@@ -484,6 +476,7 @@ fn resolve_and_expand(path: &Path, verbose: Option<&VerboseReporter>) -> Result<
     Ok(Expansion {
         symbols,
         module_paths: origins.module_paths().to_vec(),
+        entry_module,
         emitted,
         sections,
         generated,
@@ -725,7 +718,6 @@ fn check(path: &Path, options: DiagnosticCliOptions) {
 fn compile(
     path: &Path,
     output: Option<PathBuf>,
-    labels: Option<PathBuf>,
     verbose: bool,
     options: DiagnosticCliOptions,
 ) {
@@ -743,7 +735,18 @@ fn compile(
         })
         .collect();
 
-    let json = match serde_json::to_string_pretty(&emitted) {
+    let exports = expansion
+        .pub_label_positions
+        .iter()
+        .map(|(name, position)| {
+            let position = u64::try_from(position).expect("a label position is a non-negative entry count");
+            (name.clone(), position)
+        })
+        .collect();
+    let entry_count = emitted.len();
+    let file = emit::EmFile::new(expansion.module_paths[expansion.entry_module].clone(), exports, emitted);
+
+    let json = match serde_json::to_string_pretty(&file) {
         Ok(json) => json,
 
         Err(error) => {
@@ -759,31 +762,9 @@ fn compile(
         std::process::exit(1);
     }
 
-    if let Some(labels_path) = labels {
-        let positions: std::collections::BTreeMap<&str, String> = expansion
-            .pub_label_positions
-            .iter()
-            .map(|(name, position)| (name.as_str(), position.to_string()))
-            .collect();
-
-        let json = match serde_json::to_string_pretty(&positions) {
-            Ok(json) => json,
-
-            Err(error) => {
-                eprintln!("serialization error: {error}");
-                std::process::exit(1);
-            }
-        };
-
-        if let Err(error) = std::fs::write(&labels_path, json) {
-            eprintln!("failed to write {}: {error}", labels_path.display());
-            std::process::exit(1);
-        }
-    }
-
     println!(
         "compiled {} emitted value(s) to {}",
-        emitted.len(),
+        entry_count,
         output_path.display()
     );
 }

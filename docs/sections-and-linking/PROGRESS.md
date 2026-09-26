@@ -31,7 +31,14 @@ doesn't re-derive and re-reject them a second time.
 - [x] Phase 5 — Cross-unit label references (`from file import label`)
 - [x] Phase 6 — `bitter build`/`bitter exec` multi-file merge + link + wrap
 
-All six phases are done — this feature is complete. See Phase 6's own
+All six phases are done — this feature is complete.
+
+**Superseded in part (2026-09-26):** the `.em` shape described below (a
+plain list of entries, `Deferred { file, symbol }` with an absolute path)
+and the `bitterasm compile --labels` side file were replaced by the
+versioned `.em` format in Part D of `docs/1.0/PROGRESS.md`, specified in
+`docs/reference.md` ("The `.em` format"). Part E of that plan also moves
+executable containers out of `bitter`. See Phase 6's own
 section below for the final settled design, including a few things
 implementation revealed that the original plan (written before any of
 this was built) didn't anticipate.

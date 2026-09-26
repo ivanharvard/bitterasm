@@ -30,7 +30,7 @@ fn compile_to_raw_json(fixture: &str) -> String {
 
 fn compile_to_entries(fixture: &str) -> Vec<EmittedEntry> {
     let json = compile_to_raw_json(fixture);
-    serde_json::from_str(&json).expect(".em file should be valid EmittedEntry JSON")
+    bitterasm::emit::EmFile::parse(&json, bitterasm::emit::features::ALL).expect("a valid .em file").entries
 }
 
 fn int(value: &str, section: Option<&str>) -> EmittedEntry {
@@ -50,7 +50,7 @@ fn no_section_statement_produces_em_with_no_section_key_at_all() {
     // a typo there would still deserialize fine while silently changing
     // the actual bytes on disk.
     let json = compile_to_raw_json("tests/fixtures/emit/sections_none.basm");
-    assert!(!json.contains("section"), "no `section` key should appear anywhere: {json}");
+    assert!(!json.contains("\"section\""), "no `section` key should appear anywhere: {json}");
 
     let entries = compile_to_entries("tests/fixtures/emit/sections_none.basm");
     assert_eq!(entries, vec![int("1", None), int("1", None)]);

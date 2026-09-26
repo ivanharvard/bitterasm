@@ -30,8 +30,8 @@ v1 module-path identity is what in-language executable headers build on.
 **Part D — `.em` v1**
 - [x] Phase D1 — Module identity (`id` = module path + name)
 - [x] Phase D2 — `Deferred { module, symbol }`
-- [ ] Phase D3 — `exports` replaces `--labels`
-- [ ] Phase D4 — Versioned header; `bitter` matches on `id`
+- [x] Phase D3 — `exports` replaces `--labels`
+- [x] Phase D4 — Versioned header; `bitter` matches on `id`
 
 **Part E — executable containers in bitterasm**
 - [ ] Phase E1 — `Deferred` `add`
@@ -546,6 +546,28 @@ removed; `bitter build` reads `exports`.
 unknown `version`/`requires`. (Recognizing types by `id` was done in D1.)
 **Verification:** each rejection has a clear message; `requires` lists
 exactly the features used.
+**As built (D3 + D4, DONE together, since `exports` lives in the header):**
+- `emit::EmFile { version, requires, module, exports, entries }`.
+  `EmFile::new` computes `requires` from the entries (`sections` when any
+  entry has a section, `extern-labels` when any value anywhere contains a
+  `Deferred`). `EmFile::parse(json, supported)` is the shared reader: it
+  rejects a plain list ("unversioned `.em` file ... recompile"), a missing
+  or different `version`, and any required feature not in `supported`.
+  Unknown top-level fields are ignored, so version 1 can grow fields that
+  are safe to ignore.
+- `bitterasm compile --labels` is gone; `bitter build` reads `module` and
+  `exports` from each input's `.em`, so it no longer computes module paths
+  itself.
+- **`bitter encode` now lays a file out through the linker as a one-input
+  link**, so it groups sections exactly as `bitter build` does. Before, it
+  ignored sections and wrote values in emit order, which is the silent
+  wrong output `requires` exists to prevent.
+- The spec is `docs/reference.md`, "The `.em` format".
+- Tests: parser and `requires` unit tests in `src/emit.rs`;
+  `bitter/tests/em_format.rs` (id matching, `encode` grouping sections,
+  rejecting a pre-v1 file); `tests/extern_labels.rs` checks `exports` and
+  `requires`. The two dialect tests now compare entries rather than whole
+  files, since each file's header names its own module.
 
 ### Part E — executable containers in bitterasm
 

@@ -44,9 +44,16 @@ fn x86_64_dialects_and_default_syntax_compile_to_identical_output() {
         );
     }
 
-    let intel_bytes = std::fs::read(&intel_out).expect("intel .em should exist");
-    let att_bytes = std::fs::read(&att_out).expect("att .em should exist");
-    let default_bytes = std::fs::read(&default_out).expect("default .em should exist");
+    // Entries, not whole files: the header names each file's own module.
+    let intel_bytes = bitterasm::emit::EmFile::parse(&std::fs::read_to_string(&intel_out).expect(".em should exist"), bitterasm::emit::features::ALL)
+        .expect("a valid .em file")
+        .entries;
+    let att_bytes = bitterasm::emit::EmFile::parse(&std::fs::read_to_string(&att_out).expect(".em should exist"), bitterasm::emit::features::ALL)
+        .expect("a valid .em file")
+        .entries;
+    let default_bytes = bitterasm::emit::EmFile::parse(&std::fs::read_to_string(&default_out).expect(".em should exist"), bitterasm::emit::features::ALL)
+        .expect("a valid .em file")
+        .entries;
 
     assert_eq!(
         intel_bytes, default_bytes,

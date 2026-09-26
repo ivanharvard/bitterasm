@@ -1,0 +1,13 @@
+# Bytes in two sections, interleaved in source order.
+from std.binary import bits
+
+macro b(v: int) {
+    @emit bits<8> { value: v }
+}
+
+section .text
+b 1
+section .data
+b 2
+section .text
+b 3

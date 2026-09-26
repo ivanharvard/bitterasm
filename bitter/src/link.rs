@@ -24,12 +24,11 @@ use std::path::PathBuf;
 
 use bitterasm::emit::{EmittedEntry, EmittedValue};
 
-/// One already-compiled input to a link: `file` is the canonicalized path
-/// of the `.basm` source it came from (matched against a `Deferred`
-/// value's own `file` field, which `bitterasm compile` records the same
-/// way — see `ast::ExternLabel::file`'s doc), `entries` its own `.em`
-/// content, `labels` its own `pub`-label-position manifest (from
-/// `bitterasm compile --labels`) — every position is *local* to this
+/// One already-compiled input to a link: `file` is the `.basm` source it
+/// came from (for messages), `module` its module path (matched against a
+/// `Deferred` value's own `module`), `entries` its own `.em` content,
+/// `labels` its own `pub`-label positions (the `.em` file's `exports`) —
+/// every position is *local* to this
 /// input's own `entries` (`0..=entries.len()`, the same
 /// "how-many-real-entries-precede-it" count `AliasResolver::
 /// record_label_position` already uses; `entries.len()` itself means

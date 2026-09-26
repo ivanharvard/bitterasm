@@ -26,7 +26,7 @@ fn compile_copy(parent: &Path) -> (String, Vec<EmittedEntry>) {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
 
     let json = std::fs::read_to_string(root.join("main.em")).unwrap();
-    let entries = serde_json::from_str(&json).unwrap();
+    let entries = bitterasm::emit::EmFile::parse(&json, bitterasm::emit::features::ALL).unwrap().entries;
     (json, entries)
 }
 
@@ -86,6 +86,8 @@ fn a_file_under_no_search_root_is_named_relative_to_the_working_directory() {
         .expect("bitterasm compile should run");
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
 
-    let entries: Vec<EmittedEntry> = serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+    let entries = bitterasm::emit::EmFile::parse(&std::fs::read_to_string(&out).unwrap(), bitterasm::emit::features::ALL)
+        .unwrap()
+        .entries;
     assert_eq!(struct_ids(&entries), ["..elsewhere.thing.Thing"]);
 }

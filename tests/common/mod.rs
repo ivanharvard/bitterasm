@@ -7,7 +7,7 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
-use bitterasm::emit::{EmittedEntry, EmittedValue};
+use bitterasm::emit::{EmFile, EmittedEntry, EmittedValue};
 
 /// Runs `bitterasm compile` on `fixture` (relative to the crate root) and
 /// returns the process output plus the `.em` path it was told to write.
@@ -28,8 +28,8 @@ pub fn compile(fixture: &str) -> (Output, std::path::PathBuf) {
     (output, out)
 }
 
-/// Compiles `fixture`, which must succeed, and returns its `.em` entries.
-pub fn compile_entries(fixture: &str) -> Vec<EmittedEntry> {
+/// Compiles `fixture`, which must succeed, and returns its whole `.em` file.
+pub fn compile_file(fixture: &str) -> EmFile {
     let (output, out) = compile(fixture);
     assert!(
         output.status.success(),
@@ -39,7 +39,12 @@ pub fn compile_entries(fixture: &str) -> Vec<EmittedEntry> {
 
     let json = std::fs::read_to_string(&out).expect(".em file should exist");
     let _ = std::fs::remove_file(&out);
-    serde_json::from_str(&json).expect(".em file should be valid EmittedEntry JSON")
+    EmFile::parse(&json, bitterasm::emit::features::ALL).expect("a valid .em file")
+}
+
+/// Compiles `fixture`, which must succeed, and returns its `.em` entries.
+pub fn compile_entries(fixture: &str) -> Vec<EmittedEntry> {
+    compile_file(fixture).entries
 }
 
 /// Compiles `fixture` and returns every emitted value as a plain integer,
