@@ -1,0 +1,35 @@
+# Every public std.string macro on short strings. The expected values in
+# tests/string_lib.rs were produced by the recursive implementation this
+# replaced, and match Python's own UTF-8 encoding.
+from std.string import AsciiString, Utf8String, string_from_struct, utf8_struct_byte_len, validate_ascii, validate_utf8, ascii_upper, ascii_lower, ascii_title, utf8_codepoint_count, utf8_is_ascii
+from std.binary import Endian
+
+macro show(s: int) {
+    @emit s
+}
+
+macro probe() {
+    @for text in "x" {
+        show text
+    }
+    const a = string_from_struct("Hi, wörld €𝄞!")
+    show a.value
+    show a.len
+    show utf8_struct_byte_len("Hi, wörld €𝄞!")
+    show validate_utf8(a.value, a.len, Endian.Big)
+    const u = a as Utf8String<19, Endian.Big>
+    show utf8_codepoint_count(u)
+    show utf8_is_ascii(u)
+    const b = string_from_struct("MiXeD case 42")
+    show validate_ascii(b.value, b.len, Endian.Big)
+    const ascii = b as AsciiString<13, Endian.Big>
+    show ascii_upper(ascii).value
+    show ascii_lower(ascii).value
+    show ascii_title(string_from_struct("hello") as AsciiString<5, Endian.Big>).value
+    const little = b as AsciiString<13, Endian.Little>
+    show ascii_upper(little).value
+    show utf8_is_ascii(b as Utf8String<13, Endian.Big>)
+    show utf8_codepoint_count(b as Utf8String<13, Endian.Little>)
+}
+
+probe

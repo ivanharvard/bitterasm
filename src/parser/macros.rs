@@ -191,12 +191,21 @@ impl Parser {
             return Ok((Some(value), Vec::new()));
         }
 
+        // Another `acc = value` may follow a comma on the next line. In a
+        // construction, a comma followed by anything else ends the item.
         let mut updates = vec![self.parse_fold_binding()?];
-        while self.check(&TokenKind::Comma)
-            && matches!(self.tokens.get(self.pos + 1).map(|t| &t.kind), Some(TokenKind::Identifier(_)))
-            && self.tokens.get(self.pos + 2).is_some_and(|next| next.kind == TokenKind::Equal)
-        {
+        while self.check(&TokenKind::Comma) {
+            let mut after = self.pos + 1;
+            while self.tokens.get(after).is_some_and(|token| token.kind == TokenKind::Newline) {
+                after += 1;
+            }
+            let continues = matches!(self.tokens.get(after).map(|t| &t.kind), Some(TokenKind::Identifier(_)))
+                && self.tokens.get(after + 1).is_some_and(|next| next.kind == TokenKind::Equal);
+            if !continues {
+                break;
+            }
             self.advance();
+            self.skip_newlines();
             updates.push(self.parse_fold_binding()?);
         }
 

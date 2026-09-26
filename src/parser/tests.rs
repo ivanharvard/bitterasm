@@ -1552,6 +1552,17 @@ fn parses_several_accumulators_and_a_named_next() {
 }
 
 #[test]
+fn a_named_next_may_continue_on_the_next_line() {
+    let body = first_macro_body(
+        "macro f() {\n    @fold a = 0, b = 1 @for i in 0..3 {\n        @next a = a + i,\n              b = b * 2\n    }\n}\n",
+    );
+    let Statement::Meta(fold) = &body[0] else { panic!("expected a meta statement") };
+    let Statement::Meta(next) = &fold.body.as_ref().unwrap()[0] else { panic!("expected `@next`") };
+    let updates: Vec<_> = next.bindings.iter().map(|binding| binding.name.as_str()).collect();
+    assert_eq!(updates, ["a", "b"]);
+}
+
+#[test]
 fn parses_a_bare_next() {
     let body = first_macro_body("macro f() {\n    @fold a = 0 @for i in 0..3 {\n        @next\n    }\n}\n");
     let Statement::Meta(fold) = &body[0] else { panic!("expected a meta statement") };

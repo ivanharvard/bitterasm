@@ -25,7 +25,7 @@ v1 module-path identity is what in-language executable headers build on.
 - [x] Phase B5 — Reference docs + `@next` lint
 
 **Part C — long strings**
-- [ ] Phase C1 — Rewrite `std/string.basm`'s walkers with `@fold`
+- [x] Phase C1 — Rewrite `std/string.basm`'s walkers with `@fold`
 
 **Part D — `.em` v1**
 - [ ] Phase D1 — Module identity (`id` = module path + name)
@@ -460,6 +460,30 @@ equivalent and `validate_ascii` use `@fold` (linear, no recursion).
 **Verification:** a `db` of a 1,000-character string (and a multi-byte
 UTF-8 one) compiles and encodes to the expected bytes; existing string
 fixtures unchanged.
+**As built (DONE):** there were seven recursive walkers, not three. Four
+weren't tail calls (hit the 32-level limit at about 30 characters):
+`utf8_struct_byte_len_at`, `utf8_struct_value_at`, `ascii_case_value` and
+`utf8_codepoint_count_at`. Three were tail calls (hit the 4,096 cap):
+`validate_ascii_at`, `validate_utf8_at` and `utf8_is_ascii_at`. All are
+loops now, and the private `*_at` helpers are gone; public signatures are
+unchanged.
+- `@fold` where something accumulates: byte length, `string_from_struct`
+  (value and length in one linear pass, replacing a quadratic one), case
+  conversion, code point count (counting non-continuation bytes), and UTF-8
+  validation (a `remaining` accumulator skips a sequence's continuation
+  bytes; `utf8_sequence_at` checks one sequence and returns its length).
+- A plain `@for` with `@assert`/`@return` where nothing does:
+  `validate_ascii`, `utf8_is_ascii`.
+- Parser fix found here: a named `@next` may now continue on the next line
+  after a comma, like `@fold`'s accumulator list.
+- Verification: every public macro compiled against both the old and the
+  new `std/string.basm` gave identical results
+  (`tests/fixtures/strings/api.basm`), and the packed value matches
+  Python's UTF-8 encoding. `tests/fixtures/strings/long.basm` (1,000 ASCII
+  characters plus 920 bytes of multi-byte UTF-8, through `db`) produces
+  exactly Python's bytes and compiles in under a second in release.
+  `tests/fixtures/emit/string_ops.basm` existed but no test ran it; it's
+  now in `tests/std_smoke.rs`.
 
 ### Part D — `.em` v1
 

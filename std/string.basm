@@ -72,20 +72,10 @@ macro utf8_codepoint_byte_len(codepoint: int) -> int {
     @return 4
 }
 
-macro utf8_struct_byte_len_at<S>(
-    source: S,
-    index: int
-) -> int {
-    @if index == source.len {
-        @return 0
-    }
-    const head = utf8_codepoint_byte_len(source.__el`index`)
-    const tail = utf8_struct_byte_len_at(source, index + 1)
-    @return head + tail
-}
-
 pub macro utf8_struct_byte_len<S>(source: S) -> int {
-    @return utf8_struct_byte_len_at(source, 0)
+    @return @fold len = 0 @for codepoint in source {
+        @next len + utf8_codepoint_byte_len(codepoint)
+    }
 }
 
 macro utf8_codepoint_packed(codepoint: int) -> int {
@@ -111,40 +101,19 @@ macro utf8_codepoint_packed(codepoint: int) -> int {
     @return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
 }
 
-macro utf8_struct_value_at<S>(
-    source: S,
-    index: int
-) -> int {
-    @if index == source.len {
-        @return 0
-    }
-    const codepoint = source.__el`index`
-    const rest_len = utf8_struct_byte_len_at(source, index + 1)
-    const packed = utf8_codepoint_packed(codepoint)
-    const rest = utf8_struct_value_at(source, index + 1)
-    @return (packed << (rest_len * BITS_PER_BYTE)) | rest
-}
-
+# Packs each code point's UTF-8 bytes after the ones before it, so the first
+# character ends up most significant.
 pub macro string_from_struct<S>(source: S)
 {
-    const byte_len = utf8_struct_byte_len(source)
-    @return String<byte_len> {
-        value: utf8_struct_value_at(source, 0),
-        len: byte_len,
+    const packed = @fold value = 0, len = 0 @for codepoint in source {
+        const width = utf8_codepoint_byte_len(codepoint)
+        @next value = (value << (width * BITS_PER_BYTE)) | utf8_codepoint_packed(codepoint),
+              len = len + width
     }
-}
-
-macro validate_ascii_at(
-    value: int,
-    len: int,
-    index: int,
-    endian: Endian
-) -> int {
-    @if index == len {
-        @return 1
+    @return String<packed.len> {
+        value: packed.value,
+        len: packed.len,
     }
-    @assert byte_at(value, len, index, endian) < 0x80, "non-ASCII byte"
-    @return validate_ascii_at(value, len, index + 1, endian)
 }
 
 pub macro validate_ascii(
@@ -153,26 +122,27 @@ pub macro validate_ascii(
     endian: Endian
 ) -> int {
     @assert validate_string(value, len)
-    @return validate_ascii_at(value, len, 0, endian)
+    @for index in 0..len {
+        @assert byte_at(value, len, index, endian) < 0x80, "non-ASCII byte"
+    }
+    @return 1
 }
 
 macro is_continuation(byte: int) -> int {
     @return byte >= 0x80 && byte <= 0xBF
 }
 
-macro validate_utf8_at(
+# Checks the sequence starting at `index` and returns how many bytes it
+# covers.
+macro utf8_sequence_at(
     value: int,
     len: int,
     index: int,
     endian: Endian
 ) -> int {
-    @if index == len {
-        @return 1
-    }
-
     const b0 = byte_at(value, len, index, endian)
     @if b0 <= 0x7F {
-        @return validate_utf8_at(value, len, index + 1, endian)
+        @return 1
     }
 
     @if b0 >= 0xC2 && b0 <= 0xDF {
@@ -183,7 +153,7 @@ macro validate_utf8_at(
                 index + 1,
                 endian
         )), "invalid UTF-8 continuation byte"
-        @return validate_utf8_at(value, len, index + 2, endian)
+        @return 2
     }
 
     @if b0 >= 0xE0 && b0 <= 0xEF {
@@ -193,7 +163,7 @@ macro validate_utf8_at(
         @assert is_continuation(b1) && is_continuation(b2), "invalid UTF-8 continuation byte"
         @assert b0 != 0xE0 || b1 >= 0xA0, "overlong UTF-8 sequence"
         @assert b0 != 0xED || b1 <= 0x9F, "UTF-8 cannot encode a surrogate"
-        @return validate_utf8_at(value, len, index + 3, endian)
+        @return 3
     }
 
     @if b0 >= 0xF0 && b0 <= 0xF4 {
@@ -204,7 +174,7 @@ macro validate_utf8_at(
         @assert is_continuation(b1) && is_continuation(b2) && is_continuation(b3), "invalid UTF-8 continuation byte"
         @assert b0 != 0xF0 || b1 >= 0x90, "overlong UTF-8 sequence"
         @assert b0 != 0xF4 || b1 <= 0x8F, "UTF-8 code point exceeds U+10FFFF"
-        @return validate_utf8_at(value, len, index + 4, endian)
+        @return 4
     }
 
     @assert 0, "invalid UTF-8 leading byte"
@@ -216,7 +186,14 @@ pub macro validate_utf8(
     endian: Endian
 ) -> int {
     @assert validate_string(value, len)
-    @return validate_utf8_at(value, len, 0, endian)
+    # `remaining` counts the bytes still covered by the sequence last checked.
+    @fold remaining = 0 @for index in 0..len {
+        @if remaining > 0 {
+            @next remaining - 1
+        }
+        @next utf8_sequence_at(value, len, index, endian) - 1
+    }
+    @return 1
 }
 
 macro string_to_ascii(
@@ -288,20 +265,18 @@ macro byte_shift(
 macro ascii_case_value(
     value: int,
     len: int,
-    index: int,
     endian: Endian,
     upper: int
 ) -> int {
-    @if index == len {
-        @return 0
+    @return @fold cased = 0 @for index in 0..len {
+        const byte = ascii_case_byte(byte_at(value, len, index, endian), upper)
+        @next cased | (byte << byte_shift(index, len, endian))
     }
-    const byte = ascii_case_byte(byte_at(value, len, index, endian), upper)
-    @return (byte << byte_shift(index, len, endian)) | ascii_case_value(value, len, index + 1, endian, upper)
 }
 
 pub macro ascii_upper(s: AsciiString) -> AsciiString {
     @return AsciiString<s.len, s.endian> {
-        value: ascii_case_value(s.value, s.len, 0, s.endian, 1),
+        value: ascii_case_value(s.value, s.len, s.endian, 1),
         len: s.len,
         endian: s.endian,
     }
@@ -309,7 +284,7 @@ pub macro ascii_upper(s: AsciiString) -> AsciiString {
 
 pub macro ascii_lower(s: AsciiString) -> AsciiString {
     @return AsciiString<s.len, s.endian> {
-        value: ascii_case_value(s.value, s.len, 0, s.endian, 0),
+        value: ascii_case_value(s.value, s.len, s.endian, 0),
         len: s.len,
         endian: s.endian,
     }
@@ -330,52 +305,21 @@ pub macro ascii_title(s: AsciiString) -> AsciiString {
     }
 }
 
-macro utf8_codepoint_count_at(
-    value: int,
-    len: int,
-    index: int,
-    endian: Endian
-) -> int {
-    @if index == len {
-        @return 0
-    }
-    const lead = byte_at(value, len, index, endian)
-    @if lead <= 0x7F {
-        @return 1 + utf8_codepoint_count_at(value, len, index + 1, endian)
-    }
-    @if lead <= 0xDF {
-        @return 1 + utf8_codepoint_count_at(value, len, index + 2, endian)
-    }
-    @if lead <= 0xEF {
-        @return 1 + utf8_codepoint_count_at(value, len, index + 3, endian)
-    }
-    @return 1 + utf8_codepoint_count_at(value, len, index + 4, endian)
-}
-
+# Counts lead bytes: every byte that isn't a continuation byte starts a
+# code point.
 pub macro utf8_codepoint_count(s: Utf8String) -> int {
-    @return utf8_codepoint_count_at(s.value, s.len, 0, s.endian)
-}
-
-macro utf8_is_ascii_at(
-    value: int,
-    len: int,
-    index: int,
-    endian: Endian
-) -> int {
-    @if index == len {
-        @return 1
+    @return @fold count = 0 @for index in 0..s.len {
+        @if !is_continuation(byte_at(s.value, s.len, index, s.endian)) {
+            @next count + 1
+        }
     }
-    @if byte_at(
-        value,
-        len,
-        index,
-        endian
-    ) >= 0x80 {
-        @return 0
-    }
-    @return utf8_is_ascii_at(value, len, index + 1, endian)
 }
 
 pub macro utf8_is_ascii(s: Utf8String) -> int {
-    @return utf8_is_ascii_at(s.value, s.len, 0, s.endian)
+    @for index in 0..s.len {
+        @if byte_at(s.value, s.len, index, s.endian) >= 0x80 {
+            @return 0
+        }
+    }
+    @return 1
 }

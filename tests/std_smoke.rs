@@ -41,6 +41,11 @@ fn deferred_dispatch_fixture_checks_cleanly() {
 }
 
 #[test]
+fn string_ops_fixture_checks_cleanly() {
+    assert_checks_cleanly("tests/fixtures/emit/string_ops.basm");
+}
+
+#[test]
 fn math_all_ops_fixture_checks_cleanly() {
     assert_checks_cleanly("tests/fixtures/math/all_ops.basm");
 }

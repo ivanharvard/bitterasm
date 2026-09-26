@@ -1,0 +1,13 @@
+# Strings far longer than the old recursive std.string could handle (about
+# 30 characters): 1,000 ASCII characters and 920 bytes of multi-byte UTF-8.
+from std.x86_64.nasm import *
+from std.string import string_from_struct, validate_ascii, validate_utf8
+from std.binary import Endian
+
+const ascii_text = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijkl"
+const utf8_text = "héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 héllo wörld € 𝄞 "
+
+validate_ascii string_from_struct(ascii_text).value, string_from_struct(ascii_text).len, Endian.Big
+validate_utf8 string_from_struct(utf8_text).value, string_from_struct(utf8_text).len, Endian.Big
+db ascii_text
+db utf8_text
