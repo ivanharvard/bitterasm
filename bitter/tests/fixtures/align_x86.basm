@@ -1,0 +1,20 @@
+# `align 16` after variable-length x86 instructions: `target` must land on
+# byte 16, and the header measures the distance to it.
+from std.x86_64.nasm import *
+from std.bitter.deferred import *
+from std.bitter.byte_order import LittleEndian
+from std.bitter.layout import align
+
+macro offset_of(start_at: int, end_at: int) {
+    @emit LittleEndian<Positioned<32>, 32> {
+        value: Positioned<32> { value: span(start_at, end_at) },
+    }
+}
+
+start:
+offset_of start, target
+mov eax, 1
+xor edi, edi
+align 16
+target:
+ret

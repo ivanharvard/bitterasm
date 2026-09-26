@@ -40,22 +40,24 @@ struct Packed {
 }
 
 pub fn pack_stream(values: &[EmittedValue]) -> Result<Vec<u8>, String> {
-    // Every top-level entry's packed byte width is knowable structurally,
-    // with no `Deferred` resolved at all — a `bits<N>`/`Positioned<N>`
-    // leaf's width is always its own const generic argument, never a
-    // function of the value it resolves to. Computing all of them up front
-    // is what lets `Op::Span` (see `resolve_span` below) answer "how many
-    // bytes lie between these two entries" — including entries later than
-    // the one currently being packed, which a single forward pass over
-    // `values` could never otherwise see.
-    let byte_widths: Vec<usize> = values
-        .iter()
-        .map(|value| structural_width_bits(value).map(|width_bits| width_bits.div_ceil(8)))
-        .collect::<Result<_, _>>()?;
+    // Every top-level entry's packed byte width is knowable with no
+    // `Deferred` resolved at all — a `bits<N>`/`Positioned<N>` leaf's width
+    // is always its own const generic argument, never a function of the
+    // value it resolves to, and an `Align<N>`'s depends only on the widths
+    // before it. Computing all of them up front is what lets `Op::Span`
+    // (see `resolve_span` below) answer "how many bytes lie between these
+    // two entries" — including entries later than the one currently being
+    // packed.
+    let byte_widths = entry_byte_widths(values)?;
 
     let mut bytes = Vec::new();
 
     for (here_index, value) in values.iter().enumerate() {
+        if align_of(value)?.is_some() {
+            bytes.resize(bytes.len() + byte_widths[here_index], 0);
+            continue;
+        }
+
         let packed = pack_value(value, here_index, &byte_widths)?;
         let width_bytes = packed.width_bits.div_ceil(8);
         bytes.extend(to_bytes(&packed.value, width_bytes));
@@ -67,12 +69,40 @@ pub fn pack_stream(values: &[EmittedValue]) -> Result<Vec<u8>, String> {
 /// The byte offset at which entry `index` of `values` starts once packed —
 /// for `bitter build --entry`, which knows its entry label's *entry*
 /// position but the executable header wants a byte offset. Uses the same
-/// structural widths `pack_stream` does, so the two always agree.
+/// widths `pack_stream` does, so the two always agree.
 pub fn byte_offset_of(values: &[EmittedValue], index: usize) -> Result<usize, String> {
-    values[..index.min(values.len())]
-        .iter()
-        .map(|value| structural_width_bits(value).map(|width_bits| width_bits.div_ceil(8)))
-        .sum()
+    Ok(entry_byte_widths(values)?[..index.min(values.len())].iter().sum())
+}
+
+/// Every top-level entry's packed width in bytes, in one forward pass: an
+/// `Align<N>` pads from wherever the entries before it end.
+fn entry_byte_widths(values: &[EmittedValue]) -> Result<Vec<usize>, String> {
+    let mut offset = 0usize;
+    let mut widths = Vec::with_capacity(values.len());
+
+    for value in values {
+        let width = match align_of(value)? {
+            Some(n) => (n - offset % n) % n,
+            None => structural_width_bits(value)?.div_ceil(8),
+        };
+        offset += width;
+        widths.push(width);
+    }
+
+    Ok(widths)
+}
+
+/// `Some(n)` when `value` is an `Align<n>` entry.
+fn align_of(value: &EmittedValue) -> Result<Option<usize>, String> {
+    let EmittedValue::Struct { id, args, .. } = value else { return Ok(None) };
+    if id != ALIGN {
+        return Ok(None);
+    }
+
+    match const_width_arg(args)? {
+        0 => Err("`Align<0>` can't align to a multiple of zero bytes".to_string()),
+        n => Ok(Some(n)),
+    }
 }
 
 // A width-only echo of `pack_value`'s own structural walk, deliberately not
@@ -92,12 +122,17 @@ pub const LITTLE_ENDIAN: &str = "std.bitter.byte_order.LittleEndian";
 pub const DEFERRED: &str = "std.bitter.deferred.Deferred";
 pub const BIN_OP: &str = "std.bitter.deferred.BinOp";
 pub const OP: &str = "std.bitter.deferred.Op";
+pub const ALIGN: &str = "std.bitter.layout.Align";
 
 fn structural_width_bits(value: &EmittedValue) -> Result<usize, String> {
     match value {
         EmittedValue::Struct { id, args, .. } if id == BITS => bits_width(args),
 
         EmittedValue::Struct { id, args, .. } if id == POSITIONED => bits_width(args),
+
+        EmittedValue::Struct { id, .. } if id == ALIGN => Err(
+            "`Align` is only meaningful as a whole emitted entry, not inside another value".to_string(),
+        ),
 
         EmittedValue::Struct { fields, .. } => {
             let mut width_bits = 0usize;
@@ -485,6 +520,38 @@ mod tests {
                 ("opcode".to_string(), bits("7", opcode)),
             ],
         }
+    }
+
+    fn align(n: &str) -> EmittedValue {
+        EmittedValue::Struct {
+            id: ALIGN.to_string(),
+            args: vec![EmittedGenericArg::Const { value: n.to_string() }],
+            fields: vec![],
+        }
+    }
+
+    #[test]
+    fn align_pads_to_the_next_multiple_from_the_image_start() {
+        let values = [bits("8", "1"), align("4"), bits("16", "2"), align("4"), align("2"), bits("8", "3")];
+        // 1 byte, pad 3 -> offset 4; 2 bytes -> 6, pad 2 -> 8; already even.
+        assert_eq!(pack_stream(&values).unwrap(), [1, 0, 0, 0, 0, 2, 0, 0, 3]);
+    }
+
+    #[test]
+    fn span_counts_align_padding() {
+        // `span(0, 3)` measured from inside entry 0, across a 1-byte entry
+        // and the padding after it.
+        let header = positioned("8", deferred_node("Span", deferred_leaf("0"), deferred_leaf("3")));
+        let values = [header, bits("8", "9"), align("8"), bits("8", "7")];
+        assert_eq!(pack_stream(&values).unwrap(), [8, 9, 0, 0, 0, 0, 0, 0, 7]);
+    }
+
+    #[test]
+    fn rejects_align_zero_and_align_nested_in_a_value() {
+        assert!(pack_stream(&[align("0")]).unwrap_err().contains("multiple of zero"));
+
+        let nested = EmittedValue::Struct { id: "test.Wrapper".to_string(), args: vec![], fields: vec![("a".to_string(), align("4"))] };
+        assert!(pack_stream(&[nested]).unwrap_err().contains("only meaningful as a whole emitted entry"));
     }
 
     fn little_endian(width: &str, value: EmittedValue) -> EmittedValue {

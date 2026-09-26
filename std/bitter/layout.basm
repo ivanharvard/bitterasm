@@ -1,0 +1,18 @@
+# Layout directives `bitter` gives meaning to when it packs an image.
+#
+# `align n` emits an `Align<n>` entry: as many zero bytes as it takes for
+# the next entry to start at a multiple of `n` bytes from the start of the
+# image. How many that is depends on everything before it, so `bitter` works
+# it out while laying the image out; `span` across one counts the padding.
+#
+# Only meaningful as a whole emitted entry, not as a field inside another
+# struct.
+
+pub struct Align<const n: int>
+    | invariant n > 0
+{
+}
+
+pub macro align(n: int) {
+    @emit Align<n> {}
+}

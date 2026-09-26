@@ -36,7 +36,7 @@ v1 module-path identity is what in-language executable headers build on.
 **Part E — executable containers in bitterasm**
 - [x] Phase E1 — `Deferred` `add`
 - [x] Phase E2 — Linker-provided image symbols
-- [ ] Phase E3 — `Align<N>` packer primitive
+- [x] Phase E3 — `Align<N>` packer primitive
 - [ ] Phase E4 — `std/formats/elf.basm`
 - [ ] Phase E5 — `std/formats/pe.basm` and `std/formats/macho.basm`
 - [ ] Phase E6 — Remove `formats.rs`, `bitter exec`, `--format`, `--entry`
@@ -603,6 +603,14 @@ the image size through the real pipeline.
 knows the running offset).
 **Verification:** `span` across an `Align` is correct; alignment after
 variable-length x86 instructions.
+**As built (DONE):** `std/bitter/layout.basm` declares `Align<const n>`
+(`invariant n > 0`) and `align n`, which emits one. `bitter/src/pack.rs`
+computes every entry's width in one forward pass (`entry_byte_widths`),
+where an `Align<n>` is `(n - offset % n) % n` zero bytes; `span` and
+`byte_offset_of` use those same widths, so they count padding. An `Align`
+nested inside another value, or `Align<0>`, is an error. Tests: three unit
+tests in `pack.rs`, and `bitter/tests/em_format.rs` aligning after `mov`
+and `xor` so a label lands on byte 16.
 
 #### Phase E4 — `std/formats/elf.basm`
 **Deliverable:** ELF64 and ELF32 static executables (RV32 needs ELF32);

@@ -91,3 +91,21 @@ fn image_start_and_end_measure_the_encoded_image() {
     // 4 header bytes + 3 data bytes = 7, little-endian.
     assert_eq!(std::fs::read(&bin).unwrap(), [7, 0, 0, 0, 0xAA, 0xBB, 0xCC]);
 }
+
+#[test]
+fn align_pads_after_variable_length_instructions() {
+    let dir = scratch();
+    let em = compile_fixture("align_x86", &dir);
+    let bin = dir.join("align_x86.bin");
+
+    let output = encode(&em, &bin);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+
+    let bytes = std::fs::read(&bin).unwrap();
+    // 4-byte header + `mov eax, 1` (5) + `xor edi, edi` (2) = 11, padded to 16.
+    assert_eq!(&bytes[..4], [16, 0, 0, 0]);
+    assert_eq!(&bytes[4..9], [0xB8, 1, 0, 0, 0]);
+    assert_eq!(&bytes[9..11], [0x31, 0xFF]);
+    assert_eq!(&bytes[11..16], [0; 5]);
+    assert_eq!(&bytes[16..], [0xC3]);
+}
