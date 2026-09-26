@@ -5,9 +5,11 @@
 // its statement list.
 //
 // Module paths map onto the filesystem 1:1: `std.binary.native` is
-// `<root>/std/binary/native.basm`, where `<root>` is the current working
-// directory for absolute imports (no leading dots) or the importing file's
-// own directory (ascended once per extra leading dot) for relative ones.
+// `<root>/std/binary/native.basm`. For relative imports (leading dots)
+// `<root>` is the importing file's own directory, ascended once per extra
+// leading dot. For absolute imports it is the first of `search_roots()` that
+// holds the file: the current working directory, then each `BITTERASM_PATH`
+// entry, then the install root `~/.bitterasm` (where `install.sh` puts `std/`).
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -42,6 +44,8 @@ pub enum LoadError {
     ModuleNotFound {
         importer: PathBuf,
         module: String,
+        /// Every root directory the module was looked for under, in order.
+        searched: Vec<PathBuf>,
     },
     CyclicImport {
         cycle: Vec<PathBuf>,
@@ -75,12 +79,23 @@ impl fmt::Display for LoadError {
                 write!(f, "{}: {message}", path.display())
             }
 
-            LoadError::ModuleNotFound { importer, module } => {
+            LoadError::ModuleNotFound { importer, module, searched } => {
                 write!(
                     f,
                     "{}: could not find module `{module}`",
                     importer.display(),
-                )
+                )?;
+
+                if !searched.is_empty() {
+                    let roots: Vec<String> = searched
+                        .iter()
+                        .map(|root| root.display().to_string())
+                        .collect();
+
+                    write!(f, " (searched: {})", roots.join(", "))?;
+                }
+
+                Ok(())
             }
 
             LoadError::CyclicImport { cycle } => {
@@ -429,11 +444,14 @@ fn resolve_import_paths(
     match (resolve_module_path(&import.module, importer), &import.items) {
         (Ok(target_path), _) => Ok(ImportResolution::Plain(target_path)),
 
-        (Err(_), ImportItems::Names(names)) => names
+        // If the submodule fallback fails too, report the module path the
+        // user actually wrote, not `<module>.<name>`.
+        (Err(error), ImportItems::Names(names)) => names
             .iter()
             .map(|name| resolve_submodule_path(&import.module, name, importer))
             .collect::<Result<_, _>>()
-            .map(ImportResolution::Package),
+            .map(ImportResolution::Package)
+            .map_err(|_| error),
 
         (Err(error), ImportItems::All) => Err(error),
     }
@@ -988,12 +1006,31 @@ fn rename_construct_items(items: &mut [ConstructItem], renames: &HashMap<String,
     }
 }
 
-fn module_base_dir(module: &ModulePath, importer: &Path) -> Result<PathBuf, LoadError> {
+/// The directories an absolute (no leading dots) module path is looked up
+/// under, in priority order: the current working directory, each entry of
+/// `BITTERASM_PATH` (split like `PATH`), then the install root
+/// `~/.bitterasm`. A project's own `std/` therefore shadows the installed one.
+pub fn search_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+
+    if let Ok(cwd) = std::env::current_dir() {
+        roots.push(cwd);
+    }
+
+    if let Some(paths) = std::env::var_os("BITTERASM_PATH") {
+        roots.extend(std::env::split_paths(&paths).filter(|path| !path.as_os_str().is_empty()));
+    }
+
+    if let Some(home) = std::env::home_dir() {
+        roots.push(home.join(".bitterasm"));
+    }
+
+    roots
+}
+
+fn module_base_dirs(module: &ModulePath, importer: &Path) -> Vec<PathBuf> {
     if module.relative_level == 0 {
-        std::env::current_dir().map_err(|error| LoadError::Io {
-            path: importer.to_path_buf(),
-            message: error.to_string(),
-        })
+        search_roots()
     } else {
         let mut dir = importer
             .parent()
@@ -1004,25 +1041,53 @@ fn module_base_dir(module: &ModulePath, importer: &Path) -> Result<PathBuf, Load
             dir = dir.parent().map(Path::to_path_buf).unwrap_or(dir);
         }
 
-        Ok(dir)
+        vec![dir]
     }
 }
 
-fn resolve_module_path(module: &ModulePath, importer: &Path) -> Result<PathBuf, LoadError> {
-    let base = module_base_dir(module, importer)?;
+// The first `<base>/<segments...>[/<name>].basm` that exists, across every
+// base directory `module` may live under.
+fn find_module_file(
+    module: &ModulePath,
+    name: Option<&str>,
+    importer: &Path,
+) -> Result<PathBuf, LoadError> {
+    let bases = module_base_dirs(module, importer);
 
-    let mut candidate = base;
+    for base in &bases {
+        let mut candidate = base.clone();
 
-    for segment in &module.segments {
-        candidate.push(segment);
+        for segment in &module.segments {
+            candidate.push(segment);
+        }
+
+        if let Some(name) = name {
+            candidate.push(name);
+        }
+
+        candidate.set_extension("basm");
+
+        if let Ok(path) = fs::canonicalize(&candidate) {
+            return Ok(path);
+        }
     }
 
-    candidate.set_extension("basm");
+    let display = match name {
+        Some(name) => format!("{}.{name}", module_display(module)),
+        None => module_display(module),
+    };
 
-    canonicalize(&candidate).map_err(|_| LoadError::ModuleNotFound {
+    Err(LoadError::ModuleNotFound {
         importer: importer.to_path_buf(),
-        module: module_display(module),
+        module: display,
+        searched: if module.relative_level == 0 { bases } else { Vec::new() },
     })
+}
+
+/// The file an import's module path names, resolved the same way the loader
+/// itself resolves it (see `search_roots`).
+pub fn resolve_module_path(module: &ModulePath, importer: &Path) -> Result<PathBuf, LoadError> {
+    find_module_file(module, None, importer)
 }
 
 // `from <package> import <name>` where `<package>` is a directory rather
@@ -1036,21 +1101,7 @@ fn resolve_submodule_path(
     name: &str,
     importer: &Path,
 ) -> Result<PathBuf, LoadError> {
-    let base = module_base_dir(module, importer)?;
-
-    let mut candidate = base;
-
-    for segment in &module.segments {
-        candidate.push(segment);
-    }
-
-    candidate.push(name);
-    candidate.set_extension("basm");
-
-    canonicalize(&candidate).map_err(|_| LoadError::ModuleNotFound {
-        importer: importer.to_path_buf(),
-        module: format!("{}.{name}", module_display(module)),
-    })
+    find_module_file(module, Some(name), importer)
 }
 
 fn canonicalize(path: &Path) -> Result<PathBuf, LoadError> {
