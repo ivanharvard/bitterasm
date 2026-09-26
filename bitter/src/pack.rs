@@ -89,14 +89,6 @@ fn pad_image_of(value: &EmittedValue) -> Result<Option<usize>, String> {
     }
 }
 
-/// The byte offset at which entry `index` of `values` starts once packed —
-/// for `bitter build --entry`, which knows its entry label's *entry*
-/// position but the executable header wants a byte offset. Uses the same
-/// widths `pack_stream` does, so the two always agree.
-pub fn byte_offset_of(values: &[EmittedValue], index: usize) -> Result<usize, String> {
-    Ok(entry_byte_widths(values)?[..index.min(values.len())].iter().sum())
-}
-
 /// Every top-level entry's packed width in bytes, in one forward pass: an
 /// `Align<N>` pads from wherever the entries before it end.
 fn entry_byte_widths(values: &[EmittedValue]) -> Result<Vec<usize>, String> {
@@ -181,18 +173,15 @@ fn structural_width_bits(value: &EmittedValue) -> Result<usize, String> {
     }
 }
 
-// Phase 5 (`docs/sections-and-linking/PROGRESS.md`): a cross-unit label
-// reference `bitter encode` alone can never resolve — its `.em` file is, by
-// definition, not fully resolvable standalone, so `encode`'s contract (no
-// partial output, ever) means the only correct move on hitting one is a
-// clear, immediate error rather than a guess. Real resolution is `bitter
-// build`/`bitter exec`'s job (Phase 6, not yet built), once they can see
-// every linked file's own emitted stream.
+// A cross-file label reference that reached the packer unresolved: only
+// `bitter build`, which links every input's `.em`, can resolve one, and the
+// packer's contract (no partial output, ever) makes this an immediate error
+// rather than a guess.
 fn unresolved_deferred_error(module: &str, symbol: &str) -> String {
     format!(
         "can't encode standalone: `{symbol}` from `{module}` is an unresolved cross-file \
          reference — `bitter encode` only ever resolves a single, self-contained `.em` file; \
-         link it with `bitter build`/`bitter exec` instead"
+         link it with `bitter build` instead"
     )
 }
 

@@ -1,0 +1,12 @@
+# Linked with `phase6_dep.basm`: the ELF header's entry point is a label in
+# that other file, so execution starts there and exits with 7. The code
+# here would exit with 1 if it ran.
+from std.x86_64.intel import *
+from std.formats.elf import *
+from .phase6_dep import after_first
+
+elf64_executable EM_X86_64, after_first
+
+mov rdi, 1
+mov rax, 60
+syscall

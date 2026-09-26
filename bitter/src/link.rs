@@ -41,13 +41,10 @@ pub struct LinkInput {
     pub labels: HashMap<String, usize>,
 }
 
-/// A linked program: the merged entry stream (section tags discarded) plus
-/// every input's `pub` labels translated to positions in that stream — for
-/// `bitter build --entry`, which needs to know where a named label ended up.
+/// A linked program: the merged entry stream, section tags discarded.
 #[derive(Debug)]
 pub struct Linked {
     pub values: Vec<EmittedValue>,
-    pub labels: HashMap<String, usize>,
 }
 
 pub fn link(inputs: Vec<LinkInput>) -> Result<Linked, String> {
@@ -129,9 +126,7 @@ pub fn link(inputs: Vec<LinkInput>) -> Result<Linked, String> {
         values.push(value);
     }
 
-    let labels = symbols.into_iter().map(|(name, (_, position))| (name, position)).collect();
-
-    Ok(Linked { values, labels })
+    Ok(Linked { values })
 }
 
 struct Layout<'a> {
@@ -438,13 +433,16 @@ mod tests {
     }
 
     #[test]
-    fn pub_label_positions_are_reported_in_merged_terms() {
-        let a = input("a.basm", vec![entry(int("1"), Some(".data"))], &[]);
+    fn pub_label_positions_resolve_in_merged_terms() {
+        // `a`'s `.data` entry comes first in the merged stream, so `b`'s
+        // `_start` (its own entry 0) lands at merged position 1.
+        let reference = EmittedValue::Deferred { module: "b".to_string(), symbol: "_start".to_string() };
+        let a = input("a.basm", vec![entry(reference, Some(".data"))], &[]);
         let b = input("b.basm", vec![entry(int("2"), Some(".text"))], &[("_start", 0)]);
 
-        let linked = link(vec![a, b]).unwrap();
+        let merged = link(vec![a, b]).unwrap().values;
 
-        assert_eq!(linked.labels.get("_start"), Some(&1));
+        assert_eq!(merged, vec![int("1"), int("2")]);
     }
 
     #[test]

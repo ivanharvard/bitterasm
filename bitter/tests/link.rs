@@ -1,9 +1,9 @@
 // Phase 6 (see `docs/sections-and-linking/PROGRESS.md`): `bitter build`
-// accepts multiple `.basm` inputs, links them (same-named sections
-// concatenated in argument order, `pub` labels resolved across files), and
-// wraps the result in a real, runnable native executable — mirroring how
-// `examples/x86_64/hello.basm` is verified: actually build and run the
-// result, not just inspect its bytes.
+// accepts multiple `.basm` inputs and links them (same-named sections
+// concatenated in argument order, `pub` labels resolved across files). The
+// fixtures write their own ELF header with `std.formats.elf`, so the result
+// is a real, runnable executable — verified the way
+// `examples/x86_64/hello.basm` is: actually build and run it.
 //
 // Linux/x86-64 only, like `phase6_entry.basm`/`phase6_dep.basm` themselves
 // (real syscalls, real machine code) — skipped everywhere else, the same
@@ -65,6 +65,31 @@ fn two_files_link_and_the_resulting_executable_actually_runs_correctly() {
     // real, merged byte offset (Phase 6), not a placeholder, a wrong
     // address, or a crash.
     assert_eq!(run.code(), Some(7), "unexpected exit code from the linked executable");
+}
+
+#[test]
+fn the_entry_point_can_be_a_label_in_another_input() {
+    let bitter = env!("CARGO_BIN_EXE_bitter");
+    let out = std::env::temp_dir().join(format!("bitter-link-test-entry-elsewhere-{}", std::process::id()));
+
+    let build = Command::new(bitter)
+        .current_dir(workspace_root())
+        .args([
+            "build",
+            &fixture("entry_in_other_file.basm"),
+            &fixture("phase6_dep.basm"),
+            "-o",
+            &out.display().to_string(),
+        ])
+        .output()
+        .expect("bitter build should run");
+    assert!(build.status.success(), "bitter build failed: {}", String::from_utf8_lossy(&build.stderr));
+
+    // The header's `e_entry` names `after_first` in `phase6_dep.basm`:
+    // starting there exits with 7, where the first file's own code would
+    // exit with 1.
+    let run = Command::new(&out).status().expect("the linked executable should run");
+    assert_eq!(run.code(), Some(7));
 }
 
 #[test]

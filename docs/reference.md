@@ -1,7 +1,7 @@
 # CLI and language reference
 
 Details on macro-default semantics, struct-field visibility, spliced names,
-`@fold`, the `.em` format, the formatter, and diagnostics/lints — split out of the README so that stays a high-level
+`@fold`, executables, the `.em` format, the formatter, and diagnostics/lints — split out of the README so that stays a high-level
 overview.
 
 ## Struct fields: `pub` and `skip`
@@ -206,6 +206,35 @@ wrapped in another expression are not tail calls. Macros with `after` hooks are 
 excluded because eliminating their frames would change unwind-time hook behavior.
 Tail-call loops are capped at 4,096 restarts and fail with
 `MacroTailCallLimitExceeded` if they do not reach a base case.
+
+## Executables
+
+`bitter build a.basm [b.basm ...] -o program` compiles every input, links
+them (see `docs/sections-and-linking/PROGRESS.md`), packs the result, and
+writes it marked executable. It adds nothing of its own: an executable
+format's header is BitterASM code the program writes, first thing in its
+first input, before any `section` statement, so it starts the image:
+
+| Module | Header macro | Notes |
+|---|---|---|
+| `std.formats.elf` | `elf64_executable EM_X86_64, _start` | also `elf32_executable` (e.g. `EM_RISCV`); optional `load_address`, `segment_flags` (`PF_R`/`PF_W`/`PF_X`), `flags` |
+| `std.formats.pe` | `pe64_executable IMAGE_FILE_MACHINE_AMD64, _start` | console PE32+; optional `image_base` |
+| `std.formats.macho` | `macho64_executable CPU_TYPE_X86_64, CPU_SUBTYPE_X86_64_ALL, _start` | optional `vm_address` |
+
+The entry label may be in any input. Each format maps the whole image as one
+segment (readable and executable by default) and has no dynamic linking,
+imports or relocations. Without a header, `bitter build` writes a flat binary,
+like `nasm -f bin`.
+
+The headers are built from pieces any other format can use:
+
+- `std.bitter.link`'s `image_start` and `image_end`, imported like `pub`
+  labels, which `bitter` resolves to the start and end of the linked image.
+  `span(image_start, image_end)` is the image's size in bytes.
+- `std.bitter.deferred`'s `add`, `sub`, `band`, ... over those positions.
+- `std.bitter.layout`'s `align n` (zero bytes up to the next multiple of `n`)
+  and `pad_image n` (pad the finished image to a multiple of `n`, wherever
+  it's written; it takes no space where it appears).
 
 ## The `.em` format
 

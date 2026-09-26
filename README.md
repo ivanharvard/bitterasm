@@ -67,10 +67,15 @@ order, under the current directory, each directory in `BITTERASM_PATH`
 (separated like `PATH`), and finally `~/.bitterasm`. So programs anywhere on
 disk find the installed `std`, and a project's own `std/` takes priority over it.
 
-`bitter build program.basm` runs the whole pipeline — compile, encode, and wrap the
-result in a native executable (ELF, PE, or Mach-O, picked for the host OS) — in one
-command; see [examples/x86_64/hello.basm](examples/x86_64/hello.basm) for a runnable
-example. `bitter encode`/`bitter exec` expose the encode and wrap steps separately.
+`bitter build program.basm` runs the whole pipeline — compile, link, and pack —
+in one command, and writes the bytes marked executable. `bitter` knows no
+executable format itself: like instructions, ELF, PE and Mach-O headers are
+ordinary BitterASM code in `std.formats`, which a program invokes first thing,
+e.g. `elf64_executable EM_X86_64, _start`. Without one, the output is a flat
+binary. See [examples/x86_64/hello.basm](examples/x86_64/hello.basm) for a
+runnable example. `bitterasm compile` and `bitter encode` run the two halves
+separately.
 
-For CLI usage — formatting, diagnostics/lints, and macro-default semantics — see
+For CLI usage — formatting, diagnostics/lints, `@fold`, the `.em` format,
+executable formats, and macro-default semantics — see
 [docs/reference.md](docs/reference.md).

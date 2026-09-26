@@ -5,7 +5,14 @@
 # `phase6_dep.basm`'s own code, so seeing it prove the cross-file
 # `Deferred` reference (Phase 5) resolved to the real, merged byte offset
 # (Phase 6), not a placeholder or a segfault.
+#
+# The ELF header comes from `std.formats.elf`, written here in the first
+# input; its segment covers both files' code.
 from std.x86_64.intel import *
+from std.formats.elf import *
 from .phase6_dep import after_first
 
+elf64_executable EM_X86_64, start
+
+start:
 call after_first

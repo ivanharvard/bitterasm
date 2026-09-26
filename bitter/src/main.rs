@@ -2,11 +2,8 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-mod formats;
 mod link;
 mod pack;
-
-use formats::Format;
 
 #[derive(Parser)]
 #[command(name = "bitter", version, about = "Exporter CLI for BitterASM-emitted values")]
@@ -26,62 +23,26 @@ enum Command {
         output: Option<PathBuf>,
     },
 
-    /// Wrap a raw machine-code (.bin) file in a native, runnable executable
-    /// container (ELF, PE, or Mach-O) for the given, or the host, OS.
-    Exec {
-        path: PathBuf,
-
-        /// Defaults to `path` with its extension dropped (`.exe` added
-        /// back for `--format pe`).
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-
-        /// `elf`, `pe`, or `macho`. Defaults to whatever this build of
-        /// `bitter` is itself running on.
-        #[arg(short, long)]
-        format: Option<String>,
-
-        /// Byte offset into the code where execution starts (decimal, or
-        /// hex with `0x`). A raw .bin has no labels to name, so this is a
-        /// number here; `bitter build --entry` takes a label instead.
-        /// Defaults to 0, the first byte.
-        #[arg(short, long, value_parser = parse_offset)]
-        entry: Option<usize>,
-    },
-
     /// The whole pipeline in one command: compile one or more .basm
-    /// programs, link them together, encode the result, and wrap it in a
-    /// native executable — equivalent to `bitterasm compile` + `bitter
-    /// encode` + `bitter exec` run in sequence, without the intermediate
-    /// .em/.bin files. A single path behaves exactly as it always has;
-    /// given more than one, same-named `section`s are concatenated across
-    /// every input (command-line order), and a `pub` label imported
-    /// (`from file import label`) in one input but declared in another is
-    /// resolved against that other input's own compiled output — real
-    /// multi-file linking (Phase 6, `docs/sections-and-linking/
-    /// PROGRESS.md`). Execution starts at the `pub` label named by
-    /// `--entry`, or at a `pub _start` label if any input declares one, or
-    /// else at the very first byte of the linked output.
+    /// programs, link them together, and write the packed bytes, marked
+    /// executable — `bitterasm compile` + `bitter encode` without the
+    /// intermediate .em files. Given more than one path, same-named
+    /// `section`s are concatenated across every input (command-line order),
+    /// and a `pub` label imported (`from file import label`) in one input
+    /// but declared in another resolves against that other input.
+    ///
+    /// `bitter` knows no executable format itself: a program that should
+    /// run as an ELF, PE or Mach-O executable writes that header in
+    /// bitterasm, e.g. `elf64_executable EM_X86_64, _start` from
+    /// `std.formats.elf`, first thing in the first input. Without one, the
+    /// output is a flat binary.
     Build {
         #[arg(required = true)]
         paths: Vec<PathBuf>,
 
-        /// Defaults to the first path with its extension dropped (`.exe`
-        /// added back for `--format pe`).
+        /// Defaults to the first path with its extension dropped.
         #[arg(short, long)]
         output: Option<PathBuf>,
-
-        /// `elf`, `pe`, or `macho`. Defaults to whatever this build of
-        /// `bitter` is itself running on.
-        #[arg(short, long)]
-        format: Option<String>,
-
-        /// The `pub` label execution starts at (like NASM's `global` plus
-        /// a linker's `-e`). Must be `pub`: only `pub` labels are visible
-        /// to the link step. Defaults to `_start` when some input declares
-        /// `pub _start:`, otherwise the first byte of the output.
-        #[arg(short, long)]
-        entry: Option<String>,
     },
 
     /// Anything `bitter` doesn't recognize itself is handed to `bitterasm`
@@ -98,36 +59,9 @@ fn main() {
 
     match cli.command {
         Command::Encode { path, output } => encode(&path, output),
-        Command::Exec { path, output, format, entry } => exec(&path, output, format, entry.unwrap_or(0)),
-        Command::Build { paths, output, format, entry } => build(&paths, output, format, entry),
+        Command::Build { paths, output } => build(&paths, output),
         Command::External(args) => delegate_to_bitterasm(&args),
     }
-}
-
-/// `--entry` for `exec`: a decimal or `0x`-prefixed hex byte offset.
-fn parse_offset(raw: &str) -> Result<usize, String> {
-    let parsed = match raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")) {
-        Some(hex) => usize::from_str_radix(hex, 16),
-        None => raw.parse(),
-    };
-    parsed.map_err(|error| format!("`{raw}` isn't a byte offset: {error}"))
-}
-
-/// Parses `--format`, exiting with a clear error on an unknown name, or
-/// falls back to [`Format::native`].
-fn resolve_format(format: Option<String>) -> Format {
-    match format {
-        Some(name) => Format::parse(&name).unwrap_or_else(|error| {
-            eprintln!("{error}");
-            std::process::exit(1);
-        }),
-        None => Format::native(),
-    }
-}
-
-fn output_path_for(path: &std::path::Path, format: Format) -> PathBuf {
-    let stem = path.with_extension("");
-    if format.extension().is_empty() { stem } else { stem.with_extension(format.extension()) }
 }
 
 /// `bitterasm`'s own executable, preferring one installed alongside this
@@ -214,31 +148,6 @@ fn encode(path: &PathBuf, output: Option<PathBuf>) {
     println!("encoded {} byte(s) to {}", bytes.len(), output_path.display());
 }
 
-fn exec(path: &PathBuf, output: Option<PathBuf>, format: Option<String>, entry: usize) {
-    let code = match std::fs::read(path) {
-        Ok(code) => code,
-
-        Err(error) => {
-            eprintln!("failed to read {}: {error}", path.display());
-            std::process::exit(1);
-        }
-    };
-
-    let format = resolve_format(format);
-    let output_path = output.unwrap_or_else(|| output_path_for(path, format));
-
-    if let Err(error) = formats::write_executable(&code, &output_path, format, entry) {
-        eprintln!("failed to write {}: {error}", output_path.display());
-        std::process::exit(1);
-    }
-
-    println!(
-        "wrapped {} byte(s) of code into a {format:?} executable at {}",
-        code.len(),
-        output_path.display()
-    );
-}
-
 /// The `.em` features `bitter` understands — every one the format defines.
 const SUPPORTED_FEATURES: &[&str] = bitterasm::emit::features::ALL;
 
@@ -303,9 +212,8 @@ fn compile_input(path: &std::path::Path, unique: &str) -> link::LinkInput {
     }
 }
 
-fn build(paths: &[PathBuf], output: Option<PathBuf>, format: Option<String>, entry: Option<String>) {
-    let format = resolve_format(format);
-    let output_path = output.unwrap_or_else(|| output_path_for(&paths[0], format));
+fn build(paths: &[PathBuf], output: Option<PathBuf>) {
+    let output_path = output.unwrap_or_else(|| paths[0].with_extension(""));
 
     let inputs: Vec<link::LinkInput> = paths
         .iter()
@@ -313,30 +221,17 @@ fn build(paths: &[PathBuf], output: Option<PathBuf>, format: Option<String>, ent
         .map(|(index, path)| compile_input(path, &format!("{}-{index}", std::process::id())))
         .collect();
 
-    let linked = match link::link(inputs) {
-        Ok(linked) => linked,
+    let values = match link::link(inputs) {
+        Ok(linked) => linked.values,
 
         Err(error) => {
             eprintln!("failed to link: {error}");
             std::process::exit(1);
         }
     };
-    let values = linked.values;
 
-    let entry_index = match entry {
-        Some(name) => *linked.labels.get(&name).unwrap_or_else(|| {
-            eprintln!("no `pub` label named `{name}` to use as the entry point (entry labels must be `pub`)");
-            std::process::exit(1);
-        }),
-        None => linked.labels.get("_start").copied().unwrap_or(0),
-    };
-    let entry_offset = pack::byte_offset_of(&values, entry_index).unwrap_or_else(|error| {
-        eprintln!("failed to encode: {error}");
-        std::process::exit(1);
-    });
-
-    let code = match pack::pack_stream(&values) {
-        Ok(code) => code,
+    let bytes = match pack::pack_stream(&values) {
+        Ok(bytes) => bytes,
 
         Err(error) => {
             eprintln!("failed to encode: {error}");
@@ -344,15 +239,29 @@ fn build(paths: &[PathBuf], output: Option<PathBuf>, format: Option<String>, ent
         }
     };
 
-    if let Err(error) = formats::write_executable(&code, &output_path, format, entry_offset) {
+    if let Err(error) = write_executable(&output_path, &bytes) {
         eprintln!("failed to write {}: {error}", output_path.display());
         std::process::exit(1);
     }
 
     println!(
-        "built {} byte(s) of code from {} input(s) into a {format:?} executable at {}",
-        code.len(),
+        "built {} byte(s) from {} input(s) into {}",
+        bytes.len(),
         paths.len(),
         output_path.display()
     );
+}
+
+/// Writes `bytes` to `path`, marked executable where that's a file
+/// permission (on Windows, a PE runs by being named `.exe` instead).
+fn write_executable(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    std::fs::write(path, bytes)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
+    }
+
+    Ok(())
 }

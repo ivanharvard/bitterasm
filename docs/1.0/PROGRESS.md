@@ -39,7 +39,7 @@ v1 module-path identity is what in-language executable headers build on.
 - [x] Phase E3 — `Align<N>` packer primitive
 - [x] Phase E4 — `std/formats/elf.basm`
 - [x] Phase E5 — `std/formats/pe.basm` and `std/formats/macho.basm`
-- [ ] Phase E6 — Remove `formats.rs`, `bitter exec`, `--format`, `--entry`
+- [x] Phase E6 — Remove `formats.rs`, `bitter exec`, `--format`, `--entry`
 
 Work through parts in order (A → E). Within a part, phases are in order.
 Parts A–C are language work and don't depend on D–E. D must precede E.
@@ -669,3 +669,17 @@ same as today.)
 **Deliverable:** `bitter build` writes bytes and sets `+x`; examples import
 a format; README, `docs/reference.md` and the sections-and-linking doc's
 superseded points updated.
+**As built (DONE):** `bitter/src/formats.rs`, `bitter exec`, `--format`,
+`--entry`, `pack::byte_offset_of` and `link::Linked::labels` (both only
+served `--entry`) are gone. `bitter build` links, packs, writes and sets
+`0o755` on Unix; the default output name is the first input without its
+extension. `examples/x86_64/hello.basm` and the multi-file link fixtures
+write their own ELF header. New test: the header's entry point can be a
+label in another input (`bitter/tests/link.rs`). README and
+`docs/reference.md` ("Executables") describe the new model.
+
+`examples/riscv/hello.basm` is untracked work in progress and was left
+untouched; its comment still shows `--entry _start`, which no longer
+exists, and it needs an `elf32_executable EM_RISCV, _start` header.
+
+**Parts A–E are all done.**
