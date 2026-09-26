@@ -21,7 +21,7 @@ v1 module-path identity is what in-language executable headers build on.
 - [x] Phase B1 — Syntax: parser, AST, printer, formatter
 - [x] Phase B2 — Macro bodies
 - [x] Phase B3 — Construct literals and struct bodies
-- [ ] Phase B4 — Top level
+- [x] Phase B4 — Top level
 - [ ] Phase B5 — Reference docs + `@next` lint
 
 **Part C — long strings**
@@ -419,6 +419,26 @@ declaration bodies, producing fields.
 `const x = @fold ...` unrolling to a literal.
 **Verification:** a top-level fold generating `pub const`s and labels, and a
 clear error for a non-range source or a non-int accumulator.
+**As built (DONE):**
+- `resolver/toplevel.rs`, `unroll_fold`: each iteration's copy of the body
+  gets the loop variable and every accumulator substituted as integer
+  literals (`expander::substitute_statements`, as top-level `@for` does),
+  then unrolls in place. `@next` is evaluated statically; a `NextState`
+  threaded through the unroll functions (the pre-resolution counterpart of
+  `next_target`/`pending_next`) stops the rest of that iteration's
+  statements. `check_accumulator_names` and `apply_next` are shared with
+  the resolver's fold.
+- `const x = @fold ...` becomes `const x = <literal>`, so `x` is usable in
+  later top-level `@for` bounds. With several accumulators it becomes a
+  generated `struct __fold#x { pub acc: int, ... }` plus a construction.
+- A fold inside a larger top-level expression (`const y = 1 + @fold ...`)
+  isn't unrolled here; the resolver evaluates it later with the macro-body
+  rules (value only, no emits).
+- Labels can't be generated per iteration (label names aren't spliceable),
+  the same as with top-level `@for`, so the fixture uses constants and
+  invocations instead.
+- Negative values are substituted as `-(n)` (`int_literal`), which top-level
+  `@for` now uses too.
 
 #### Phase B5 — Reference docs + `@next` lint
 **Deliverable:** a `@fold` section in `docs/reference.md`; a lint warning

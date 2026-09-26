@@ -1,0 +1,7 @@
+struct P {
+    pub x: int,
+}
+
+@fold p = P(x = 1) @for i in 0..2 {
+    @next p
+}

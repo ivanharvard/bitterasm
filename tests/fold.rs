@@ -147,3 +147,36 @@ fn a_construction_next_cannot_reach_a_macro_body_fold() {
 fn rejects_next_in_a_struct_body_without_a_fold() {
     assert!(error("struct_next_outside").contains("`@next` can only be used inside a `@fold` body"));
 }
+
+// ---------------------------------------------------------------------
+// top level (Phase B4)
+// ---------------------------------------------------------------------
+
+#[test]
+fn unrolls_folds_at_top_level() {
+    assert_eq!(
+        ints("top_level"),
+        vec![
+            0, 1, 3, 6, // one `show` per iteration
+            6,          // `start3`, a constant the fold generated
+            0, 1,       // `@for j in 0..total - 8`, with `total` = 10
+            4, 6,       // `r.n`, `r.s`
+            0, -5, -10, // a negative accumulator
+        ]
+    );
+}
+
+#[test]
+fn a_top_level_fold_needs_a_literal_range() {
+    assert!(error("top_level_not_range").contains("range"));
+}
+
+#[test]
+fn rejects_next_at_top_level_outside_a_fold() {
+    assert!(error("top_level_next_outside").contains("`@next` can only be used inside a `@fold` body"));
+}
+
+#[test]
+fn top_level_accumulators_must_be_integers() {
+    assert!(error("top_level_struct_accumulator").contains("accumulators must be integer constants"));
+}

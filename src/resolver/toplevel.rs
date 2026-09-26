@@ -26,11 +26,18 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{literal_name, Expr, MetaStatement, NamePart, Program, SplicedName, Statement};
+use crate::ast::{
+    literal_name, CallArgument, Expr, MetaStatement, NamePart, Program, SplicedName, Statement,
+    StructDeclaration, UnaryOp,
+};
+use crate::token::Span;
+use crate::types::{StructBodyItem, StructField, TypeExpr};
 use crate::eval::{self, EvalError, Int};
 use crate::expander;
 
+use super::fold::{NextTarget, PendingNext};
 use super::macro_body::MAX_FOR_ITERATIONS;
+use super::values::Value;
 use super::ResolveError;
 
 /// Like the single-`Program` form this used to be, but also returns which
@@ -49,7 +56,7 @@ pub fn unroll_top_level(
     let mut statement_modules = Vec::new();
 
     for (statement, &module) in program.statements.iter().zip(module_of) {
-        let unrolled = unroll_statements(std::slice::from_ref(statement), &mut consts)?;
+        let unrolled = unroll_statements(std::slice::from_ref(statement), &mut consts, &mut NextState::default())?;
         statement_modules.extend(std::iter::repeat(module).take(unrolled.len()));
         statements.extend(unrolled);
     }
@@ -60,12 +67,57 @@ pub fn unroll_top_level(
 fn unroll_statements(
     statements: &[Statement],
     consts: &mut HashMap<String, Int>,
+    next: &mut NextState,
 ) -> Result<Vec<Statement>, ResolveError> {
     let mut out = Vec::new();
 
     for statement in statements {
+        // A `@next` reached so far ends this fold iteration: nothing after
+        // it is unrolled.
+        if next.pending.is_some() {
+            break;
+        }
+
         match statement {
-            Statement::Meta(meta) => unroll_meta(meta, consts, &mut out)?,
+            Statement::Meta(meta) => unroll_meta(meta, consts, next, &mut out)?,
+
+            // `const x = @fold ...`: the fold's body unrolls here, in
+            // place, and `x` binds its final value — see `unroll_fold`.
+            Statement::Const(decl) if matches!(decl.value, Expr::Fold { .. }) => {
+                let Expr::Fold { fold, .. } = &decl.value else { unreachable!("matched above") };
+                let mut decl = decl.clone();
+                decl.name = fold_spliced_name(&decl.name, consts)?;
+
+                let accumulators = unroll_fold(fold, consts, next, &mut out)?;
+                let Some(name) = literal_name(&decl.name) else {
+                    unreachable!("fold_spliced_name leaves only literal parts");
+                };
+
+                if let [(_, value)] = accumulators.as_slice() {
+                    consts.insert(name, value.clone());
+                    decl.value = int_literal(value, decl.span);
+                } else {
+                    // Several accumulators: a generated struct with an
+                    // `int` field per accumulator, constructed here. Its
+                    // name can't be written in source, so it can't clash.
+                    let struct_name = format!("__fold#{name}");
+                    out.push(Statement::Struct(fold_result_struct(&struct_name, &accumulators, decl.span)));
+                    decl.value = Expr::Call {
+                        callee: Box::new(Expr::Identifier { name: struct_name, span: decl.span }),
+                        arguments: accumulators
+                            .iter()
+                            .map(|(field, value)| CallArgument {
+                                name: Some(field.clone()),
+                                value: int_literal(value, decl.span),
+                                span: decl.span,
+                            })
+                            .collect(),
+                        span: decl.span,
+                    };
+                }
+
+                out.push(Statement::Const(decl));
+            }
 
             Statement::Const(decl) => {
                 let mut decl = decl.clone();
@@ -130,9 +182,43 @@ fn unroll_statements(
 fn unroll_meta(
     meta: &MetaStatement,
     consts: &mut HashMap<String, Int>,
+    next: &mut NextState,
     out: &mut Vec<Statement>,
 ) -> Result<(), ResolveError> {
     match meta.name.as_str() {
+        // A statement fold: its body unrolls in place, its value is unused.
+        "fold" => unroll_fold(meta, consts, next, out).map(|_| ()),
+
+        "next" => {
+            let span = meta.span;
+            match next.target {
+                NextTarget::Fold => {}
+                NextTarget::None => {
+                    return Err(ResolveError::Fold {
+                        message: "`@next` can only be used inside a `@fold` body".to_string(),
+                        span,
+                    });
+                }
+                NextTarget::ForInsideFold => {
+                    return Err(ResolveError::Fold {
+                        message: "`@next` can't be used inside a plain `@for` nested in a `@fold` — \
+                                  it would have to end both loops' iterations at once"
+                            .to_string(),
+                        span,
+                    });
+                }
+            }
+
+            let value = meta.args.first().map(|value| eval_top_level_const(value, consts).map(Value::Int)).transpose()?;
+            let updates = meta
+                .bindings
+                .iter()
+                .map(|update| Ok((update.name.clone(), Value::Int(eval_top_level_const(&update.value, consts)?), update.span)))
+                .collect::<Result<Vec<_>, ResolveError>>()?;
+
+            next.pending = Some(PendingNext { value, updates, span });
+            Ok(())
+        }
         "for" => {
             let [var, source] = meta.args.as_slice() else {
                 return Err(ResolveError::Internal {
@@ -183,14 +269,17 @@ fn unroll_meta(
                 }
 
                 let mut substitutions = HashMap::new();
-                substitutions.insert(
-                    var_name.clone(),
-                    Expr::Integer { raw: i.to_string(), span: meta.span },
-                );
+                substitutions.insert(var_name.clone(), int_literal(&i, meta.span));
 
                 let literalized = expander::substitute_statements(body, &substitutions);
-                let unrolled = unroll_statements(&literalized, consts)?;
-                out.extend(unrolled);
+                let outer = next.target;
+                next.target = match outer {
+                    NextTarget::None => NextTarget::None,
+                    _ => NextTarget::ForInsideFold,
+                };
+                let unrolled = unroll_statements(&literalized, consts, next);
+                next.target = outer;
+                out.extend(unrolled?);
 
                 i += Int::from(1);
             }
@@ -212,7 +301,7 @@ fn unroll_meta(
             let chosen = if truthy { meta.body.as_ref() } else { meta.else_body.as_ref() };
 
             if let Some(chosen) = chosen {
-                let unrolled = unroll_statements(chosen, consts)?;
+                let unrolled = unroll_statements(chosen, consts, next)?;
                 out.extend(unrolled);
             }
 
@@ -241,7 +330,7 @@ fn unroll_meta(
                 }
             }
             if let Some(body) = chosen {
-                out.extend(unroll_statements(body, consts)?);
+                out.extend(unroll_statements(body, consts, next)?);
             }
             Ok(())
         }
@@ -254,6 +343,140 @@ fn unroll_meta(
             kind: format!("@{other}"),
             span: meta.span,
         }),
+    }
+}
+
+/// Where a top-level `@next` would go, and one waiting for its fold — the
+/// pre-resolution counterpart of `AliasResolver::next_target` /
+/// `pending_next` (see `super::fold`).
+#[derive(Default)]
+struct NextState {
+    target: NextTarget,
+    pending: Option<PendingNext>,
+}
+
+/// Unrolls a `@fold` at top level into `out`, returning each accumulator's
+/// final value. Like top-level `@for`, this runs before resolution: the
+/// source must be a literal range, and every initial and `@next` value an
+/// integer constant expression. Each iteration's copy of the body has the
+/// loop variable and every accumulator substituted as integer literals.
+fn unroll_fold(
+    fold: &MetaStatement,
+    consts: &mut HashMap<String, Int>,
+    next: &mut NextState,
+    out: &mut Vec<Statement>,
+) -> Result<Vec<(String, Int)>, ResolveError> {
+    let [Expr::Identifier { name: var, .. }, source] = fold.args.as_slice() else {
+        return Err(ResolveError::Internal {
+            message: "top-level `@fold`'s args should always be [var, source] — the parser guarantees this shape"
+                .to_string(),
+            span: fold.span,
+        });
+    };
+    let Expr::Range { start, end, inclusive, .. } = source else {
+        return Err(ResolveError::TopLevelForRequiresRange { span: source.span() });
+    };
+    let body = fold.body.as_deref().unwrap_or_default();
+
+    super::fold::check_accumulator_names(&fold.bindings, var)?;
+
+    let mut accumulators = fold
+        .bindings
+        .iter()
+        .map(|binding| {
+            let value = eval_top_level_const(&binding.value, consts).map_err(|error| match error {
+                ResolveError::ExpectedConstantExpression { span } => ResolveError::Fold {
+                    message: format!(
+                        "a top-level `@fold`'s accumulators must be integer constants, since top level \
+                         unrolls before anything else is resolved — `{}` isn't; accumulate other values \
+                         in a `@fold` inside a macro instead",
+                        binding.name,
+                    ),
+                    span,
+                },
+                other => other,
+            })?;
+            Ok((binding.name.clone(), Value::Int(value)))
+        })
+        .collect::<Result<Vec<_>, ResolveError>>()?;
+
+    let start = eval_top_level_const(start, consts)?;
+    let end = eval_top_level_const(end, consts)?;
+
+    let mut i = start;
+    let mut iterations: u64 = 0;
+
+    while if *inclusive { i <= end } else { i < end } {
+        iterations += 1;
+        if iterations > MAX_FOR_ITERATIONS {
+            return Err(ResolveError::ForLoopTooLarge { span: fold.span });
+        }
+
+        let mut substitutions = HashMap::new();
+        substitutions.insert(var.clone(), int_literal(&i, fold.span));
+        for (name, value) in &accumulators {
+            let Value::Int(value) = value else { unreachable!("top-level accumulators are integers") };
+            substitutions.insert(name.clone(), int_literal(value, fold.span));
+        }
+
+        let literalized = expander::substitute_statements(body, &substitutions);
+        let outer = std::mem::replace(&mut next.target, NextTarget::Fold);
+        let unrolled = unroll_statements(&literalized, consts, next);
+        next.target = outer;
+        out.extend(unrolled?);
+
+        if let Some(pending) = next.pending.take() {
+            super::fold::apply_next(&mut accumulators, pending)?;
+        }
+
+        i += Int::from(1);
+    }
+
+    Ok(accumulators
+        .into_iter()
+        .map(|(name, value)| match value {
+            Value::Int(value) => (name, value),
+            _ => unreachable!("top-level accumulators are integers"),
+        })
+        .collect())
+}
+
+// `struct <name> { pub acc: int, ... }` — a top-level fold's result type
+// when it has several accumulators.
+fn fold_result_struct(name: &str, accumulators: &[(String, Int)], span: Span) -> StructDeclaration {
+    StructDeclaration {
+        name: vec![NamePart::Literal(name.to_string())],
+        is_pub: false,
+        generic_params: Vec::new(),
+        facets: Vec::new(),
+        fields: accumulators
+            .iter()
+            .map(|(field, _)| {
+                StructBodyItem::Field(StructField {
+                    name: vec![NamePart::Literal(field.clone())],
+                    ty: TypeExpr::Named { path: vec!["int".to_string()], span },
+                    is_pub: true,
+                    is_skip: false,
+                    default: None,
+                    span,
+                })
+            })
+            .collect(),
+        span,
+    }
+}
+
+// An integer as source: a negative one is `-(n)`, not a literal with a
+// sign in it.
+fn int_literal(value: &Int, span: Span) -> Expr {
+    if *value < Int::from(0) {
+        Expr::Unary {
+            op: UnaryOp::Negate,
+            operand: Box::new(Expr::Integer { raw: (-value.clone()).to_string(), span }),
+            span,
+        }
+    } else {
+        Expr::Integer { raw: value.to_string(), span }
     }
 }
 

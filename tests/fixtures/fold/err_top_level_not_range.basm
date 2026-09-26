@@ -1,0 +1,5 @@
+const n = 3
+
+@fold a = 0 @for i in n {
+    @next a
+}

@@ -1,0 +1,38 @@
+# Top-level folds unroll before resolution: invocations and constants per
+# iteration, a const bound to a fold feeding a later @for bound, several
+# accumulators, and negative values.
+macro show(v: int) {
+    @emit v
+}
+
+@fold offset = 0 @for i in 0..4 {
+    pub const start`i` = offset
+    show offset
+    @next offset + i + 1
+}
+
+show start3
+
+const total = @fold a = 0 @for i in 0..5 {
+    @next a + i
+}
+
+@for j in 0..total - 8 {
+    show j
+}
+
+const r = @fold n = 0, s = 0 @for i in 0..4 {
+    @next n = n + 1, s = s + i
+}
+
+macro read_r() {
+    @emit r.n
+    @emit r.s
+}
+
+read_r
+
+@fold a = 0 @for i in 0..3 {
+    show a
+    @next a - 5
+}
