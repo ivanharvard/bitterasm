@@ -1,0 +1,12 @@
+# A pub macro that invokes a private macro as a statement, passing a
+# private constant.
+const SCALE = 10
+
+macro emit_scaled(v: int) {
+    @emit v * SCALE
+}
+
+pub macro show(v: int) {
+    emit_scaled v
+    emit_scaled SCALE
+}

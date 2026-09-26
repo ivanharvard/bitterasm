@@ -813,12 +813,22 @@ fn rename_statement(statement: &mut Statement, renames: &HashMap<String, String>
             }
         }
 
-        // Never actually reached — `collect_declarations` never splices a
-        // `SyntaxOverride` (or `ExternLabel`, which it also never re-splices
-        // transitively — see its own doc) into a statement list for this to
-        // run on — but matched here too for exhaustiveness.
+        // An invocation inside a macro body may call one of this module's
+        // private macros, or pass its private constants.
+        Statement::Invocation(invocation) => {
+            if let Some(mangled) = renames.get(&invocation.name) {
+                invocation.name = mangled.clone();
+            }
+            for operand in &mut invocation.operands {
+                rename_expr(operand, renames);
+            }
+        }
+
+        // Nothing to rename. `collect_declarations` never splices a
+        // `SyntaxOverride` or `ExternLabel` into a statement list for this
+        // to run on; they're matched here for exhaustiveness.
         Statement::Import(_) | Statement::Label(_) | Statement::Section(_)
-        | Statement::Invocation(_) | Statement::SyntaxOverride(_) | Statement::ExternLabel(_) => {}
+        | Statement::SyntaxOverride(_) | Statement::ExternLabel(_) => {}
     }
 }
 
