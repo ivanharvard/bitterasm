@@ -37,7 +37,7 @@ v1 module-path identity is what in-language executable headers build on.
 - [x] Phase E1 — `Deferred` `add`
 - [x] Phase E2 — Linker-provided image symbols
 - [x] Phase E3 — `Align<N>` packer primitive
-- [ ] Phase E4 — `std/formats/elf.basm`
+- [x] Phase E4 — `std/formats/elf.basm`
 - [ ] Phase E5 — `std/formats/pe.basm` and `std/formats/macho.basm`
 - [ ] Phase E6 — Remove `formats.rs`, `bitter exec`, `--format`, `--entry`
 
@@ -618,6 +618,27 @@ machine constants for x86-64 and RISC-V.
 **Verification:** byte-for-byte match with the old `wrap_elf` output for
 the x86 hello; `readelf -h -l` on x86 and RISC-V output; the x86 hello
 runs.
+**As built (DONE):**
+- `elf64_executable machine, entry[, load_address = 0x400000,
+  segment_flags = 5, flags = 0]` and `elf32_executable` (default load
+  address 0x10000), plus `EM_X86_64`, `EM_RISCV` and `PF_R`/`PF_W`/`PF_X`.
+  `e_entry` is `add(span(image_start, entry), load_address)` and the
+  segment's sizes are `span(image_start, image_end)`. Invoke it first,
+  before any `section`, so it starts the image.
+- Two loader bugs surfaced and were fixed in their own commits first, both
+  about a library's `pub` macro being called from another file: a label
+  the library imported (`image_start`) didn't travel with it, and an
+  invocation statement of one of its private macros (`elf_ident 2`) wasn't
+  renamed along with that macro. Tests: `tests/extern_labels.rs`,
+  `tests/private_declarations.rs`.
+- Tests (`bitter/tests/formats.rs`): the x86-64 hello with an in-language
+  header is byte-for-byte the old `wrap_elf` output (kept as
+  `hello_x86_64.golden`, so the check survives E6), runs and prints
+  `Hello, World!`; a RISC-V ELF32 exit program has the right header and
+  code bytes. `readelf -h -l` accepts both without warnings. There's no
+  RISC-V emulator here to run it.
+- A multi-file ELF build can't be tested until E6, because `bitter build`
+  still wraps its output in the Rust ELF header. Tested there.
 
 #### Phase E5 — `std/formats/pe.basm` and `std/formats/macho.basm`
 **Deliverable:** ports of `wrap_pe` and `wrap_macho`.

@@ -1,0 +1,129 @@
+# ELF static executables, for Linux and the BSDs.
+#
+# Invoke one header macro first thing in the program's entry file, before
+# any `section` statement, so its bytes start the image:
+#
+#   from std.formats.elf import *
+#
+#   elf64_executable EM_X86_64, _start
+#
+# The header maps the whole image as one segment at `load_address` and
+# starts execution at `entry`, a label in this file or imported from another
+# one. Its sizes and entry point come from `span` over the linked image
+# (`std.bitter.link`), so they stay correct however the program's sections
+# and files are laid out.
+#
+# What this doesn't produce: section headers, dynamic linking, or separate
+# segments per section. The single segment is readable and executable by
+# default; pass `segment_flags` (a combination of `PF_R`, `PF_W`, `PF_X`) to
+# change that.
+#
+# Every multi-byte field is little-endian (`ELFDATA2LSB`), which is what
+# x86-64 and RISC-V use.
+
+from std.binary import bits
+from std.bitter.deferred import *
+from std.bitter.byte_order import LittleEndian
+from std.bitter.link import image_start, image_end
+
+# e_machine values.
+pub const EM_X86_64 = 0x3E
+pub const EM_RISCV = 0xF3
+
+# Segment permission bits, for `segment_flags`.
+pub const PF_X = 1
+pub const PF_W = 2
+pub const PF_R = 4
+
+# A little-endian field `bytes` wide holding `value`.
+macro elf_field(value: int, bytes: int) {
+    const width = bytes * 8
+    @emit LittleEndian<bits<width>, width> { value: bits<width> { value: value } }
+}
+
+# The same, for a value only known once the image is laid out.
+macro elf_late_field(value: Deferred, bytes: int) {
+    const width = bytes * 8
+    @emit LittleEndian<Positioned<width>, width> { value: Positioned<width> { value: value } }
+}
+
+# e_ident: magic, class (1 = 32-bit, 2 = 64-bit), little-endian, version 1,
+# System V ABI, then padding to 16 bytes.
+macro elf_ident(class: int) {
+    elf_field 0x7F, 1
+    elf_field 'E', 1
+    elf_field 'L', 1
+    elf_field 'F', 1
+    elf_field class, 1
+    elf_field 1, 1
+    elf_field 1, 1
+    elf_field 0, 1
+    elf_field 0, 8
+}
+
+# A 64-bit ELF executable header and its one program header (120 bytes).
+pub macro elf64_executable(
+    machine: int,
+    entry: int,
+    load_address: int = 0x400000,
+    segment_flags: int = 5,
+    flags: int = 0
+) {
+    elf_ident 2
+    elf_field 2, 2                                                  # e_type: ET_EXEC
+    elf_field machine, 2                                            # e_machine
+    elf_field 1, 4                                                  # e_version
+    elf_late_field add(span(image_start, entry), load_address), 8  # e_entry
+    elf_field 64, 8                                                 # e_phoff
+    elf_field 0, 8                                                  # e_shoff
+    elf_field flags, 4                                              # e_flags
+    elf_field 64, 2                                                 # e_ehsize
+    elf_field 56, 2                                                 # e_phentsize
+    elf_field 1, 2                                                  # e_phnum
+    elf_field 0, 2                                                  # e_shentsize
+    elf_field 0, 2                                                  # e_shnum
+    elf_field 0, 2                                                  # e_shstrndx
+
+    elf_field 1, 4                                                  # p_type: PT_LOAD
+    elf_field segment_flags, 4                                      # p_flags
+    elf_field 0, 8                                                  # p_offset
+    elf_field load_address, 8                                       # p_vaddr
+    elf_field load_address, 8                                       # p_paddr
+    elf_late_field span(image_start, image_end), 8                  # p_filesz
+    elf_late_field span(image_start, image_end), 8                  # p_memsz
+    elf_field 0x1000, 8                                             # p_align
+}
+
+# A 32-bit ELF executable header and its one program header (84 bytes), e.g.
+# for RV32.
+pub macro elf32_executable(
+    machine: int,
+    entry: int,
+    load_address: int = 0x10000,
+    segment_flags: int = 5,
+    flags: int = 0
+) {
+    elf_ident 1
+    elf_field 2, 2                                                  # e_type: ET_EXEC
+    elf_field machine, 2                                            # e_machine
+    elf_field 1, 4                                                  # e_version
+    elf_late_field add(span(image_start, entry), load_address), 4  # e_entry
+    elf_field 52, 4                                                 # e_phoff
+    elf_field 0, 4                                                  # e_shoff
+    elf_field flags, 4                                              # e_flags
+    elf_field 52, 2                                                 # e_ehsize
+    elf_field 32, 2                                                 # e_phentsize
+    elf_field 1, 2                                                  # e_phnum
+    elf_field 0, 2                                                  # e_shentsize
+    elf_field 0, 2                                                  # e_shnum
+    elf_field 0, 2                                                  # e_shstrndx
+
+    elf_field 1, 4                                                  # p_type: PT_LOAD
+    elf_field 0, 4                                                  # p_offset
+    elf_field load_address, 4                                       # p_vaddr
+    elf_field load_address, 4                                       # p_paddr
+    elf_late_field span(image_start, image_end), 4                  # p_filesz
+    elf_late_field span(image_start, image_end), 4                  # p_memsz
+    elf_field segment_flags, 4                                      # p_flags
+    elf_field 0x1000, 4                                             # p_align
+}

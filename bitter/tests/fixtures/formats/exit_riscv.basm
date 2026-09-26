@@ -1,0 +1,11 @@
+# A 32-bit RISC-V Linux program that exits with status 42, with an ELF32
+# header from `std.formats.elf`.
+from std.riscv.native import *
+from std.formats.elf import *
+
+elf32_executable EM_RISCV, _start
+
+pub _start:
+    addi a0, zero, 42
+    addi a7, zero, 93
+    ecall
