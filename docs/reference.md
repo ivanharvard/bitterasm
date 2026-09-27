@@ -368,6 +368,7 @@ indent_width = 4
 hard_tabs = false
 indent_facets = true
 facets_on_new_line = true
+indent_label_bodies = true
 pub_on_declaration = true
 return_type_on_declaration = true
 collapse_short_multiline_generics = true
@@ -378,7 +379,8 @@ newline_style = "Auto" # Auto, Unix, or Windows
 ```
 
 Formatting preserves comments and source tokens while normalizing delimiter-aware
-indentation, trailing whitespace, blank lines, comment wrapping, and the final newline.
+indentation (plus one level for the lines under a top-level label, up to the next label,
+`section`, or declaration, unless `indent_label_bodies = false`), trailing whitespace, blank lines, comment wrapping, and the final newline.
 Long code is wrapped at safe commas inside `()`, `[]`, and `{}`; lines with no safe
 split may exceed `max_width` because newlines terminate BitterASM statements. `--check`
 makes no changes and returns a non-zero exit status if any input would be reformatted.

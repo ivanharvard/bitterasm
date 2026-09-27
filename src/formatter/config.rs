@@ -7,6 +7,9 @@ pub struct FormatConfig {
     pub hard_tabs: bool,
     pub indent_facets: bool,
     pub facets_on_new_line: bool,
+    /// Indent the lines under a top-level label one level, up to the next
+    /// label, `section`, or declaration.
+    pub indent_label_bodies: bool,
     pub pub_on_declaration: bool,
     pub return_type_on_declaration: bool,
     pub collapse_short_multiline_generics: bool,
@@ -23,6 +26,7 @@ impl Default for FormatConfig {
             hard_tabs: false,
             indent_facets: true,
             facets_on_new_line: true,
+            indent_label_bodies: true,
             pub_on_declaration: true,
             return_type_on_declaration: true,
             collapse_short_multiline_generics: true,
@@ -87,6 +91,7 @@ pub(super) fn parse_config(source: &str) -> Result<FormatConfig, String> {
             "hard_tabs" => config.hard_tabs = parse_bool(value, line_number, key)?,
             "indent_facets" => config.indent_facets = parse_bool(value, line_number, key)?,
             "facets_on_new_line" => config.facets_on_new_line = parse_bool(value, line_number, key)?,
+            "indent_label_bodies" => config.indent_label_bodies = parse_bool(value, line_number, key)?,
             "pub_on_declaration" => config.pub_on_declaration = parse_bool(value, line_number, key)?,
             "return_type_on_declaration" => {
                 config.return_type_on_declaration = parse_bool(value, line_number, key)?

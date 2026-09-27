@@ -6,6 +6,7 @@ use crate::token::TokenKind;
 mod config;
 mod generics;
 mod indentation;
+mod labels;
 mod signature;
 mod wrapping;
 
@@ -17,6 +18,7 @@ use indentation::{
     contains_facet, is_facet, leading_closers, leading_generic_closers, make_indent,
     update_delimiters, update_generic_depth,
 };
+use labels::label_body_lines;
 use signature::normalize_macro_signatures;
 use wrapping::{split_inline_facets, wrap_code, wrap_comment};
 
@@ -32,6 +34,11 @@ pub fn format_source(source: &str, config: &FormatConfig) -> Result<String, Stri
     let normalized = normalize_macro_signatures(&normalized, config);
     let normalized = collapse_short_generics(&normalized, config)?;
     let tokens = lexer::lex(&normalized).map_err(|error| format!("lex error: {error}"))?;
+    let label_body = if config.indent_label_bodies {
+        label_body_lines(&normalized, &tokens)
+    } else {
+        Vec::new()
+    };
     let mut delimiters = Vec::new();
     let mut generic_depth: usize = 0;
     let mut facet_blocks = Vec::new();
@@ -39,7 +46,7 @@ pub fn format_source(source: &str, config: &FormatConfig) -> Result<String, Stri
     let mut result = Vec::new();
     let mut offset = 0usize;
 
-    for line in normalized.split('\n') {
+    for (line_index, line) in normalized.split('\n').enumerate() {
         let end = offset + line.len();
         let line_tokens: Vec<_> = tokens
             .iter()
@@ -68,7 +75,8 @@ pub fn format_source(source: &str, config: &FormatConfig) -> Result<String, Stri
             let leading_generic_closers = leading_generic_closers(&line_tokens);
             let is_facet = is_facet(&line_tokens);
             let facet_indent = config.indent_facets && is_facet;
-            let depth_bias = facet_blocks.len() + usize::from(facet_indent);
+            let label_indent = label_body.get(line_index).copied().unwrap_or(false);
+            let depth_bias = facet_blocks.len() + usize::from(facet_indent) + usize::from(label_indent);
             let line_depth = delimiters.len().saturating_sub(leading_closers)
                 + generic_depth.saturating_sub(leading_generic_closers)
                 + depth_bias;
@@ -239,6 +247,67 @@ mod tests {
             format_source("macro x()\n    | invariant enabled\n{}\n", &config).unwrap(),
             "macro x()\n| invariant enabled\n{}\n"
         );
+    }
+
+    #[test]
+    fn indents_the_lines_under_a_label() {
+        let source = "section .text\npub _start:\nmov eax, 1\n\n.write:\nsyscall # write\n";
+        assert_eq!(
+            format_source(source, &FormatConfig::default()).unwrap(),
+            "section .text\npub _start:\n    mov eax, 1\n\n.write:\n    syscall # write\n"
+        );
+    }
+
+    #[test]
+    fn a_label_body_keeps_its_consts_and_ends_at_a_section() {
+        let source = "msg:\nconst text = \"hi\"\ndb text\nsection .text\nret\n";
+        assert_eq!(
+            format_source(source, &FormatConfig::default()).unwrap(),
+            "msg:\n    const text = \"hi\"\n    db text\nsection .text\nret\n"
+        );
+    }
+
+    #[test]
+    fn a_label_body_ends_at_a_declaration() {
+        let source = "start:\nnoop\nmacro noop() {\n@emit 1\n}\n";
+        assert_eq!(
+            format_source(source, &FormatConfig::default()).unwrap(),
+            "start:\n    noop\nmacro noop() {\n    @emit 1\n}\n"
+        );
+    }
+
+    #[test]
+    fn a_comment_above_a_label_stays_with_that_label() {
+        let source = "start:\nnoop\n\n# the loop\nloop:\n# body\nnoop\n";
+        assert_eq!(
+            format_source(source, &FormatConfig::default()).unwrap(),
+            "start:\n    noop\n\n# the loop\nloop:\n    # body\n    noop\n"
+        );
+    }
+
+    #[test]
+    fn a_multiline_invocation_under_a_label_is_indented_as_a_whole() {
+        let source = "start:\nemit_pair(\n1,\n2\n)\n";
+        assert_eq!(
+            format_source(source, &FormatConfig::default()).unwrap(),
+            "start:\n    emit_pair(\n        1,\n        2\n    )\n"
+        );
+    }
+
+    #[test]
+    fn labels_inside_a_macro_body_are_left_alone() {
+        let source = "macro x() {\ninner:\n@emit 1\n}\n";
+        assert_eq!(
+            format_source(source, &FormatConfig::default()).unwrap(),
+            "macro x() {\n    inner:\n    @emit 1\n}\n"
+        );
+    }
+
+    #[test]
+    fn label_body_indentation_can_be_disabled() {
+        let config = FormatConfig { indent_label_bodies: false, ..Default::default() };
+        let source = "start:\n    noop\n";
+        assert_eq!(format_source(source, &config).unwrap(), "start:\nnoop\n");
     }
 
     #[test]
