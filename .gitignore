@@ -1,4 +1,5 @@
 target/
 .DS_Store
 *.em
-__pycache__/docs/book/book/
+__pycache__/
+docs/book/book/
