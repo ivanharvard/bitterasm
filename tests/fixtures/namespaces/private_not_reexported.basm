@@ -1,0 +1,2 @@
+# A private import of `middle`'s isn't something `middle` exports.
+from .lib.middle import emit_base

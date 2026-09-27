@@ -1,0 +1,7 @@
+from .lib.regs import *
+
+macro get(n: int) {
+    @emit r`n`
+}
+
+get 2

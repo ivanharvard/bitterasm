@@ -1,4 +1,4 @@
-from .impl import *
+pub from .impl import *
 
 # A second, C-flavored surface syntax for the same `impl.basm` instructions
 # `native.basm` already covers — no instruction mnemonic required anywhere

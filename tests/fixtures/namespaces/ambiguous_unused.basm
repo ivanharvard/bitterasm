@@ -1,0 +1,5 @@
+# Both define `BASE`, which is fine as long as it isn't used.
+from .lib.base import *
+from .lib.other import *
+
+emit_base

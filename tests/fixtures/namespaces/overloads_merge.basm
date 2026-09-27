@@ -1,0 +1,4 @@
+from .lib.put_two import *
+
+put 1
+put 2, 3

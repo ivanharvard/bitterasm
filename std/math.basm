@@ -1,4 +1,4 @@
-from std.decimal import Decimal, Fraction
+pub from std.decimal import Decimal, Fraction
 
 # Fixed-point results are truncated to `precision` decimal places. Four
 # guard digits are used internally. Embedded constants support 0..60 places.

@@ -1,0 +1,9 @@
+# Adds an overload to the `put` it re-exports.
+pub from .put_one import *
+
+pub macro put(
+    a: int,
+    b: int
+) {
+    @emit a + b
+}

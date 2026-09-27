@@ -6,7 +6,7 @@
 # hardcodes the reduced surface forms to 64-bit (`w = 1`) because this package
 # only defines the 64-bit register-name family.
 
-from .impl import *
+pub from .impl import *
 
 pub macro assert_valid_reg(r: Reg) {
     @assert r.value >= 0 && r.value <= 15, "not a valid register (0-15)"

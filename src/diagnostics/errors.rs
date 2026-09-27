@@ -22,6 +22,10 @@ pub fn load_error(error: LoadError, sources: &mut SourceMap) -> Diagnostic {
             }
             diagnostic
         }
+        LoadError::Resolve { path, error } => {
+            let source = std::fs::read_to_string(&path).ok().map(|text| sources.add(&path, text));
+            resolve_error(*error, source)
+        }
         other => Diagnostic::error(other.to_string()),
     }
 }
@@ -74,7 +78,8 @@ pub fn resolve_error(error: ResolveError, source: Option<SourceId>) -> Diagnosti
         ComputedNameNotAllowed { span } => ("computed name is not allowed here".into(), span),
         TopLevelForRequiresRange { span } => ("top-level @for requires a range".into(), span),
     };
-    let diagnostic = Diagnostic::error(message);
+    // Names reach here as the loader's internal names (`bits#3`).
+    let diagnostic = Diagnostic::error(crate::loader::demangle(&message));
     match source {
         Some(id) => diagnostic.primary(id, span, "error occurs here"),
         None => diagnostic,

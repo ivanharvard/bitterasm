@@ -2,7 +2,8 @@
 // them into a single, self-contained `Program` before the resolver ever
 // sees it. The resolver and symbol table stay import-agnostic: by the time
 // they run, every declaration a file depends on already lives directly in
-// its statement list.
+// its statement list, and every name has been rewritten to what it means
+// in the file that wrote it (see "namespaces" below).
 //
 // Module paths map onto the filesystem 1:1: `std.binary.native` is
 // `<root>/std/binary/native.basm`. For relative imports (leading dots)
@@ -11,17 +12,19 @@
 // holds the file: the current working directory, then each `BITTERASM_PATH`
 // entry, then the install root `~/.bitterasm` (where `install.sh` puts `std/`).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::ast::{
-    literal_name, ConstructItem, Expr, Facet, FacetPayload, ImportItems, ImportStatement,
-    MetaStatement, ModulePath, NamePart, Program, Statement,
+    literal_name, ConstructItem, Expr, ExternLabel, Facet, FacetPayload, ImportItems,
+    ImportStatement, MetaStatement, ModulePath, NamePart, Program, Statement,
 };
+use crate::eval::Int;
 use crate::lexer;
 use crate::parser::{self, ParserSeed};
+use crate::resolver::{self, ResolveError};
 use crate::token::Span;
 use crate::types::{GenericParameter, StructBodyItem, TypeArgument, TypeExpr};
 
@@ -53,6 +56,19 @@ pub enum LoadError {
     UnknownImportedName {
         module: String,
         name: String,
+    },
+    /// A top-level `@for`/`@if`/`@fold` in `path` couldn't be unrolled, or
+    /// `path` declares one name twice.
+    Resolve {
+        path: PathBuf,
+        error: Box<ResolveError>,
+    },
+    /// `importer` uses `name`, which more than one of its imports brings
+    /// in, each meaning something different.
+    AmbiguousName {
+        importer: PathBuf,
+        name: String,
+        modules: Vec<String>,
     },
     /// Two of `importer`'s own imports each assign `name` a different
     /// `syntax` override, and `importer` doesn't locally declare its own
@@ -111,6 +127,21 @@ impl fmt::Display for LoadError {
                 write!(f, "module `{module}` has no `{name}`")
             }
 
+            LoadError::Resolve { path, error } => {
+                write!(f, "{}: {error:?}", path.display())
+            }
+
+            LoadError::AmbiguousName { importer, name, modules } => {
+                let modules: Vec<String> = modules.iter().map(|module| format!("`{module}`")).collect();
+                write!(
+                    f,
+                    "{}: `{name}` is imported from more than one module ({}) — \
+                     import it by name from the one you mean",
+                    importer.display(),
+                    modules.join(", "),
+                )
+            }
+
             LoadError::ConflictingSyntaxOverride { importer, name } => {
                 write!(
                     f,
@@ -125,29 +156,49 @@ impl fmt::Display for LoadError {
 
 impl std::error::Error for LoadError {}
 
-// A fully parsed module, kept around by canonical path so a module imported
-// from multiple places is only read and parsed once.
+// A fully loaded module, kept around by canonical path so a module imported
+// from multiple places is only read, parsed and named once.
 struct LoadedModule {
+    // The file's statements exactly as parsed: the source-faithful view
+    // `load_entry_program` returns.
+    source_statements: Vec<Statement>,
+
+    // The same statements with top-level `@for`/`@if`/`@fold` unrolled and
+    // every declaration and reference given its internal name (see
+    // "namespaces" below). This is what gets spliced into a program.
     statements: Vec<Statement>,
+
+    // The `pub` labels this file imports by name, as already-named extern
+    // label declarations, each with the id of the module that declares it.
+    extern_labels: Vec<(ExternLabel, usize)>,
+
     span: Span,
 
-    // Generic signatures and macro syntax patterns visible by the end of
-    // this file: its own struct/type-alias/macro declarations plus
-    // everything transitively pulled in by its own imports. Handed to
-    // files that import this module, so they can parse `bits<width>`-shaped
-    // usages, and custom-syntax macro invocations, correctly without the
-    // declaration itself being textually present. Private (non-pub)
-    // declarations from this file are filtered out of both maps before
-    // caching, since a name an importer can never write shouldn't shadow
-    // how they interpret an unrelated same-named generic/macro of their
-    // own.
+    // Generic signatures and macro syntax patterns for the names this
+    // module exports. Handed to files that import it, so they can parse
+    // `bits<width>`-shaped usages, and custom-syntax macro invocations,
+    // without the declaration itself being textually present.
     seed: ParserSeed,
 
+    // What each name means inside this file, and the part of that an
+    // importer sees: its `pub` declarations plus its `pub from` imports.
+    scope: HashMap<String, Binding>,
+    exports: HashMap<String, Binding>,
+
     // Stable, unique-per-module id assigned the first time this module is
-    // loaded. Used to mangle its private declarations into names that can't
-    // collide with (or be typed by) any other module's when everything is
-    // flattened into one global program.
+    // loaded. Internal names carry it (see "namespaces" below).
     module_id: usize,
+}
+
+#[derive(Default)]
+struct LoadState {
+    cache: HashMap<PathBuf, LoadedModule>,
+    stack: Vec<PathBuf>,
+
+    // Every loaded module's top-level integer constants, by internal name:
+    // what a later module's top-level `@for` bounds can read through its
+    // imports.
+    const_values: HashMap<String, Int>,
 }
 
 pub fn load_program(entry: &Path) -> Result<Program, LoadError> {
@@ -167,6 +218,7 @@ pub struct ModuleOrigins {
     module_of_statement: Vec<usize>,
     paths: Vec<PathBuf>,
     module_paths: Vec<String>,
+    scopes: Vec<HashMap<String, String>>,
     entry_module: usize,
 }
 
@@ -191,6 +243,14 @@ impl ModuleOrigins {
         &self.module_paths
     }
 
+    /// Every module's names, each mapped to the internal name the loader
+    /// rewrote references to it into, indexed by module id. The resolver
+    /// reads it for a name it builds itself (`` x`i` ``), which the loader
+    /// never saw.
+    pub fn scopes(&self) -> &[HashMap<String, String>] {
+        &self.scopes
+    }
+
     /// The module id of the file originally passed to
     /// [`load_program_with_modules`] — not necessarily 0; see
     /// [`load_module`]'s own doc for why discovery order doesn't guarantee
@@ -204,18 +264,16 @@ impl ModuleOrigins {
 /// `Program`'s top-level statements, which file originally declared it —
 /// needed to enforce a non-`pub` struct field's visibility against the
 /// module that's actually trying to read it, since that check has to
-/// survive the same flattening that makes privacy for top-level
-/// declarations need name-mangling in the first place (see "privacy
-/// mangling" below). Ordinary callers that don't care about module
-/// attribution (formatting, `expand`, every existing test) should keep
-/// using [`load_program`].
+/// survive the same flattening that makes namespaces need internal names
+/// in the first place (see "namespaces" below). Ordinary callers that don't
+/// care about module attribution (formatting, `expand`, every existing
+/// test) should keep using [`load_program`].
 pub fn load_program_with_modules(entry: &Path) -> Result<(Program, ModuleOrigins), LoadError> {
     let entry_path = canonicalize(entry)?;
 
-    let mut cache: HashMap<PathBuf, LoadedModule> = HashMap::new();
-    let mut stack: Vec<PathBuf> = Vec::new();
-
-    load_module(&entry_path, &mut cache, &mut stack)?;
+    let mut state = LoadState::default();
+    load_module(&entry_path, &mut state)?;
+    let cache = &state.cache;
 
     // The entry file's own imports get spliced into its statement list; it
     // is never itself spliced into anything, so seed the "already included"
@@ -233,15 +291,9 @@ pub fn load_program_with_modules(entry: &Path) -> Result<(Program, ModuleOrigins
     for statement in &entry_module.statements {
         match statement {
             Statement::Import(import) => {
-                let mut spliced_modules = Vec::new();
-                statements.extend(splice_import(
-                    import,
-                    &entry_path,
-                    &cache,
-                    &mut spliced,
-                    &mut spliced_modules,
-                )?);
-                module_of_statement.extend(spliced_modules);
+                for target in import_targets(import, &entry_path)? {
+                    collect_declarations(&target, cache, &mut spliced, &mut statements, &mut module_of_statement)?;
+                }
             }
 
             other => {
@@ -251,27 +303,38 @@ pub fn load_program_with_modules(entry: &Path) -> Result<(Program, ModuleOrigins
         }
     }
 
+    for (label, module_id) in &entry_module.extern_labels {
+        statements.push(Statement::ExternLabel(label.clone()));
+        module_of_statement.push(*module_id);
+    }
+
     // Several modules may import the same label; it's one declaration.
-    let mut seen_labels: HashSet<(String, String)> = HashSet::new();
+    let mut seen_labels: HashSet<String> = HashSet::new();
     let (statements, module_of_statement): (Vec<_>, Vec<_>) = statements
         .into_iter()
         .zip(module_of_statement)
         .filter(|(statement, _)| match statement {
-            Statement::ExternLabel(label) => seen_labels.insert((label.name.clone(), label.module.clone())),
+            Statement::ExternLabel(label) => seen_labels.insert(label.name.clone()),
             _ => true,
         })
         .unzip();
 
     let mut paths: Vec<PathBuf> = vec![PathBuf::new(); cache.len()];
-    for (path, module) in &cache {
+    let mut scopes: Vec<HashMap<String, String>> = vec![HashMap::new(); cache.len()];
+    for (path, module) in cache {
         paths[module.module_id] = path.clone();
+        scopes[module.module_id] = module
+            .scope
+            .iter()
+            .filter_map(|(name, binding)| Some((name.clone(), binding.internal_name()?)))
+            .collect();
     }
 
     let module_paths = paths.iter().map(|path| module_path_of(path)).collect();
 
     Ok((
         Program { statements, span },
-        ModuleOrigins { module_of_statement, paths, module_paths, entry_module: entry_module_id },
+        ModuleOrigins { module_of_statement, paths, module_paths, scopes, entry_module: entry_module_id },
     ))
 }
 
@@ -282,12 +345,11 @@ pub fn load_program_with_modules(entry: &Path) -> Result<(Program, ModuleOrigins
 /// continues to use [`load_program`]'s flattened program.
 pub fn load_entry_program(entry: &Path) -> Result<Program, LoadError> {
     let entry_path = canonicalize(entry)?;
-    let mut cache: HashMap<PathBuf, LoadedModule> = HashMap::new();
-    let mut stack: Vec<PathBuf> = Vec::new();
-    load_module(&entry_path, &mut cache, &mut stack)?;
-    let entry_module = &cache[&entry_path];
+    let mut state = LoadState::default();
+    load_module(&entry_path, &mut state)?;
+    let entry_module = &state.cache[&entry_path];
     Ok(Program {
-        statements: entry_module.statements.clone(),
+        statements: entry_module.source_statements.clone(),
         span: entry_module.span,
     })
 }
@@ -297,10 +359,9 @@ pub fn load_entry_program(entry: &Path) -> Result<Program, LoadError> {
 /// resolver spans must be matched back to the module they came from.
 pub fn load_sources(entry: &Path) -> Result<Vec<(PathBuf, String)>, LoadError> {
     let entry_path = canonicalize(entry)?;
-    let mut cache: HashMap<PathBuf, LoadedModule> = HashMap::new();
-    let mut stack = Vec::new();
-    load_module(&entry_path, &mut cache, &mut stack)?;
-    let mut paths: Vec<_> = cache.into_keys().collect();
+    let mut state = LoadState::default();
+    load_module(&entry_path, &mut state)?;
+    let mut paths: Vec<_> = state.cache.into_keys().collect();
     paths.sort();
     paths.into_iter().map(|path| {
         let source = fs::read_to_string(&path).map_err(|error| LoadError::Io {
@@ -310,17 +371,13 @@ pub fn load_sources(entry: &Path) -> Result<Vec<(PathBuf, String)>, LoadError> {
     }).collect()
 }
 
-fn load_module(
-    path: &Path,
-    cache: &mut HashMap<PathBuf, LoadedModule>,
-    stack: &mut Vec<PathBuf>,
-) -> Result<(), LoadError> {
-    if cache.contains_key(path) {
+fn load_module(path: &Path, state: &mut LoadState) -> Result<(), LoadError> {
+    if state.cache.contains_key(path) {
         return Ok(());
     }
 
-    if let Some(start) = stack.iter().position(|p| p == path) {
-        let mut cycle: Vec<PathBuf> = stack[start..].to_vec();
+    if let Some(start) = state.stack.iter().position(|p| p == path) {
+        let mut cycle: Vec<PathBuf> = state.stack[start..].to_vec();
         cycle.push(path.to_path_buf());
 
         return Err(LoadError::CyclicImport { cycle });
@@ -339,7 +396,7 @@ fn load_module(
 
     let imports = parser::discover_imports(tokens.clone());
 
-    stack.push(path.to_path_buf());
+    state.stack.push(path.to_path_buf());
 
     let mut seed = ParserSeed::default();
 
@@ -354,39 +411,20 @@ fn load_module(
     let mut conflicted_overrides: HashSet<String> = HashSet::new();
 
     for import in &imports {
-        let child_paths = match resolve_import_paths(import, path)? {
-            ImportResolution::Plain(child_path) => vec![child_path],
-            ImportResolution::Package(child_paths) => child_paths,
+        // A named import only brings those names' parse information.
+        let only = match &import.items {
+            ImportItems::Names(names) => Some(names.as_slice()),
+            ImportItems::All => None,
+        };
+
+        let (child_paths, only) = match resolve_import_paths(import, path)? {
+            ImportResolution::Plain(child_path) => (vec![child_path], only),
+            ImportResolution::Package(child_paths) => (child_paths, None),
         };
 
         for child_path in child_paths {
-            load_module(&child_path, cache, stack)?;
-            let child_seed = &cache[&child_path].seed;
-            seed.generic_signatures.extend(child_seed.generic_signatures.clone());
-            for (name, patterns) in &child_seed.macro_syntaxes {
-                let known = seed.macro_syntaxes.entry(name.clone()).or_default();
-                for pattern in patterns {
-                    if !known.contains(pattern) {
-                        known.push(pattern.clone());
-                    }
-                }
-            }
-            for entry in &child_seed.unanchored_syntaxes {
-                if !seed.unanchored_syntaxes.contains(entry) {
-                    seed.unanchored_syntaxes.push(entry.clone());
-                }
-            }
-            for (name, pattern) in &child_seed.syntax_overrides {
-                match seed.syntax_overrides.get(name) {
-                    Some(existing) if existing != pattern => {
-                        conflicted_overrides.insert(name.clone());
-                    }
-                    Some(_) => {}
-                    None => {
-                        seed.syntax_overrides.insert(name.clone(), pattern.clone());
-                    }
-                }
-            }
+            load_module(&child_path, state)?;
+            merge_seed(&mut seed, &state.cache[&child_path].seed, only, &mut conflicted_overrides);
         }
     }
 
@@ -407,32 +445,118 @@ fn load_module(
         }
     }
 
-    stack.pop();
+    state.stack.pop();
 
-    let own_private_names: HashSet<String> = program
+    let module_id = state.cache.len();
+    let imported = imported_bindings(&program.statements, path, &state.cache)?;
+
+    // Top-level `@for`/`@if` bounds may read the integer constants this
+    // file can see, except where one of its own consts shadows the name.
+    let own_const_names: HashSet<String> = program
         .statements
         .iter()
         .filter_map(|statement| match statement {
-            Statement::Struct(decl) if !decl.is_pub => literal_name(&decl.name),
-            Statement::TypeAlias(decl) if !decl.is_pub => literal_name(&decl.name),
-            Statement::Macro(decl) if !decl.is_pub => literal_name(&decl.name),
+            Statement::Const(decl) => literal_name(&decl.name),
             _ => None,
         })
         .collect();
 
-    seed.generic_signatures.retain(|name, _| !own_private_names.contains(name.as_str()));
-    seed.macro_syntaxes.retain(|name, _| !own_private_names.contains(name.as_str()));
-    seed.syntax_overrides.retain(|name, _| !own_private_names.contains(name.as_str()));
-    seed.unanchored_syntaxes.retain(|(name, _)| !own_private_names.contains(name.as_str()));
+    let mut consts: HashMap<String, Int> = imported
+        .scope
+        .iter()
+        .filter(|(name, _)| !own_const_names.contains(*name))
+        .filter_map(|(name, binding)| match binding {
+            Binding::Decl(internal) => Some((name.clone(), state.const_values.get(internal)?.clone())),
+            _ => None,
+        })
+        .collect();
 
-    let module_id = cache.len();
+    let unrolled = resolver::unroll_module(&program.statements, &mut consts).map_err(|error| {
+        LoadError::Resolve { path: path.to_path_buf(), error: Box::new(error) }
+    })?;
 
-    cache.insert(
+    // This file's own declarations shadow anything it imports, except that
+    // a macro's overloads join whatever overloads of the same name it
+    // imports: a dialect adds `mov` overloads to the `mov` it builds on.
+    let mut own: HashMap<String, Binding> = HashMap::new();
+    let mut own_pub: HashMap<String, Binding> = HashMap::new();
+
+    for statement in &unrolled {
+        // One name, one declaration per file — only macros overload.
+        if let Some((name, span)) = own_name_and_span(statement) {
+            let is_macro = matches!(statement, Statement::Macro(_));
+            let clashes = match own.get(&name) {
+                Some(Binding::Macros { .. }) => !is_macro,
+                Some(_) => true,
+                None => false,
+            };
+            if clashes {
+                return Err(LoadError::Resolve {
+                    path: path.to_path_buf(),
+                    error: Box::new(ResolveError::DuplicateSymbol { name, span }),
+                });
+            }
+        }
+
+        if let Some((name, is_pub)) = declaration_name(statement) {
+            let binding = match statement {
+                Statement::Macro(_) => Binding::Macros {
+                    name: name.clone(),
+                    modules: BTreeSet::from([module_id]),
+                },
+                _ => Binding::Decl(internal_name(&name, module_id)),
+            };
+
+            if let (Statement::Const(_), Some(value)) = (statement, consts.get(&name)) {
+                state.const_values.insert(internal_name(&name, module_id), value.clone());
+            }
+
+            if is_pub {
+                own_pub.insert(name.clone(), binding.clone());
+            }
+            own.insert(name, binding);
+        } else if let Statement::Label(label) = statement {
+            own.insert(label.name.clone(), Binding::Label(label.name.clone()));
+        }
+    }
+
+    let scope = shadow(own, imported.scope);
+    let exports = shadow(own_pub, imported.exports);
+
+    let mut statements = Vec::with_capacity(unrolled.len());
+
+    for mut statement in unrolled {
+        let mut renamer = Renamer::new(&scope, &statement);
+        name_declaration(&mut statement, module_id);
+        rename_statement(&mut statement, &mut renamer);
+
+        if let Some((name, candidates)) = renamer.ambiguous {
+            return Err(LoadError::AmbiguousName {
+                importer: path.to_path_buf(),
+                name,
+                modules: describe_origins(&candidates, &state.cache),
+            });
+        }
+
+        statements.push(statement);
+    }
+
+    // Importers get parse information only for what they can name.
+    seed.generic_signatures.retain(|name, _| exports.contains_key(name));
+    seed.macro_syntaxes.retain(|name, _| exports.contains_key(name));
+    seed.syntax_overrides.retain(|name, _| exports.contains_key(name));
+    seed.unanchored_syntaxes.retain(|(name, _)| exports.contains_key(name));
+
+    state.cache.insert(
         path.to_path_buf(),
         LoadedModule {
-            statements: program.statements,
+            source_statements: program.statements,
+            statements,
+            extern_labels: imported.extern_labels,
             span: program.span,
             seed,
+            scope,
+            exports,
             module_id,
         },
     );
@@ -440,10 +564,56 @@ fn load_module(
     Ok(())
 }
 
-// Resolves one `from <module> import <items>` statement to the declarations
-// it brings in, recursing into that module's own imports. Modules already
-// spliced elsewhere in this build (diamond imports) contribute nothing the
-// second time, since their declarations are already present.
+// Adds a child module's exported parse information to `seed`: all of it, or
+// only the entries for `only`'s names.
+fn merge_seed(
+    seed: &mut ParserSeed,
+    child_seed: &ParserSeed,
+    only: Option<&[String]>,
+    conflicted_overrides: &mut HashSet<String>,
+) {
+    let wanted = |name: &String| only.is_none_or(|names| names.contains(name));
+
+    for (name, signature) in &child_seed.generic_signatures {
+        if wanted(name) {
+            seed.generic_signatures.insert(name.clone(), signature.clone());
+        }
+    }
+
+    for (name, patterns) in &child_seed.macro_syntaxes {
+        if !wanted(name) {
+            continue;
+        }
+        let known = seed.macro_syntaxes.entry(name.clone()).or_default();
+        for pattern in patterns {
+            if !known.contains(pattern) {
+                known.push(pattern.clone());
+            }
+        }
+    }
+
+    for entry in &child_seed.unanchored_syntaxes {
+        if wanted(&entry.0) && !seed.unanchored_syntaxes.contains(entry) {
+            seed.unanchored_syntaxes.push(entry.clone());
+        }
+    }
+
+    for (name, pattern) in &child_seed.syntax_overrides {
+        if !wanted(name) {
+            continue;
+        }
+        match seed.syntax_overrides.get(name) {
+            Some(existing) if existing != pattern => {
+                conflicted_overrides.insert(name.clone());
+            }
+            Some(_) => {}
+            None => {
+                seed.syntax_overrides.insert(name.clone(), pattern.clone());
+            }
+        }
+    }
+}
+
 // Resolves one `from <module> import <items>` statement to every file path
 // it draws from: a plain module (`<module>` resolves directly to a `.basm`
 // file) is `Plain`, one path; a package-style import (`<module>` is a
@@ -477,114 +647,18 @@ fn resolve_import_paths(
     }
 }
 
-fn splice_import(
-    import: &ImportStatement,
-    importer: &Path,
-    cache: &HashMap<PathBuf, LoadedModule>,
-    spliced: &mut HashSet<PathBuf>,
-    out_modules: &mut Vec<usize>,
-) -> Result<Vec<Statement>, LoadError> {
-    // Phase 5 (`docs/sections-and-linking/PROGRESS.md`): a name in a plain
-    // `from file import ...` list that names a `pub` label in `file`,
-    // rather than an ordinary declaration — collected alongside the
-    // ordinary `declared` validation below (`file` already canonicalized,
-    // via `target_path`), then turned into `Statement::ExternLabel`s once
-    // every target is known to exist, instead of being spliced in
-    // `collect_declarations` (which never touches `Statement::Label` at
-    // all — see its own doc).
-    let mut extern_labels: Vec<crate::ast::ExternLabel> = Vec::new();
-    let mut extern_label_modules: Vec<usize> = Vec::new();
-
-    let target_paths: Vec<PathBuf> = match resolve_import_paths(import, importer)? {
-        ImportResolution::Plain(target_path) => {
-            for (extern_label, module_id) in imported_labels(import, &target_path, cache)? {
-                extern_labels.push(extern_label);
-                extern_label_modules.push(module_id);
-            }
-
-            vec![target_path]
-        }
-
+fn import_targets(import: &ImportStatement, importer: &Path) -> Result<Vec<PathBuf>, LoadError> {
+    Ok(match resolve_import_paths(import, importer)? {
+        ImportResolution::Plain(target_path) => vec![target_path],
         ImportResolution::Package(target_paths) => target_paths,
-    };
-
-    // Everything each target transitively needs still has to be spliced in
-    // for resolution to work. Non-pub declarations are mangled (see
-    // `collect_declarations`) so they're never nameable outside the module
-    // that declared them, regardless of how much gets spliced.
-    let mut out = Vec::new();
-
-    for target_path in &target_paths {
-        collect_declarations(target_path, cache, spliced, &mut out, out_modules)?;
-    }
-
-    for (extern_label, module_id) in extern_labels.into_iter().zip(extern_label_modules) {
-        out.push(Statement::ExternLabel(extern_label));
-        out_modules.push(module_id);
-    }
-
-    Ok(out)
+    })
 }
 
-// The `pub` labels a plain `from file import a, b` names, as extern labels
-// (with the declaring module's id), after checking every name is a `pub`
-// declaration or `pub` label in `target_path`. Only a plain import's names
-// can be checked this way — a package import's names were each already
-// resolved to a whole file by `resolve_import_paths`.
-fn imported_labels(
-    import: &ImportStatement,
-    target_path: &Path,
-    cache: &HashMap<PathBuf, LoadedModule>,
-) -> Result<Vec<(crate::ast::ExternLabel, usize)>, LoadError> {
-    let ImportItems::Names(names) = &import.items else { return Ok(Vec::new()) };
-
-    let target = &cache[target_path];
-    let declared: HashSet<String> = target
-        .statements
-        .iter()
-        .filter_map(declaration_name)
-        .filter(|(_, is_pub)| *is_pub)
-        .map(|(name, _)| name)
-        .collect();
-
-    let pub_labels: HashSet<&str> = target
-        .statements
-        .iter()
-        .filter_map(|statement| match statement {
-            Statement::Label(label) if label.is_pub => Some(label.name.as_str()),
-            _ => None,
-        })
-        .collect();
-
-    let mut labels = Vec::new();
-
-    for name in names {
-        if declared.contains(name.as_str()) {
-            continue;
-        }
-
-        if pub_labels.contains(name.as_str()) {
-            labels.push((
-                crate::ast::ExternLabel {
-                    name: name.clone(),
-                    file: target_path.display().to_string(),
-                    module: module_path_of(target_path),
-                    span: import.span,
-                },
-                target.module_id,
-            ));
-            continue;
-        }
-
-        return Err(LoadError::UnknownImportedName {
-            module: module_display(&import.module),
-            name: name.clone(),
-        });
-    }
-
-    Ok(labels)
-}
-
+// Appends a module's declarations, and everything its own imports need, to
+// `out`. A program needs every module it transitively imports, whether or
+// not their names are visible to it; internal names keep them apart. Modules
+// already spliced elsewhere in this build (diamond imports) contribute
+// nothing the second time.
 fn collect_declarations(
     path: &Path,
     cache: &HashMap<PathBuf, LoadedModule>,
@@ -598,49 +672,21 @@ fn collect_declarations(
 
     let module = &cache[path];
 
-    // Non-pub struct/type-alias/const declarations are private to this
-    // file: mangle them to a name no other file's source text could ever
-    // spell, and rewrite every reference to them within this file's own
-    // declarations to match. Declarations from other files are untouched
-    // here; each gets its own independent rename pass at its own splice.
-    let renames = build_rename_map(&module.statements, module.module_id);
-
     for statement in &module.statements {
         match statement {
-            // A label this module imports is carried along like its other
-            // declarations: its macros may refer to it wherever they're
-            // called (e.g. `std.formats.elf` using `std.bitter.link`'s
-            // `image_end`).
             Statement::Import(nested) => {
-                let nested_path = resolve_module_path(&nested.module, path)?;
-                collect_declarations(&nested_path, cache, spliced, out, out_modules)?;
-
-                for (extern_label, module_id) in imported_labels(nested, &nested_path, cache)? {
-                    out.push(Statement::ExternLabel(extern_label));
-                    out_modules.push(module_id);
+                for target in import_targets(nested, path)? {
+                    collect_declarations(&target, cache, spliced, out, out_modules)?;
                 }
             }
 
-            // A top-level `@for`/`@if`/`@match` (see `resolver::toplevel`'s
-            // module doc) is carried across wholesale, still unexpanded,
-            // exactly like any other declaration below — e.g. RISC-V's
-            // register bank, `@for i in 0..32 { pub const x`i` = Reg(i) }`,
-            // needs to survive splicing into an importer's statement list
-            // undisturbed so `unroll_top_level` (which runs once, after
-            // every file is merged) is the one place that ever decides what
-            // it unrolls into. Renaming still needs to reach inside it (a
-            // private declaration generated by a top-level `@for` is
-            // renamed exactly like any other), which
-            // `rename_statement`'s own `Meta` arm already does.
             Statement::Struct(_)
             | Statement::Enum(_)
             | Statement::TypeAlias(_)
             | Statement::Const(_)
             | Statement::Macro(_)
             | Statement::Meta(_) => {
-                let mut declaration = statement.clone();
-                rename_statement(&mut declaration, &renames);
-                out.push(declaration);
+                out.push(statement.clone());
                 out_modules.push(module.module_id);
             }
 
@@ -650,11 +696,19 @@ fn collect_declarations(
             // time, propagated via `ParserSeed`, not by being spliced into
             // an importer's statement list. `ExternLabel` is never present
             // in a *loaded* module's own `statements` — it's synthesized
-            // from an import (see the `Import` arm above) — so it's
-            // matched here only for exhaustiveness.
+            // from an import (see `extern_labels` below) — so it's matched
+            // here only for exhaustiveness.
             Statement::Label(_) | Statement::Section(_) | Statement::Invocation(_)
             | Statement::SyntaxOverride(_) | Statement::ExternLabel(_) => {}
         }
+    }
+
+    // A label this module imports is carried along like its other
+    // declarations: its macros may refer to it wherever they're called (e.g.
+    // `std.formats.elf` using `std.bitter.link`'s `image_end`).
+    for (label, module_id) in &module.extern_labels {
+        out.push(Statement::ExternLabel(label.clone()));
+        out_modules.push(*module_id);
     }
 
     Ok(())
@@ -663,9 +717,8 @@ fn collect_declarations(
 // A name and whether it's reachable from outside the file that declared it.
 // Every one of these can in principle carry a splice, but only meaningfully
 // so once generated from inside a live macro body — a top-level declaration
-// (the only kind this function ever sees; `build_rename_map` doesn't
-// descend into macro bodies) is always fully literal, so a non-literal name
-// here just means there's nothing to add to the rename map for it —
+// (the only kind this function ever sees) is always fully literal once
+// unrolled, so a non-literal name here just means there's nothing to name —
 // `resolver::collect_symbols` is what rejects that case with a real error.
 fn declaration_name(statement: &Statement) -> Option<(String, bool)> {
     match statement {
@@ -678,41 +731,587 @@ fn declaration_name(statement: &Statement) -> Option<(String, bool)> {
     }
 }
 
+// The name a top-level statement declares in its own file, and where.
+fn own_name_and_span(statement: &Statement) -> Option<(String, Span)> {
+    let (name, span) = match statement {
+        Statement::Struct(decl) => (literal_name(&decl.name)?, decl.span),
+        Statement::Enum(decl) => (literal_name(&decl.name)?, decl.span),
+        Statement::TypeAlias(decl) => (literal_name(&decl.name)?, decl.span),
+        Statement::Const(decl) => (literal_name(&decl.name)?, decl.span),
+        Statement::Macro(decl) => (literal_name(&decl.name)?, decl.span),
+        Statement::Label(label) => (label.name.clone(), label.span),
+        _ => return None,
+    };
+    Some((name, span))
+}
+
 // ===============
-// privacy mangling
+// namespaces
 // ===============
 //
-// Non-pub declarations are only ever meant to be visible within the file
-// that declares them. Since the resolver works over one flattened, global
-// program with a single flat (by-name) symbol table, "private" can't mean
-// "absent from the table" (a pub sibling may still depend on it) — instead
-// it means "renamed to something no source text could ever spell", using
-// `#`, which the lexer only ever treats as the start of a line comment and
-// so can never appear inside an identifier a `.basm` file actually wrote.
+// Each file sees its own declarations and exactly what it imports. The
+// resolver, though, works over one flattened program with a single flat
+// (by-name) symbol table, so two files' same-named declarations can't both
+// keep their names. Instead every top-level declaration gets an internal
+// name, `name#module`, and every reference is rewritten to the internal
+// name of whatever it means in the file that wrote it. `#` can't appear in
+// an identifier a `.basm` file actually wrote (the lexer only ever treats
+// it as the start of a line comment), so no source text can spell one.
+//
+// A macro reference means an overload set, possibly spanning modules (a
+// dialect adds overloads to the mnemonics it imports), so it's rewritten to
+// `name#a,b,...`, which the resolver reads as every overload of `name`
+// declared in modules `a`, `b`, .... Labels keep their own names: they only
+// exist in the file being compiled.
 
-fn build_rename_map(statements: &[Statement], module_id: usize) -> HashMap<String, String> {
-    let mut renames = HashMap::new();
+/// What a name means inside one module.
+#[derive(Debug, Clone, PartialEq)]
+enum Binding {
+    /// A struct, enum, type alias or const, by internal name.
+    Decl(String),
+
+    /// A label in this file.
+    Label(String),
+
+    /// Every overload of macro `name` declared in one of `modules`.
+    Macros { name: String, modules: BTreeSet<usize> },
+
+    /// A `pub` label imported from another file, and that file's module id.
+    ExternLabel(ExternLabel, usize),
+
+    /// Imports that bring different declarations under this name. Only an
+    /// error once the name is used.
+    Ambiguous(Vec<Binding>),
+}
+
+impl Binding {
+    fn internal_name(&self) -> Option<String> {
+        match self {
+            Binding::Decl(name) | Binding::Label(name) => Some(name.clone()),
+
+            Binding::Macros { name, modules } => {
+                let modules: Vec<String> = modules.iter().map(usize::to_string).collect();
+                Some(format!("{name}#{}", modules.join(",")))
+            }
+
+            Binding::ExternLabel(label, _) => Some(label.name.clone()),
+
+            Binding::Ambiguous(_) => None,
+        }
+    }
+
+    // One name brought in twice: the same declaration, or macro overloads
+    // that join, or else an ambiguity.
+    fn merge(self, other: Binding) -> Binding {
+        if self == other {
+            return self;
+        }
+
+        match (self, other) {
+            (Binding::Macros { name, mut modules }, Binding::Macros { modules: theirs, .. }) => {
+                modules.extend(theirs);
+                Binding::Macros { name, modules }
+            }
+
+            (first, second) => {
+                let mut candidates = Vec::new();
+                for binding in [first, second] {
+                    match binding {
+                        Binding::Ambiguous(inner) => candidates.extend(inner),
+                        other => candidates.push(other),
+                    }
+                }
+                candidates.dedup();
+                Binding::Ambiguous(candidates)
+            }
+        }
+    }
+}
+
+fn internal_name(name: &str, module_id: usize) -> String {
+    format!("{name}#{module_id}")
+}
+
+/// Strips the loader's internal naming (`name#module`, `name#a,b`) back off
+/// every name in `text`, for anything shown to a person.
+pub fn demangle(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let digit_at = |index: usize| chars.get(index).is_some_and(char::is_ascii_digit);
+
+    let mut out = String::with_capacity(text.len());
+    let mut index = 0;
+
+    while index < chars.len() {
+        if chars[index] == '#' && digit_at(index + 1) {
+            // `#3`, `#3,5`, ... — a comma belongs to the name only when
+            // another module id follows it.
+            index += 1;
+            loop {
+                while digit_at(index) {
+                    index += 1;
+                }
+                if chars.get(index) == Some(&',') && digit_at(index + 1) {
+                    index += 1;
+                } else {
+                    break;
+                }
+            }
+            continue;
+        }
+        out.push(chars[index]);
+        index += 1;
+    }
+
+    out
+}
+
+struct ImportedBindings {
+    // Everything this file's imports bring in.
+    scope: HashMap<String, Binding>,
+    // The part of `scope` its `pub from` imports re-export.
+    exports: HashMap<String, Binding>,
+    extern_labels: Vec<(ExternLabel, usize)>,
+}
+
+// What a file's imports bring in. A name imported explicitly
+// (`from x import name`) takes precedence over one a `*` brings in.
+fn imported_bindings(
+    statements: &[Statement],
+    importer: &Path,
+    cache: &HashMap<PathBuf, LoadedModule>,
+) -> Result<ImportedBindings, LoadError> {
+    // (name, binding, explicit, re-exported)
+    let mut candidates: Vec<(String, Binding, bool, bool)> = Vec::new();
+    let mut extern_labels = Vec::new();
 
     for statement in statements {
-        if let Some((name, is_pub)) = declaration_name(statement) {
-            if !is_pub {
-                renames.insert(name.clone(), format!("{name}#{module_id}"));
+        let Statement::Import(import) = statement else { continue };
+
+        match (resolve_import_paths(import, importer)?, &import.items) {
+            (ImportResolution::Plain(target_path), ImportItems::Names(names)) => {
+                let target = &cache[&target_path];
+
+                for name in names {
+                    if let Some(binding) = target.exports.get(name) {
+                        candidates.push((name.clone(), binding.clone(), true, import.is_pub));
+                        continue;
+                    }
+
+                    let is_pub_label = target.statements.iter().any(|statement| {
+                        matches!(statement, Statement::Label(label) if label.is_pub && &label.name == name)
+                    });
+
+                    if !is_pub_label {
+                        return Err(LoadError::UnknownImportedName {
+                            module: module_display(&import.module),
+                            name: name.clone(),
+                        });
+                    }
+
+                    let label = ExternLabel {
+                        name: internal_name(name, target.module_id),
+                        file: target_path.display().to_string(),
+                        module: module_path_of(&target_path),
+                        span: import.span,
+                    };
+                    extern_labels.push((label.clone(), target.module_id));
+                    candidates.push((
+                        name.clone(),
+                        Binding::ExternLabel(label, target.module_id),
+                        true,
+                        import.is_pub,
+                    ));
+                }
+            }
+
+            (ImportResolution::Plain(target_path), ImportItems::All) => {
+                for (name, binding) in &cache[&target_path].exports {
+                    candidates.push((name.clone(), binding.clone(), false, import.is_pub));
+                }
+            }
+
+            (ImportResolution::Package(target_paths), _) => {
+                for target_path in target_paths {
+                    for (name, binding) in &cache[&target_path].exports {
+                        candidates.push((name.clone(), binding.clone(), false, import.is_pub));
+                    }
+                }
             }
         }
     }
 
-    renames
+    let resolve = |reexported_only: bool| {
+        let mut explicit: HashMap<String, Binding> = HashMap::new();
+        let mut glob: HashMap<String, Binding> = HashMap::new();
+
+        for (name, binding, is_explicit, is_pub) in &candidates {
+            if reexported_only && !is_pub {
+                continue;
+            }
+            let map = if *is_explicit { &mut explicit } else { &mut glob };
+            let merged = match map.remove(name) {
+                Some(existing) => existing.merge(binding.clone()),
+                None => binding.clone(),
+            };
+            map.insert(name.clone(), merged);
+        }
+
+        glob.extend(explicit);
+        glob
+    };
+
+    Ok(ImportedBindings { scope: resolve(false), exports: resolve(true), extern_labels })
 }
 
-fn rename_statement(statement: &mut Statement, renames: &HashMap<String, String>) {
-    match statement {
-        Statement::Struct(decl) => {
-            if let Some(literal) = literal_name(&decl.name) {
-                if let Some(mangled) = renames.get(&literal) {
-                    decl.name = vec![NamePart::Literal(mangled.clone())];
+// A file's own declarations over what it imports: its own name wins, except
+// that its macro overloads join same-named imported ones.
+fn shadow(own: HashMap<String, Binding>, mut imported: HashMap<String, Binding>) -> HashMap<String, Binding> {
+    for (name, binding) in own {
+        let combined = match (binding, imported.remove(&name)) {
+            (Binding::Macros { name: macro_name, mut modules }, Some(Binding::Macros { modules: theirs, .. })) => {
+                modules.extend(theirs);
+                Binding::Macros { name: macro_name, modules }
+            }
+            (binding, _) => binding,
+        };
+        imported.insert(name, combined);
+    }
+
+    imported
+}
+
+// The module paths an ambiguous name's candidates come from.
+fn describe_origins(candidates: &[Binding], cache: &HashMap<PathBuf, LoadedModule>) -> Vec<String> {
+    let module_path_of_id = |id: usize| {
+        cache
+            .iter()
+            .find(|(_, module)| module.module_id == id)
+            .map(|(path, _)| module_path_of(path))
+            .unwrap_or_default()
+    };
+
+    let mut modules = Vec::new();
+    for candidate in candidates {
+        match candidate {
+            Binding::Decl(name) => {
+                if let Some(id) = name.rsplit_once('#').and_then(|(_, id)| id.parse().ok()) {
+                    modules.push(module_path_of_id(id));
+                }
+            }
+            Binding::Macros { modules: ids, .. } => modules.extend(ids.iter().map(|id| module_path_of_id(*id))),
+            Binding::ExternLabel(label, _) => modules.push(label.module.clone()),
+            Binding::Label(_) | Binding::Ambiguous(_) => {}
+        }
+    }
+    modules.sort();
+    modules.dedup();
+    modules
+}
+
+// Gives a top-level declaration its internal name.
+fn name_declaration(statement: &mut Statement, module_id: usize) {
+    let name = match statement {
+        Statement::Struct(decl) => &mut decl.name,
+        Statement::Enum(decl) => &mut decl.name,
+        Statement::TypeAlias(decl) => &mut decl.name,
+        Statement::Const(decl) => &mut decl.name,
+        Statement::Macro(decl) => &mut decl.name,
+        _ => return,
+    };
+
+    if let Some(literal) = literal_name(name) {
+        *name = vec![NamePart::Literal(internal_name(&literal, module_id))];
+    }
+}
+
+// Rewrites the references inside one top-level statement. A name the
+// statement binds anywhere inside itself (a parameter, a loop variable, a
+// macro body's own `const`, ...) is left alone everywhere in it, so a
+// parameter never turns into a same-named global.
+struct Renamer<'a> {
+    scope: &'a HashMap<String, Binding>,
+    values: HashSet<String>,
+    types: HashSet<String>,
+
+    // The first ambiguous name referenced, if any.
+    ambiguous: Option<(String, Vec<Binding>)>,
+}
+
+impl<'a> Renamer<'a> {
+    fn new(scope: &'a HashMap<String, Binding>, statement: &Statement) -> Self {
+        let mut binders = Binders::default();
+        binders.statement(statement, true);
+        Self { scope, values: binders.values, types: binders.types, ambiguous: None }
+    }
+
+    /// The internal name for a reference in value position.
+    fn get(&mut self, name: &str) -> Option<String> {
+        if self.values.contains(name) {
+            return None;
+        }
+        self.lookup(name)
+    }
+
+    /// The internal name for a reference in type position.
+    fn get_type(&mut self, name: &str) -> Option<String> {
+        if self.types.contains(name) {
+            return None;
+        }
+        self.lookup(name)
+    }
+
+    fn lookup(&mut self, name: &str) -> Option<String> {
+        match self.scope.get(name)? {
+            Binding::Ambiguous(candidates) => {
+                self.ambiguous.get_or_insert_with(|| (name.to_string(), candidates.clone()));
+                None
+            }
+            binding => binding.internal_name(),
+        }
+    }
+}
+
+// Every name a statement binds inside itself: `values` for names read as
+// values, `types` for names used as types.
+#[derive(Default)]
+struct Binders {
+    values: HashSet<String>,
+    types: HashSet<String>,
+}
+
+impl Binders {
+    fn both(&mut self, name: &str) {
+        self.values.insert(name.to_string());
+        self.types.insert(name.to_string());
+    }
+
+    fn generics(&mut self, params: &[GenericParameter]) {
+        for param in params {
+            match param {
+                GenericParameter::Const { name, .. } | GenericParameter::Type { name, .. } => self.both(name),
+            }
+        }
+    }
+
+    // A declaration nested in a macro body is generated when the macro
+    // runs, under its own name.
+    fn nested(&mut self, name: &[NamePart], top: bool) {
+        if !top {
+            if let Some(name) = literal_name(name) {
+                self.both(&name);
+            }
+        }
+    }
+
+    fn statement(&mut self, statement: &Statement, top: bool) {
+        match statement {
+            Statement::Struct(decl) => {
+                self.nested(&decl.name, top);
+                self.generics(&decl.generic_params);
+                self.values.insert("source".to_string());
+                self.struct_items(&decl.fields);
+                self.facets(&decl.facets);
+            }
+
+            Statement::TypeAlias(decl) => {
+                self.nested(&decl.name, top);
+                self.generics(&decl.generic_params);
+                self.values.insert("source".to_string());
+                self.facets(&decl.facets);
+            }
+
+            Statement::Enum(decl) => {
+                self.nested(&decl.name, top);
+                self.generics(&decl.generic_params);
+            }
+
+            Statement::Const(decl) => {
+                self.nested(&decl.name, top);
+                self.expr(&decl.value);
+            }
+
+            Statement::Macro(decl) => {
+                self.nested(&decl.name, top);
+                self.generics(&decl.generic_params);
+                for param in &decl.params {
+                    self.values.insert(param.name.clone());
+                    if let Some(default) = &param.default {
+                        self.expr(default);
+                    }
+                }
+                self.values.insert("result".to_string());
+                self.facets(&decl.facets);
+                for statement in &decl.body {
+                    self.statement(statement, false);
                 }
             }
 
+            Statement::Label(label) if !top => {
+                self.values.insert(label.name.clone());
+            }
+
+            Statement::Meta(meta) => self.meta(meta),
+
+            Statement::Invocation(invocation) => {
+                for operand in &invocation.operands {
+                    self.expr(operand);
+                }
+            }
+
+            _ => {}
+        }
+    }
+
+    fn meta(&mut self, meta: &MetaStatement) {
+        if matches!(meta.name.as_str(), "for" | "fold") {
+            if let Some(Expr::Identifier { name, .. }) = meta.args.first() {
+                self.values.insert(name.clone());
+            }
+            if meta.name == "fold" {
+                for binding in &meta.bindings {
+                    self.values.insert(binding.name.clone());
+                }
+            }
+        }
+
+        for arg in &meta.args {
+            self.expr(arg);
+        }
+        for binding in &meta.bindings {
+            self.expr(&binding.value);
+        }
+        for statement in meta.body.iter().chain(&meta.else_body).flatten() {
+            self.statement(statement, false);
+        }
+        for arm in &meta.match_arms {
+            // `Variant(binding)` binds `binding` for the arm.
+            if let Some(Expr::Call { arguments, .. }) = &arm.pattern {
+                for argument in arguments {
+                    if let Expr::Identifier { name, .. } = &argument.value {
+                        self.values.insert(name.clone());
+                    }
+                }
+            }
+            for statement in &arm.body {
+                self.statement(statement, false);
+            }
+        }
+    }
+
+    fn facets(&mut self, facets: &[Facet]) {
+        for facet in facets {
+            match &facet.payload {
+                FacetPayload::Expr(expr) => self.expr(expr),
+                FacetPayload::Block(statements) => {
+                    for statement in statements {
+                        self.statement(statement, false);
+                    }
+                }
+                FacetPayload::Bare | FacetPayload::Type(_) | FacetPayload::Pattern(_) => {}
+            }
+        }
+    }
+
+    fn struct_items(&mut self, items: &[StructBodyItem]) {
+        for item in items {
+            match item {
+                StructBodyItem::Field(field) => {
+                    if let Some(default) = &field.default {
+                        self.expr(default);
+                    }
+                }
+                StructBodyItem::For { var, source, body, .. } => {
+                    self.values.insert(var.clone());
+                    self.expr(source);
+                    self.struct_items(body);
+                }
+                StructBodyItem::Fold { accumulators, var, source, body, .. } => {
+                    self.values.insert(var.clone());
+                    for accumulator in accumulators {
+                        self.values.insert(accumulator.name.clone());
+                        self.expr(&accumulator.value);
+                    }
+                    self.expr(source);
+                    self.struct_items(body);
+                }
+                StructBodyItem::Next { .. } => {}
+                StructBodyItem::If { condition, body, else_body, .. } => {
+                    self.expr(condition);
+                    self.struct_items(body);
+                    if let Some(else_body) = else_body {
+                        self.struct_items(else_body);
+                    }
+                }
+            }
+        }
+    }
+
+    // Only a `@fold` or a construction's `@for`/`@fold` binds anything
+    // inside an expression.
+    fn expr(&mut self, expr: &Expr) {
+        match expr {
+            Expr::Fold { fold, .. } => self.meta(fold),
+
+            Expr::Construct { callee, fields, .. } => {
+                self.expr(callee);
+                self.construct_items(fields);
+            }
+
+            Expr::Member { object, .. } => self.expr(object),
+            Expr::Call { callee, arguments, .. } => {
+                self.expr(callee);
+                for argument in arguments {
+                    self.expr(&argument.value);
+                }
+            }
+            Expr::EnumVariant { payload: Some(payload), .. } => self.expr(payload),
+            Expr::Unary { operand, .. } => self.expr(operand),
+            Expr::Binary { left, right, .. } | Expr::Range { start: left, end: right, .. }
+            | Expr::In { value: left, source: right, .. } => {
+                self.expr(left);
+                self.expr(right);
+            }
+            Expr::Splice { inner, .. } | Expr::As { value: inner, .. } => self.expr(inner),
+
+            Expr::Identifier { .. } | Expr::SplicedIdentifier { .. } | Expr::Integer { .. }
+            | Expr::String { .. } | Expr::EnumVariant { payload: None, .. } => {}
+        }
+    }
+
+    fn construct_items(&mut self, items: &[ConstructItem]) {
+        for item in items {
+            match item {
+                ConstructItem::Field { value, .. } => self.expr(value),
+                ConstructItem::For { var, source, body, .. } => {
+                    self.values.insert(var.clone());
+                    self.expr(source);
+                    self.construct_items(body);
+                }
+                ConstructItem::Fold { accumulators, var, source, body, .. } => {
+                    self.values.insert(var.clone());
+                    for accumulator in accumulators {
+                        self.values.insert(accumulator.name.clone());
+                        self.expr(&accumulator.value);
+                    }
+                    self.expr(source);
+                    self.construct_items(body);
+                }
+                ConstructItem::Next { .. } => {}
+                ConstructItem::If { condition, body, else_body, .. } => {
+                    self.expr(condition);
+                    self.construct_items(body);
+                    if let Some(else_body) = else_body {
+                        self.construct_items(else_body);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn rename_statement(statement: &mut Statement, renames: &mut Renamer) {
+    match statement {
+        Statement::Struct(decl) => {
             rename_spliced_name(&mut decl.name, renames);
 
             for param in &mut decl.generic_params {
@@ -727,12 +1326,6 @@ fn rename_statement(statement: &mut Statement, renames: &HashMap<String, String>
         }
 
         Statement::TypeAlias(decl) => {
-            if let Some(literal) = literal_name(&decl.name) {
-                if let Some(mangled) = renames.get(&literal) {
-                    decl.name = vec![NamePart::Literal(mangled.clone())];
-                }
-            }
-
             rename_spliced_name(&mut decl.name, renames);
 
             for param in &mut decl.generic_params {
@@ -747,12 +1340,6 @@ fn rename_statement(statement: &mut Statement, renames: &HashMap<String, String>
         }
 
         Statement::Const(decl) => {
-            if let Some(literal) = literal_name(&decl.name) {
-                if let Some(mangled) = renames.get(&literal) {
-                    decl.name = vec![NamePart::Literal(mangled.clone())];
-                }
-            }
-
             rename_spliced_name(&mut decl.name, renames);
 
             if let Some(ty) = &mut decl.ty {
@@ -763,12 +1350,6 @@ fn rename_statement(statement: &mut Statement, renames: &HashMap<String, String>
         }
 
         Statement::Macro(decl) => {
-            if let Some(literal) = literal_name(&decl.name) {
-                if let Some(mangled) = renames.get(&literal) {
-                    decl.name = vec![NamePart::Literal(mangled.clone())];
-                }
-            }
-
             rename_spliced_name(&mut decl.name, renames);
 
             for param in &mut decl.generic_params {
@@ -777,6 +1358,9 @@ fn rename_statement(statement: &mut Statement, renames: &HashMap<String, String>
 
             for param in &mut decl.params {
                 rename_type_expr(&mut param.ty, renames);
+                if let Some(default) = &mut param.default {
+                    rename_expr(default, renames);
+                }
             }
 
             if let Some(ty) = &mut decl.return_ty {
@@ -795,12 +1379,6 @@ fn rename_statement(statement: &mut Statement, renames: &HashMap<String, String>
         Statement::Meta(meta) => rename_meta_statement(meta, renames),
 
         Statement::Enum(decl) => {
-            if let Some(literal) = literal_name(&decl.name) {
-                if let Some(mangled) = renames.get(&literal) {
-                    decl.name = vec![NamePart::Literal(mangled.clone())];
-                }
-            }
-
             rename_spliced_name(&mut decl.name, renames);
 
             for param in &mut decl.generic_params {
@@ -836,7 +1414,7 @@ fn rename_statement(statement: &mut Statement, renames: &HashMap<String, String>
 // siblings in its condition/range bounds, just like any other statement
 // inside the body — so its `args` and nested `body`/`else_body` all need
 // the same rewriting a plain statement would get.
-fn rename_meta_statement(meta: &mut MetaStatement, renames: &HashMap<String, String>) {
+fn rename_meta_statement(meta: &mut MetaStatement, renames: &mut Renamer) {
     for arg in &mut meta.args {
         rename_expr(arg, renames);
     }
@@ -867,12 +1445,15 @@ fn rename_meta_statement(meta: &mut MetaStatement, renames: &HashMap<String, Str
     }
 }
 
-fn rename_struct_body_items(items: &mut [StructBodyItem], renames: &HashMap<String, String>) {
+fn rename_struct_body_items(items: &mut [StructBodyItem], renames: &mut Renamer) {
     for item in items {
         match item {
             StructBodyItem::Field(field) => {
                 rename_type_expr(&mut field.ty, renames);
                 rename_spliced_name(&mut field.name, renames);
+                if let Some(default) = &mut field.default {
+                    rename_expr(default, renames);
+                }
             }
 
             StructBodyItem::For { source, body, .. } => {
@@ -909,7 +1490,7 @@ fn rename_struct_body_items(items: &mut [StructBodyItem], renames: &HashMap<Stri
     }
 }
 
-fn rename_spliced_name(parts: &mut [NamePart], renames: &HashMap<String, String>) {
+fn rename_spliced_name(parts: &mut [NamePart], renames: &mut Renamer) {
     for part in parts {
         if let NamePart::Splice(expr) = part {
             rename_expr(expr, renames);
@@ -917,7 +1498,12 @@ fn rename_spliced_name(parts: &mut [NamePart], renames: &HashMap<String, String>
     }
 }
 
-fn rename_facet(facet: &mut Facet, renames: &HashMap<String, String>) {
+fn rename_facet(facet: &mut Facet, renames: &mut Renamer) {
+    // A lint facet names lints, not declarations.
+    if crate::diagnostics::is_lint_facet(&facet.name) {
+        return;
+    }
+
     match &mut facet.payload {
         FacetPayload::Bare => {}
 
@@ -939,7 +1525,7 @@ fn rename_facet(facet: &mut Facet, renames: &HashMap<String, String>) {
     }
 }
 
-fn rename_generic_parameter(param: &mut GenericParameter, renames: &HashMap<String, String>) {
+fn rename_generic_parameter(param: &mut GenericParameter, renames: &mut Renamer) {
     match param {
         GenericParameter::Const { ty, .. } => rename_type_expr(ty, renames),
 
@@ -956,11 +1542,11 @@ fn rename_generic_parameter(param: &mut GenericParameter, renames: &HashMap<Stri
     }
 }
 
-fn rename_type_expr(ty: &mut TypeExpr, renames: &HashMap<String, String>) {
+fn rename_type_expr(ty: &mut TypeExpr, renames: &mut Renamer) {
     match ty {
         TypeExpr::Named { path, .. } => {
             if path.len() == 1 {
-                if let Some(mangled) = renames.get(&path[0]) {
+                if let Some(mangled) = renames.get_type(&path[0]) {
                     path[0] = mangled.clone();
                 }
             }
@@ -980,12 +1566,20 @@ fn rename_type_expr(ty: &mut TypeExpr, renames: &HashMap<String, String>) {
     }
 }
 
-fn rename_expr(expr: &mut Expr, renames: &HashMap<String, String>) {
+fn rename_expr(expr: &mut Expr, renames: &mut Renamer) {
     match expr {
         Expr::Identifier { name, .. } => {
             if let Some(mangled) = renames.get(name) {
                 *name = mangled.clone();
             }
+        }
+
+        // With nothing left to evaluate (`` k`2` ``, or a top-level `@for`
+        // body's after unrolling), a spliced name is just a name.
+        Expr::SplicedIdentifier { name, span } if crate::ast::literal_spliced_name(name).is_some() => {
+            let name = crate::ast::literal_spliced_name(name).unwrap_or_default();
+            *expr = Expr::Identifier { name, span: *span };
+            rename_expr(expr, renames);
         }
 
         Expr::SplicedIdentifier { name, .. } => {
@@ -1009,7 +1603,7 @@ fn rename_expr(expr: &mut Expr, renames: &HashMap<String, String>) {
         }
 
         Expr::EnumVariant { enum_name, generic_args, payload, .. } => {
-            if let Some(mangled) = renames.get(enum_name) {
+            if let Some(mangled) = renames.get_type(enum_name) {
                 *enum_name = mangled.clone();
             }
             for arg in generic_args {
@@ -1066,7 +1660,7 @@ fn rename_expr(expr: &mut Expr, renames: &HashMap<String, String>) {
     }
 }
 
-fn rename_construct_items(items: &mut [ConstructItem], renames: &HashMap<String, String>) {
+fn rename_construct_items(items: &mut [ConstructItem], renames: &mut Renamer) {
     for item in items {
         match item {
             ConstructItem::Field { name, value, .. } => {
@@ -1271,6 +1865,16 @@ fn module_display(module: &ModulePath) -> String {
 mod tests {
     use super::*;
 
+    // A declaration's name as its file wrote it, without the internal
+    // `#module` suffix the loader gives it.
+    fn declared(name: &[NamePart]) -> Option<String> {
+        literal_name(name).map(|name| demangle(&name))
+    }
+
+    fn lookup_declared(symbols: &crate::resolver::SymbolTable, name: &str) -> Option<crate::resolver::SymbolId> {
+        symbols.iter().find(|symbol| demangle(&symbol.name) == name).map(|symbol| symbol.id)
+    }
+
     // `bits<width>`'s `width` argument is an identifier, which only parses
     // as a const (rather than a type) argument if the parser already knows
     // `bits`'s generic signature by the time it reaches that line. Loading
@@ -1287,7 +1891,7 @@ mod tests {
             .statements
             .iter()
             .find_map(|statement| match statement {
-                Statement::Struct(decl) if literal_name(&decl.name).as_deref() == Some("bits") => Some(decl),
+                Statement::Struct(decl) if declared(&decl.name).as_deref() == Some("bits") => Some(decl),
                 _ => None,
             })
             .expect("bits struct should be spliced in from std.binary.native");
@@ -1348,7 +1952,7 @@ mod tests {
             .expect("aliases should resolve");
 
         let resolved = |name: &str| {
-            let id = symbols.lookup(name).expect("symbol should exist");
+            let id = lookup_declared(&symbols, name).expect("symbol should exist");
             aliases.get(&id).expect("alias should resolve").clone()
         };
 
@@ -1388,11 +1992,11 @@ mod tests {
         let program = load_program(&dir.join("importer.basm")).expect("importer.basm should load");
 
         assert!(program.statements.iter().any(
-            |statement| matches!(statement, Statement::Struct(decl) if literal_name(&decl.name).as_deref() == Some("TheStruct"))
+            |statement| matches!(statement, Statement::Struct(decl) if declared(&decl.name).as_deref() == Some("TheStruct"))
         ));
 
         assert!(program.statements.iter().any(
-            |statement| matches!(statement, Statement::Const(decl) if literal_name(&decl.name).as_deref() == Some("the_const"))
+            |statement| matches!(statement, Statement::Const(decl) if declared(&decl.name).as_deref() == Some("the_const"))
         ));
 
         fs::remove_dir_all(&dir).ok();
@@ -1412,7 +2016,7 @@ mod tests {
         let bits_count = program
             .statements
             .iter()
-            .filter(|statement| matches!(statement, Statement::Struct(decl) if literal_name(&decl.name).as_deref() == Some("bits")))
+            .filter(|statement| matches!(statement, Statement::Struct(decl) if declared(&decl.name).as_deref() == Some("bits")))
             .count();
 
         assert_eq!(bits_count, 1);
@@ -1435,13 +2039,13 @@ mod tests {
         let helper_index = program
             .statements
             .iter()
-            .position(|s| matches!(s, Statement::Struct(decl) if literal_name(&decl.name).as_deref() == Some("Helper")))
+            .position(|s| matches!(s, Statement::Struct(decl) if declared(&decl.name).as_deref() == Some("Helper")))
             .expect("Helper should be present");
 
         let main_index = program
             .statements
             .iter()
-            .position(|s| matches!(s, Statement::Struct(decl) if literal_name(&decl.name).as_deref() == Some("Main")))
+            .position(|s| matches!(s, Statement::Struct(decl) if declared(&decl.name).as_deref() == Some("Main")))
             .expect("Main should be present");
 
         let helper_module = origins.module_of(helper_index);
@@ -1456,12 +2060,9 @@ mod tests {
 
     #[test]
     fn import_star_carries_a_top_level_for_across_the_module_boundary() {
-        // `regs.basm`'s declarations only exist inside an unexpanded
-        // `@for`, not as bare top-level statements — `collect_declarations`
-        // must carry the whole meta across the splice (not drop it, and not
-        // hoist its body out from under it) so `unroll_top_level`, run once
-        // over the fully merged program, is still the one place that
-        // decides what it unrolls into.
+        // `regs.basm`'s declarations only exist inside a `@for`, not as
+        // bare top-level statements. The loader unrolls each module before
+        // naming its declarations, so they still reach the importer.
         let dir = scratch_dir("import_star_carries_top_level_for");
 
         fs::write(
@@ -1480,7 +2081,7 @@ mod tests {
             .statements
             .iter()
             .filter_map(|statement| match statement {
-                Statement::Const(decl) => literal_name(&decl.name),
+                Statement::Const(decl) => declared(&decl.name),
                 _ => None,
             })
             .collect();
@@ -1595,13 +2196,13 @@ mod tests {
         let symbols = crate::resolver::collect_symbols(&program, &statement_modules)
             .expect("symbol collection should succeed");
 
-        let macro_symbol = symbols.lookup("reads_x").unwrap();
-        let foo_symbol = symbols.lookup("Foo").unwrap();
+        let macro_symbol = lookup_declared(&symbols, "reads_x").unwrap();
+        let foo_symbol = lookup_declared(&symbols, "Foo").unwrap();
         let declaration = program
             .statements
             .iter()
             .find_map(|statement| match statement {
-                Statement::Macro(decl) if literal_name(&decl.name).as_deref() == Some("reads_x") => {
+                Statement::Macro(decl) if declared(&decl.name).as_deref() == Some("reads_x") => {
                     Some(decl.clone())
                 }
                 _ => None,
@@ -1633,7 +2234,7 @@ mod tests {
         assert!(matches!(
             error,
             crate::resolver::ResolveError::PrivateFieldAccess { field, type_name, .. }
-                if field == "x" && type_name == "Foo"
+                if field == "x" && demangle(&type_name) == "Foo"
         ));
 
         fs::remove_dir_all(&dir).ok();
@@ -1659,13 +2260,13 @@ mod tests {
         let symbols = crate::resolver::collect_symbols(&program, &statement_modules)
             .expect("symbol collection should succeed");
 
-        let macro_symbol = symbols.lookup("reads_x").unwrap();
-        let foo_symbol = symbols.lookup("Foo").unwrap();
+        let macro_symbol = lookup_declared(&symbols, "reads_x").unwrap();
+        let foo_symbol = lookup_declared(&symbols, "Foo").unwrap();
         let declaration = program
             .statements
             .iter()
             .find_map(|statement| match statement {
-                Statement::Macro(decl) if literal_name(&decl.name).as_deref() == Some("reads_x") => {
+                Statement::Macro(decl) if declared(&decl.name).as_deref() == Some("reads_x") => {
                     Some(decl.clone())
                 }
                 _ => None,
@@ -1719,12 +2320,12 @@ mod tests {
         let symbols = crate::resolver::collect_symbols(&program, &statement_modules)
             .expect("symbol collection should succeed");
 
-        let macro_symbol = symbols.lookup("makes_foo").unwrap();
+        let macro_symbol = lookup_declared(&symbols, "makes_foo").unwrap();
         let declaration = program
             .statements
             .iter()
             .find_map(|statement| match statement {
-                Statement::Macro(decl) if literal_name(&decl.name).as_deref() == Some("makes_foo") => {
+                Statement::Macro(decl) if declared(&decl.name).as_deref() == Some("makes_foo") => {
                     Some(decl.clone())
                 }
                 _ => None,
@@ -1749,7 +2350,7 @@ mod tests {
         assert!(matches!(
             error,
             crate::resolver::ResolveError::PrivateFieldAccess { field, type_name, .. }
-                if field == "x" && type_name == "Foo"
+                if field == "x" && demangle(&type_name) == "Foo"
         ));
 
         fs::remove_dir_all(&dir).ok();
@@ -1847,7 +2448,7 @@ mod tests {
             .statements
             .iter()
             .find_map(|statement| match statement {
-                Statement::Invocation(invocation) if invocation.name == "mov" => Some(invocation),
+                Statement::Invocation(invocation) if demangle(&invocation.name) == "mov" => Some(invocation),
                 _ => None,
             })
             .expect("expected a mov invocation");
@@ -1893,7 +2494,7 @@ mod tests {
             .statements
             .iter()
             .filter_map(|statement| match statement {
-                Statement::Invocation(invocation) if invocation.name == "load" => Some(invocation),
+                Statement::Invocation(invocation) if demangle(&invocation.name) == "load" => Some(invocation),
                 _ => None,
             })
             .collect();

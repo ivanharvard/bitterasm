@@ -10,7 +10,7 @@ impl Parser {
         match &self.current().kind {
             TokenKind::From => {
                 Ok(Statement::Import(
-                    self.parse_from_import()?
+                    self.parse_from_import(false)?
                 ))
             }
 
@@ -74,6 +74,10 @@ impl Parser {
                         self.parse_macro_declaration(true)?
                     )),
 
+                    TokenKind::From => Ok(Statement::Import(
+                        self.parse_from_import(true)?
+                    )),
+
                     TokenKind::Identifier(_) if self.check_next(&TokenKind::Colon) => {
                         Ok(Statement::Label(
                             self.parse_label(true)?
@@ -130,8 +134,9 @@ impl Parser {
     // imports
     // ===============
 
-    fn parse_from_import(&mut self) -> Result<ImportStatement, ParseError> {
-        let start = self.current().span.start;
+    // `pub` (already consumed, when `is_pub`) starts the statement's span.
+    fn parse_from_import(&mut self, is_pub: bool) -> Result<ImportStatement, ParseError> {
+        let start = if is_pub { self.previous().span.start } else { self.current().span.start };
 
         self.expect_simple(TokenKind::From)?;
 
@@ -158,6 +163,7 @@ impl Parser {
         let end = self.statement_end()?;
 
         let import = ImportStatement {
+            is_pub,
             module,
             items,
             span: Span::new(start, end),

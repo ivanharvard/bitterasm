@@ -2,7 +2,8 @@
 //! aliases, consts, macros), keyed by name. Macro names may map to an
 //! overload set; all other declaration names remain unique. By the time [`SymbolTable`] is built
 //! the [`crate::loader`] has already flattened every imported module into
-//! one [`crate::ast::Program`], so a single flat table — rather than one
+//! one [`crate::ast::Program`] and given every declaration a program-wide
+//! internal name (`bits#3`), so a single flat table — rather than one
 //! scoped per module — is enough.
 
 use std::collections::HashMap;

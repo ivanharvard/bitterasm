@@ -1,0 +1,3 @@
+pub macro put(a: int) {
+    @emit a
+}

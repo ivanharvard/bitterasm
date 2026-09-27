@@ -1,0 +1,14 @@
+# `std.string` uses `std.binary`'s `bits` internally; that doesn't stop this
+# file from declaring its own.
+from std.string import string_from_struct
+
+struct bits {
+    v: int,
+}
+
+macro go() {
+    const s = string_from_struct("hi")
+    @emit bits { v: s.len }
+}
+
+go

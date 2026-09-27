@@ -64,6 +64,23 @@ pub fn unroll_top_level(
     Ok((Program { statements, span: program.span }, statement_modules))
 }
 
+/// Unrolls one module's top-level `@for`/`@if`/`@fold`, before the loader
+/// names its declarations: `consts` holds the integer constants the module
+/// can see through its imports, and comes back with the module's own added.
+/// Afterwards every top-level declaration in `statements` has a literal name.
+pub fn unroll_module(
+    statements: &[Statement],
+    consts: &mut HashMap<String, Int>,
+) -> Result<Vec<Statement>, ResolveError> {
+    let mut out = Vec::new();
+
+    for statement in statements {
+        out.extend(unroll_statements(std::slice::from_ref(statement), consts, &mut NextState::default())?);
+    }
+
+    Ok(out)
+}
+
 fn unroll_statements(
     statements: &[Statement],
     consts: &mut HashMap<String, Int>,

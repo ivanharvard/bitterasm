@@ -43,9 +43,12 @@ impl<'a> MacroTable<'a> {
         for statement in &program.statements {
             // Top-level, so always a literal name by the same invariant
             // `collect_symbols` enforces for real compilation.
+            // Keyed by the name as declared, without the loader's internal
+            // `#module` suffix, since that's what an invocation here says
+            // and what a nested one is demangled to below.
             if let Statement::Macro(decl) = statement {
                 if let Some(name) = crate::ast::literal_name(&decl.name) {
-                    table.insert(name, decl);
+                    table.insert(crate::loader::demangle(&name), decl);
                 }
             }
         }
@@ -96,7 +99,8 @@ pub fn expand_source(
         if let Some(reporter) = progress {
             reporter.finish_ok();
         }
-        edits.push((trim_trailing_newline(source, invocation.span), printer::print_statements(&expanded, 0)));
+        let text = crate::loader::demangle(&printer::print_statements(&expanded, 0));
+        edits.push((trim_trailing_newline(source, invocation.span), text));
     }
 
     // Descending by start so an earlier edit's length change never shifts
@@ -155,7 +159,7 @@ pub fn expand_invocation(table: &MacroTable, invocation: &Invocation, depth: usi
         return vec![Statement::Invocation(invocation.clone())];
     }
 
-    let Some(decl) = table.0.get(invocation.name.as_str()) else {
+    let Some(decl) = table.0.get(crate::loader::demangle(&invocation.name).as_str()) else {
         return vec![Statement::Invocation(invocation.clone())];
     };
 

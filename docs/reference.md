@@ -1,8 +1,52 @@
 # CLI and language reference
 
-Details on macro-default semantics, struct-field visibility, spliced names,
-`@fold`, executables, the `.em` format, the formatter, and diagnostics/lints — split out of the README so that stays a high-level
-overview.
+Details on modules and imports, macro-default semantics, struct-field
+visibility, spliced names, `@fold`, executables, the `.em` format, the
+formatter, and diagnostics/lints — split out of the README so that stays a
+high-level overview.
+
+## Modules and imports
+
+Each file is a module, named by its path: `std/binary.basm` is
+`std.binary`. A file sees its own declarations and exactly what it imports,
+nothing more:
+
+```text
+from std.binary import *          # every `pub` name std.binary exports
+from std.string import validate_ascii, string_from_struct
+from .helpers import Pair          # relative to this file's directory
+```
+
+- **Only `pub` declarations can be imported.** A declaration without `pub`
+  is private to its file.
+- **Imports aren't passed on.** If `a` imports `b`, a file importing `a`
+  doesn't see `b`'s names. `a`'s own macros still use `b` wherever they're
+  called from, since a name always means what it means in the file that
+  wrote it.
+- **`pub from` re-exports.** `pub from .impl import *` makes everything it
+  imports part of this file's exports too. A dialect uses it to offer its
+  ISA's instructions and registers along with its own syntax:
+  `std.x86_64.nasm` re-exports `std.x86_64.intel`, which re-exports
+  `std.x86_64.impl`.
+- **Your own declarations win.** A file's own declaration shadows an
+  imported one with the same name, so adding a `pub` name to a library can't
+  break a file that already uses that name for something else.
+- **Macro overloads merge.** A macro's overloads join any same-named
+  overloads that are imported, from any number of modules. That's how a
+  dialect adds `mov rax, rbx` to the `mov` it builds on.
+- **Ambiguity is an error only when used.** If two imports bring in
+  different declarations under one name, using that name is an error that
+  names both modules. Importing it by name (`from .other import BASE`)
+  picks one: a name imported by name takes precedence over one brought in
+  by `*`.
+- **A `pub` label is imported by name** (`from .other_file import start`),
+  never by `*`. See [Executables](#executables).
+
+`from pkg import a, b`, where `pkg` is a directory rather than a file, means
+`from pkg.a import *` and `from pkg.b import *`.
+
+Absolute module paths are looked up under the current directory, each
+`BITTERASM_PATH` entry, and `~/.bitterasm`, in that order.
 
 ## Struct fields: `pub` and `skip`
 

@@ -236,17 +236,19 @@ impl<'a> AliasResolver<'a> {
             },
 
             // `` acc_`i` ``: settle the name, then read it exactly like an
-            // identifier. A private top-level name in this module was
-            // renamed to `name#module` by the loader, which couldn't
-            // rewrite a name it didn't know yet, so that spelling is tried
-            // first — the same precedence a plain reference gets.
+            // identifier. The loader rewrote every name it could see to an
+            // internal name, but couldn't rewrite this one, so it's looked
+            // up in this module's scope the same way: a local binding
+            // first, then whatever the name means in this module.
             Expr::SplicedIdentifier { name, span } => {
                 let name = self.resolve_spliced_name(name, scope)?;
-                let private = format!("{name}#{}", self.current_module);
-                let name = if !scope.contains_key(&name) && self.lookup_symbol(&private).is_some() {
-                    private
-                } else {
+                let name = if scope.contains_key(&name) {
                     name
+                } else if let Some(internal) = self.scoped_name(&name) {
+                    internal
+                } else {
+                    let own = format!("{name}#{}", self.current_module);
+                    if self.lookup_symbol(&own).is_some() { own } else { name }
                 };
                 self.eval_value(&Expr::Identifier { name, span: *span }, scope)
             }
@@ -1575,9 +1577,11 @@ impl<'a> AliasResolver<'a> {
     /// `Expr::Identifier` arm).
     pub(super) fn resolve_extern_label_value(&mut self, id: SymbolId) -> Result<Value, ResolveError> {
         let extern_label = self.find_extern_label_declaration(id)?;
+        // The declaration carries the loader's internal name; the linker
+        // knows the label by the name its file declared.
         Ok(Value::ExternLabel {
             module: extern_label.module.clone(),
-            name: extern_label.name.clone(),
+            name: crate::loader::demangle(&extern_label.name),
         })
     }
 

@@ -179,9 +179,21 @@ pub struct AliasResolver<'a> {
     // never get spliced from another file) always runs as the entry
     // module, which is what this starts out as.
     pub(super) current_module: usize,
+
+    // Each module's names mapped to the internal names the loader gave
+    // them, indexed by module id (`crate::loader::ModuleOrigins::scopes`).
+    // Empty unless set with `with_module_scopes`.
+    pub(super) module_scopes: Vec<HashMap<String, String>>,
 }
 
 impl<'a> AliasResolver<'a> {
+    /// Lets a name built during resolution (`` x`i` ``) find what it means
+    /// in the module that built it.
+    pub fn with_module_scopes(mut self, scopes: Vec<HashMap<String, String>>) -> Self {
+        self.module_scopes = scopes;
+        self
+    }
+
     /// `consts` is every top-level const already evaluated to an `Int`
     /// (see [`super::ConstEvaluator`]) — needed so a generic const argument
     /// that references one, e.g. `bits<SOME_WIDTH>`, can fold to a
@@ -242,6 +254,7 @@ impl<'a> AliasResolver<'a> {
             alias_decl_cache: RefCell::new(HashMap::new()),
             used_forward_label_placeholder: false,
             current_module: entry_module,
+            module_scopes: Vec::new(),
         }
     }
 

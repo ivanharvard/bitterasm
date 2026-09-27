@@ -1,0 +1,8 @@
+# `middle` imports `base`, but that doesn't make `BASE` visible here.
+from .lib.middle import *
+
+macro go() {
+    @emit BASE
+}
+
+go

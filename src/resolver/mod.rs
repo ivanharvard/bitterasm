@@ -27,7 +27,7 @@ pub use consts::ConstEvaluator;
 pub use facets::validate as validate_facets;
 pub use macro_body::MacroExpansion;
 pub use symbols::*;
-pub use toplevel::unroll_top_level;
+pub use toplevel::{unroll_module, unroll_top_level};
 pub use types::*;
 pub use values::Value;
 

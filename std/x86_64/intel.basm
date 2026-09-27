@@ -99,7 +99,7 @@
 # memory
 # shapes safely share its name without ever reaching this ambiguity.)
 
-from .impl import *
+pub from .impl import *
 
 # `Reg`'s `bits<4>` invariant already guarantees this range. Keep the explicit
 # assertion at the dialect boundary for a direct diagnostic if that invariant

@@ -1,4 +1,4 @@
-from .impl import *
+pub from .impl import *
 
 # Real, conventional RISC-V assembly syntax for every `impl.basm` macro —
 # assigned here, explicitly, rather than left to whichever ones happen to

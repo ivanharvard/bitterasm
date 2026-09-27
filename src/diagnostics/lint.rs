@@ -136,6 +136,10 @@ pub fn lint_program(program: &Program, source: SourceId, config: &LintConfig) ->
     }
     for statement in &program.statements {
         let Statement::Import(import) = statement else { continue };
+        // A re-exported name is used by whoever imports this file.
+        if import.is_pub {
+            continue;
+        }
         let ImportItems::Names(names) = &import.items else { continue };
         for name in names {
             if !references.contains(name) {
@@ -555,7 +559,7 @@ fn struct_items_contain_next(items: &[StructBodyItem]) -> bool {
     })
 }
 
-fn is_lint_facet(name: &str) -> bool {
+pub fn is_lint_facet(name: &str) -> bool {
     matches!(name, "allow" | "expect" | "warn" | "deny" | "forbid")
 }
 

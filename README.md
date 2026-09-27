@@ -79,6 +79,6 @@ binary. See [examples/x86_64/hello.basm](examples/x86_64/hello.basm) for a
 runnable example. `bitterasm compile` and `bitter encode` run the two halves
 separately.
 
-For CLI usage — formatting, diagnostics/lints, `@fold`, the `.em` format,
+For modules and imports, CLI usage — formatting, diagnostics/lints, `@fold`, the `.em` format,
 executable formats, and macro-default semantics — see
 [docs/reference.md](docs/reference.md).

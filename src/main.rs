@@ -371,7 +371,8 @@ fn resolve_and_expand(path: &Path, verbose: Option<&VerboseReporter>) -> Result<
         resolver::LabelMode::Tolerant,
         HashMap::new(),
         entry_module,
-    );
+    )
+    .with_module_scopes(origins.scopes().to_vec());
 
     // Every struct/alias in the program is resolved up front, whether or
     // not any invocation actually reaches it — a broken declaration fails
@@ -454,7 +455,8 @@ fn resolve_and_expand(path: &Path, verbose: Option<&VerboseReporter>) -> Result<
         resolver::LabelMode::Strict,
         label_positions,
         entry_module,
-    );
+    )
+    .with_module_scopes(origins.scopes().to_vec());
 
     resolve_structs_and_aliases(&mut alias_resolver)?;
 
@@ -682,7 +684,8 @@ fn analyze(path: &Path, options: DiagnosticCliOptions, verbose: Option<&VerboseR
             std::process::exit(1);
         }
         Err(CompileError::Resolve(error)) => {
-            let source = diagnostic_run.sources.locate_span(error.span(), error.source_needle());
+            let needle = error.source_needle().map(loader::demangle);
+            let source = diagnostic_run.sources.locate_span(error.span(), needle.as_deref());
             let diagnostic = diagnostics::resolve_error(error, source);
             emit_diagnostics(&[diagnostic], &diagnostic_run);
             std::process::exit(1);

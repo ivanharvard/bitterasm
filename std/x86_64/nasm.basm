@@ -19,7 +19,7 @@
 # Not covered: NASM's `$`/`$$`, `equ`, `times`, `resb`, and `global`/`extern`
 # (use `const`, `@for`, and `pub` labels instead).
 
-from .intel import *
+pub from .intel import *
 from std.string import string_from_struct
 
 # =================

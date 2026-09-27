@@ -42,7 +42,8 @@ pub fn print_statement(statement: &Statement, indent: usize) -> String {
                 ImportItems::Names(names) => names.join(", "),
             };
 
-            format!("{pad}from {dots}{path} import {items}")
+            let visibility = if import.is_pub { "pub " } else { "" };
+            format!("{pad}{visibility}from {dots}{path} import {items}")
         }
 
         Statement::Struct(decl) => print_struct(decl, indent),

@@ -1,0 +1,7 @@
+from .lib.reexport import *
+
+macro go() {
+    @emit BASE
+}
+
+go

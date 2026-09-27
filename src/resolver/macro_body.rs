@@ -1108,16 +1108,18 @@ impl<'a> AliasResolver<'a> {
         value: &Value,
         scope: &HashMap<String, Value>,
     ) -> Result<Option<HashMap<String, Value>>, ResolveError> {
+        // A variant name in a pattern may share its spelling with a
+        // declaration the loader renamed it after; compare what was written.
         if let Value::Enum { variant, payload, .. } = value {
             match pattern {
-                Expr::Identifier { name, .. } if name == variant && payload.is_none() => {
+                Expr::Identifier { name, .. } if crate::loader::demangle(name) == *variant && payload.is_none() => {
                     return Ok(Some(HashMap::new()));
                 }
                 Expr::Call { callee, arguments, .. } => {
                     let Expr::Identifier { name, .. } = callee.as_ref() else {
                         return Ok(None);
                     };
-                    if name != variant || arguments.len() != 1 {
+                    if crate::loader::demangle(name) != *variant || arguments.len() != 1 {
                         return Ok(None);
                     }
                     let Some(payload) = payload.as_deref() else {

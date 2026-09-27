@@ -28,6 +28,22 @@ fn parses_import_all() {
 
     assert_eq!(import.module.relative_level, 0);
     assert_eq!(import.items, ImportItems::All);
+    assert!(!import.is_pub);
+}
+
+#[test]
+fn parses_pub_import_as_a_re_export() {
+    let source = "pub from .impl import mov, add\n";
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    let Statement::Import(import) = &program.statements[0] else {
+        panic!("expected import");
+    };
+
+    assert!(import.is_pub);
+    assert_eq!(import.module.relative_level, 1);
+    assert_eq!(import.span.start, 0, "the span starts at `pub`");
+    assert_eq!(crate::printer::print_statement(&program.statements[0], 0), source.trim_end());
 }
 
 #[test]

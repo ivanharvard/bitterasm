@@ -1,0 +1,8 @@
+from .lib.base import *
+from .lib.other import *
+
+macro go() {
+    @emit BASE
+}
+
+go

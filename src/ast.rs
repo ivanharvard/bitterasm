@@ -62,6 +62,10 @@ pub struct SyntaxOverrideStatement {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImportStatement {
+    /// `pub from x import ...` re-exports what it imports: a module that
+    /// imports this one sees those names too. A plain import is private to
+    /// the importing file.
+    pub is_pub: bool,
     pub module: ModulePath,
     pub items: ImportItems,
     pub span: Span,
