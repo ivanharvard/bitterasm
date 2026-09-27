@@ -1,0 +1,16 @@
+[book]
+title = "The BitterASM Book"
+authors = ["ivanharvard"]
+language = "en"
+src = "src"
+
+[build]
+# Draft chapters in SUMMARY.md (empty links) are placeholders; don't create
+# empty files for them.
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/ivanharvard/bitterasm"
+edit-url-template = "https://github.com/ivanharvard/bitterasm/edit/main/docs/book/{path}"
+additional-js = ["theme/basm.js"]
+additional-css = ["theme/basm.css"]

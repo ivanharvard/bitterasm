@@ -10,7 +10,7 @@
 //! `SymbolTable` around just to make sense of an id.
 //!
 //! A whole `.em` file is an [`EmFile`]: a versioned header around the
-//! entries. `docs/reference.md` ("The `.em` format") is its specification.
+//! entries. `docs/book/src/tools/em-format.md` is its specification.
 
 use std::collections::BTreeMap;
 
