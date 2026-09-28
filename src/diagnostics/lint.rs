@@ -86,16 +86,20 @@ impl LintConfig {
         self.levels.get(&lint).copied().unwrap_or(LintLevel::Warn)
     }
 
+    /// Sets `selector`'s level, overriding any earlier setting, except that
+    /// a forbidden lint stays forbidden.
     pub fn set(&mut self, selector: &str, level: LintLevel) -> Result<(), String> {
-        if let Some(lint) = LintName::named(selector) {
-            self.levels.insert(lint, level);
-            return Ok(());
+        let lints = match (LintName::named(selector), LintName::group(selector)) {
+            (Some(lint), _) => vec![lint],
+            (None, Some(group)) => group.to_vec(),
+            (None, None) => return Err(format!("unknown lint or lint group `{selector}`")),
+        };
+        for lint in lints {
+            if self.level(lint) != LintLevel::Forbid {
+                self.levels.insert(lint, level);
+            }
         }
-        if let Some(group) = LintName::group(selector) {
-            for lint in group { self.levels.insert(*lint, level); }
-            return Ok(());
-        }
-        Err(format!("unknown lint or lint group `{selector}`"))
+        Ok(())
     }
 }
 

@@ -91,8 +91,9 @@ bitterasm compile program.basm -D unreachable_code
 ```
 
 `-A`, `-W`, `-D` and `-F` set `allow`, `warn`, `deny` and `forbid`. They
-are applied in that order, whatever order you type them in, so
-`-D all -A unused` still denies `unused`.
+apply left to right, so a later flag overrides an earlier one:
+`-D all -A unused` denies every lint except the `unused` group. A forbidden
+lint can't be lowered again, by a later flag or by a facet.
 
 ## Checking without compiling
 

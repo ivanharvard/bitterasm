@@ -4,7 +4,7 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::io::IsTerminal;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgMatches, Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 
 use bitterasm::ast::Statement;
 use bitterasm::expander::MacroTable;
@@ -109,7 +109,13 @@ enum Command {
 }
 
 fn main() {
-    let cli = Cli::parse();
+    let matches = Cli::command().get_matches();
+    let mut cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
+    if let (Some((_, command_matches)), Command::Compile { diagnostics, .. } | Command::Check { diagnostics, .. }) =
+        (matches.subcommand(), &mut cli.command)
+    {
+        diagnostics.levels_in_order = lint_levels_in_order(command_matches);
+    }
 
     match cli.command {
         Command::Compile { path, output, verbose, diagnostics } => {
@@ -142,6 +148,22 @@ mod cli_tests {
         assert_eq!(path, PathBuf::from("program.basm"));
         assert!(matches!(diagnostics.diagnostic_format, CliDiagnosticFormat::Json));
         assert_eq!(diagnostics.deny, ["unused"]);
+    }
+
+    #[test]
+    fn lint_flags_apply_in_command_line_order() {
+        let matches = Cli::command().get_matches_from([
+            "bitterasm", "check", "program.basm", "-D", "all", "-A", "unused", "-W", "unreachable_code",
+        ]);
+        let (_, check) = matches.subcommand().unwrap();
+        assert_eq!(
+            lint_levels_in_order(check),
+            [
+                ("all".to_string(), LintLevel::Deny),
+                ("unused".to_string(), LintLevel::Allow),
+                ("unreachable_code".to_string(), LintLevel::Warn),
+            ]
+        );
     }
 }
 
@@ -593,6 +615,47 @@ struct DiagnosticCliOptions {
     /// Promote a lint to errors and prevent source-level lowering.
     #[arg(short = 'F', long = "forbid", value_name = "LINT")]
     forbid: Vec<String>,
+
+    /// Every `-A`/`-W`/`-D`/`-F`, in command-line order, so a later flag
+    /// overrides an earlier one (`-D all -A unused` allows `unused`). Filled
+    /// in by `main` from clap's argument positions; empty when the options
+    /// were built some other way.
+    #[arg(skip)]
+    levels_in_order: Vec<(String, LintLevel)>,
+}
+
+impl DiagnosticCliOptions {
+    fn lint_levels(&self) -> Vec<(String, LintLevel)> {
+        if !self.levels_in_order.is_empty() {
+            return self.levels_in_order.clone();
+        }
+        [
+            (&self.allow, LintLevel::Allow),
+            (&self.warn, LintLevel::Warn),
+            (&self.deny, LintLevel::Deny),
+            (&self.forbid, LintLevel::Forbid),
+        ]
+        .into_iter()
+        .flat_map(|(selectors, level)| selectors.iter().map(move |selector| (selector.clone(), level)))
+        .collect()
+    }
+}
+
+fn lint_levels_in_order(matches: &ArgMatches) -> Vec<(String, LintLevel)> {
+    let mut levels = Vec::new();
+    for (id, level) in [
+        ("allow", LintLevel::Allow),
+        ("warn", LintLevel::Warn),
+        ("deny", LintLevel::Deny),
+        ("forbid", LintLevel::Forbid),
+    ] {
+        let (Some(values), Some(indices)) = (matches.get_many::<String>(id), matches.indices_of(id)) else {
+            continue;
+        };
+        levels.extend(indices.zip(values).map(|(index, value)| (index, value.clone(), level)));
+    }
+    levels.sort_by_key(|(index, ..)| *index);
+    levels.into_iter().map(|(_, selector, level)| (selector, level)).collect()
 }
 
 struct DiagnosticRun {
@@ -611,15 +674,8 @@ fn prepare_diagnostics(path: &Path, options: &DiagnosticCliOptions) -> Result<Di
         Some(config_path) => diagnostics::load_lint_config(&config_path)?,
         None => LintConfig::default(),
     };
-    for (selectors, level) in [
-        (&options.allow, LintLevel::Allow),
-        (&options.warn, LintLevel::Warn),
-        (&options.deny, LintLevel::Deny),
-        (&options.forbid, LintLevel::Forbid),
-    ] {
-        for selector in selectors {
-            config.set(selector, level)?;
-        }
+    for (selector, level) in options.lint_levels() {
+        config.set(&selector, level)?;
     }
     let format = match options.diagnostic_format {
         CliDiagnosticFormat::Terminal => DiagnosticFormat::Terminal,

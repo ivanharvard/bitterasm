@@ -27,10 +27,6 @@ use bitterasm::emit::{EmFile, EmittedGenericArg, EmittedType, EmittedValue};
 
 const BOOK: &str = "docs/book/src";
 
-// Every lint but `generated_declarations`, which only reports that a program
-// generated declarations: what some examples are there to show. (`-D all -A
-// ...` can't express this: the CLI applies every `-A` before any `-D`.)
-const DENIED_LINTS: &[&str] = &["unused", "unreachable_code", "fold_without_next", "unfulfilled_lint_expectation"];
 
 const EXPECTATIONS: &[&str] = &["emits", "bytes", "error"];
 
@@ -135,8 +131,9 @@ fn check(root: &Path, dir: &Path, block: &Block, expectations: &[Block], n: usiz
     let output = Command::new(env!("CARGO_BIN_EXE_bitterasm"))
         .current_dir(root)
         .args(["compile", &source.display().to_string(), "-o", &em.display().to_string()])
-        .args(DENIED_LINTS.iter().flat_map(|lint| ["-D", lint]))
-        .args(["--color", "never"])
+        // Every lint but `generated_declarations`, which only reports that a
+        // program generated declarations: what some examples are there to show.
+        .args(["-D", "all", "-A", "generated_declarations", "--color", "never"])
         .output()
         .expect("bitterasm compile should run");
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
