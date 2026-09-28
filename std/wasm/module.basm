@@ -23,13 +23,18 @@
 #! 01 05 01 60 00 01 7f
 #! ```
 #!
-#! This covers enough to build a module exporting a function; the Table,
-#! Memory, Global, Start, Element and Data sections have no helpers yet.
+#! `section_header` writes a section's id and size, and the helpers below
+#! write the entries of the type, import, function, memory, export, code
+#! and data sections: enough for a WASI program like
+#! `examples/wasm/hello.basm`. The table, global, start and element sections
+#! have no helpers yet.
 
 from std.binary import *
 from std.bitter.deferred import *
 from std.bitfield import *
 from std.wasm.leb128 import *
+from std.wasm.impl import i32_const, end
+from std.string import string_from_struct
 
 # =================
 # encoding a not-yet-known length
@@ -152,4 +157,200 @@ pub macro func_type_0_to_1(result: Byte)
         __el2: Byte(0x01),
         __el3: result,
     }
+}
+
+# =================
+# sections
+# =================
+
+## The id of the custom section.
+pub const CUSTOM_SECTION = 0
+## The id of the type section: function signatures.
+pub const TYPE_SECTION = 1
+## The id of the import section.
+pub const IMPORT_SECTION = 2
+## The id of the function section: each defined function's type.
+pub const FUNCTION_SECTION = 3
+## The id of the table section.
+pub const TABLE_SECTION = 4
+## The id of the memory section.
+pub const MEMORY_SECTION = 5
+## The id of the global section.
+pub const GLOBAL_SECTION = 6
+## The id of the export section.
+pub const EXPORT_SECTION = 7
+## The id of the start section.
+pub const START_SECTION = 8
+## The id of the element section.
+pub const ELEMENT_SECTION = 9
+## The id of the code section: each defined function's body.
+pub const CODE_SECTION = 10
+## The id of the data section.
+pub const DATA_SECTION = 11
+
+## `value`, which can't be negative, as unsigned LEB128: the spec's `u32`,
+## which every count and index is.
+pub macro u32(value: int)
+    | emits Bytes<...>
+{
+    @emit uleb128(value)
+}
+
+## The number of bytes from label `start` to label `end`, as unsigned
+## LEB128: the size before a section or a function body. It always takes 5
+## bytes, since it isn't known until layout, and 5 hold any size.
+pub macro size(start: int, end: int)
+    | emits DeferredLeb128<5>
+{
+    deferred_uleb128 span(start, end), 5
+}
+
+## A section's id, such as `TYPE_SECTION`, and its size. Put the label
+## `start` right after it and `end` after the section's contents.
+pub macro section_header(
+    id: int,
+    start: int,
+    end: int
+) {
+    byte id
+    size start, end
+}
+
+# =================
+# types
+# =================
+
+# A result type: a count, then that many value types.
+macro value_types(a: Byte) -> Bytes<2> {
+    @return Bytes<2> { __el0: Byte(1), __el1: a }
+}
+
+## A function's parameter types: `params(I32, I32)`. Up to four.
+pub macro params() -> Bytes<1> {
+    @return Bytes<1> { __el0: Byte(0) }
+}
+
+pub macro params(a: Byte) -> Bytes<2> {
+    @return value_types(a)
+}
+
+pub macro params(
+    a: Byte,
+    b: Byte
+) -> Bytes<3> {
+    @return Bytes<3> { __el0: Byte(2), __el1: a, __el2: b }
+}
+
+pub macro params(
+    a: Byte,
+    b: Byte,
+    c: Byte
+) -> Bytes<4> {
+    @return Bytes<4> { __el0: Byte(3), __el1: a, __el2: b, __el3: c }
+}
+
+pub macro params(
+    a: Byte,
+    b: Byte,
+    c: Byte,
+    d: Byte
+) -> Bytes<5> {
+    @return Bytes<5> { __el0: Byte(4), __el1: a, __el2: b, __el3: c, __el4: d }
+}
+
+## A function's result types: `results(I32)`, or `results()` for none.
+pub macro results() -> Bytes<1> {
+    @return Bytes<1> { __el0: Byte(0) }
+}
+
+pub macro results(a: Byte) -> Bytes<2> {
+    @return value_types(a)
+}
+
+## A function type: `func_type params(I32), results(I32)`.
+pub macro func_type(
+    parameters: Bytes<...>,
+    returned: Bytes<...>
+) {
+    byte 0x60
+    @emit parameters
+    @emit returned
+}
+
+# =================
+# imports, memories and exports
+# =================
+
+# A string's `String<N>` packs its first byte most significant.
+macro string_bytes<S>(source: S) -> Bytes<...> {
+    const packed = string_from_struct(source)
+    const n = packed.len
+    @return Bytes<n> {
+        @for i in 0..n {
+            __el`i`: field(packed.value, 8 * (n - i) - 1, 8 * (n - 1 - i)),
+        }
+    }
+}
+
+## A name: its length in bytes, then its UTF-8 bytes.
+pub macro name<S>(source: S) {
+    const bytes = string_bytes(source)
+    u32 string_from_struct(source).len
+    @emit bytes
+}
+
+## Imports the function `item_name` from the module `module_name`, with the
+## type numbered `type_index` in the type section. Imported functions are
+## numbered before the module's own.
+pub macro import_func<S, T>(
+    module_name: S,
+    item_name: T,
+    type_index: int
+) {
+    name module_name
+    name item_name
+    byte 0x00
+    u32 type_index
+}
+
+## A memory of `pages` 64 KiB pages, with no maximum.
+pub macro memory(pages: int) {
+    byte 0x00
+    u32 pages
+}
+
+## Exports function number `index` as `export_name`.
+pub macro export_func<S>(
+    export_name: S,
+    index: int
+) {
+    name export_name
+    byte 0x00
+    u32 index
+}
+
+## Exports memory number `index` as `export_name`.
+pub macro export_memory<S>(
+    export_name: S,
+    index: int
+) {
+    name export_name
+    byte 0x02
+    u32 index
+}
+
+# =================
+# data
+# =================
+
+## A data segment that copies the string `source`'s UTF-8 bytes into
+## memory 0 at address `offset` when the module starts.
+pub macro data_segment<S>(
+    offset: int,
+    source: S
+) {
+    byte 0x00
+    i32_const offset
+    end
+    name source
 }

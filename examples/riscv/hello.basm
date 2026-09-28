@@ -1,0 +1,30 @@
+# "Hello, world!" for Linux RISC-V (RV64), written in BitterASM — including
+# its ELF executable header (`std.formats.elf`).
+#
+# Build and run (from the repository root; needs a RISC-V machine or
+# `qemu-riscv64`):
+# bitter build examples/riscv/hello.basm -o /tmp/hello
+# qemu-riscv64 /tmp/hello
+
+from std.riscv.native import *
+from std.formats.elf import *
+
+elf64_executable EM_RISCV, _start
+
+const text = "Hello, World!\n"
+
+section .text
+pub _start:
+    li a0, 1            # stdout
+    la a1, msg          # buffer
+    li a2, text.len     # length
+    li a7, 64           # sys_write
+    ecall
+
+    li a0, 0            # status 0
+    li a7, 93           # sys_exit
+    ecall
+
+section .rodata
+msg:
+    ascii text

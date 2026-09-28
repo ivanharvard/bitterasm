@@ -1,0 +1,76 @@
+# "Hello, world!" for WebAssembly with WASI, written in BitterASM — the
+# whole module, sections and all.
+#
+# Build and run (from the repository root):
+# bitter build examples/wasm/hello.basm -o /tmp/hello.wasm
+# wasmtime /tmp/hello.wasm
+
+from std.wasm.module import *
+from std.wasm.impl import *
+
+const text = "Hello, World!\n"
+
+header
+
+section_header TYPE_SECTION, types, types_end
+types:
+    u32 2
+    func_type params(I32, I32, I32, I32), results(I32)  # 0: fd_write
+    func_type params(), results()                       # 1: _start
+types_end:
+
+section_header IMPORT_SECTION, imports, imports_end
+imports:
+    u32 1
+    import_func "wasi_snapshot_preview1", "fd_write", 0 # function 0
+imports_end:
+
+section_header FUNCTION_SECTION, functions, functions_end
+functions:
+    u32 1
+    u32 1                                               # function 1: _start
+functions_end:
+
+section_header MEMORY_SECTION, memories, memories_end
+memories:
+    u32 1
+    memory 1                                            # one 64 KiB page
+memories_end:
+
+section_header EXPORT_SECTION, exports, exports_end
+exports:
+    u32 2
+    export_memory "memory", 0
+    export_func "_start", 1
+exports_end:
+
+section_header CODE_SECTION, code, code_end
+code:
+    u32 1
+    size start, start_end
+start:
+    u32 0                   # no locals
+
+    i32_const 0             # iov.base = 8
+    i32_const 8
+    i32_store
+
+    i32_const 4             # iov.len
+    i32_const text.len
+    i32_store
+
+    i32_const 1             # stdout
+    i32_const 0             # the iovec
+    i32_const 1             # one of them
+    i32_const 20            # where to put the byte count written
+    call 0                  # fd_write
+    drop
+    end
+start_end:
+code_end:
+
+section_header DATA_SECTION, data, data_end
+data:
+    u32 1
+    data_segment 8, text    # the string, at address 8
+data_end:

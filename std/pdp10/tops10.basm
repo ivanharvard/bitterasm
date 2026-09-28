@@ -1,0 +1,56 @@
+#! TOPS-10 monitor calls: the operating system's side of a PDP-10 program,
+#! kept apart from `std.pdp10.impl`, which is only the machine.
+#!
+#! ```
+#! from std.pdp10.impl import *
+#! from std.pdp10.tops10 import *
+#!
+#! start:
+#!     outstr JOBDA + msg
+#!     exit
+#! msg:
+#!     asciz "Hi\r\n"
+#! ```
+#!
+#! ```bytes
+#! 01 49 80 00 62
+#! 01 38 00 00 0a
+#! 09 1a 46 8a 00
+#! ```
+#!
+#! TOPS-10 loads a program at `JOBDA`. Every instruction and data word is
+#! one emitted value, so a label's position counts words, and `JOBDA` plus
+#! the label is its address.
+#!
+#! Opcodes are from the DECsystem-10 Monitor Calls manual (AA-0974G-TB).
+
+from std.pdp10.impl import *
+
+## `.JBDA`, the first address after the job data area: where TOPS-10 loads
+## a program's code.
+pub const JOBDA = 0o140
+
+# A monitor call is a UUO: an opcode the hardware traps to the monitor, with
+# `ac` picking the function.
+
+## Types the ASCIZ string at `address` on the terminal: `TTCALL 3,`.
+pub macro outstr(address: int)
+    | emits Instr
+{
+    instr 0o051, 3, 0, 0, address
+}
+
+## Types the character in the low 7 bits of the word at `address` on the
+## terminal: `TTCALL 1,`.
+pub macro outchr(address: int)
+    | emits Instr
+{
+    instr 0o051, 1, 0, 0, address
+}
+
+## Ends the program and returns to the monitor: `CALLI 12`.
+pub macro exit()
+    | emits Instr
+{
+    instr 0o047, 0, 0, 0, 0o12
+}

@@ -27,6 +27,7 @@ from std.binary import *
 from std.bitfield import *
 from std.bitter.deferred import *
 from std.bitter.byte_order import *
+from std.string import string_from_struct
 
 # =================
 # registers
@@ -770,4 +771,96 @@ pub macro jal(rd: Reg, target: int)
     | emits LittleEndian<JType, 32>
 {
     @emit j_type(JAL, rd, target)
+}
+
+# =================
+# pseudo-instructions
+# =================
+# The two every program needs, expanded the way GNU `as` expands them.
+
+# `la`'s two halves: I-type and U-type with an immediate `bitter` works out
+# later, since the distance to the label isn't known until layout.
+struct ITypeLate {
+    imm: Positioned<12>,
+    rs1: Reg,
+    funct3: Funct3,
+    rd: Reg,
+    opcode: Opcode,
+}
+
+struct UTypeLate {
+    imm: Positioned<20>,
+    rd: Reg,
+    opcode: Opcode,
+}
+
+## Loads the constant `imm` into `rd`: `addi rd, zero, imm` when it fits in
+## 12 signed bits, else `lui` for the upper 20 bits then, unless they're
+## zero, `addi` for the rest.
+pub macro li(rd: Reg, imm: int) {
+    @if imm >= -2048 && imm < 2048 {
+        @emit i_type(OP_IMM, 0b000, rd, x0, imm)
+    } @else {
+        # `addi` sign-extends its 12 bits, so round the upper part up
+        # whenever bit 11 is set.
+        const upper = (imm + 0x800) >> 12
+        const lower = imm - (upper << 12)
+        @emit u_type(LUI, rd, upper)
+        @if lower != 0 {
+            @emit i_type(OP_IMM, 0b000, rd, rd, lower)
+        }
+    }
+}
+
+## Loads the address of the label `symbol` into `rd`: `auipc` for the upper
+## 20 bits of the distance, then `addi` for the rest.
+pub macro la(rd: Reg, symbol: int) {
+    # Both halves measure from the `auipc`, and the `addi` sits 4 bytes
+    # after it. The upper part rounds up for the same reason as `li`'s.
+    @emit LittleEndian<UTypeLate, 32> { value: UTypeLate(
+            imm = field(add(span(here(), symbol), 0x800), 31, 12),
+            rd = rd,
+            opcode = Opcode(AUIPC)
+    ) }
+    @emit LittleEndian<ITypeLate, 32> { value: ITypeLate(
+            imm = field(add(span(here(), symbol), 4), 11, 0),
+            rs1 = rd,
+            funct3 = Funct3(0b000),
+            rd = rd,
+            opcode = Opcode(OP_IMM)
+    ) }
+}
+
+# =================
+# data
+# =================
+
+## A byte.
+pub type Byte = bits<8>
+
+# Its own copy rather than `std.x86_64.impl`'s or `std.wasm.leb128`'s, for
+# the same reason they don't share theirs.
+## `N` bytes, packed by `bitter` in order.
+pub struct Bytes<const N: int>
+    | invariant N >= 0
+{
+    @for i in 0..N {
+        pub __el`i`: Byte,
+    }
+}
+
+# A string's `String<N>` packs its first byte most significant.
+macro string_bytes<S>(source: S) -> Bytes<...> {
+    const packed = string_from_struct(source)
+    const n = packed.len
+    @return Bytes<n> {
+        @for i in 0..n {
+            __el`i`: field(packed.value, 8 * (n - i) - 1, 8 * (n - 1 - i)),
+        }
+    }
+}
+
+## A string literal's UTF-8 bytes, with no terminator: GNU's `.ascii`.
+pub macro ascii<S>(source: S) {
+    @emit string_bytes(source)
 }
