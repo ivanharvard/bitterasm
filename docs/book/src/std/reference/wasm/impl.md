@@ -149,6 +149,25 @@ popping it.
 |---|---|---|---|
 | `local_tee index` | `index: int` | emits `OpWithImm<...>` |  |
 
+### `i32_load`
+
+Pops an address and pushes the `i32` at `address + offset`. `align` is
+the alignment the address is promised to have, as a power of two:
+2, a 4-byte boundary, by default.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `i32_load offset, align` | `offset: int = 0`, `align: int = 2` | emits `MemOp<...>` |  |
+
+### `i32_store`
+
+Pops an `i32` value, then an address, and stores the value at
+`address + offset`. `align` means what it does for `i32_load`.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `i32_store offset, align` | `offset: int = 0`, `align: int = 2` | emits `MemOp<...>` |  |
+
 ### `i32_const`
 
 Pushes `value` as an `i32`.
@@ -205,6 +224,13 @@ Pops two `i32`s and pushes their product.
 `struct OpWithImm<const N: int>`
 
 An opcode followed by `N` bytes of immediates.
+
+### `MemOp`
+
+`struct MemOp<const N: int>`
+
+A load or store: its opcode, then its memory operand, the alignment as a
+power of two and the offset added to the address.
 
 ## Constants
 

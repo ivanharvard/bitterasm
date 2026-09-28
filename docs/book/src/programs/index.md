@@ -16,44 +16,25 @@ for Linux on x86-64:
 ```basm
 from std.x86_64.nasm import *
 from std.formats.elf import *
-from std.string import string_from_struct, validate_ascii
-from std.binary import Endian
 
 elf64_executable EM_X86_64, _start
 
+const text = "Hello, World!\n"
+
 section .rodata
 msg:
-    const text = "Hello, World!\n"
-    validate_ascii string_from_struct(text).value, text.len, Endian.Little
     db text
 
 section .text
 pub _start:
-    lea rsi, [rel msg]
-    mov edx, text.len
-
-.write:
-    mov eax, 1      # sys_write
-    mov edi, 1      # stdout
+    mov eax, 1          # sys_write
+    mov edi, 1          # stdout
+    lea rsi, [rel msg]  # buffer
+    mov edx, text.len   # length
     syscall
 
-    cmp rax, -4     # -EINTR
-    je .write
-
-    test rax, rax
-    jle .error
-
-    add rsi, rax
-    sub rdx, rax
-    jnz .write
-
-    mov eax, 60      # sys_exit
-    xor edi, edi
-    syscall
-
-.error:
-    mov eax, 60
-    mov edi, 1
+    mov eax, 60         # sys_exit
+    xor edi, edi        # status 0
     syscall
 ```
 
@@ -63,8 +44,9 @@ Every piece of it is ordinary BitterASM:
   header. See [Executables](executables.md).
 - `section .rodata` and `section .text` put the string and the code in
   separate [sections](sections.md).
-- `msg:`, `_start:`, `.write:` and `.error:` are [labels](labels.md).
-  `pub` exports `_start`.
+- [`const text`](../basics/constants.md) names the string, so `db text` can emit it and
+  `text.len` gives its length.
+- `msg:` and `_start:` are [labels](labels.md). `pub` exports `_start`.
 - `lea`, `mov`, `syscall` and the rest are macros from
   `std.x86_64.nasm`, and `db` is NASM's data directive.
 

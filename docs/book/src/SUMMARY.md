@@ -105,6 +105,7 @@
     - [`option`](std/reference/option.md)
     - [`pdp10`](std/reference/pdp10/index.md)
         - [`impl`](std/reference/pdp10/impl.md)
+        - [`tops10`](std/reference/pdp10/tops10.md)
     - [`riscv`](std/reference/riscv/index.md)
         - [`c_like`](std/reference/riscv/c_like.md)
         - [`impl`](std/reference/riscv/impl.md)

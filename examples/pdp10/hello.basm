@@ -1,0 +1,18 @@
+# "Hello, world!" for the PDP-10 under TOPS-10, written in BitterASM.
+#
+# Build (from the repository root):
+# bitter build examples/pdp10/hello.basm -o /tmp/hello.bin
+#
+# The output is the program's words, loaded at JOBDA (0o140), each packed
+# into 5 bytes. There's no .SAV writer yet, so TOPS-10 can't run the file
+# directly.
+
+from std.pdp10.impl import *
+from std.pdp10.tops10 import *
+
+start:
+    outstr JOBDA + msg          # type the string
+    exit                        # return to the monitor
+
+msg:
+    asciz "Hello, World!\r\n"

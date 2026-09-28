@@ -99,6 +99,26 @@ pub struct Instr {
 # Opcode values below are from the DEC PDP-10 System Reference Manual
 # (DEC-10-HGAA-D), Appendix A's numeric instruction-mnemonic listing.
 
+## An instruction with any opcode, for one this module doesn't name, such as
+## an operating system's monitor call.
+pub macro instr(
+    opcode: int,
+    ac: int,
+    i: int,
+    x: int,
+    y: int
+)
+    | emits Instr
+{
+    @emit Instr(
+        opcode = Opcode(opcode),
+        ac = AC(ac),
+        i = truncate(i, 1),
+        x = Index(x),
+        y = truncate(y, 18)
+    )
+}
+
 # HALT is documented in the manual's own word-format chart as `JRST 4,` —
 # opcode 0254 with the ac field fixed to 4, not a separate opcode of its
 # own.
@@ -321,4 +341,34 @@ pub macro exch(
         x = x,
         y = truncate(y, 18)
     )
+}
+
+# =================
+# data
+# =================
+
+## A 36-bit data word.
+pub type Word = bits<36>
+
+# Character `i` of `source`, or NUL past its end.
+macro char_or_nul<S>(source: S, i: int) -> int {
+    @if i < source.len {
+        const c = source.__el`i`
+        @assert c >= 0 && c < 0x80, "asciz takes 7-bit ASCII"
+        @return c
+    } @else {
+        @return 0
+    }
+}
+
+## A string packed the way MACRO-10's `ASCIZ` packs it: five 7-bit
+## characters to a word, first character in the high bits, low bit unused,
+## and at least one NUL at the end. Each word is its own emitted value, so a
+## label after it still counts words.
+pub macro asciz<S>(source: S) {
+    @for k in 0..source.len / 5 + 1 {
+        const first = place(char_or_nul(source, 5 * k), 35, 29) | place(char_or_nul(source, 5 * k + 1), 28, 22)
+        const rest = place(char_or_nul(source, 5 * k + 2), 21, 15) | place(char_or_nul(source, 5 * k + 3), 14, 8) | place(char_or_nul(source, 5 * k + 4), 7, 1)
+        @emit Word(first | rest)
+    }
 }

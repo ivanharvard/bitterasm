@@ -102,3 +102,12 @@ syntax auipc(rd, imm) = { auipc $rd$, $imm$ }
 # =================
 
 syntax jal(rd, target) = { jal $rd$, $target$ }
+
+# =================
+# pseudo-instructions and data
+# =================
+# GNU's `.ascii` loses its dot: a statement can't start with one.
+
+syntax li(rd, imm) = { li $rd$, $imm$ }
+syntax la(rd, symbol) = { la $rd$, $symbol$ }
+syntax ascii(source) = { ascii $source$ }

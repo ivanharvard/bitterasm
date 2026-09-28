@@ -217,6 +217,51 @@ pub macro local_tee(index: int)
 }
 
 # =================
+# memory instructions
+# =================
+
+## A load or store: its opcode, then its memory operand, the alignment as a
+## power of two and the offset added to the address.
+pub struct MemOp<const N: int> {
+    opcode: Byte,
+    align: Byte,
+    offset: Bytes<N>,
+}
+
+# `align` is a LEB128 number too, but one byte holds any alignment a load or
+# store can have.
+macro mem_op(
+    opcode: int,
+    offset: int,
+    align: int
+) -> MemOp<...> {
+    @assert align >= 0 && align < 0x80, "align is a power of two, 0 to 127"
+    const n = uleb128_length(offset)
+    @return MemOp<n> {
+        opcode: Byte(opcode),
+        align: Byte(align),
+        offset: uleb128(offset),
+    }
+}
+
+## Pops an address and pushes the `i32` at `address + offset`. `align` is
+## the alignment the address is promised to have, as a power of two:
+## 2, a 4-byte boundary, by default.
+pub macro i32_load(offset: int = 0, align: int = 2)
+    | emits MemOp<...>
+{
+    @emit mem_op(0x28, offset, align)
+}
+
+## Pops an `i32` value, then an address, and stores the value at
+## `address + offset`. `align` means what it does for `i32_load`.
+pub macro i32_store(offset: int = 0, align: int = 2)
+    | emits MemOp<...>
+{
+    @emit mem_op(0x36, offset, align)
+}
+
+# =================
 # numeric instructions
 # =================
 # A representative subset (constants, comparison, arithmetic on `i32`), not

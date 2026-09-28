@@ -22,8 +22,8 @@
 #! - Loads and stores smaller than a word name their width before `mem`:
 #!   `i8`, `u8`, `i16` or `u16`.
 #! - Unsigned comparisons (`sltu`, `sltiu`, `bltu`, `bgeu`), `lui`, `auipc`,
-#!   `ecall` and `ebreak` have no C-like spelling, and keep their plain
-#!   `name a, b, c` syntax.
+#!   `ecall`, `ebreak`, `li`, `la` and `ascii` have no C-like spelling, and
+#!   keep their plain `name a, b, c` syntax.
 #!
 #! Import this instead of `std.riscv.native`, never alongside it: both
 #! assign syntax to the same instructions.

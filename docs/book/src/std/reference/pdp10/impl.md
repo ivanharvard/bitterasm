@@ -25,6 +25,15 @@ Appendix A.
 
 ## Macros
 
+### `instr`
+
+An instruction with any opcode, for one this module doesn't name, such as
+an operating system's monitor call.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `instr opcode, ac, i, x, y` | `opcode: int`, `ac: int`, `i: int`, `x: int`, `y: int` | emits `Instr` |  |
+
 ### `halt`
 
 Stops the processor. It's `JRST 4,`.
@@ -125,6 +134,17 @@ Swaps `ac` with the word at the effective address.
 |---|---|---|---|
 | `exch ac, i, x, y` | `ac: AC`, `i: int`, `x: Index`, `y: int` | emits `Instr` |  |
 
+### `asciz`
+
+A string packed the way MACRO-10's `ASCIZ` packs it: five 7-bit
+characters to a word, first character in the high bits, low bit unused,
+and at least one NUL at the end. Each word is its own emitted value, so a
+label after it still counts words.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `asciz source` | `<S>`, `source: S` |  |  |
+
 ## Types
 
 ### `AC`
@@ -164,6 +184,12 @@ An 18-bit address.
 
 The PDP-10 instruction word: opcode (9 bits), `ac` (4), `i` (1), `x` (4)
 and `y` (18), most significant first.
+
+### `Word`
+
+`type Word = bits<36>`
+
+A 36-bit data word.
 
 ## Constants
 

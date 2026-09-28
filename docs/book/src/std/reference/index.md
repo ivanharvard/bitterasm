@@ -13,7 +13,7 @@
 | [`iter`](iter.md) | Stepped ranges of integers, for `@for`. |
 | [`math`](math.md) | Integer math, and fixed-point math on `Decimal` and `Fraction`, all evaluated at compile time. |
 | [`option`](option.md) | `Option<T>`: a value that may be missing. |
-| [`pdp10/`](pdp10/index.md) | `impl` |
+| [`pdp10/`](pdp10/index.md) | `impl`, `tops10` |
 | [`riscv/`](riscv/index.md) | `c_like`, `impl`, `native` |
 | [`string`](string.md) | Strings packed into one integer. A string literal like `"hi"` is a struct of code points; `string_from_struct` encodes it as UTF-8 bytes in a single `int`, with its length in bytes. |
 | [`unsigned`](unsigned.md) | `uint`, an `int` that can't be negative. |

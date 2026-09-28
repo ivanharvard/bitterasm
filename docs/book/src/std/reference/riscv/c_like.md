@@ -26,8 +26,8 @@ e3 1e 05 fe
 - Loads and stores smaller than a word name their width before `mem`:
   `i8`, `u8`, `i16` or `u16`.
 - Unsigned comparisons (`sltu`, `sltiu`, `bltu`, `bgeu`), `lui`, `auipc`,
-  `ecall` and `ebreak` have no C-like spelling, and keep their plain
-  `name a, b, c` syntax.
+  `ecall`, `ebreak`, `li`, `la` and `ascii` have no C-like spelling, and
+  keep their plain `name a, b, c` syntax.
 
 Import this instead of `std.riscv.native`, never alongside it: both
 assign syntax to the same instructions.
@@ -353,6 +353,33 @@ in `rd`. `jal ra, f` calls `f`; `jal zero, l` just jumps.
 |---|---|---|---|---|
 | `rd = call(target)` | `rd: Reg`, `target: int` | emits `LittleEndian<JType, 32>` |  | [`std.riscv.impl`](impl.md) |
 
+### `li`
+
+Loads the constant `imm` into `rd`: `addi rd, zero, imm` when it fits in
+12 signed bits, else `lui` for the upper 20 bits then, unless they're
+zero, `addi` for the rest.
+
+| Syntax | Parameters | Result | Description | From |
+|---|---|---|---|---|
+| `li rd, imm` | `rd: Reg`, `imm: int` |  |  | [`std.riscv.impl`](impl.md) |
+
+### `la`
+
+Loads the address of the label `symbol` into `rd`: `auipc` for the upper
+20 bits of the distance, then `addi` for the rest.
+
+| Syntax | Parameters | Result | Description | From |
+|---|---|---|---|---|
+| `la rd, symbol` | `rd: Reg`, `symbol: int` |  |  | [`std.riscv.impl`](impl.md) |
+
+### `ascii`
+
+A string literal's UTF-8 bytes, with no terminator: GNU's `.ascii`.
+
+| Syntax | Parameters | Result | Description | From |
+|---|---|---|---|---|
+| `ascii source` | `<S>`, `source: S` |  |  | [`std.riscv.impl`](impl.md) |
+
 ## Re-exported
 
-From [`std.riscv.impl`](impl.md): `Reg`, `x0`, `x1`, `x2`, `x3`, `x4`, `x5`, `x6`, `x7`, `x8`, `x9`, `x10`, `x11`, `x12`, `x13`, `x14`, `x15`, `x16`, `x17`, `x18`, `x19`, `x20`, `x21`, `x22`, `x23`, `x24`, `x25`, `x26`, `x27`, `x28`, `x29`, `x30`, `x31`, `zero`, `ra`, `sp`, `gp`, `tp`, `t0`, `t1`, `t2`, `s0`, `fp`, `s1`, `a0`, `a1`, `a2`, `a3`, `a4`, `a5`, `a6`, `a7`, `s2`, `s3`, `s4`, `s5`, `s6`, `s7`, `s8`, `s9`, `s10`, `s11`, `t3`, `t4`, `t5`, `t6`, `Opcode`, `Funct3`, `Funct7`, `Bit1`, `Imm4`, `Imm5`, `Imm6`, `Imm7`, `Imm8`, `Imm10`, `Imm12`, `Imm20`, `RType`, `IType`, `SType`, `BType`, `UType`, `JType`.
+From [`std.riscv.impl`](impl.md): `Reg`, `x0`, `x1`, `x2`, `x3`, `x4`, `x5`, `x6`, `x7`, `x8`, `x9`, `x10`, `x11`, `x12`, `x13`, `x14`, `x15`, `x16`, `x17`, `x18`, `x19`, `x20`, `x21`, `x22`, `x23`, `x24`, `x25`, `x26`, `x27`, `x28`, `x29`, `x30`, `x31`, `zero`, `ra`, `sp`, `gp`, `tp`, `t0`, `t1`, `t2`, `s0`, `fp`, `s1`, `a0`, `a1`, `a2`, `a3`, `a4`, `a5`, `a6`, `a7`, `s2`, `s3`, `s4`, `s5`, `s6`, `s7`, `s8`, `s9`, `s10`, `s11`, `t3`, `t4`, `t5`, `t6`, `Opcode`, `Funct3`, `Funct7`, `Bit1`, `Imm4`, `Imm5`, `Imm6`, `Imm7`, `Imm8`, `Imm10`, `Imm12`, `Imm20`, `RType`, `IType`, `SType`, `BType`, `UType`, `JType`, `Byte`, `Bytes`.
