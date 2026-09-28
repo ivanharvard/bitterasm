@@ -1758,8 +1758,28 @@ pub fn search_roots() -> Vec<PathBuf> {
         roots.extend(std::env::split_paths(&paths).filter(|path| !path.as_os_str().is_empty()));
     }
 
-    if let Some(home) = std::env::home_dir() {
+    let home_dir = std::env::home_dir();
+
+    if let Some(home) = &home_dir {
         roots.push(home.join(".bitterasm"));
+    }
+
+    if cfg!(all(unix, not(target_vendor = "apple"))) {
+        const DEFAULT_DATA_DIRS: &str = "/usr/local/share:/usr/share";
+
+        let data_home = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| Some(home_dir.as_ref()?.join(".local/share")));
+
+        let data_dirs = std::env::var_os("XDG_DATA_DIRS");
+        let data_dirs = data_dirs.as_deref().unwrap_or(DEFAULT_DATA_DIRS.as_ref());
+        let data_dirs = std::env::split_paths(data_dirs);
+
+        let dirs = std::iter::chain(data_home, data_dirs)
+            .filter(|path| path.is_absolute())
+            .map(|path| path.join("bitterasm"));
+
+        roots.extend(dirs);
     }
 
     roots
