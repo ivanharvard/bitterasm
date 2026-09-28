@@ -1,30 +1,74 @@
+#! Strings packed into one integer. A string literal like `"hi"` is a
+#! struct of code points; `string_from_struct` encodes it as UTF-8 bytes in a
+#! single `int`, with its length in bytes.
+#!
+#! ```
+#! from std.string import *
+#! from std.binary import Endian
+#!
+#! macro show(value: int) {
+#!     @emit value
+#! }
+#!
+#! macro demo() {
+#!     const s = string_from_struct("héllo")
+#!     show s.len
+#!     show utf8_codepoint_count(s as Utf8String<6, Endian.Big>)
+#!     show ascii_upper(string_from_struct("hi") as AsciiString<2, Endian.Big>).value
+#! }
+#!
+#! demo
+#! ```
+#!
+#! ```emits
+#! 6 5 18505
+#! ```
+#!
+#! `18505` is `0x4849`, the bytes of `HI`. Converting to `AsciiString` or
+#! `Utf8String` with `as` checks the bytes are valid, and picks their
+#! `Endian`: whether byte 0 is the most (`Big`) or least (`Little`)
+#! significant byte of `value`. The byte order doesn't change the UTF-8.
+
 from std.binary import BITS_PER_BYTE, Endian
 
-# Packed strings store exactly `len` bytes in `value`. Endianness controls
-# which packed byte is logical byte zero; it does not change UTF-8 itself.
+## `len` bytes packed into `value`, first byte most significant.
+## `string_from_struct` builds one. Convert it with `as` to `AsciiString` or
+## `Utf8String` to check its bytes and choose their order.
 pub struct String<const len: int>
     | invariant validate_string(value, len)
     | to string_to_ascii(source, target.len, target.endian)
     | to string_to_utf8(source, target.len, target.endian)
 {
+    ## The bytes, packed.
     pub value: int,
+    ## The number of bytes.
     pub len: int,
 }
 
+## `len` ASCII bytes (each below `0x80`) packed into `value`, with byte 0 at
+## the `endian` end.
 pub struct AsciiString<const len: int, const endian: Endian>
     | invariant validate_ascii(value, len, endian)
     | to ascii_to_utf8(source, target.len, target.endian)
 {
+    ## The bytes, packed.
     pub value: int,
+    ## The number of bytes.
     pub len: int,
+    ## Which end of `value` holds byte 0.
     pub endian: Endian,
 }
 
+## `len` bytes of valid UTF-8 packed into `value`, with byte 0 at the
+## `endian` end.
 pub struct Utf8String<const len: int, const endian: Endian>
     | invariant validate_utf8(value, len, endian)
 {
+    ## The bytes, packed.
     pub value: int,
+    ## The number of bytes.
     pub len: int,
+    ## Which end of `value` holds byte 0.
     pub endian: Endian,
 }
 
@@ -42,6 +86,8 @@ macro validate_string(
     @return 1
 }
 
+## Byte `index` of `len` bytes packed into `value`, counting from the
+## `endian` end. `index` must be within the string.
 pub macro byte_at(
     value: int,
     len: int,
@@ -72,6 +118,8 @@ macro utf8_codepoint_byte_len(codepoint: int) -> int {
     @return 4
 }
 
+## How many bytes a string literal (or any struct of code points) takes
+## as UTF-8.
 pub macro utf8_struct_byte_len<S>(source: S) -> int {
     @return @fold len = 0 @for codepoint in source {
         @next len + utf8_codepoint_byte_len(codepoint)
@@ -101,8 +149,9 @@ macro utf8_codepoint_packed(codepoint: int) -> int {
     @return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
 }
 
-# Packs each code point's UTF-8 bytes after the ones before it, so the first
-# character ends up most significant.
+## A string literal (or any struct of code points) as a `String` of its
+## UTF-8 bytes, first character most significant.
+# Packs each code point's UTF-8 bytes after the ones before it.
 pub macro string_from_struct<S>(source: S)
 {
     const packed = @fold value = 0, len = 0 @for codepoint in source {
@@ -116,6 +165,8 @@ pub macro string_from_struct<S>(source: S)
     }
 }
 
+## 1 if `len` bytes packed into `value` are all ASCII. Otherwise it's a
+## compile error.
 pub macro validate_ascii(
     value: int,
     len: int,
@@ -180,6 +231,9 @@ macro utf8_sequence_at(
     @assert 0, "invalid UTF-8 leading byte"
 }
 
+## 1 if `len` bytes packed into `value` are valid UTF-8: no stray or
+## missing continuation bytes, overlong forms, surrogates, or code points
+## past U+10FFFF. Otherwise it's a compile error.
 pub macro validate_utf8(
     value: int,
     len: int,
@@ -224,6 +278,7 @@ macro ascii_to_utf8(
     @return Utf8String(value = s.value, len = len, endian = endian)
 }
 
+## Byte `index` of `s`.
 pub macro ascii_byte_at(
     s: AsciiString,
     index: int
@@ -231,6 +286,7 @@ pub macro ascii_byte_at(
     @return byte_at(s.value, s.len, index, s.endian)
 }
 
+## Byte `index` of `s`. This is a byte, not a character.
 pub macro utf8_byte_at(
     s: Utf8String,
     index: int
@@ -274,6 +330,7 @@ macro ascii_case_value(
     }
 }
 
+## `s` with `a`-`z` made uppercase.
 pub macro ascii_upper(s: AsciiString) -> AsciiString {
     @return AsciiString<s.len, s.endian> {
         value: ascii_case_value(s.value, s.len, s.endian, 1),
@@ -282,6 +339,7 @@ pub macro ascii_upper(s: AsciiString) -> AsciiString {
     }
 }
 
+## `s` with `A`-`Z` made lowercase.
 pub macro ascii_lower(s: AsciiString) -> AsciiString {
     @return AsciiString<s.len, s.endian> {
         value: ascii_case_value(s.value, s.len, s.endian, 0),
@@ -290,6 +348,7 @@ pub macro ascii_lower(s: AsciiString) -> AsciiString {
     }
 }
 
+## `s` with its first byte made uppercase.
 pub macro ascii_title(s: AsciiString) -> AsciiString {
     @if s.len == 0 {
         @return s
@@ -305,6 +364,7 @@ pub macro ascii_title(s: AsciiString) -> AsciiString {
     }
 }
 
+## The number of characters (code points) in `s`.
 # Counts lead bytes: every byte that isn't a continuation byte starts a
 # code point.
 pub macro utf8_codepoint_count(s: Utf8String) -> int {
@@ -315,6 +375,7 @@ pub macro utf8_codepoint_count(s: Utf8String) -> int {
     }
 }
 
+## 1 if every byte of `s` is ASCII, else 0.
 pub macro utf8_is_ascii(s: Utf8String) -> int {
     @for index in 0..s.len {
         @if byte_at(s.value, s.len, index, s.endian) >= 0x80 {

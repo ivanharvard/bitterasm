@@ -1292,6 +1292,7 @@ impl<'a> AliasResolver<'a> {
             is_pub: decl.is_pub,
             ty: decl.ty.clone(),
             value: self.splice_expr(&decl.value, scope)?,
+            doc: decl.doc.clone(),
             span: decl.span,
         })
     }

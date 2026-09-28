@@ -9,9 +9,9 @@ directory.
 
 | Module | Provides |
 |---|---|
-| `std.binary` | `bits<N>`, the `bool` type with `true` and `false`, `Endian`, `bit_width`, `byte_width` |
+| `std.binary` | `bits<N>`, two's-complement `signed<N>`, the `bool` type with `true` and `false`, `Endian`, `bit_width`, `byte_width` |
 | `std.bitfield` | Bit-range helpers for encoders: `mask`, `bit`, `slice`, `field`, `truncate`, `place` |
-| `std.ctypes` | C-style integer types: `int8_t`, `uint8_t`, ... `uint64_t` |
+| `std.ctypes` | C-style integer types: signed `int8_t` ... `int64_t` and unsigned `uint8_t` ... `uint64_t` |
 | `std.unsigned` | `uint`, a non-negative `int` |
 | `std.array` | `Array<T, N>` and `get`, `updated`, `reversed`, `popped`, `appended`, `first`, `last`, `mapped`, `enumerate`, `array_from_struct` |
 | `std.string` | Packed `String`, `AsciiString` and `Utf8String`, with validation and case conversion |
@@ -72,6 +72,6 @@ through the C-like dialect.
 
 ## Reference
 
-A generated reference for every public declaration is planned. Until then,
-the source files are the reference: each starts with comments explaining
-it.
+The [std reference](reference/index.md) lists every public declaration of
+every module, generated from std's doc comments by `bitterasm doc`. See
+[Generating docs](../tools/docs.md) to do the same for your own modules.

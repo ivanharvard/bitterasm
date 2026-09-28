@@ -1,2 +1,5 @@
+#! `uint`, an `int` that can't be negative.
+
+## An `int` that's at least zero, checked wherever a value becomes one.
 pub type uint = int
     | invariant x >= 0

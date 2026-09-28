@@ -27,7 +27,7 @@ use crate::ast::{
 };
 
 use crate::facets::syntax::SyntaxPattern;
-use crate::token::{Span, Token, TokenKind};
+use crate::token::{DocComment, Span, Token, TokenKind};
 use crate::types::{FnBound, GenericParameter, StructBodyItem, StructField, TypeExpr, TypeArgument};
 
 mod expressions;
@@ -38,6 +38,7 @@ mod macros;
 mod construct;
 mod facets;
 mod invocation_syntax;
+mod docs;
 
 #[cfg(test)]
 mod tests;
@@ -59,7 +60,7 @@ mod tests;
 /// assert_eq!(program.statements.len(), 1);
 /// ```
 pub fn parse(tokens: Vec<Token>) -> Result<Program, ParseError> {
-    parse_seeded(tokens, &ParserSeed::default()).map(|(program, _)| program)
+    parse_seeded(tokens, Vec::new(), &ParserSeed::default()).map(|(program, _)| program)
 }
 
 /// What the same-file prepass discovers, threaded across files the same
@@ -101,12 +102,15 @@ pub(crate) struct ParserSeed {
 
 /// Parses `tokens`, treating `seed` as generic signatures and macro syntax
 /// patterns known in advance (e.g. pulled in from imported modules, whose
-/// declarations aren't textually present in this token stream). Returns
+/// declarations aren't textually present in this token stream), and
+/// attaching `docs` (from [`crate::lexer::lex_with_docs`]) to the items
+/// they document. Returns
 /// everything visible by the end of the file (seed plus whatever this file
 /// declared itself), so callers can pass it on to files that import *this*
 /// one in turn.
 pub(crate) fn parse_seeded(
     tokens: Vec<Token>,
+    docs: Vec<DocComment>,
     seed: &ParserSeed,
 ) -> Result<(Program, ParserSeed), ParseError> {
     // dummy pass to collect signatures
@@ -118,6 +122,7 @@ pub(crate) fn parse_seeded(
     let _ = prepass.parse_program();
 
     let mut parser = Parser::new(tokens);
+    parser.pending_docs = docs;
     parser.generic_signatures = prepass.generic_signatures;
     parser.macro_syntaxes = prepass.macro_syntaxes;
     parser.syntax_overrides = prepass.syntax_overrides;
@@ -236,6 +241,11 @@ struct Parser {
     /// name's `` `...` `` piece), where an identifier followed by a
     /// backtick is that splice closing, not a spliced name starting.
     pub(super) in_splice: bool,
+
+    // `##`/`#!` lines not yet claimed by an item, in source order, and the
+    // ones that turned out to document nothing. See `docs.rs`.
+    pending_docs: Vec<DocComment>,
+    stray_docs: Vec<DocComment>,
 }
 
 impl Parser {
@@ -253,6 +263,8 @@ impl Parser {
             restrict_closing_ops: false,
             restrict_brace_construction: false,
             in_splice: false,
+            pending_docs: Vec::new(),
+            stray_docs: Vec::new(),
         }
     }
 
@@ -342,9 +354,13 @@ impl Parser {
         let mut statements = Vec::new();
 
         self.skip_newlines();
+        let doc = self.take_module_doc();
 
         while !self.at_eof() {
-            statements.push(self.parse_statement()?);
+            let doc_lines = self.take_doc_lines();
+            let mut statement = self.parse_statement()?;
+            self.attach_doc(&mut statement, doc_lines);
+            statements.push(statement);
             self.skip_newlines();
         }
 
@@ -353,6 +369,8 @@ impl Parser {
         Ok(Program {
             statements,
             span: Span::new(start, end),
+            doc,
+            stray_docs: self.finish_docs(),
         })
     }
 

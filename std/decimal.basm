@@ -1,24 +1,54 @@
+#! Exact non-integer numbers, for compile-time math: `Decimal`, a value
+#! scaled by a power of ten, and `Fraction`, a numerator over a denominator.
+#! Both convert to and from `int` with `as`.
+#!
+#! ```
+#! from std.decimal import *
+#!
+#! macro show(value: int) {
+#!     @emit value
+#! }
+#!
+#! const half = Fraction(n = 1, d = 2)
+#! const d = fraction_to_decimal(half, 3)
+#! show d.value
+#! show d.scale
+#! show Decimal(value = 42, scale = 0) as int
+#! ```
+#!
+#! ```emits
+#! 500 3 42
+#! ```
+
+## A signed infinity.
 pub enum Infinity {
+    ## Positive infinity.
     Positive,
+    ## Negative infinity.
     Negative
 }
 
-# Interpreted as `value` / (10 ** `scale`)
+## `value / 10^scale`: `Decimal(value = 314, scale = 2)` is 3.14. `scale`
+## can't be negative. `as int` works when `scale` is 0.
 pub struct Decimal
     | invariant source.scale >= 0
     | to decimal_to_int(source)
     | to decimal_to_fraction(source)
     | from decimal_from_int(source)
 {
+    ## The digits, as an integer.
     pub value: int,
+    ## How many of those digits come after the decimal point.
     pub scale: int
 }
 
+## `x` as an `int`. `x.scale` must be 0.
 pub macro decimal_to_int(x: Decimal) -> int {
     @assert x.scale == 0
     @return x.value
 }
 
+## `x` as a `Decimal` with scale 0.
 pub macro decimal_from_int(x: int) -> Decimal {
     @return Decimal(
         value=x,
@@ -26,22 +56,30 @@ pub macro decimal_from_int(x: int) -> Decimal {
     )
 }
 
+# How many decimal places `as Decimal` keeps.
 const PRECISION = 10
+
+## `n / d`, where `d` isn't 0. `as int` works when `d` is 1, and `as
+## Decimal` keeps 10 decimal places.
 pub struct Fraction
     | invariant source.d != 0
     | to fraction_to_int(source)
     | to fraction_to_decimal(source, PRECISION)
     | from fraction_from_int(source)
 {
+    ## The numerator.
     pub n: int,
+    ## The denominator.
     pub d: int
 }
 
+## `x` as an `int`. `x.d` must be 1.
 pub macro fraction_to_int(x: Fraction) -> int {
     @assert x.d == 1
     @return x.n
 }
 
+## `x` over 1.
 pub macro fraction_from_int(x: int) -> Fraction {
     @return Fraction(n=x,d=1)
 }
@@ -60,10 +98,13 @@ macro pow(
     @return base * pow(base, exp - 1)
 }
 
+## `x` as `x.value` over `10^x.scale`, not reduced.
 pub macro decimal_to_fraction(x: Decimal) -> Fraction {
     @return Fraction(n=x.value, d=pow(10, x.scale))
 }
 
+## `x` as a `Decimal` with `precision` decimal places, rounded toward
+## zero.
 pub macro fraction_to_decimal(
     x: Fraction,
     precision: int

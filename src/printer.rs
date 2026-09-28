@@ -292,7 +292,7 @@ fn print_macro_param(param: &MacroParameter) -> String {
     format!("{name}: {ty}{default}", name = param.name, ty = print_type_expr(&param.ty))
 }
 
-fn print_generic_params(params: &[GenericParameter]) -> String {
+pub fn print_generic_params(params: &[GenericParameter]) -> String {
     if params.is_empty() {
         return String::new();
     }

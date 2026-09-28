@@ -77,3 +77,16 @@ mdbook build docs/book          # writes docs/book/book
 
 The introduction is included from the README's `overview` anchor, so edit it
 there.
+
+## The std reference
+
+`std/reference/` is generated from std's doc comments, so don't edit it by
+hand. Edit the `##` and `#!` comments in `std/`, then regenerate it:
+
+```sh
+bitterasm doc std -o docs/book/src/std/reference --summary docs/book/src/SUMMARY.md
+```
+
+That also updates the reference's entries in `SUMMARY.md`, so a new module
+needs nothing else. `cargo test --test doc_comments` fails while either is
+out of date.

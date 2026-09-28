@@ -401,7 +401,7 @@ mod tests {
     #[test]
     fn reifies_an_int() {
         let symbols =
-            collect_symbols(&Program { statements: vec![], span: Span::new(0, 0) }, &[]).unwrap();
+            collect_symbols(&Program { statements: vec![], span: Span::new(0, 0), doc: None, stray_docs: vec![] }, &[]).unwrap();
 
         assert_eq!(
             reify_value(&TypeIds::new(&symbols, &[]), &Value::Int(Int::from(42))),

@@ -17,7 +17,9 @@ formatted.
   under a top-level label.
 - Facets, each moved to its own indented line.
 - Trailing whitespace, runs of blank lines, and the final newline.
-- Comments longer than `comment_width`, which are wrapped.
+- Comments longer than `comment_width`, which are wrapped. In [doc
+  comments](../basics/doc-comments.md), code blocks, tables and headings
+  are left as written.
 - Long lines, which are wrapped at commas inside `()`, `[]` and `{}`. A line
   with no such comma stays long, since a newline would end the statement.
 

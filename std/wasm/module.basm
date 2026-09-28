@@ -1,3 +1,31 @@
+#! The WebAssembly module container: the header, sections, and their
+#! length prefixes. A section starts with its id byte and its length in
+#! bytes, which `deferred_uleb128` fills in once `bitter` knows it.
+#!
+#! ```
+#! from std.wasm.module import *
+#! from std.wasm.impl import *
+#! from std.bitter.deferred import *
+#!
+#! header
+#!
+#! # The type section: one function type, () -> i32.
+#! byte(0x01)
+#! deferred_uleb128 span(types_start, types_end), 1
+#! types_start:
+#! byte(0x01)
+#! func_type_0_to_1(I32)
+#! types_end:
+#! ```
+#!
+#! ```bytes
+#! 00 61 73 6d 01 00 00 00
+#! 01 05 01 60 00 01 7f
+#! ```
+#!
+#! This covers enough to build a module exporting a function; the Table,
+#! Memory, Global, Start, Element and Data sections have no helpers yet.
+
 from std.binary import *
 from std.bitter.deferred import *
 from std.bitfield import *
@@ -30,8 +58,11 @@ from std.wasm.leb128 import *
 # LEB128 form (padded with zero groups up to a value's max byte count for
 # its bit width), which is exactly what a fixed `n` produces whenever the
 # real length turns out smaller than `n` bytes can hold.
+## One byte of a LEB128 value `bitter` works out later.
 pub struct Leb128Group {
+    ## Set on every byte but the last.
     pub continuation: bool,
+    ## Seven bits of the value.
     pub payload: Positioned<7>,
 }
 
@@ -54,6 +85,7 @@ macro deferred_leb128_group(
     }
 }
 
+## `N` bytes of a LEB128 value `bitter` works out later.
 pub struct DeferredLeb128<const N: int>
     | invariant N >= 0
 {
@@ -62,10 +94,9 @@ pub struct DeferredLeb128<const N: int>
     }
 }
 
-# Encodes `value` (typically `span(start, end)`) as fixed-width unsigned
-# LEB128 into exactly `n` bytes, `@emit`'d directly — this is meant to be
-# invoked as a top-level statement, a length-prefix "instruction" in its
-# own right, the same way `std/wasm/impl.basm`'s opcodes are.
+## `value`, usually `span(start, end)`, as unsigned LEB128 in exactly `n`
+## bytes, padded if it turns out to need fewer. `n` has to be enough for
+## the final value: one byte holds up to 127.
 pub macro deferred_uleb128(
     value: Deferred,
     n: int
@@ -87,15 +118,14 @@ pub macro deferred_uleb128(
 # section kind (Table/Memory/Global/Start/Element/Data aren't covered
 # here). `std/` is meant to grow, per the README's own "Status" section.
 
+## One byte, such as a section id.
 pub macro byte(value: int)
     | emits Byte
 {
     @emit Byte(value)
 }
 
-# The 8-byte preamble every module starts with: magic (`\0asm`) then
-# version 1. Neither is length-prefixed — there's nothing optional or
-# variable-length about it to measure.
+## The 8 bytes every module starts with: `\0asm`, then version 1.
 pub macro header()
     | emits Bytes<8>
 {
@@ -111,9 +141,8 @@ pub macro header()
     }
 }
 
-# A function type with no parameters and exactly one result — the one
-# shape this MVP subset needs. `0x60` is the functype form marker every
-# WASM function type starts with.
+## A function type with no parameters and one result of type `result`,
+## such as `I32`.
 pub macro func_type_0_to_1(result: Byte)
     | emits Bytes<4>
 {

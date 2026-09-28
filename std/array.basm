@@ -1,5 +1,37 @@
+#! `Array<T, N>`: `N` values of type `T`, and ways to build new arrays from
+#! old ones. Every value is immutable, so each operation returns a new array.
+#!
+#! ```
+#! from std.array import *
+#!
+#! macro show_all<const N: int>(values: Array<int, N>) {
+#!     @for v in values {
+#!         @emit v
+#!     }
+#! }
+#!
+#! macro double(x: int) -> int {
+#!     @return x * 2
+#! }
+#!
+#! const values = Array<int, 3> { __el0: 10, __el1: 20, __el2: 30 }
+#!
+#! show_all reversed(values)
+#! show_all mapped(appended(values, 40), double)
+#! ```
+#!
+#! ```emits
+#! 30 20 10
+#! 20 40 60 80
+#! ```
+#!
+#! An array is built with its elements named `__el0`, `__el1`, ..., or by an
+#! `@for` inside the construction. `@for v in values` visits the elements
+#! in order.
+
 from std.enumerated import Enumerated
 
+## `N` values of type `T`, in order.
 pub struct Array<T, const N: int>
     | invariant N >= 0
 {
@@ -7,6 +39,7 @@ pub struct Array<T, const N: int>
         pub __el`i`: T,
     }
 
+    ## The number of elements, `N`. `skip`, so `@for` doesn't visit it.
     pub skip len: int = N,
 }
 
@@ -18,15 +51,15 @@ macro oob_check<T>(
     @assert index < arr.len, "Index is greater than Array length"
 }
 
+## The element at `index`, counting from 0. An index outside the array is
+## a compile error.
 pub macro get<T>(arr: Array<T, ...>, index: int) -> T
-    | syntax { $arr$[$index$] }
     | before oob_check(arr, index)
 {
     @return arr.__el`index`
 }
 
-# Since all basm objects are immutable, we need to return a new array with the
-# updated value
+## A copy of `arr` with the element at `index` replaced by `value`.
 pub macro updated<T>(
     arr: Array<T, ...>,
     index: int,
@@ -45,6 +78,7 @@ pub macro updated<T>(
     }
 }
 
+## A copy of `arr` in reverse order.
 pub macro reversed<T>(arr: Array<T, ...>) -> Array<T, ...>
 {
     @return Array<T, arr.len> {
@@ -54,6 +88,7 @@ pub macro reversed<T>(arr: Array<T, ...>) -> Array<T, ...>
     }
 }
 
+## A copy of `arr` without its last element. `arr` can't be empty.
 pub macro popped<T, const N: int>(arr: Array<T, N>) -> Array<T, N-1>
 {
     @assert N > 0
@@ -65,18 +100,22 @@ pub macro popped<T, const N: int>(arr: Array<T, N>) -> Array<T, N-1>
     }
 }
 
+## The first element. `arr` can't be empty.
 pub macro first<T>(arr: Array<T, ...>) -> T
 {
     @assert arr.len > 0
     @return get(arr, 0)
 }
 
+## The last element. `arr` can't be empty.
 pub macro last<T>(arr: Array<T, ...>) -> T
 {
     @assert arr.len > 0
     @return get(arr, arr.len - 1)
 }
 
+## A new array holding `f` of each element, in order. `f` is any macro
+## that takes a `T` and returns a `U`.
 pub macro mapped<T, U, F: Fn(T) -> U>(arr: Array<T, ...>, f: F) -> Array<U, ...>
 {
     @return Array<U, arr.len> {
@@ -86,6 +125,8 @@ pub macro mapped<T, U, F: Fn(T) -> U>(arr: Array<T, ...>, f: F) -> Array<U, ...>
     }
 }
 
+## An `Array<int, N>` of a struct's `__el0`..`__el{len - 1}` fields, such
+## as a `String`'s characters or a `Range`'s values.
 pub macro array_from_struct<S>(source: S)
 {
     const len = source.len
@@ -96,6 +137,7 @@ pub macro array_from_struct<S>(source: S)
     }
 }
 
+## Each element paired with its index, as an `Enumerated<T>`.
 pub macro enumerate<T>(arr: Array<T, ...>) -> Array<Enumerated<T>, ...>
 {
     @return Array<Enumerated<T>, arr.len> {
@@ -105,6 +147,7 @@ pub macro enumerate<T>(arr: Array<T, ...>) -> Array<Enumerated<T>, ...>
     }
 }
 
+## A copy of `arr` with `value` added at the end.
 pub macro appended<T, const N: int>(
     arr: Array<T, N>,
     value: T

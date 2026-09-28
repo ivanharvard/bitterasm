@@ -197,6 +197,7 @@ impl<'a> AliasResolver<'a> {
                 is_pub: true,
                 is_skip: false,
                 default: None,
+                        doc: None,
                 span,
             }));
 
@@ -212,6 +213,7 @@ impl<'a> AliasResolver<'a> {
             is_pub: false,
             generic_params: Vec::new(),
             facets: Vec::new(),
+            doc: None,
             fields: struct_fields,
             span,
         });
@@ -259,6 +261,7 @@ impl<'a> AliasResolver<'a> {
                 is_pub: true,
                 is_skip: false,
                 default: None,
+                        doc: None,
                 span,
             }));
 
@@ -276,6 +279,7 @@ impl<'a> AliasResolver<'a> {
             is_pub: true,
             is_skip: true,
             default: None,
+                        doc: None,
             span,
         }));
         values.push(("len".to_string(), Value::Int(Int::from(len))));
@@ -287,6 +291,7 @@ impl<'a> AliasResolver<'a> {
             is_pub: false,
             generic_params: Vec::new(),
             facets: Vec::new(),
+            doc: None,
             fields: struct_fields,
             span,
         });

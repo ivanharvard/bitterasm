@@ -239,6 +239,7 @@ fn substitute_statement(statement: &Statement, substitutions: &HashMap<String, E
             is_pub: decl.is_pub,
             ty: decl.ty.as_ref().map(|ty| substitute_type_expr(ty, substitutions)),
             value: substitute_expr(&decl.value, substitutions),
+            doc: decl.doc.clone(),
             span: decl.span,
         }),
 
@@ -322,7 +323,8 @@ fn substitute_struct(decl: &StructDeclaration, substitutions: &HashMap<String, E
         generic_params: decl.generic_params.clone(),
         facets: substitute_facets(&decl.facets, &inner),
         fields: substitute_struct_body_items(&decl.fields, &inner),
-        span: decl.span,
+        doc: decl.doc.clone(),
+            span: decl.span,
     }
 }
 
@@ -339,6 +341,7 @@ fn substitute_struct_body_items(
                 is_pub: field.is_pub,
                 is_skip: field.is_skip,
                 default: field.default.as_ref().map(|d| substitute_expr(d, substitutions)),
+                doc: field.doc.clone(),
                 span: field.span,
             }),
 
@@ -410,7 +413,8 @@ fn substitute_type_alias(
         generic_params: decl.generic_params.clone(),
         facets: substitute_facets(&decl.facets, &inner),
         ty: substitute_type_expr(&decl.ty, &inner),
-        span: decl.span,
+        doc: decl.doc.clone(),
+            span: decl.span,
     }
 }
 
@@ -441,6 +445,7 @@ fn substitute_macro(decl: &MacroDeclaration, substitutions: &HashMap<String, Exp
         return_ty: decl.return_ty.as_ref().map(|ty| substitute_type_expr(ty, &generics_shadowed)),
         facets: substitute_facets(&decl.facets, &generics_shadowed),
         body: substitute_statements(&decl.body, &body_scope),
+        doc: decl.doc.clone(),
         span: decl.span,
     }
 }

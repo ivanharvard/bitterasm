@@ -204,6 +204,11 @@ fn regmem_encodes_correctly() {
         // ModRM(mod=10, reg=r9&7=1, rm=100)=0x8C, SIB(scale=10, index=rcx&7=1, base=rax&7=0)=0x88,
         // disp32 LE of 0x100 (256 doesn't fit in disp8)
         0x4C, 0x8B, 0x8C, 0x88, 0x00, 0x01, 0x00, 0x00,
+        // mov rax, MemIndexed(rbx, r12, 4, 0), 1 — r12's low3=100 is SIB's
+        // "no index" code, but REX.X=1 makes it r12, so it's a valid index:
+        // REX(W=1,R=0,X=ext(r12)=1,B=0)=0x4A, opcode=0x8B,
+        // ModRM(mod=00, reg=rax=0, rm=100)=0x04, SIB(scale=10, index=r12&7=100, base=rbx=011)=0xA3
+        0x4A, 0x8B, 0x04, 0xA3,
     ];
 
     assert_case_encodes_to("regmem", expected);

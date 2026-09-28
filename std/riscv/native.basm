@@ -1,12 +1,27 @@
+#! RISC-V RV32I in its standard assembly syntax: `add a0, a1, a2`,
+#! `lw a0, 8(sp)`, `beq a0, zero, done`.
+#!
+#! ```
+#! from std.riscv.native import *
+#!
+#! add a0, a1, a2
+#! lw a0, 8(sp)
+#! ```
+#!
+#! ```bytes
+#! 33 85 c5 00
+#! 03 25 81 00
+#! ```
+#!
+#! The instructions themselves, and their registers, come from
+#! `std.riscv.impl`.
+
 pub from .impl import *
 
-# Real, conventional RISC-V assembly syntax for every `impl.basm` macro —
-# assigned here, explicitly, rather than left to whichever ones happen to
-# already read right under default positional `name arg, arg, ...` syntax,
-# so this file is a complete, standalone spec of "native" syntax on its
-# own, not just the handful of special cases that actually needed it. An
-# alternate dialect can sit alongside this one, importing the same `.impl`,
-# without touching or duplicating any instruction's real implementation.
+# Every `impl.basm` macro gets its syntax assigned here explicitly, even
+# where the default positional `name arg, arg, ...` already reads right, so
+# this file is a complete spec of the native syntax on its own. Another
+# dialect can import the same `.impl` without touching this one.
 
 # =================
 # R-type: register-register ops

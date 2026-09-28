@@ -1,3 +1,28 @@
+#! RISC-V RV32I: its registers, instruction formats, and every base
+#! instruction, each emitted as a little-endian 32-bit word.
+#!
+#! Import a dialect rather than this module: `std.riscv.native` for the
+#! standard assembly syntax, or `std.riscv.c_like`. Here every instruction
+#! takes its operands in order, `lw rd, offset, rs1` rather than
+#! `lw rd, offset(rs1)`.
+#!
+#! ```
+#! from std.riscv.impl import *
+#!
+#! loop:
+#!     addi a0, a0, -1
+#!     bne a0, zero, loop
+#! ```
+#!
+#! ```bytes
+#! 13 05 f5 ff
+#! e3 1e 05 fe
+#! ```
+#!
+#! Immediates are plain `int`s, truncated to their field, so a negative one
+#! becomes its two's-complement encoding. Branch and jump targets are labels;
+#! `bitter` works out the offset once the program is laid out.
+
 from std.binary import *
 from std.bitfield import *
 from std.bitter.deferred import *
@@ -6,48 +31,81 @@ from std.bitter.byte_order import *
 # =================
 # registers
 # =================
-# 32 general-purpose registers, 5 bits each. x0 is wired to zero by the ISA
-# spec, not by anything here — nothing stops constructing Reg(0) again.
 
+## A register number, 0 to 31.
 pub type Reg = bits<5>
 
 @for i in 0..32 {
+    ## A general-purpose register. `x0` always reads as zero.
     pub const x`i` = Reg(i)
 }
 
 # Standard ABI names, aliased to the `xN` registers they name.
+## `x0`, which always reads as zero.
 pub const zero = x0
+## `x1`: the return address.
 pub const ra = x1
+## `x2`: the stack pointer.
 pub const sp = x2
+## `x3`: the global pointer.
 pub const gp = x3
+## `x4`: the thread pointer.
 pub const tp = x4
+## `x5`: a temporary.
 pub const t0 = x5
+## `x6`: a temporary.
 pub const t1 = x6
+## `x7`: a temporary.
 pub const t2 = x7
+## `x8`: saved across calls.
 pub const s0 = x8
+## `x8`: the frame pointer, the same register as `s0`.
 pub const fp = x8
+## `x9`: saved across calls.
 pub const s1 = x9
+## `x10`: a function argument and return value.
 pub const a0 = x10
+## `x11`: a function argument and return value.
 pub const a1 = x11
+## `x12`: a function argument.
 pub const a2 = x12
+## `x13`: a function argument.
 pub const a3 = x13
+## `x14`: a function argument.
 pub const a4 = x14
+## `x15`: a function argument.
 pub const a5 = x15
+## `x16`: a function argument.
 pub const a6 = x16
+## `x17`: a function argument.
 pub const a7 = x17
+## `x18`: saved across calls.
 pub const s2 = x18
+## `x19`: saved across calls.
 pub const s3 = x19
+## `x20`: saved across calls.
 pub const s4 = x20
+## `x21`: saved across calls.
 pub const s5 = x21
+## `x22`: saved across calls.
 pub const s6 = x22
+## `x23`: saved across calls.
 pub const s7 = x23
+## `x24`: saved across calls.
 pub const s8 = x24
+## `x25`: saved across calls.
 pub const s9 = x25
+## `x26`: saved across calls.
 pub const s10 = x26
+## `x27`: saved across calls.
 pub const s11 = x27
+## `x28`: a temporary.
 pub const t3 = x28
+## `x29`: a temporary.
 pub const t4 = x29
+## `x30`: a temporary.
 pub const t5 = x30
+## `x31`: a temporary.
 pub const t6 = x31
 
 # =================
@@ -61,18 +119,30 @@ pub const t6 = x31
 # happen to share a width (`Funct7`/`Imm7` are both `bits<7>`), so a
 # format struct's field types stay self-documenting.
 
+## The 7-bit major opcode, which picks the format and family.
 pub type Opcode = bits<7>
+## The 3-bit `funct3` field, which picks the instruction within a family.
 pub type Funct3 = bits<3>
+## The 7-bit `funct7` field of an R-type instruction.
 pub type Funct7 = bits<7>
 
+## A one-bit field.
 pub type Bit1 = bits<1>
+## A 4-bit immediate field.
 pub type Imm4 = bits<4>
+## A 5-bit immediate field.
 pub type Imm5 = bits<5>
+## A 6-bit immediate field.
 pub type Imm6 = bits<6>
+## A 7-bit immediate field.
 pub type Imm7 = bits<7>
+## An 8-bit immediate field.
 pub type Imm8 = bits<8>
+## A 10-bit immediate field.
 pub type Imm10 = bits<10>
+## A 12-bit immediate field.
 pub type Imm12 = bits<12>
+## A 20-bit immediate field.
 pub type Imm20 = bits<20>
 
 # =================
@@ -81,6 +151,7 @@ pub type Imm20 = bits<20>
 # Field order is bit order, most-significant field first — bit 31 down to
 # bit 0 — matching how `bitter`'s packer is meant to concatenate them.
 
+## The R-type format: register-register operations.
 pub struct RType {
     funct7: Funct7,
     rs2: Reg,
@@ -90,6 +161,8 @@ pub struct RType {
     opcode: Opcode,
 }
 
+## The I-type format: register-immediate operations, loads, `jalr` and
+## system calls.
 pub struct IType {
     imm: Imm12,
     rs1: Reg,
@@ -98,6 +171,8 @@ pub struct IType {
     opcode: Opcode,
 }
 
+## The S-type format: stores. The 12-bit offset is split around the
+## registers.
 pub struct SType {
     imm_hi: Imm7,
     rs2: Reg,
@@ -119,6 +194,9 @@ pub struct SType {
 # finish that arithmetic once it knows where this instruction actually
 # lands. `Positioned<N>` carries the field's intended width alongside the
 # still-unresolved value so `bitter` knows how many bits to pack it into.
+## The B-type format: conditional branches. The offset's bits are spread
+## across the word the way the spec lays them out, and resolved by
+## `bitter`.
 pub struct BType {
     imm12: Positioned<1>,
     imm10_5: Positioned<6>,
@@ -130,12 +208,15 @@ pub struct BType {
     opcode: Opcode,
 }
 
+## The U-type format: a 20-bit upper immediate.
 pub struct UType {
     imm: Imm20,
     rd: Reg,
     opcode: Opcode,
 }
 
+## The J-type format: `jal`. Like B-type, its offset's bits are spread across
+## the word, and resolved by `bitter`.
 pub struct JType {
     imm20: Positioned<1>,
     imm10_1: Positioned<10>,
@@ -278,6 +359,7 @@ macro j_type(
 # R-type: register-register ops
 # =================
 
+## `rd = rs1 + rs2`.
 pub macro add(
     rd: Reg,
     rs1: Reg,
@@ -288,6 +370,7 @@ pub macro add(
     @emit r_type(OP, 0b000, 0b0000000, rd, rs1, rs2)
 }
 
+## `rd = rs1 - rs2`.
 pub macro sub(
     rd: Reg,
     rs1: Reg,
@@ -298,6 +381,7 @@ pub macro sub(
     @emit r_type(OP, 0b000, 0b0100000, rd, rs1, rs2)
 }
 
+## `rd = rs1 << rs2`, shifting by the low 5 bits of `rs2`.
 pub macro sll(
     rd: Reg,
     rs1: Reg,
@@ -308,6 +392,7 @@ pub macro sll(
     @emit r_type(OP, 0b001, 0b0000000, rd, rs1, rs2)
 }
 
+## `rd = 1` if `rs1 < rs2` as signed numbers, else 0.
 pub macro slt(
     rd: Reg,
     rs1: Reg,
@@ -318,6 +403,7 @@ pub macro slt(
     @emit r_type(OP, 0b010, 0b0000000, rd, rs1, rs2)
 }
 
+## `rd = 1` if `rs1 < rs2` as unsigned numbers, else 0.
 pub macro sltu(
     rd: Reg,
     rs1: Reg,
@@ -328,6 +414,7 @@ pub macro sltu(
     @emit r_type(OP, 0b011, 0b0000000, rd, rs1, rs2)
 }
 
+## `rd = rs1 ^ rs2`.
 pub macro xor(
     rd: Reg,
     rs1: Reg,
@@ -338,6 +425,7 @@ pub macro xor(
     @emit r_type(OP, 0b100, 0b0000000, rd, rs1, rs2)
 }
 
+## `rd = rs1 >> rs2`, shifting in zeros, by the low 5 bits of `rs2`.
 pub macro srl(
     rd: Reg,
     rs1: Reg,
@@ -348,6 +436,8 @@ pub macro srl(
     @emit r_type(OP, 0b101, 0b0000000, rd, rs1, rs2)
 }
 
+## `rd = rs1 >> rs2`, shifting in copies of the sign bit, by the low 5 bits of
+## `rs2`.
 pub macro sra(
     rd: Reg,
     rs1: Reg,
@@ -358,6 +448,7 @@ pub macro sra(
     @emit r_type(OP, 0b101, 0b0100000, rd, rs1, rs2)
 }
 
+## `rd = rs1 | rs2`.
 pub macro or(
     rd: Reg,
     rs1: Reg,
@@ -368,6 +459,7 @@ pub macro or(
     @emit r_type(OP, 0b110, 0b0000000, rd, rs1, rs2)
 }
 
+## `rd = rs1 & rs2`.
 pub macro and(
     rd: Reg,
     rs1: Reg,
@@ -382,6 +474,7 @@ pub macro and(
 # I-type: register-immediate ops
 # =================
 
+## `rd = rs1 + imm`, with a 12-bit signed `imm`.
 pub macro addi(
     rd: Reg,
     rs1: Reg,
@@ -392,6 +485,7 @@ pub macro addi(
     @emit i_type(OP_IMM, 0b000, rd, rs1, imm)
 }
 
+## `rd = 1` if `rs1 < imm` as signed numbers, else 0.
 pub macro slti(
     rd: Reg,
     rs1: Reg,
@@ -402,6 +496,8 @@ pub macro slti(
     @emit i_type(OP_IMM, 0b010, rd, rs1, imm)
 }
 
+## `rd = 1` if `rs1 < imm` as unsigned numbers, else 0. `imm` is
+## sign-extended first, so `sltiu rd, rs1, 1` tests for zero.
 pub macro sltiu(
     rd: Reg,
     rs1: Reg,
@@ -412,6 +508,7 @@ pub macro sltiu(
     @emit i_type(OP_IMM, 0b011, rd, rs1, imm)
 }
 
+## `rd = rs1 ^ imm`. `xori rd, rs1, -1` is bitwise NOT.
 pub macro xori(
     rd: Reg,
     rs1: Reg,
@@ -422,6 +519,7 @@ pub macro xori(
     @emit i_type(OP_IMM, 0b100, rd, rs1, imm)
 }
 
+## `rd = rs1 | imm`.
 pub macro ori(
     rd: Reg,
     rs1: Reg,
@@ -432,6 +530,7 @@ pub macro ori(
     @emit i_type(OP_IMM, 0b110, rd, rs1, imm)
 }
 
+## `rd = rs1 & imm`.
 pub macro andi(
     rd: Reg,
     rs1: Reg,
@@ -449,6 +548,7 @@ pub macro andi(
 # fields, since RType/IType/etc. are meant to match RV32I's own format
 # names, not a shift-specific seventh shape the ISA spec doesn't have.
 
+## `rd = rs1 << shamt`, for `shamt` from 0 to 31.
 pub macro slli(
     rd: Reg,
     rs1: Reg,
@@ -459,6 +559,7 @@ pub macro slli(
     @emit i_type(OP_IMM, 0b001, rd, rs1, slice(shamt, 4, 0))
 }
 
+## `rd = rs1 >> shamt`, shifting in zeros, for `shamt` from 0 to 31.
 pub macro srli(
     rd: Reg,
     rs1: Reg,
@@ -469,6 +570,8 @@ pub macro srli(
     @emit i_type(OP_IMM, 0b101, rd, rs1, slice(shamt, 4, 0))
 }
 
+## `rd = rs1 >> shamt`, shifting in copies of the sign bit, for `shamt` from 0
+## to 31.
 pub macro srai(
     rd: Reg,
     rs1: Reg,
@@ -479,6 +582,8 @@ pub macro srai(
     @emit i_type(OP_IMM, 0b101, rd, rs1, place(0b0100000, 11, 5) | slice(shamt, 4, 0))
 }
 
+## Jumps to `rs1 + offset` (with bit 0 cleared) and puts the address of the
+## next instruction in `rd`. `jalr zero, ra, 0` returns from a function.
 pub macro jalr(
     rd: Reg,
     rs1: Reg,
@@ -489,12 +594,14 @@ pub macro jalr(
     @emit i_type(JALR, 0b000, rd, rs1, offset)
 }
 
+## Calls the execution environment, e.g. a Linux system call.
 pub macro ecall()
     | emits LittleEndian<IType, 32>
 {
     @emit i_type(SYSTEM, 0b000, x0, x0, 0)
 }
 
+## Stops in a debugger.
 pub macro ebreak()
     | emits LittleEndian<IType, 32>
 {
@@ -509,30 +616,35 @@ pub macro ebreak()
 # in native.basm, not here, so an alternate dialect could assign its own
 # spelling to these same macros without touching, or duplicating, this file.
 
+## Loads the byte at `rs1 + offset` into `rd`, sign-extended.
 pub macro lb(rd: Reg, offset: int, rs1: Reg)
     | emits LittleEndian<IType, 32>
 {
     @emit i_type(LOAD, 0b000, rd, rs1, offset)
 }
 
+## Loads the 16-bit halfword at `rs1 + offset` into `rd`, sign-extended.
 pub macro lh(rd: Reg, offset: int, rs1: Reg)
     | emits LittleEndian<IType, 32>
 {
     @emit i_type(LOAD, 0b001, rd, rs1, offset)
 }
 
+## Loads the 32-bit word at `rs1 + offset` into `rd`.
 pub macro lw(rd: Reg, offset: int, rs1: Reg)
     | emits LittleEndian<IType, 32>
 {
     @emit i_type(LOAD, 0b010, rd, rs1, offset)
 }
 
+## Loads the byte at `rs1 + offset` into `rd`, zero-extended.
 pub macro lbu(rd: Reg, offset: int, rs1: Reg)
     | emits LittleEndian<IType, 32>
 {
     @emit i_type(LOAD, 0b100, rd, rs1, offset)
 }
 
+## Loads the 16-bit halfword at `rs1 + offset` into `rd`, zero-extended.
 pub macro lhu(rd: Reg, offset: int, rs1: Reg)
     | emits LittleEndian<IType, 32>
 {
@@ -543,18 +655,21 @@ pub macro lhu(rd: Reg, offset: int, rs1: Reg)
 # S-type: stores
 # =================
 
+## Stores the low byte of `rs2` at `rs1 + offset`.
 pub macro sb(rs2: Reg, offset: int, rs1: Reg)
     | emits LittleEndian<SType, 32>
 {
     @emit s_type(STORE, 0b000, rs1, rs2, offset)
 }
 
+## Stores the low 16 bits of `rs2` at `rs1 + offset`.
 pub macro sh(rs2: Reg, offset: int, rs1: Reg)
     | emits LittleEndian<SType, 32>
 {
     @emit s_type(STORE, 0b001, rs1, rs2, offset)
 }
 
+## Stores `rs2` at `rs1 + offset`.
 pub macro sw(rs2: Reg, offset: int, rs1: Reg)
     | emits LittleEndian<SType, 32>
 {
@@ -577,36 +692,42 @@ pub macro sw(rs2: Reg, offset: int, rs1: Reg)
 # `Deferred.Pos`). The scrambled field order `b_type` builds is RV32I's, not
 # a choice made here — see the BType declaration's own doc comment.
 
+## Branches to the label `target` if `rs1 == rs2`.
 pub macro beq(rs1: Reg, rs2: Reg, target: int)
     | emits LittleEndian<BType, 32>
 {
     @emit b_type(BRANCH, 0b000, rs1, rs2, target)
 }
 
+## Branches to the label `target` if `rs1 != rs2`.
 pub macro bne(rs1: Reg, rs2: Reg, target: int)
     | emits LittleEndian<BType, 32>
 {
     @emit b_type(BRANCH, 0b001, rs1, rs2, target)
 }
 
+## Branches to the label `target` if `rs1 < rs2` as signed numbers.
 pub macro blt(rs1: Reg, rs2: Reg, target: int)
     | emits LittleEndian<BType, 32>
 {
     @emit b_type(BRANCH, 0b100, rs1, rs2, target)
 }
 
+## Branches to the label `target` if `rs1 >= rs2` as signed numbers.
 pub macro bge(rs1: Reg, rs2: Reg, target: int)
     | emits LittleEndian<BType, 32>
 {
     @emit b_type(BRANCH, 0b101, rs1, rs2, target)
 }
 
+## Branches to the label `target` if `rs1 < rs2` as unsigned numbers.
 pub macro bltu(rs1: Reg, rs2: Reg, target: int)
     | emits LittleEndian<BType, 32>
 {
     @emit b_type(BRANCH, 0b110, rs1, rs2, target)
 }
 
+## Branches to the label `target` if `rs1 >= rs2` as unsigned numbers.
 pub macro bgeu(rs1: Reg, rs2: Reg, target: int)
     | emits LittleEndian<BType, 32>
 {
@@ -617,6 +738,7 @@ pub macro bgeu(rs1: Reg, rs2: Reg, target: int)
 # U-type: upper immediate
 # =================
 
+## `rd = imm << 12`: loads a 20-bit upper immediate.
 pub macro lui(
     rd: Reg,
     imm: int
@@ -626,6 +748,7 @@ pub macro lui(
     @emit u_type(LUI, rd, imm)
 }
 
+## `rd = pc + (imm << 12)`: an address relative to this instruction.
 pub macro auipc(
     rd: Reg,
     imm: int
@@ -641,6 +764,8 @@ pub macro auipc(
 # Same `target`/`here()` story as BType above, and same scrambling story as
 # BType — see JType's own doc comment.
 
+## Jumps to the label `target` and puts the address of the next instruction
+## in `rd`. `jal ra, f` calls `f`; `jal zero, l` just jumps.
 pub macro jal(rd: Reg, target: int)
     | emits LittleEndian<JType, 32>
 {

@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::io::IsTerminal;
@@ -92,6 +92,32 @@ enum Command {
         verbose: bool,
     },
 
+    /// Generate Markdown reference pages from `##` and `#!` doc comments:
+    /// one page per module, plus an `index.md` listing them.
+    Doc {
+        /// .basm files, or directories to search for them.
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+
+        /// The directory to write the pages to.
+        #[arg(short, long, default_value = "doc")]
+        output: PathBuf,
+
+        /// Write nothing; fail if the pages in `--output` (or the
+        /// `--summary` list) are out of date.
+        #[arg(long, conflicts_with = "test")]
+        check: bool,
+
+        /// An mdBook `SUMMARY.md` to list the pages in, between
+        /// `<!-- bitterasm doc: begin -->` and `<!-- bitterasm doc: end -->`.
+        #[arg(long, value_name = "SUMMARY.md", conflicts_with = "test")]
+        summary: Option<PathBuf>,
+
+        /// Compile the examples in doc comments instead of writing pages.
+        #[arg(long)]
+        test: bool,
+    },
+
     /// Format .basm files in place according to bitterasm.toml.
     #[command(alias = "fmt")]
     Format {
@@ -128,8 +154,173 @@ fn main() {
             expand(&path, depth, lines, chars, output, verbose)
         }
 
+        Command::Doc { paths, output, check, summary, test } => {
+            if test { test_docs(&paths) } else { write_docs(&paths, &output, check, summary.as_deref()) }
+        }
+
         Command::Format { paths, check, config } => format_files(paths, check, config),
     }
+}
+
+fn doc_files(paths: &[PathBuf]) -> Vec<PathBuf> {
+    match bitterasm::doc::collect_files(paths) {
+        Ok(files) if files.is_empty() => {
+            eprintln!("no .basm files found");
+            std::process::exit(1);
+        }
+        Ok(files) => files,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn write_docs(paths: &[PathBuf], output: &Path, check: bool, summary: Option<&Path>) {
+    let fail = |message: String| -> ! {
+        eprintln!("{message}");
+        std::process::exit(1);
+    };
+    let reference = bitterasm::doc::generate(&doc_files(paths)).unwrap_or_else(|error| fail(error.to_string()));
+
+    // The pages' links in `SUMMARY.md` go from its own directory to `output`.
+    let summary_update = summary.map(|summary_path| {
+        let current = std::fs::read_to_string(summary_path)
+            .unwrap_or_else(|error| fail(format!("failed to read {}: {error}", summary_path.display())));
+        let base = link_base(summary_path, output);
+        let updated = bitterasm::doc::update_summary(&current, &reference, &base)
+            .unwrap_or_else(|error| fail(format!("{}: {error}", summary_path.display())));
+        (summary_path, current, updated)
+    });
+
+    if check {
+        let mut stale: Vec<String> = reference
+            .pages
+            .iter()
+            .filter(|page| std::fs::read_to_string(output.join(&page.path)).ok().as_ref() != Some(&page.markdown))
+            .map(|page| output.join(&page.path).display().to_string())
+            .collect();
+        // A page for a module that's gone is out of date too.
+        let expected: HashSet<PathBuf> = reference.pages.iter().map(|page| output.join(&page.path)).collect();
+        let mut existing = Vec::new();
+        markdown_files(output, &mut existing);
+        stale.extend(existing.into_iter().filter(|path| !expected.contains(path)).map(|path| path.display().to_string()));
+        if let Some((path, current, updated)) = &summary_update
+            && current != updated
+        {
+            stale.push(path.display().to_string());
+        }
+        if !stale.is_empty() {
+            stale.sort();
+            for name in &stale {
+                eprintln!("out of date: {name}");
+            }
+            fail("run `bitterasm doc` without `--check` to regenerate".to_string());
+        }
+        println!("{} page(s) in {} are up to date", reference.pages.len(), output.display());
+        return;
+    }
+
+    for page in &reference.pages {
+        let path = output.join(&page.path);
+        let written = path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| std::fs::write(&path, &page.markdown));
+        if let Err(error) = written {
+            fail(format!("failed to write {}: {error}", path.display()));
+        }
+    }
+    // Pages of modules that no longer exist. They could as well be someone's
+    // own notes, so they're only pointed out, never deleted.
+    let expected: HashSet<PathBuf> = reference.pages.iter().map(|page| output.join(&page.path)).collect();
+    let mut existing = Vec::new();
+    markdown_files(output, &mut existing);
+    for path in existing.into_iter().filter(|path| !expected.contains(path)) {
+        eprintln!("warning: {} isn't a page of this reference; delete it if it's an old one", path.display());
+    }
+    if let Some((path, _, updated)) = summary_update {
+        if let Err(error) = std::fs::write(path, updated) {
+            fail(format!("failed to write {}: {error}", path.display()));
+        }
+    }
+    println!("wrote {} page(s) to {}", reference.pages.len(), output.display());
+}
+
+fn markdown_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            markdown_files(&path, out);
+        } else if path.extension().is_some_and(|extension| extension == "md") {
+            out.push(path);
+        }
+    }
+}
+
+// `output` as a link prefix from the directory `summary` is in:
+// `docs/book/src/SUMMARY.md` and `docs/book/src/std/reference` give
+// `std/reference/`.
+fn link_base(summary: &Path, output: &Path) -> String {
+    let absolute = |path: &Path| {
+        std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
+    };
+    let from = absolute(summary.parent().unwrap_or(Path::new(".")));
+    let to = absolute(output);
+    let shared = from.components().zip(to.components()).take_while(|(a, b)| a == b).count();
+    let ups = from.components().count() - shared;
+    let mut base = "../".repeat(ups);
+    for component in to.components().skip(shared) {
+        base.push_str(&component.as_os_str().to_string_lossy());
+        base.push('/');
+    }
+    base
+}
+
+fn test_docs(paths: &[PathBuf]) {
+    let examples = match bitterasm::doc::examples(&doc_files(paths)) {
+        Ok(examples) => examples,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    };
+
+    let bitterasm = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("bitterasm"));
+    let runner = bitterasm::doc::doctest::Runner {
+        bitter: find_bitter(&bitterasm),
+        bitterasm,
+        cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+    };
+
+    let mut checked = 0;
+    let mut failures = Vec::new();
+    for (index, module) in examples.iter().enumerate() {
+        failures.extend(module.errors.iter().cloned());
+        let scratch = std::env::temp_dir().join(format!("bitterasm-doc-{}-{index}", std::process::id()));
+        let report = runner.run(&module.blocks, &scratch);
+        checked += report.checked;
+        failures.extend(report.failures);
+    }
+
+    for failure in &failures {
+        eprintln!("error: {failure}\n");
+    }
+    println!("{} of {checked} doc example(s) passed", checked - failures.len().min(checked));
+    if !failures.is_empty() {
+        std::process::exit(1);
+    }
+}
+
+// `bitter` ships alongside `bitterasm`; otherwise look on PATH.
+fn find_bitter(bitterasm: &Path) -> Option<PathBuf> {
+    let name = if cfg!(windows) { "bitter.exe" } else { "bitter" };
+    let beside = bitterasm.parent().map(|dir| dir.join(name));
+    beside
+        .into_iter()
+        .chain(std::env::var_os("PATH").iter().flat_map(std::env::split_paths).map(|dir| dir.join(name)))
+        .find(|path| path.is_file())
 }
 
 #[cfg(test)]

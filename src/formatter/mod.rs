@@ -20,7 +20,7 @@ use indentation::{
 };
 use labels::label_body_lines;
 use signature::normalize_macro_signatures;
-use wrapping::{split_inline_facets, wrap_code, wrap_comment};
+use wrapping::{split_inline_facets, wrap_code, wrap_comment, wrap_doc_comment};
 
 /// Formats whitespace while retaining every source token and comment.
 pub fn format_source(source: &str, config: &FormatConfig) -> Result<String, String> {
@@ -43,6 +43,7 @@ pub fn format_source(source: &str, config: &FormatConfig) -> Result<String, Stri
     let mut generic_depth: usize = 0;
     let mut facet_blocks = Vec::new();
     let mut blank_lines = 0usize;
+    let mut in_doc_fence = false;
     let mut result = Vec::new();
     let mut offset = 0usize;
 
@@ -82,7 +83,9 @@ pub fn format_source(source: &str, config: &FormatConfig) -> Result<String, Stri
                 + depth_bias;
             let indent = make_indent(line_depth, config);
 
-            if content.starts_with('#') {
+            if lexer::doc_comment(content).is_some() {
+                result.extend(wrap_doc_comment(content, &indent, config.comment_width, &mut in_doc_fence));
+            } else if content.starts_with('#') {
                 result.extend(wrap_comment(content, &indent, config.comment_width));
             } else if let Some(lines) = split_inline_facets(
                 content,
@@ -208,6 +211,36 @@ mod tests {
         assert_eq!(
             format_source(source, &FormatConfig::default()).unwrap(),
             "const x = call(\n    first,\n    Nested {\n        value: [\n            1,\n        ]\n    }\n)\n"
+        );
+    }
+
+    #[test]
+    fn keeps_doc_comment_markdown_intact() {
+        let config = FormatConfig { comment_width: 20, ..Default::default() };
+        let source = concat!(
+            "#! one two three four five\n",
+            "#! ```\n",
+            "#! mov  rax,   rbx   ; a long line of code\n",
+            "#! ```\n",
+            "##   - one two three four five\n",
+            "## | a   | b |\n",
+            "##\n",
+            "const x = 1\n",
+        );
+        assert_eq!(
+            format_source(source, &config).unwrap(),
+            concat!(
+                "#! one two three\n",
+                "#! four five\n",
+                "#! ```\n",
+                "#! mov  rax,   rbx   ; a long line of code\n",
+                "#! ```\n",
+                "##   - one two three\n",
+                "##   four five\n",
+                "## | a   | b |\n",
+                "##\n",
+                "const x = 1\n",
+            )
         );
     }
 

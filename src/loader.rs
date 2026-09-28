@@ -18,14 +18,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::ast::{
-    literal_name, ConstructItem, Expr, ExternLabel, Facet, FacetPayload, ImportItems,
+    literal_name, ConstructItem, Doc, Expr, ExternLabel, Facet, FacetPayload, ImportItems,
     ImportStatement, MetaStatement, ModulePath, NamePart, Program, Statement,
 };
 use crate::eval::Int;
 use crate::lexer;
 use crate::parser::{self, ParserSeed};
 use crate::resolver::{self, ResolveError};
-use crate::token::Span;
+use crate::token::{DocComment, Span};
 use crate::types::{GenericParameter, StructBodyItem, TypeArgument, TypeExpr};
 
 #[derive(Debug)]
@@ -162,6 +162,14 @@ struct LoadedModule {
     // The file's statements exactly as parsed: the source-faithful view
     // `load_entry_program` returns.
     source_statements: Vec<Statement>,
+
+    // The same statements with top-level `@for`/`@if`/`@fold` unrolled, but
+    // not yet renamed: what `load_unrolled_entry_program` returns.
+    unrolled: Vec<Statement>,
+
+    // The file's `#!` block, and the doc comments that document nothing.
+    doc: Option<Doc>,
+    stray_docs: Vec<DocComment>,
 
     // The same statements with top-level `@for`/`@if`/`@fold` unrolled and
     // every declaration and reference given its internal name (see
@@ -333,7 +341,12 @@ pub fn load_program_with_modules(entry: &Path) -> Result<(Program, ModuleOrigins
     let module_paths = paths.iter().map(|path| module_path_of(path)).collect();
 
     Ok((
-        Program { statements, span },
+        Program {
+            statements,
+            span,
+            doc: entry_module.doc.clone(),
+            stray_docs: entry_module.stray_docs.clone(),
+        },
         ModuleOrigins { module_of_statement, paths, module_paths, scopes, entry_module: entry_module_id },
     ))
 }
@@ -351,6 +364,25 @@ pub fn load_entry_program(entry: &Path) -> Result<Program, LoadError> {
     Ok(Program {
         statements: entry_module.source_statements.clone(),
         span: entry_module.span,
+        doc: entry_module.doc.clone(),
+        stray_docs: entry_module.stray_docs.clone(),
+    })
+}
+
+/// [`load_entry_program`] with the entry's top-level `@for`/`@if`/`@fold`
+/// already unrolled, so a declaration it generates (`pub const r`i``) has
+/// its literal name (`r0`, `r1`, ...). Names aren't made internal, and every
+/// span still belongs to `entry`: the view `bitterasm doc` documents.
+pub fn load_unrolled_entry_program(entry: &Path) -> Result<Program, LoadError> {
+    let entry_path = canonicalize(entry)?;
+    let mut state = LoadState::default();
+    load_module(&entry_path, &mut state)?;
+    let entry_module = &state.cache[&entry_path];
+    Ok(Program {
+        statements: entry_module.unrolled.clone(),
+        span: entry_module.span,
+        doc: entry_module.doc.clone(),
+        stray_docs: entry_module.stray_docs.clone(),
     })
 }
 
@@ -388,7 +420,7 @@ fn load_module(path: &Path, state: &mut LoadState) -> Result<(), LoadError> {
         message: error.to_string(),
     })?;
 
-    let tokens = lexer::lex(&source).map_err(|error| LoadError::Lex {
+    let (tokens, docs) = lexer::lex_with_docs(&source).map_err(|error| LoadError::Lex {
         path: path.to_path_buf(),
         message: error.message,
         span: error.span,
@@ -428,7 +460,7 @@ fn load_module(path: &Path, state: &mut LoadState) -> Result<(), LoadError> {
         }
     }
 
-    let (program, mut seed) = parser::parse_seeded(tokens, &seed).map_err(|error| {
+    let (program, mut seed) = parser::parse_seeded(tokens, docs, &seed).map_err(|error| {
         LoadError::Parse {
             path: path.to_path_buf(),
             message: error.message,
@@ -525,7 +557,7 @@ fn load_module(path: &Path, state: &mut LoadState) -> Result<(), LoadError> {
 
     let mut statements = Vec::with_capacity(unrolled.len());
 
-    for mut statement in unrolled {
+    for mut statement in unrolled.clone() {
         let mut renamer = Renamer::new(&scope, &statement);
         name_declaration(&mut statement, module_id);
         rename_statement(&mut statement, &mut renamer);
@@ -551,6 +583,9 @@ fn load_module(path: &Path, state: &mut LoadState) -> Result<(), LoadError> {
         path.to_path_buf(),
         LoadedModule {
             source_statements: program.statements,
+            unrolled,
+            doc: program.doc,
+            stray_docs: program.stray_docs,
             statements,
             extern_labels: imported.extern_labels,
             span: program.span,

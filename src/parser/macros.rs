@@ -345,13 +345,16 @@ impl Parser {
                 return Err(ParseError::new(unterminated_message, self.current().span));
             }
 
-            body.push(match self.parse_statement() {
+            let doc_lines = self.take_doc_lines();
+            let mut statement = match self.parse_statement() {
                 Ok(statement) => statement,
                 Err(error) => {
                     self.block_depth -= 1;
                     return Err(error);
                 }
-            });
+            };
+            self.attach_doc(&mut statement, doc_lines);
+            body.push(statement);
             self.skip_newlines();
         }
 
@@ -450,6 +453,7 @@ impl Parser {
             return_ty,
             facets,
             body,
+            doc: None,
             span: Span::new(start, body_end),
         })
     }

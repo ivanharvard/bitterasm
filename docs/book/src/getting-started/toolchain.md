@@ -7,6 +7,7 @@
 | `bitterasm compile prog.basm [-o prog.em]` | Expands the program and writes its emitted values to a `.em` file. |
 | `bitterasm check prog.basm` | Runs every check `compile` does, but writes nothing. |
 | `bitterasm expand prog.basm` | Prints the program with every macro call replaced by the macro's body. Nothing is evaluated. |
+| `bitterasm doc <paths> [-o dir]` | Writes reference pages from doc comments; `--test` compiles their examples. See [Generating docs](../tools/docs.md). |
 | `bitterasm format <paths>` | Formats `.basm` files in place (`fmt` for short). See [Formatting](../tools/formatting.md). |
 
 `compile` and `check` also take lint options (`-A`, `-W`, `-D`, `-F`) and

@@ -1,4 +1,9 @@
+#! `Option<T>`: a value that may be missing.
+
+## Either `Some` value of type `T`, or `None`.
 pub enum Option<T> {
+    ## A value.
     Some: T,
+    ## No value.
     None
 }

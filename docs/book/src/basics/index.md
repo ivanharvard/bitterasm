@@ -47,7 +47,7 @@ show add3(
 ## Comments
 
 `#` starts a comment that runs to the end of the line. There are no block
-comments.
+comments. `##` and `#!` start [doc comments](doc-comments.md).
 
 ```basm
 # A whole-line comment.

@@ -1,37 +1,149 @@
+#! Fixed-width binary values: `bits<N>`, `signed<N>`, `bool`, and byte
+#! order.
+#!
+#! `bits<N>` is how std gives an `int` a width. Its value must fit in `N`
+#! bits, which is checked when the value is built, so an encoder can't
+#! silently emit a field that overflows.
+#!
+#! ```
+#! from std.binary import *
+#!
+#! macro show<T>(value: T) {
+#!     @emit value
+#! }
+#!
+#! show bits<8> { value: 65 }
+#! show bit_width(255)
+#! ```
+#!
+#! ```emits
+#! bits<8> { value: 65 }
+#! 8
+#! ```
+
+## An unsigned value `width` bits wide: `0 <= value < 2^width`.
+##
+## ```fail
+## from std.binary import *
+##
+## const too_big = bits<4> { value: 16 }
+## ```
+##
+## ```error
+## invariant `fits_inside_width(width, value)` was violated for `bits`
+## ```
 pub struct bits<const width: int>
     | invariant fits_inside_width(width, value)
 {
+    ## The value itself. `skip`, so `@for` over a `bits` visits nothing.
     pub skip value: int
 }
 
+## A signed value `width` bits wide, stored in two's complement:
+## `-2^(width - 1) <= value < 2^(width - 1)`. Convert an `int` to one with
+## `as`, and back the same way.
+##
+## ```
+## from std.binary import *
+##
+## macro db(value: signed<8>) {
+##     @emit value
+## }
+##
+## db (-1) as signed<8>
+## db 100 as signed<8>
+## ```
+##
+## ```bytes
+## ff 64
+## ```
+##
+## ```fail
+## from std.binary import *
+##
+## const too_small = (-129) as signed<8>
+## ```
+##
+## ```error
+## value doesn't fit in the signed width
+## ```
+pub struct signed<const width: int>
+    | from signed_from_int(source, target.width)
+    | to signed_to_int(source)
+{
+    ## The value's two's-complement bits: -1 is all ones.
+    pub bits: bits<width>
+}
+
+## `x` as a `signed<width>`. It must fit: from `-2^(width - 1)` up to
+## `2^(width - 1) - 1`.
+pub macro signed_from_int(x: int, width: int) -> signed<...> {
+    const limit = 1 << (width - 1)
+    @assert x >= 0 - limit && x < limit, "value doesn't fit in the signed width"
+    @return signed<width> { bits: bits<width> { value: x & ((1 << width) - 1) } }
+}
+
+## The `int` a `signed<width>` holds, sign-extended from its top bit.
+pub macro signed_to_int<const width: int>(x: signed<width>) -> int {
+    @if x.bits.value >= 1 << (width - 1) {
+        @return x.bits.value - (1 << width)
+    }
+    @return x.bits.value
+}
+
+## The number of bits in a byte.
 pub const BITS_PER_BYTE: int = 8
 
+## A single bit: `true` or `false`.
 pub type bool         = bits<1>
+## `1` as a `bool`.
 pub const true: bool  = 1
+## `0` as a `bool`.
 pub const false: bool = 0
 
-# 1 if the given value fits inside `width` many bits, else 0
+## 1 if `value` fits in `width` bits (`0 <= value < 2^width`), else 0.
 pub macro fits_inside_width(width: int, value: int) -> int
 {
     @return value >= 0 && value < (1 << width)
 }
 
-# Calculates the number of bits required to represent this integer.
-pub macro bit_width(n: int) {
-    @if n <= 0xFF {
+## The number of bits needed to write `n`, which must not be negative. Zero
+## still takes one bit.
+##
+## ```
+## from std.binary import bit_width
+##
+## macro show(value: int) {
+##     @emit value
+## }
+##
+## show bit_width(0)
+## show bit_width(255)
+## show bit_width(256)
+## ```
+##
+## ```emits
+## 1 8 9
+## ```
+pub macro bit_width(n: int) -> int {
+    @assert n >= 0, "bit_width takes a non-negative value"
+    @if n <= 1 {
         @return 1
     } @else {
-        @return 1 + bit_width(n >> BITS_PER_BYTE)
+        @return 1 + bit_width(n >> 1)
     }
 }
 
-# Calculates the number of bytes required to represent this integer.
-pub macro byte_width(n: int) {
-    @return bit_width(n) / 8
+## The number of whole bytes needed to write `n`, which must not be
+## negative: `byte_width(255)` is 1 and `byte_width(256)` is 2.
+pub macro byte_width(n: int) -> int {
+    @return (bit_width(n) + BITS_PER_BYTE - 1) / BITS_PER_BYTE
 }
 
-# Useful for functions that change behaviors based on Endianness
+## Byte order, for code that can lay out values either way.
 pub enum Endian {
+    ## Least significant byte first, as on x86 and RISC-V.
     Little,
+    ## Most significant byte first.
     Big
 }

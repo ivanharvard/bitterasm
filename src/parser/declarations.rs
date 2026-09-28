@@ -36,6 +36,7 @@ impl Parser {
                 ));
             }
 
+            let doc = self.take_doc();
             let variant_start = self.current().span.start;
             let variant_name = self.expect_identifier()?;
             let payload = if self.check(&TokenKind::Colon) {
@@ -52,6 +53,7 @@ impl Parser {
             variants.push(EnumVariantDeclaration {
                 name: variant_name,
                 payload,
+                doc,
                 span: Span::new(variant_start, variant_end),
             });
 
@@ -77,6 +79,7 @@ impl Parser {
             is_pub,
             generic_params,
             variants,
+            doc: None,
             span: Span::new(start, closing.span.end),
         })
     }
@@ -111,6 +114,7 @@ impl Parser {
             generic_params,
             facets,
             fields,
+            doc: None,
             span: Span::new(start, body_end),
         })
     }
@@ -269,6 +273,7 @@ impl Parser {
     fn parse_struct_field(
         &mut self,
     ) -> Result<StructField, ParseError> {
+        let doc = self.take_doc();
         let start = self.current().span.start;
 
         let is_pub = if self.check(&TokenKind::Pub) {
@@ -310,6 +315,7 @@ impl Parser {
             is_pub,
             is_skip,
             default,
+            doc,
             span: Span::new(start, end),
         })
     }
@@ -359,6 +365,7 @@ impl Parser {
             generic_params,
             facets,
             ty: target,
+            doc: None,
             span: Span::new(start, end),
         })
     }

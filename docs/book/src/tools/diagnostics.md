@@ -26,13 +26,15 @@ happens when it fires.
 |---|---|
 | `unused_import` | An imported name is never used. |
 | `unused_parameter` | A macro parameter is never used. Start its name with `_` to mark it unused on purpose. |
+| `unused_doc_comments` | A `##` or `#!` doc comment doesn't document anything. See [Doc comments](../basics/doc-comments.md). |
 | `unreachable_code` | A statement comes after a `@return` or `@next` that always runs. |
 | `fold_without_next` | A `@fold` body has no `@next`, so its accumulators never change. |
 | `generated_declarations` | Macros generated declarations. See [Generating declarations](../macros/generating.md). |
 | `unfulfilled_lint_expectation` | An `expect` facet's lint didn't fire. |
+| `missing_docs` | A `pub` item has no `##` doc comment, or a file has no `#!` block. Allowed by default, and not part of `all`. See [Generating docs](docs.md). |
 
-Two groups name several at once: `unused` (`unused_import` and
-`unused_parameter`) and `all`.
+Two groups name several at once: `unused` (`unused_import`,
+`unused_parameter` and `unused_doc_comments`) and `all`.
 
 ## Levels
 

@@ -1,25 +1,45 @@
+#! WebAssembly instructions: a representative subset of control, variable
+#! and `i32` instructions, each emitted as its binary encoding.
+#!
+#! ```
+#! from std.wasm.impl import *
+#!
+#! local_get(0)
+#! i32_const(-1)
+#! i32_add
+#! end
+#! ```
+#!
+#! ```bytes
+#! 20 00 41 7f 6a 0b
+#! ```
+#!
+#! WebAssembly's dotted names aren't identifiers here, so `i32.const` is
+#! `i32_const` and `local.get` is `local_get`. Names that are keywords in
+#! other languages end in `_`: `if_`, `else_`, `return_`. `std.wasm.module`
+#! builds the module around them.
+
 from std.wasm.leb128 import *
 
-# WASM opcode names use a dotted convention (`i32.const`, `local.get`) that
-# isn't valid bitterasm identifier syntax — dots are member access. Names
-# here use underscores instead (`i32_const`, `local_get`); a `native.basm`-
-# style syntax layer offering the dotted spelling via the `syntax` facet
-# (the same way `std/riscv/native.basm` sits over `std/riscv/impl.basm`) is
-# straightforward future work, not needed to prove out the encoding itself.
+# A syntax layer offering the dotted spelling (the way `std/riscv/native.basm`
+# sits over `std/riscv/impl.basm`) is future work.
 
 # =================
 # value types
 # =================
 
+## The `i32` value type.
 pub const I32: Byte = Byte(0x7F)
+## The `i64` value type.
 pub const I64: Byte = Byte(0x7E)
+## The `f32` value type.
 pub const F32: Byte = Byte(0x7D)
+## The `f64` value type.
 pub const F64: Byte = Byte(0x7C)
 
-# The blocktype byte meaning "this block produces no value." WASM also
-# allows a value-type byte (`I32` etc., above, for a block producing one
-# value) or a signed LEB128 type index (the multi-value proposal's
-# function-typed blocks) — the latter isn't covered by this MVP subset.
+## The block type of a `block`, `loop` or `if_` that produces no value. A
+## value type such as `I32` means it produces one value of that type.
+# Type-index block types (the multi-value proposal) aren't covered.
 pub const EMPTY_BLOCKTYPE: Byte = Byte(0x40)
 
 # =================
@@ -34,6 +54,7 @@ pub const EMPTY_BLOCKTYPE: Byte = Byte(0x40)
 # declaration order" fallback concatenates `opcode` then `imm` with no help
 # needed, exactly the way it concatenates `std/riscv`'s multi-field format
 # structs.
+## An opcode followed by `N` bytes of immediates.
 pub struct OpWithImm<const N: int> {
     opcode: Byte,
     imm: Bytes<N>,
@@ -78,66 +99,80 @@ macro op_with_byte(
 # so this file, like `std/pdp10/impl.basm`'s `jrst`/`jumpa`, never imports
 # `std.bitter.deferred`.
 
+## Traps immediately.
 pub macro unreachable()
     | emits Byte
 {
     @emit Byte(0x00)
 }
 
+## Does nothing.
 pub macro nop()
     | emits Byte
 {
     @emit Byte(0x01)
 }
 
+## Starts a block. `br` to it jumps to its `end`. `blocktype` is
+## `EMPTY_BLOCKTYPE` or the type of the value it produces.
 pub macro block(blocktype: Byte)
     | emits OpWithImm<1>
 {
     @emit op_with_byte(0x02, blocktype)
 }
 
+## Starts a loop. `br` to it jumps back to its start.
 pub macro loop(blocktype: Byte)
     | emits OpWithImm<1>
 {
     @emit op_with_byte(0x03, blocktype)
 }
 
+## Starts an `if`: runs what follows if the `i32` it pops isn't zero, and
+## the `else_` part (if any) otherwise.
 pub macro if_(blocktype: Byte)
     | emits OpWithImm<1>
 {
     @emit op_with_byte(0x04, blocktype)
 }
 
+## Starts the `else` part of an `if_`.
 pub macro else_()
     | emits Byte
 {
     @emit Byte(0x05)
 }
 
+## Ends a `block`, `loop`, `if_` or function body.
 pub macro end()
     | emits Byte
 {
     @emit Byte(0x0B)
 }
 
+## Branches to the enclosing block `depth` levels out: `br(0)` is the
+## innermost.
 pub macro br(depth: int)
     | emits OpWithImm<...>
 {
     @emit op_with_uleb128(0x0C, depth)
 }
 
+## Pops an `i32`, and does `br(depth)` if it isn't zero.
 pub macro br_if(depth: int)
     | emits OpWithImm<...>
 {
     @emit op_with_uleb128(0x0D, depth)
 }
 
+## Returns from the current function.
 pub macro return_()
     | emits Byte
 {
     @emit Byte(0x0F)
 }
 
+## Calls function number `func_index`.
 pub macro call(func_index: int)
     | emits OpWithImm<...>
 {
@@ -148,6 +183,7 @@ pub macro call(func_index: int)
 # parametric instructions
 # =================
 
+## Pops a value and discards it.
 pub macro drop()
     | emits Byte
 {
@@ -158,18 +194,22 @@ pub macro drop()
 # variable instructions
 # =================
 
+## Pushes local variable number `index`.
 pub macro local_get(index: int)
     | emits OpWithImm<...>
 {
     @emit op_with_uleb128(0x20, index)
 }
 
+## Pops a value into local variable number `index`.
 pub macro local_set(index: int)
     | emits OpWithImm<...>
 {
     @emit op_with_uleb128(0x21, index)
 }
 
+## Stores the top of the stack in local variable number `index`, without
+## popping it.
 pub macro local_tee(index: int)
     | emits OpWithImm<...>
 {
@@ -184,36 +224,43 @@ pub macro local_tee(index: int)
 # "Status" section, the same way `std/pdp10` shipped with a representative
 # subset rather than every DEC PRM opcode.
 
+## Pushes `value` as an `i32`.
 pub macro i32_const(value: int)
     | emits OpWithImm<...>
 {
     @emit op_with_sleb128(0x41, value)
 }
 
+## Pops an `i32` and pushes 1 if it's zero, else 0.
 pub macro i32_eqz()
     | emits Byte
 {
     @emit Byte(0x45)
 }
 
+## Pops two `i32`s and pushes 1 if the first is less than the second as
+## signed numbers, else 0.
 pub macro i32_lt_s()
     | emits Byte
 {
     @emit Byte(0x48)
 }
 
+## Pops two `i32`s and pushes their sum.
 pub macro i32_add()
     | emits Byte
 {
     @emit Byte(0x6A)
 }
 
+## Pops two `i32`s and pushes the first minus the second.
 pub macro i32_sub()
     | emits Byte
 {
     @emit Byte(0x6B)
 }
 
+## Pops two `i32`s and pushes their product.
 pub macro i32_mul()
     | emits Byte
 {

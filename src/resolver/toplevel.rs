@@ -61,7 +61,7 @@ pub fn unroll_top_level(
         statements.extend(unrolled);
     }
 
-    Ok((Program { statements, span: program.span }, statement_modules))
+    Ok((Program { statements, span: program.span, doc: program.doc.clone(), stray_docs: program.stray_docs.clone() }, statement_modules))
 }
 
 /// Unrolls one module's top-level `@for`/`@if`/`@fold`, before the loader
@@ -469,6 +469,7 @@ fn fold_result_struct(name: &str, accumulators: &[(String, Int)], span: Span) ->
         is_pub: false,
         generic_params: Vec::new(),
         facets: Vec::new(),
+            doc: None,
         fields: accumulators
             .iter()
             .map(|(field, _)| {
@@ -478,6 +479,7 @@ fn fold_result_struct(name: &str, accumulators: &[(String, Int)], span: Span) ->
                     is_pub: true,
                     is_skip: false,
                     default: None,
+                        doc: None,
                     span,
                 })
             })

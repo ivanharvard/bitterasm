@@ -232,6 +232,7 @@ impl Parser {
         Ok(Label {
             name,
             is_pub,
+            doc: None,
             span: Span::new(start, end),
         })
     }
@@ -366,6 +367,7 @@ impl Parser {
             is_pub,
             ty,
             value,
+            doc: None,
             span: Span::new(start, end),
         })
     }
@@ -510,6 +512,6 @@ impl Parser {
 
         self.register_syntax_override(&name, pattern.clone(), span)?;
 
-        Ok(SyntaxOverrideStatement { name, pattern, span })
+        Ok(SyntaxOverrideStatement { name, pattern, doc: None, span })
     }
 }

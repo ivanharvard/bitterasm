@@ -1,13 +1,32 @@
-# Real, conventional Intel-syntax x86-64 assembly for `impl.basm`'s instructions
-# —
-# assigned here, explicitly, rather than left to whichever ones happen to
-# already
-# read right under default positional `name arg, arg, ...` syntax, mirroring
-# `std/riscv/native.basm`'s own stated convention (see its header comment) for
-# the
-# same reason: this file is then a complete, standalone spec of "native" syntax
-# on
-# its own.
+#! Intel-syntax x86-64 assembly: destination first, registers by name,
+#! and memory operands in brackets.
+#!
+#! ```
+#! from std.x86_64.intel import *
+#!
+#! mov rax, [rsp+8]
+#! add eax, 1
+#! mov r8, [rbx+rcx*4+0x10]
+#! ```
+#!
+#! ```bytes
+#! 48 8b 44 24 08
+#! 81 c0 01 00 00 00
+#! 4c 8b 44 8b 10
+#! ```
+#!
+#! The operand size comes from the register's name: `rax`, `r8` and the
+#! other `Reg`s are 64-bit, and `eax`, `r8d` and the other `Reg32`s are
+#! 32-bit. Memory operands are `[base]`, `[base+disp]`,
+#! `[base+index*scale+disp]` and `[rip+disp]`. Every instruction of
+#! `std.x86_64.impl` stays available in its explicit form too, with the
+#! operand size as a final argument: `mov rax, rbx, 0`.
+#!
+#! For NASM's `[rel label]` and data directives, use `std.x86_64.nasm`.
+
+# Every instruction's syntax is assigned here explicitly, rather than left to
+# whichever ones already read right under default positional syntax, the
+# same convention as `std/riscv/native.basm`.
 #
 # =================
 # operand size: picked by register spelling
@@ -25,30 +44,22 @@
 # why almost every mnemonic needs *two* patterns, not one
 # =================
 # Once a name has *any* registered syntax, default positional syntax for that
-# name
-# is gone entirely — not just for the shape the new syntax covers, but for every
-# other arity too (confirmed empirically: an early draft that dropped `w` via a
-# reduced-arity wrapper, with no restatement alongside it, made every one of
-# this
-# file's *own* delegating calls to the real 3-argument `impl.basm` macro a parse
-# error, since `mov`, once claimed, no longer accepts a bare `mov $a$, $b$, $c$`
-# unless something says it still can). So for every mnemonic that gets a
-# reduced,
-# `w`-dropping pattern below, this file also registers a second pattern that
-# just
-# restates the real underlying macro's own full argument list verbatim
-# (`syntax mov(a, b, c) = { mov $a$, $b$, $c$ }`) — not because it changes
-# anything (it's byte-for-byte what default syntax already produced), but
-# because
-# it has to be there for *any* 3-argument `mov`/`add`/etc. call to keep parsing
-# at
-# all, including this file's own internal ones. A standalone restatement has to
-# be
-# declared *before* the reduced-arity macro it accompanies in this file — also
-# confirmed empirically (declaring it after produced a spurious parse error on
-# the
-# very call it was meant to keep working) — so every section below follows that
-# order.
+# name is gone entirely — not just for the shape the new syntax covers, but for
+# every other arity too (confirmed empirically: an early draft that dropped `w`
+# via a reduced-arity wrapper, with no restatement alongside it, made every one
+# of this file's *own* delegating calls to the real 3-argument `impl.basm` macro
+# a parse error, since `mov`, once claimed, no longer accepts a bare `mov $a$,
+# $b$, $c$` unless something says it still can). So for every mnemonic that gets
+# a reduced, `w`-dropping pattern below, this file also registers a second
+# pattern that just restates the real underlying macro's own full argument list
+# verbatim (`syntax mov(a, b, c) = { mov $a$, $b$, $c$ }`) — not because it
+# changes anything (it's byte-for-byte what default syntax already produced),
+# but because it has to be there for *any* 3-argument `mov`/`add`/etc. call to
+# keep parsing at all, including this file's own internal ones. A standalone
+# restatement has to be declared *before* the reduced-arity macro it accompanies
+# in this file — also confirmed empirically (declaring it after produced a
+# spurious parse error on the very call it was meant to keep working) — so every
+# section below follows that order.
 #
 # =================
 # memory operands: real `[...]` syntax, and why it needs a compiler fix first
@@ -58,36 +69,28 @@
 # like they should be four independent patterns, but a `syntax` capture is an
 # unbounded, generic expression parse, stopped only by the next literal token in
 # its *own* pattern — so `[$base$+$disp$]`'s `disp` capture, bounded only by
-# `]`,
-# happily swallows an indexed form's entire `$index$*$scale$+$disp$` right-hand
-# side as one ordinary, well-typed arithmetic expression (`rcx*4+0x10`
-# type-checks
-# fine as a plain `int`, so there's no type error for a later type-check to
-# catch —
-# both readings are equally well-typed, they just disagree on what the source
-# text
-# even *means*). The same trap catches `[base]` vs. `[base+disp]` (the
-# empty-disp
-# capture swallows `+disp` too) and `[base+disp]` vs. `[rip+disp]` (a bare
-# identifier is itself a valid captured expression, so a generic `base` capture
-# also matches literal `rip`). Confirmed empirically before this file was
-# written:
-# registering all four patterns made every one of them a hard "ambiguous syntax"
-# parse error, including the flagship
-# `mov rax, [rbx+rcx*4+0x10]` example this dialect is built around.
+# `]`, happily swallows an indexed form's entire `$index$*$scale$+$disp$`
+# right-hand side as one ordinary, well-typed arithmetic expression
+# (`rcx*4+0x10` type-checks fine as a plain `int`, so there's no type error for
+# a later type-check to catch — both readings are equally well-typed, they just
+# disagree on what the source text even *means*). The same trap catches `[base]`
+# vs. `[base+disp]` (the empty-disp capture swallows `+disp` too) and
+# `[base+disp]` vs. `[rip+disp]` (a bare identifier is itself a valid captured
+# expression, so a generic `base` capture also matches literal `rip`). Confirmed
+# empirically before this file was written: registering all four patterns made
+# every one of them a hard "ambiguous syntax" parse error, including the
+# flagship `mov rax, [rbx+rcx*4+0x10]` example this dialect is built around.
 #
 # Fixed at the compiler level, not worked around here: `src/parser/
 # invocation_syntax.rs`'s `parse_invocation_via_syntax_candidates` now prefers
 # whichever successful match used the *most* literal (non-capture) tokens, when
 # more than one candidate parses the same text — `[base+index*scale+disp]`'s 5
 # literal tokens (`[`,`+`,`*`,`+`,`]`) beat `[base+disp]`'s 3 (`[`,`+`,`]`),
-# which
-# beat `[base]`'s 2 (`[`,`]`); `[rip+disp]`'s literal `rip` token gives it 4,
-# beating `[base+disp]`'s 3. Two patterns that are *genuinely* equally specific
-# (like `$a$ + $b$` vs. `$b$ + $a$`) are untouched by this and still hit the
-# original ambiguity error. See that file's own comment, and the commit that
-# added
-# it, for the full reasoning and the new tests covering it.
+# which beat `[base]`'s 2 (`[`,`]`); `[rip+disp]`'s literal `rip` token gives it
+# 4, beating `[base+disp]`'s 3. Two patterns that are *genuinely* equally
+# specific (like `$a$ + $b$` vs. `$b$ + $a$`) are untouched by this and still
+# hit the original ambiguity error. See that file's own comment, and the commit
+# that added it, for the full reasoning and the new tests covering it.
 #
 # =================
 # reg,reg vs. reg,imm: overloads
@@ -96,8 +99,7 @@
 # and immediate operands. Expose both forms under the real Intel mnemonic.
 # (Memory-operand forms don't have this problem — see the section above: a
 # bracketed operand is lexically distinct from a bare one, so `mov`'s many
-# memory
-# shapes safely share its name without ever reaching this ambiguity.)
+# memory shapes safely share its name without ever reaching this ambiguity.)
 
 pub from .impl import *
 
@@ -109,6 +111,8 @@ pub from .impl import *
 # within-file references didn't resolve correctly once imported from elsewhere
 # (`unknown macro` from a file that only ever imports this one) — not
 # investigated further, `pub` costs nothing here.
+## Fails to compile unless `r` is a register number, 0 to 15. The
+## instructions here use it to check their operands.
 pub macro assert_valid_reg(r: Reg) {
     @assert r.value >= 0 && r.value <= 15, "not a valid register (0-15)"
 }
@@ -119,6 +123,7 @@ pub macro assert_valid_reg(r: Reg) {
 
 syntax mov(a, b, c) = { mov $a$, $b$, $c$ }
 
+## `rd = rs`.
 pub macro mov(rd: Reg, rs: Reg)
     | syntax { mov $rd$, $rs$ } {
         assert_valid_reg rs
@@ -127,16 +132,19 @@ pub macro mov(rd: Reg, rs: Reg)
 
 # --- load direction: reg <- [mem] ---
 
+## Loads the value at `[base]` into `rd`.
 pub macro mov_load_base(rd: Reg, base: Reg)
     | syntax { mov $rd$, [$base$] } {
         mov rd, Mem(base, 0), 1
     }
 
+## Loads the value at `[base + disp]` into `rd`.
 pub macro mov_load_base_disp(rd: Reg, base: Reg, disp: int)
     | syntax { mov $rd$, [$base$+$disp$] } {
         mov rd, Mem(base, disp), 1
     }
 
+## Loads the value at `[base + index * scale + disp]` into `rd`.
 pub macro mov_load_indexed(
     rd: Reg,
     base: Reg,
@@ -149,6 +157,8 @@ pub macro mov_load_indexed(
     mov rd, MemIndexed(base, index, scale, disp), 1
 }
 
+## Loads the value at `[rip + disp]`, `disp` bytes past the end of the
+## instruction, into `rd`.
 pub macro mov_load_rip(rd: Reg, disp: int)
     | syntax { mov $rd$, [rip+$disp$] } {
         mov rd, MemRipRelative(disp), 1
@@ -156,16 +166,19 @@ pub macro mov_load_rip(rd: Reg, disp: int)
 
 # --- store direction: [mem] <- reg ---
 
+## Stores `rs` at `[base]`.
 pub macro mov_store_base(base: Reg, rs: Reg)
     | syntax { mov [$base$], $rs$ } {
         mov Mem(base, 0), rs, 1
     }
 
+## Stores `rs` at `[base + disp]`.
 pub macro mov_store_base_disp(base: Reg, disp: int, rs: Reg)
     | syntax { mov [$base$+$disp$], $rs$ } {
         mov Mem(base, disp), rs, 1
     }
 
+## Stores `rs` at `[base + index * scale + disp]`.
 pub macro mov_store_indexed(
     base: Reg,
     index: Reg,
@@ -178,6 +191,8 @@ pub macro mov_store_indexed(
     mov MemIndexed(base, index, scale, disp), rs, 1
 }
 
+## Stores `rs` at `[rip + disp]`, `disp` bytes past the end of the
+## instruction.
 pub macro mov_store_rip(disp: int, rs: Reg)
     | syntax { mov [rip+$disp$], $rs$ } {
         mov MemRipRelative(disp), rs, 1
@@ -188,8 +203,7 @@ pub macro mov_store_rip(disp: int, rs: Reg)
 # =================
 # Register-only sugar (drop `w`, hardcode 64-bit) — memory-destination forms
 # (`add [rbx+4], rax, 1`'s style bracket sugar) aren't built here: the exact
-# same
-# mechanical pattern `mov`'s store direction above demonstrates would apply
+# same mechanical pattern `mov`'s store direction above demonstrates would apply
 # unchanged, just not worth six more near-identical copies of it for this file's
 # own sake. `impl.basm`'s own `Mem(...)`/`MemIndexed(...)`/`MemRipRelative(...)`
 # constructor calls remain directly usable as an ALU op's second operand either
@@ -197,6 +211,7 @@ pub macro mov_store_rip(disp: int, rs: Reg)
 # `add Mem(rax, 4), rbx, 1` still works verbatim with this file imported.
 
 syntax add(a, b, c) = { add $a$, $b$, $c$ }
+## `rd = rd + rs`.
 pub macro add(rd: Reg, rs: Reg)
     | syntax { add $rd$, $rs$ } {
         assert_valid_reg rs
@@ -204,6 +219,7 @@ pub macro add(rd: Reg, rs: Reg)
     }
 
 syntax or(a, b, c) = { or $a$, $b$, $c$ }
+## `rd = rd | rs`.
 pub macro or(rd: Reg, rs: Reg)
     | syntax { or $rd$, $rs$ } {
         assert_valid_reg rs
@@ -211,6 +227,7 @@ pub macro or(rd: Reg, rs: Reg)
     }
 
 syntax and(a, b, c) = { and $a$, $b$, $c$ }
+## `rd = rd & rs`.
 pub macro and(rd: Reg, rs: Reg)
     | syntax { and $rd$, $rs$ } {
         assert_valid_reg rs
@@ -219,6 +236,7 @@ pub macro and(rd: Reg, rs: Reg)
 
 syntax sub(a, b, c) = { sub $a$, $b$, $c$ }
 
+## `rd = rd - rs`.
 pub macro sub(rd: Reg, rs: Reg)
     | syntax { sub $rd$, $rs$ } {
         assert_valid_reg rs
@@ -226,6 +244,7 @@ pub macro sub(rd: Reg, rs: Reg)
     }
 
 syntax xor(a, b, c) = { xor $a$, $b$, $c$ }
+## `rd = rd ^ rs`.
 pub macro xor(rd: Reg, rs: Reg)
     | syntax { xor $rd$, $rs$ } {
         assert_valid_reg rs
@@ -233,6 +252,7 @@ pub macro xor(rd: Reg, rs: Reg)
     }
 
 syntax cmp(a, b, c) = { cmp $a$, $b$, $c$ }
+## Sets the flags from `rd - rs`, without storing it.
 pub macro cmp(rd: Reg, rs: Reg)
     | syntax { cmp $rd$, $rs$ } {
         assert_valid_reg rs
@@ -240,6 +260,7 @@ pub macro cmp(rd: Reg, rs: Reg)
     }
 
 syntax test(a, b, c) = { test $a$, $b$, $c$ }
+## Sets the flags from `rd & rs`, without storing it.
 pub macro test(rd: Reg, rs: Reg)
     | syntax { test $rd$, $rs$ } {
         assert_valid_reg rs
@@ -248,27 +269,35 @@ pub macro test(rd: Reg, rs: Reg)
 
 # reg,imm forms — same surface mnemonic as reg,reg, selected by operand type.
 
+## `rd = imm`.
 pub macro mov(rd: Reg, imm: int)
     | syntax { mov $rd$, $imm$ } { mov rd, imm, 1 }
 
+## `rd = rd + imm`.
 pub macro add(rd: Reg, imm: int)
     | syntax { add $rd$, $imm$ } { add rd, imm, 1 }
 
+## `rd = rd | imm`.
 pub macro or(rd: Reg, imm: int)
     | syntax { or $rd$, $imm$ } { or rd, imm, 1 }
 
+## `rd = rd & imm`.
 pub macro and(rd: Reg, imm: int)
     | syntax { and $rd$, $imm$ } { and rd, imm, 1 }
 
+## `rd = rd - imm`.
 pub macro sub(rd: Reg, imm: int)
     | syntax { sub $rd$, $imm$ } { sub rd, imm, 1 }
 
+## `rd = rd ^ imm`.
 pub macro xor(rd: Reg, imm: int)
     | syntax { xor $rd$, $imm$ } { xor rd, imm, 1 }
 
+## Sets the flags from `rd - imm`, without storing it.
 pub macro cmp(rd: Reg, imm: int)
     | syntax { cmp $rd$, $imm$ } { cmp rd, imm, 1 }
 
+## Sets the flags from `rd & imm`, without storing it.
 pub macro test(rd: Reg, imm: int)
     | syntax { test $rd$, $imm$ } { test rd, imm, 1 }
 
@@ -276,27 +305,32 @@ pub macro test(rd: Reg, imm: int)
 # lea
 # =================
 # Address-only — reuses the exact same four addressing-mode patterns `mov`'s
-# load
-# direction above establishes, since `lea`'s own encoding shape (Phase 5) is
-# identical to a memory *load*'s (reg field is the destination, `MemOperand` the
-# address), just a different opcode.
+# load direction above establishes, since `lea`'s own encoding shape (Phase 5)
+# is identical to a memory *load*'s (reg field is the destination, `MemOperand`
+# the address), just a different opcode.
 
+## Loads the address `[base]` into `rd`, without reading memory.
 pub macro lea_base(rd: Reg, base: Reg)
     | syntax { lea $rd$, [$base$] } {
         lea rd, Mem(base, 0), 1
     }
 
+## Loads the address `[base + disp]` into `rd`, without reading memory.
 pub macro lea_base_disp(rd: Reg, base: Reg, disp: int)
     | syntax { lea $rd$, [$base$+$disp$] } {
         lea rd, Mem(base, disp), 1
     }
 
+## Loads the address `[base + index * scale + disp]` into `rd`, without reading
+## memory.
 pub macro lea_indexed(rd: Reg, base: Reg, index: Reg, scale: int, disp: int)
     | syntax { lea $rd$, [$base$+$index$*$scale$+$disp$] }
 {
     lea rd, MemIndexed(base, index, scale, disp), 1
 }
 
+## Loads the address `[rip + disp]`, `disp` bytes past the end of the
+## instruction, into `rd`.
 pub macro lea_rip(rd: Reg, disp: int)
     | syntax { lea $rd$, [rip+$disp$] } {
         lea rd, MemRipRelative(disp), 1
@@ -319,8 +353,10 @@ pub macro lea_rip(rd: Reg, disp: int)
 # restatement of its own.
 
 syntax shl(a, b, c) = { shl $a$, $b$, $c$ }
+## `rd = rd << imm`.
 pub macro shl(rd: Reg, imm: int)
     | syntax { shl $rd$, $imm$ } { shl rd, imm, 1 }
+## `rd = rd << cl`.
 pub macro shl_cl(rd: Reg)
     | syntax { shl $rd$, cl } { shl_cl rd, 1 }
 
@@ -328,14 +364,18 @@ syntax shr(a, b, c) = { shr $a$, $b$, $c$ }
 
 # These wrapper names distinguish the immediate and literal-`cl` bodies
 # internally; both still expose the ordinary `shr` mnemonic at the call site.
+## `rd = rd >> imm`, shifting in zeros.
 pub macro shr_imm(rd: Reg, imm: int)
     | syntax { shr $rd$, $imm$ } { shr rd, imm, 1 }
+## `rd = rd >> cl`, shifting in zeros.
 pub macro shr_cl(rd: Reg)
     | syntax { shr $rd$, cl } { shr_cl rd, 1 }
 
 syntax sar(a, b, c) = { sar $a$, $b$, $c$ }
+## `rd = rd >> imm`, shifting in copies of the sign bit.
 pub macro sar(rd: Reg, imm: int)
     | syntax { sar $rd$, $imm$ } { sar rd, imm, 1 }
+## `rd = rd >> cl`, shifting in copies of the sign bit.
 pub macro sar_cl(rd: Reg)
     | syntax { sar $rd$, cl } { sar_cl rd, 1 }
 
@@ -354,22 +394,27 @@ pub macro sar_cl(rd: Reg)
 # `imm_len = 4 + 4 * w`), and like every 32-bit write it zero-extends into
 # the full 64-bit register.
 
+## `rd = rs`, in 32 bits.
 pub macro mov(rd: Reg32, rs: Reg32)
     | syntax { mov $rd$, $rs$ } { mov rd.reg, rs.reg, 0 }
 
+## `rd = imm`, in 32 bits.
 pub macro mov(rd: Reg32, imm: int)
     | syntax { mov $rd$, $imm$ } { mov rd.reg, imm, 0 }
 
+## Loads the 32-bit value at `[base]` into `rd`.
 pub macro mov_load_base(rd: Reg32, base: Reg)
     | syntax { mov $rd$, [$base$] } {
         mov rd.reg, Mem(base, 0), 0
     }
 
+## Loads the 32-bit value at `[base + disp]` into `rd`.
 pub macro mov_load_base_disp(rd: Reg32, base: Reg, disp: int)
     | syntax { mov $rd$, [$base$+$disp$] } {
         mov rd.reg, Mem(base, disp), 0
     }
 
+## Loads the 32-bit value at `[base + index * scale + disp]` into `rd`.
 pub macro mov_load_indexed(
     rd: Reg32,
     base: Reg,
@@ -382,21 +427,26 @@ pub macro mov_load_indexed(
     mov rd.reg, MemIndexed(base, index, scale, disp), 0
 }
 
+## Loads the 32-bit value at `[rip + disp]`, `disp` bytes past the end of
+## the instruction, into `rd`.
 pub macro mov_load_rip(rd: Reg32, disp: int)
     | syntax { mov $rd$, [rip+$disp$] } {
         mov rd.reg, MemRipRelative(disp), 0
     }
 
+## Stores the 32-bit `rs` at `[base]`.
 pub macro mov_store_base(base: Reg, rs: Reg32)
     | syntax { mov [$base$], $rs$ } {
         mov Mem(base, 0), rs.reg, 0
     }
 
+## Stores the 32-bit `rs` at `[base + disp]`.
 pub macro mov_store_base_disp(base: Reg, disp: int, rs: Reg32)
     | syntax { mov [$base$+$disp$], $rs$ } {
         mov Mem(base, disp), rs.reg, 0
     }
 
+## Stores the 32-bit `rs` at `[base + index * scale + disp]`.
 pub macro mov_store_indexed(
     base: Reg,
     index: Reg,
@@ -409,72 +459,101 @@ pub macro mov_store_indexed(
     mov MemIndexed(base, index, scale, disp), rs.reg, 0
 }
 
+## Stores the 32-bit `rs` at `[rip + disp]`, `disp` bytes past the end of
+## the instruction.
 pub macro mov_store_rip(disp: int, rs: Reg32)
     | syntax { mov [rip+$disp$], $rs$ } {
         mov MemRipRelative(disp), rs.reg, 0
     }
 
+## `rd = rd + rs`, in 32 bits.
 pub macro add(rd: Reg32, rs: Reg32)
     | syntax { add $rd$, $rs$ } { add rd.reg, rs.reg, 0 }
+## `rd = rd | rs`, in 32 bits.
 pub macro or(rd: Reg32, rs: Reg32)
     | syntax { or $rd$, $rs$ } { or rd.reg, rs.reg, 0 }
+## `rd = rd & rs`, in 32 bits.
 pub macro and(rd: Reg32, rs: Reg32)
     | syntax { and $rd$, $rs$ } { and rd.reg, rs.reg, 0 }
+## `rd = rd - rs`, in 32 bits.
 pub macro sub(rd: Reg32, rs: Reg32)
     | syntax { sub $rd$, $rs$ } { sub rd.reg, rs.reg, 0 }
+## `rd = rd ^ rs`, in 32 bits.
 pub macro xor(rd: Reg32, rs: Reg32)
     | syntax { xor $rd$, $rs$ } { xor rd.reg, rs.reg, 0 }
+## Sets the flags from `rd - rs`, in 32 bits, without storing it.
 pub macro cmp(rd: Reg32, rs: Reg32)
     | syntax { cmp $rd$, $rs$ } { cmp rd.reg, rs.reg, 0 }
+## Sets the flags from `rd & rs`, in 32 bits, without storing it.
 pub macro test(rd: Reg32, rs: Reg32)
     | syntax { test $rd$, $rs$ } { test rd.reg, rs.reg, 0 }
 
+## `rd = rd + imm`, in 32 bits.
 pub macro add(rd: Reg32, imm: int)
     | syntax { add $rd$, $imm$ } { add rd.reg, imm, 0 }
+## `rd = rd | imm`, in 32 bits.
 pub macro or(rd: Reg32, imm: int)
     | syntax { or $rd$, $imm$ } { or rd.reg, imm, 0 }
+## `rd = rd & imm`, in 32 bits.
 pub macro and(rd: Reg32, imm: int)
     | syntax { and $rd$, $imm$ } { and rd.reg, imm, 0 }
+## `rd = rd - imm`, in 32 bits.
 pub macro sub(rd: Reg32, imm: int)
     | syntax { sub $rd$, $imm$ } { sub rd.reg, imm, 0 }
+## `rd = rd ^ imm`, in 32 bits.
 pub macro xor(rd: Reg32, imm: int)
     | syntax { xor $rd$, $imm$ } { xor rd.reg, imm, 0 }
+## Sets the flags from `rd - imm`, in 32 bits, without storing it.
 pub macro cmp(rd: Reg32, imm: int)
     | syntax { cmp $rd$, $imm$ } { cmp rd.reg, imm, 0 }
+## Sets the flags from `rd & imm`, in 32 bits, without storing it.
 pub macro test(rd: Reg32, imm: int)
     | syntax { test $rd$, $imm$ } { test rd.reg, imm, 0 }
 
+## Loads the address `[base]` into the 32-bit `rd`, without reading memory.
 pub macro lea_base(rd: Reg32, base: Reg)
     | syntax { lea $rd$, [$base$] } {
         lea rd.reg, Mem(base, 0), 0
     }
 
+## Loads the address `[base + disp]` into the 32-bit `rd`, without reading
+## memory.
 pub macro lea_base_disp(rd: Reg32, base: Reg, disp: int)
     | syntax { lea $rd$, [$base$+$disp$] } {
         lea rd.reg, Mem(base, disp), 0
     }
 
+## Loads the address `[base + index * scale + disp]` into the 32-bit `rd`,
+## without reading memory.
 pub macro lea_indexed(rd: Reg32, base: Reg, index: Reg, scale: int, disp: int)
     | syntax { lea $rd$, [$base$+$index$*$scale$+$disp$] }
 {
     lea rd.reg, MemIndexed(base, index, scale, disp), 0
 }
 
+## Loads the address `[rip + disp]`, `disp` bytes past the end of the
+## instruction, into the 32-bit `rd`.
 pub macro lea_rip(rd: Reg32, disp: int)
     | syntax { lea $rd$, [rip+$disp$] } {
         lea rd.reg, MemRipRelative(disp), 0
     }
 
+## `rd = rd << imm`, in 32 bits.
 pub macro shl(rd: Reg32, imm: int)
     | syntax { shl $rd$, $imm$ } { shl rd.reg, imm, 0 }
+## `rd = rd << cl`, in 32 bits.
 pub macro shl_cl(rd: Reg32)
     | syntax { shl $rd$, cl } { shl_cl rd.reg, 0 }
+## `rd = rd >> imm`, shifting in zeros, in 32 bits.
 pub macro shr_imm(rd: Reg32, imm: int)
     | syntax { shr $rd$, $imm$ } { shr rd.reg, imm, 0 }
+## `rd = rd >> cl`, shifting in zeros, in 32 bits.
 pub macro shr_cl(rd: Reg32)
     | syntax { shr $rd$, cl } { shr_cl rd.reg, 0 }
+## `rd = rd >> imm`, shifting in copies of the sign bit, in 32 bits.
 pub macro sar(rd: Reg32, imm: int)
     | syntax { sar $rd$, $imm$ } { sar rd.reg, imm, 0 }
+## `rd = rd >> cl`, shifting in copies of the sign bit, in 32 bits.
 pub macro sar_cl(rd: Reg32)
     | syntax { sar $rd$, cl } { sar_cl rd.reg, 0 }
 

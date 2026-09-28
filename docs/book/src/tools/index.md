@@ -6,6 +6,7 @@ Besides compiling, `bitterasm` has commands that help while writing code:
 |---|---|
 | `bitterasm format` | [Formatting](formatting.md) |
 | `bitterasm check` | [Diagnostics and lints](diagnostics.md) |
+| `bitterasm doc` | [Generating docs](docs.md) |
 | `bitterasm expand` | [Generating declarations](../macros/generating.md#seeing-what-was-generated) |
 
 Both `format` and the lint settings read an optional `bitterasm.toml`,
