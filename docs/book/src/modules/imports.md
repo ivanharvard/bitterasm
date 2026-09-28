@@ -51,8 +51,41 @@ If the module path names a directory, the listed names are modules in it:
 
 ## The search path
 
-A relative path (`.helpers`) is found next to the importing file. `.` is the
-only relative form: there's no `..` for a parent directory.
+A relative path starts with dots. One dot is the importing file's own
+directory, and each extra dot goes up one more:
+
+| Path | Found in |
+|---|---|
+| `.helpers` | the importing file's directory |
+| `.lib.helpers` | its `lib` subdirectory |
+| `..helpers` | its parent directory |
+| `...helpers` | two directories up |
+
+Here `lib/double.basm` imports from its parent directory:
+
+```basm,file=numbers.basm
+pub const BASE = 21
+```
+
+```basm,file=lib/double.basm
+from ..numbers import BASE
+
+pub const DOUBLED = BASE * 2
+```
+
+```basm
+from .lib.double import DOUBLED
+
+macro show(value: int) {
+    @emit value
+}
+
+show DOUBLED
+```
+
+```emits
+42
+```
 
 An absolute path (`std.binary`) is looked up in these directories, in order:
 

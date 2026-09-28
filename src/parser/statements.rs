@@ -179,9 +179,15 @@ impl Parser {
 
         let mut relative_level = 0;
 
-        // unresolved atm
-        while self.check(&TokenKind::Dot) {
-            relative_level += 1;
+        // Each leading `.` goes up a directory. The lexer reads runs of
+        // dots as range and wildcard tokens, so count those as their dots.
+        loop {
+            relative_level += match self.current().kind {
+                TokenKind::Dot => 1,
+                TokenKind::DotDot => 2,
+                TokenKind::Ellipsis => 3,
+                _ => break,
+            };
             self.advance();
         }
 

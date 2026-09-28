@@ -54,6 +54,18 @@ fn prints_struct_fields_with_visibility_skip_and_defaults() {
 }
 
 #[test]
+fn parses_parent_relative_imports() {
+    for (source, level) in [("from ..util import x\n", 2), ("from ...util import x\n", 3), ("from ....util import x\n", 4)] {
+        let program = parse(lex(source).unwrap()).unwrap();
+        let Statement::Import(import) = &program.statements[0] else {
+            panic!("expected import");
+        };
+        assert_eq!(import.module.relative_level, level, "{source}");
+        assert_eq!(crate::printer::print_statement(&program.statements[0], 0), source.trim_end());
+    }
+}
+
+#[test]
 fn parses_named_imports() {
     let program =
         parse(lex("from tinycpu.native import mov, add\n").unwrap())
