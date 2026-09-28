@@ -168,6 +168,9 @@ impl<'a> AliasResolver<'a> {
             .map(|value| self.value_type(value))
             .collect::<Result<Vec<_>, _>>()?;
         let mut matches = Vec::new();
+        // Overloads that took an `int` for an alias of `int` (see
+        // `int_fits_alias`) rather than an exact type match.
+        let mut inexact = HashSet::new();
         for (id, declaration) in declarations {
             let required = declaration.params.iter().filter(|param| param.default.is_none()).count();
             if actual_types.len() < required || actual_types.len() > declaration.params.len() {
@@ -175,11 +178,20 @@ impl<'a> AliasResolver<'a> {
             }
 
             let accepted = if declaration.generic_params.is_empty() {
-                let mut expected_types = Vec::with_capacity(declaration.params.len());
-                for param in declaration.params.iter().take(actual_types.len()) {
-                    expected_types.push(self.resolve_type_expr(&param.ty)?);
+                let mut accepted = true;
+                for ((param, actual), value) in declaration.params.iter().zip(&actual_types).zip(arguments) {
+                    let expected = self.resolve_type_expr(&param.ty)?;
+                    if expected.accepts(actual) {
+                        continue;
+                    }
+                    if matches!(self.int_fits_alias(&expected, value, span), Ok(true)) {
+                        inexact.insert(id);
+                        continue;
+                    }
+                    accepted = false;
+                    break;
                 }
-                expected_types.iter().zip(&actual_types).all(|(expected, actual)| expected.accepts(actual))
+                accepted
             } else {
                 // A candidate's own generic params don't need to fully
                 // resolve for it to be ruled *in* or *out* here — only
@@ -202,6 +214,10 @@ impl<'a> AliasResolver<'a> {
             if accepted {
                 matches.push((id, declaration));
             }
+        }
+
+        if matches.len() > 1 && matches.iter().any(|(id, _)| !inexact.contains(id)) {
+            matches.retain(|(id, _)| !inexact.contains(id));
         }
 
         // A non-generic overload is a more specific claim than a generic one
@@ -402,7 +418,7 @@ impl<'a> AliasResolver<'a> {
 
             if generic_names.is_empty() {
                 let expected = self.resolve_type_expr(&param.ty)?;
-                if !expected.accepts(&actual) {
+                if !expected.accepts(&actual) && !self.int_fits_alias(&expected, &value, param.span)? {
                     return Err(ResolveError::TypeMismatch {
                         name: param.name.clone(), expected: describe_type(&expected, self),
                         actual: describe_type(&actual, self), span: param.span,
@@ -410,6 +426,11 @@ impl<'a> AliasResolver<'a> {
                 }
             } else {
                 self.unify_type_expr(&param.ty, &actual, &generic_names, &mut generic_scope, param.span)?;
+                // A concrete alias of `int` among generic parameters: `unify`
+                // only checked the type, so check the alias's rule too.
+                if let Ok(expected) = self.resolve_type_expr(&param.ty) {
+                    self.int_fits_alias(&expected, &value, param.span)?;
+                }
             }
 
             scope.insert(param.name.clone(), value);
@@ -631,7 +652,10 @@ impl<'a> AliasResolver<'a> {
         // no generics referenced, etc.) — checked exactly like a
         // non-generic macro's parameter always has been.
         let resolved = self.resolve_type_expr(expected)?;
-        if resolved.accepts(actual) {
+        let int_for_int_alias = matches!(resolved, ResolvedType::Alias { .. })
+            && matches!(resolved.strip_alias(), ResolvedType::Builtin(_))
+            && matches!(actual, ResolvedType::Builtin(_));
+        if resolved.accepts(actual) || int_for_int_alias {
             Ok(())
         } else {
             Err(ResolveError::TypeMismatch {

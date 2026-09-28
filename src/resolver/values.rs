@@ -710,7 +710,7 @@ impl<'a> AliasResolver<'a> {
             let expected = self.field_type(&struct_ty, &field_name, span)?;
             let actual = self.value_type(&value)?;
 
-            if actual != expected {
+            if actual != expected && !self.int_fits_alias(&expected, &value, span)? {
                 return Err(ResolveError::TypeMismatch {
                     name: field_name,
                     expected: describe_type(&expected, self),
@@ -1215,6 +1215,27 @@ impl<'a> AliasResolver<'a> {
                 }
             }
         }
+    }
+
+    /// Whether a plain `int` can be used where `expected`, an alias of
+    /// `int`, is required. Unlike a struct, an integer has nowhere to record
+    /// that `as` checked it (see `tag_nominal`), so the alias's invariants
+    /// are checked wherever the integer is used as one instead; a violation
+    /// is an error. `Ok(false)` when `expected` isn't an alias of `int` or
+    /// `value` isn't an integer.
+    pub(super) fn int_fits_alias(
+        &mut self,
+        expected: &ResolvedType,
+        value: &Value,
+        span: Span,
+    ) -> Result<bool, ResolveError> {
+        let is_int_alias = matches!(expected, ResolvedType::Alias { .. })
+            && matches!(expected.strip_alias(), ResolvedType::Builtin(BuiltinType::Int));
+        if !is_int_alias || !matches!(value, Value::Int(_)) {
+            return Ok(false);
+        }
+        self.convert_to(value.clone(), expected, span)?;
+        Ok(true)
     }
 
     fn try_explicit_conversion(

@@ -110,27 +110,43 @@ names is an error.
 
 ### Aliases of `int`
 
-An alias of `int` with an invariant, like `std.unsigned`'s `uint`, checks
-its rule on `as`. But a plain integer can't remember that it was checked, so
-the result is an ordinary `int`. As a result, a parameter typed `uint` can't
-be satisfied by anything:
+A struct produced by `as` remembers which alias checked it. A plain integer
+has nowhere to record that, so an alias of `int` works differently: wherever
+an `int` is used as one, as an argument, a struct field or a return value,
+the alias's rule is checked right there. `std.unsigned`'s `uint` is an
+example:
+
+```basm
+from std.unsigned import uint
+
+macro count(n: uint) {
+    @emit n
+}
+
+count 5
+count 6 as uint
+```
+
+```emits
+5 6
+```
 
 ```basm,fail
 from std.unsigned import uint
 
-macro f(x: uint) {
-    @emit x
+macro count(n: uint) {
+    @emit n
 }
 
-f 5 as uint
+count -1
 ```
 
 ```error
-type mismatch for `x`: expected `uint`, found `int`
+invariant `(x >= 0)` was violated for `uint`
 ```
 
-Use an alias of `int` for its check (`const n = x as uint`), and type
-parameters as `int`. Aliases of structs don't have this limit.
+If a macro has overloads for both `int` and an alias of `int`, a plain
+integer picks the `int` one.
 
 ## Generic aliases
 
