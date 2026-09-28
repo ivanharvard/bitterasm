@@ -60,6 +60,55 @@ pub(super) fn wrap_comment(comment: &str, indent: &str, width: usize) -> Vec<Str
     lines
 }
 
+/// Formats one `##`/`#!` line. Doc text is Markdown, so unlike an
+/// ordinary comment its spacing means something: fenced code (tracked
+/// across lines in `in_fence`), tables and headings are kept exactly as
+/// written, and prose is only re-wrapped when a line is over `width`,
+/// with continuation lines keeping its indentation.
+pub(super) fn wrap_doc_comment(
+    comment: &str,
+    indent: &str,
+    width: usize,
+    in_fence: &mut bool,
+) -> Vec<String> {
+    let Some((is_module, text)) = crate::lexer::doc_comment(comment) else {
+        return wrap_comment(comment, indent, width);
+    };
+    let marker = if is_module { "#!" } else { "##" };
+    let text = text.trim_end();
+    if text.is_empty() {
+        return vec![format!("{indent}{marker}")];
+    }
+
+    let prefix = format!("{indent}{marker} ");
+    let content = text.trim_start();
+    let is_fence = content.starts_with("```") || content.starts_with("~~~");
+    let verbatim = *in_fence || is_fence || content.starts_with('|') || content.starts_with('#');
+    if is_fence {
+        *in_fence = !*in_fence;
+    }
+    if verbatim || prefix.chars().count() + text.chars().count() <= width {
+        return vec![format!("{prefix}{text}")];
+    }
+
+    let leading = &text[..text.len() - content.len()];
+    let available = width.saturating_sub(prefix.chars().count() + leading.chars().count()).max(1);
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in content.split_whitespace() {
+        if !current.is_empty() && current.chars().count() + 1 + word.chars().count() > available {
+            lines.push(format!("{prefix}{leading}{current}"));
+            current.clear();
+        }
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(word);
+    }
+    lines.push(format!("{prefix}{leading}{current}"));
+    lines
+}
+
 pub(super) fn wrap_code(
     content: &str,
     tokens: &[&Token],

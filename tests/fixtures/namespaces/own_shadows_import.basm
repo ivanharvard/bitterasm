@@ -1,0 +1,10 @@
+from .lib.base import *
+
+const BASE = 7
+
+macro go() {
+    @emit BASE
+}
+
+go
+emit_base

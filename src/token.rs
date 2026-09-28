@@ -156,3 +156,17 @@ impl Token {
         Self { kind, span: Span::new(start, end) }
     }
 }
+
+/// A `##` or `#!` line: documentation, as opposed to an ordinary `#`
+/// comment, which the lexer drops. Kept out of the token stream (the
+/// grammar never sees it) and handed to the parser on the side, which
+/// attaches each `##` block to the item that follows it and each leading
+/// `#!` block to the file itself. `text` is the line after its marker,
+/// minus one separating space, so Markdown indentation survives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocComment {
+    /// `#!`: documents the enclosing file rather than the next item.
+    pub is_module: bool,
+    pub text: String,
+    pub span: Span,
+}

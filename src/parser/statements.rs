@@ -10,7 +10,7 @@ impl Parser {
         match &self.current().kind {
             TokenKind::From => {
                 Ok(Statement::Import(
-                    self.parse_from_import()?
+                    self.parse_from_import(false)?
                 ))
             }
 
@@ -74,6 +74,10 @@ impl Parser {
                         self.parse_macro_declaration(true)?
                     )),
 
+                    TokenKind::From => Ok(Statement::Import(
+                        self.parse_from_import(true)?
+                    )),
+
                     TokenKind::Identifier(_) if self.check_next(&TokenKind::Colon) => {
                         Ok(Statement::Label(
                             self.parse_label(true)?
@@ -130,8 +134,9 @@ impl Parser {
     // imports
     // ===============
 
-    fn parse_from_import(&mut self) -> Result<ImportStatement, ParseError> {
-        let start = self.current().span.start;
+    // `pub` (already consumed, when `is_pub`) starts the statement's span.
+    fn parse_from_import(&mut self, is_pub: bool) -> Result<ImportStatement, ParseError> {
+        let start = if is_pub { self.previous().span.start } else { self.current().span.start };
 
         self.expect_simple(TokenKind::From)?;
 
@@ -158,6 +163,7 @@ impl Parser {
         let end = self.statement_end()?;
 
         let import = ImportStatement {
+            is_pub,
             module,
             items,
             span: Span::new(start, end),
@@ -173,9 +179,15 @@ impl Parser {
 
         let mut relative_level = 0;
 
-        // unresolved atm
-        while self.check(&TokenKind::Dot) {
-            relative_level += 1;
+        // Each leading `.` goes up a directory. The lexer reads runs of
+        // dots as range and wildcard tokens, so count those as their dots.
+        loop {
+            relative_level += match self.current().kind {
+                TokenKind::Dot => 1,
+                TokenKind::DotDot => 2,
+                TokenKind::Ellipsis => 3,
+                _ => break,
+            };
             self.advance();
         }
 
@@ -220,6 +232,7 @@ impl Parser {
         Ok(Label {
             name,
             is_pub,
+            doc: None,
             span: Span::new(start, end),
         })
     }
@@ -354,6 +367,7 @@ impl Parser {
             is_pub,
             ty,
             value,
+            doc: None,
             span: Span::new(start, end),
         })
     }
@@ -498,6 +512,6 @@ impl Parser {
 
         self.register_syntax_override(&name, pattern.clone(), span)?;
 
-        Ok(SyntaxOverrideStatement { name, pattern, span })
+        Ok(SyntaxOverrideStatement { name, pattern, doc: None, span })
     }
 }

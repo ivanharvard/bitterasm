@@ -37,16 +37,29 @@ impl<'a> AliasResolver<'a> {
     }
 
     pub(super) fn lookup_symbol(&self, name: &str) -> Option<SymbolId> {
+        if overload_set_members(name).is_some() {
+            return self.lookup_symbols(name).first().copied();
+        }
         self.symbols.lookup(name).or_else(|| self.generated_symbols.lookup(name))
     }
 
     pub(super) fn lookup_symbols(&self, name: &str) -> Vec<SymbolId> {
+        if let Some(members) = overload_set_members(name) {
+            return members.iter().flat_map(|member| self.lookup_symbols(member)).collect();
+        }
         self.symbols
             .lookup_all(name)
             .iter()
             .chain(self.generated_symbols.lookup_all(name))
             .copied()
             .collect()
+    }
+
+    /// The internal name the loader rewrote `name` to in the current
+    /// module, for a name built during resolution (`` x`i` ``) that the
+    /// loader never saw.
+    pub(super) fn scoped_name(&self, name: &str) -> Option<String> {
+        self.module_scopes.get(self.current_module)?.get(name).cloned()
     }
 
     /// Registers a freshly-discovered declaration (a macro's generated
@@ -184,6 +197,7 @@ impl<'a> AliasResolver<'a> {
                 is_pub: true,
                 is_skip: false,
                 default: None,
+                        doc: None,
                 span,
             }));
 
@@ -199,6 +213,7 @@ impl<'a> AliasResolver<'a> {
             is_pub: false,
             generic_params: Vec::new(),
             facets: Vec::new(),
+            doc: None,
             fields: struct_fields,
             span,
         });
@@ -246,6 +261,7 @@ impl<'a> AliasResolver<'a> {
                 is_pub: true,
                 is_skip: false,
                 default: None,
+                        doc: None,
                 span,
             }));
 
@@ -263,6 +279,7 @@ impl<'a> AliasResolver<'a> {
             is_pub: true,
             is_skip: true,
             default: None,
+                        doc: None,
             span,
         }));
         values.push(("len".to_string(), Value::Int(Int::from(len))));
@@ -274,6 +291,7 @@ impl<'a> AliasResolver<'a> {
             is_pub: false,
             generic_params: Vec::new(),
             facets: Vec::new(),
+            doc: None,
             fields: struct_fields,
             span,
         });
@@ -386,4 +404,15 @@ fn statement_span(statement: &Statement) -> Span {
         Statement::Meta(s) => s.span,
         Statement::SyntaxOverride(s) => s.span,
     }
+}
+
+/// A macro reference the loader rewrote to `name#a,b,...` means every
+/// overload of `name` declared in modules `a`, `b`, ... (whose own internal
+/// names are `name#a`, `name#b`, ...). See the loader's "namespaces".
+fn overload_set_members(name: &str) -> Option<Vec<String>> {
+    let (base, modules) = name.rsplit_once('#')?;
+    if !modules.contains(',') {
+        return None;
+    }
+    Some(modules.split(',').map(|module| format!("{base}#{module}")).collect())
 }

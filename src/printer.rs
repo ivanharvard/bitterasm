@@ -42,7 +42,8 @@ pub fn print_statement(statement: &Statement, indent: usize) -> String {
                 ImportItems::Names(names) => names.join(", "),
             };
 
-            format!("{pad}from {dots}{path} import {items}")
+            let visibility = if import.is_pub { "pub " } else { "" };
+            format!("{pad}{visibility}from {dots}{path} import {items}")
         }
 
         Statement::Struct(decl) => print_struct(decl, indent),
@@ -246,10 +247,13 @@ fn print_struct_body_item(item: &StructBodyItem, indent: usize) -> String {
 
 fn print_struct_field(field: &StructField, indent: usize) -> String {
     format!(
-        "{pad}{name}: {ty}",
+        "{pad}{pub_kw}{skip_kw}{name}: {ty}{default}",
         pad = INDENT.repeat(indent),
+        pub_kw = if field.is_pub { "pub " } else { "" },
+        skip_kw = if field.is_skip { "skip " } else { "" },
         name = print_spliced_name(&field.name),
         ty = print_type_expr(&field.ty),
+        default = field.default.as_ref().map(|value| format!(" = {}", print_expr(value))).unwrap_or_default(),
     )
 }
 
@@ -288,7 +292,7 @@ fn print_macro_param(param: &MacroParameter) -> String {
     format!("{name}: {ty}{default}", name = param.name, ty = print_type_expr(&param.ty))
 }
 
-fn print_generic_params(params: &[GenericParameter]) -> String {
+pub fn print_generic_params(params: &[GenericParameter]) -> String {
     if params.is_empty() {
         return String::new();
     }

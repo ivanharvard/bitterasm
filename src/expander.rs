@@ -43,9 +43,12 @@ impl<'a> MacroTable<'a> {
         for statement in &program.statements {
             // Top-level, so always a literal name by the same invariant
             // `collect_symbols` enforces for real compilation.
+            // Keyed by the name as declared, without the loader's internal
+            // `#module` suffix, since that's what an invocation here says
+            // and what a nested one is demangled to below.
             if let Statement::Macro(decl) = statement {
                 if let Some(name) = crate::ast::literal_name(&decl.name) {
-                    table.insert(name, decl);
+                    table.insert(crate::loader::demangle(&name), decl);
                 }
             }
         }
@@ -96,7 +99,8 @@ pub fn expand_source(
         if let Some(reporter) = progress {
             reporter.finish_ok();
         }
-        edits.push((trim_trailing_newline(source, invocation.span), printer::print_statements(&expanded, 0)));
+        let text = crate::loader::demangle(&printer::print_statements(&expanded, 0));
+        edits.push((trim_trailing_newline(source, invocation.span), text));
     }
 
     // Descending by start so an earlier edit's length change never shifts
@@ -155,7 +159,7 @@ pub fn expand_invocation(table: &MacroTable, invocation: &Invocation, depth: usi
         return vec![Statement::Invocation(invocation.clone())];
     }
 
-    let Some(decl) = table.0.get(invocation.name.as_str()) else {
+    let Some(decl) = table.0.get(crate::loader::demangle(&invocation.name).as_str()) else {
         return vec![Statement::Invocation(invocation.clone())];
     };
 
@@ -235,6 +239,7 @@ fn substitute_statement(statement: &Statement, substitutions: &HashMap<String, E
             is_pub: decl.is_pub,
             ty: decl.ty.as_ref().map(|ty| substitute_type_expr(ty, substitutions)),
             value: substitute_expr(&decl.value, substitutions),
+            doc: decl.doc.clone(),
             span: decl.span,
         }),
 
@@ -318,7 +323,8 @@ fn substitute_struct(decl: &StructDeclaration, substitutions: &HashMap<String, E
         generic_params: decl.generic_params.clone(),
         facets: substitute_facets(&decl.facets, &inner),
         fields: substitute_struct_body_items(&decl.fields, &inner),
-        span: decl.span,
+        doc: decl.doc.clone(),
+            span: decl.span,
     }
 }
 
@@ -335,6 +341,7 @@ fn substitute_struct_body_items(
                 is_pub: field.is_pub,
                 is_skip: field.is_skip,
                 default: field.default.as_ref().map(|d| substitute_expr(d, substitutions)),
+                doc: field.doc.clone(),
                 span: field.span,
             }),
 
@@ -406,7 +413,8 @@ fn substitute_type_alias(
         generic_params: decl.generic_params.clone(),
         facets: substitute_facets(&decl.facets, &inner),
         ty: substitute_type_expr(&decl.ty, &inner),
-        span: decl.span,
+        doc: decl.doc.clone(),
+            span: decl.span,
     }
 }
 
@@ -437,6 +445,7 @@ fn substitute_macro(decl: &MacroDeclaration, substitutions: &HashMap<String, Exp
         return_ty: decl.return_ty.as_ref().map(|ty| substitute_type_expr(ty, &generics_shadowed)),
         facets: substitute_facets(&decl.facets, &generics_shadowed),
         body: substitute_statements(&decl.body, &body_scope),
+        doc: decl.doc.clone(),
         span: decl.span,
     }
 }

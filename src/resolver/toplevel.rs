@@ -61,7 +61,24 @@ pub fn unroll_top_level(
         statements.extend(unrolled);
     }
 
-    Ok((Program { statements, span: program.span }, statement_modules))
+    Ok((Program { statements, span: program.span, doc: program.doc.clone(), stray_docs: program.stray_docs.clone() }, statement_modules))
+}
+
+/// Unrolls one module's top-level `@for`/`@if`/`@fold`, before the loader
+/// names its declarations: `consts` holds the integer constants the module
+/// can see through its imports, and comes back with the module's own added.
+/// Afterwards every top-level declaration in `statements` has a literal name.
+pub fn unroll_module(
+    statements: &[Statement],
+    consts: &mut HashMap<String, Int>,
+) -> Result<Vec<Statement>, ResolveError> {
+    let mut out = Vec::new();
+
+    for statement in statements {
+        out.extend(unroll_statements(std::slice::from_ref(statement), consts, &mut NextState::default())?);
+    }
+
+    Ok(out)
 }
 
 fn unroll_statements(
@@ -335,10 +352,13 @@ fn unroll_meta(
             Ok(())
         }
 
-        // Every other meta (`@emit`, `@return`, `@assert`) only
-        // makes sense inside a macro body — the same
-        // `UnsupportedMacroStatement`-shaped rejection `walk_macro_body`
-        // already gives it there, just reached at the top level instead.
+        // `@emit`, `@return` and `@assert` only mean something while a
+        // macro runs.
+        "emit" | "return" | "assert" => Err(ResolveError::MetaOutsideMacro {
+            kind: format!("@{}", meta.name),
+            span: meta.span,
+        }),
+
         other => Err(ResolveError::UnsupportedMacroStatement {
             kind: format!("@{other}"),
             span: meta.span,
@@ -449,6 +469,7 @@ fn fold_result_struct(name: &str, accumulators: &[(String, Int)], span: Span) ->
         is_pub: false,
         generic_params: Vec::new(),
         facets: Vec::new(),
+            doc: None,
         fields: accumulators
             .iter()
             .map(|(field, _)| {
@@ -458,6 +479,7 @@ fn fold_result_struct(name: &str, accumulators: &[(String, Int)], span: Span) ->
                     is_pub: true,
                     is_skip: false,
                     default: None,
+                        doc: None,
                     span,
                 })
             })
@@ -603,7 +625,7 @@ mod tests {
     #[test]
     fn a_bare_top_level_emit_is_rejected() {
         let error = unroll("@emit 5\n").unwrap_err();
-        assert!(matches!(error, ResolveError::UnsupportedMacroStatement { .. }));
+        assert!(matches!(error, ResolveError::MetaOutsideMacro { .. }));
     }
 
     fn const_names(program: &Program) -> Vec<String> {

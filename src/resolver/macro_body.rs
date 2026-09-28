@@ -168,6 +168,9 @@ impl<'a> AliasResolver<'a> {
             .map(|value| self.value_type(value))
             .collect::<Result<Vec<_>, _>>()?;
         let mut matches = Vec::new();
+        // Overloads that took an `int` for an alias of `int` (see
+        // `int_fits_alias`) rather than an exact type match.
+        let mut inexact = HashSet::new();
         for (id, declaration) in declarations {
             let required = declaration.params.iter().filter(|param| param.default.is_none()).count();
             if actual_types.len() < required || actual_types.len() > declaration.params.len() {
@@ -175,11 +178,20 @@ impl<'a> AliasResolver<'a> {
             }
 
             let accepted = if declaration.generic_params.is_empty() {
-                let mut expected_types = Vec::with_capacity(declaration.params.len());
-                for param in declaration.params.iter().take(actual_types.len()) {
-                    expected_types.push(self.resolve_type_expr(&param.ty)?);
+                let mut accepted = true;
+                for ((param, actual), value) in declaration.params.iter().zip(&actual_types).zip(arguments) {
+                    let expected = self.resolve_type_expr(&param.ty)?;
+                    if expected.accepts(actual) {
+                        continue;
+                    }
+                    if matches!(self.int_fits_alias(&expected, value, span), Ok(true)) {
+                        inexact.insert(id);
+                        continue;
+                    }
+                    accepted = false;
+                    break;
                 }
-                expected_types.iter().zip(&actual_types).all(|(expected, actual)| expected.accepts(actual))
+                accepted
             } else {
                 // A candidate's own generic params don't need to fully
                 // resolve for it to be ruled *in* or *out* here — only
@@ -202,6 +214,10 @@ impl<'a> AliasResolver<'a> {
             if accepted {
                 matches.push((id, declaration));
             }
+        }
+
+        if matches.len() > 1 && matches.iter().any(|(id, _)| !inexact.contains(id)) {
+            matches.retain(|(id, _)| !inexact.contains(id));
         }
 
         // A non-generic overload is a more specific claim than a generic one
@@ -332,6 +348,7 @@ impl<'a> AliasResolver<'a> {
                     continue;
                 }
                 expansion.returned = body_result.returned;
+                self.check_return_type(declaration, expansion.returned.as_ref())?;
 
                 let after_hooks = crate::facets::extract_exprs(&declaration.facets, "after");
                 if !after_hooks.is_empty() {
@@ -356,6 +373,15 @@ impl<'a> AliasResolver<'a> {
             }
         })();
 
+        // Innermost first: an error keeps the module of the deepest call
+        // it passed through. A call that succeeds forgets any error a
+        // nested call raised and something recovered from.
+        match &result {
+            Err(_) if self.error_module.is_none() => self.error_module = Some(self.current_module),
+            Err(_) => {}
+            Ok(_) => self.error_module = None,
+        }
+
         self.macro_call_stack.pop();
         self.generic_scope = previous_generic_scope;
         self.next_target = previous_next_target;
@@ -366,12 +392,47 @@ impl<'a> AliasResolver<'a> {
         result
     }
 
+    /// Checks a finished call's return value against the `-> Type` its
+    /// signature declares, resolved against this call's generic bindings
+    /// (so `-> Array<T, N + 1>` means this call's `T` and `N`). No
+    /// conversion happens, the same as for arguments. `-> Type` promises a
+    /// return value, so returning nothing is an error too; what a macro
+    /// emits is declared separately, with `| emits`.
+    fn check_return_type(
+        &mut self,
+        declaration: &MacroDeclaration,
+        returned: Option<&Value>,
+    ) -> Result<(), ResolveError> {
+        let Some(return_ty) = &declaration.return_ty else {
+            return Ok(());
+        };
+        let expected = self.resolve_type_expr(return_ty)?;
+        let Some(value) = returned else {
+            return Err(ResolveError::ReturnTypeMismatch {
+                name: macro_display_name(&declaration.name),
+                expected: describe_type(&expected, self),
+                actual: None,
+                span: return_ty.span(),
+            });
+        };
+        let actual = self.value_type(value)?;
+        if !expected.accepts(&actual) && !self.int_fits_alias(&expected, value, return_ty.span())? {
+            return Err(ResolveError::ReturnTypeMismatch {
+                name: macro_display_name(&declaration.name),
+                expected: describe_type(&expected, self),
+                actual: Some(describe_type(&actual, self)),
+                span: return_ty.span(),
+            });
+        }
+        Ok(())
+    }
+
     /// Binds `declaration`'s params against already-evaluated `arguments`,
     /// returning both the resulting value scope and — for a generic macro
     /// — the bindings its own `T`/`const N` params picked up along the way,
     /// inferred from each argument's actual type (see `unify_type_expr`).
     /// Empty for a non-generic macro, which type-checks exactly as before.
-    fn bind_macro_arguments(
+    pub(super) fn bind_macro_arguments(
         &mut self,
         declaration: &MacroDeclaration,
         arguments: Vec<Value>,
@@ -402,7 +463,7 @@ impl<'a> AliasResolver<'a> {
 
             if generic_names.is_empty() {
                 let expected = self.resolve_type_expr(&param.ty)?;
-                if !expected.accepts(&actual) {
+                if !expected.accepts(&actual) && !self.int_fits_alias(&expected, &value, param.span)? {
                     return Err(ResolveError::TypeMismatch {
                         name: param.name.clone(), expected: describe_type(&expected, self),
                         actual: describe_type(&actual, self), span: param.span,
@@ -410,6 +471,11 @@ impl<'a> AliasResolver<'a> {
                 }
             } else {
                 self.unify_type_expr(&param.ty, &actual, &generic_names, &mut generic_scope, param.span)?;
+                // A concrete alias of `int` among generic parameters: `unify`
+                // only checked the type, so check the alias's rule too.
+                if let Ok(expected) = self.resolve_type_expr(&param.ty) {
+                    self.int_fits_alias(&expected, &value, param.span)?;
+                }
             }
 
             scope.insert(param.name.clone(), value);
@@ -563,7 +629,15 @@ impl<'a> AliasResolver<'a> {
             }
         }
 
-        if let TypeExpr::Apply { base, args, .. } = expected {
+        if let TypeExpr::Apply { base, args, span: apply_span } = expected {
+            if let Some(expansion) = self.expand_generic_alias(base, args, *apply_span)? {
+                let nominal = !expansion.invariants.is_empty()
+                    || expansion.declaration.facets.iter().any(|facet| matches!(facet.name.as_str(), "to" | "from"));
+                if !nominal {
+                    return self.unify_type_expr(&expansion.ty, actual, generic_names, scope, span);
+                }
+            }
+
             let actual_name = describe_type(actual, self);
             let mismatch = || ResolveError::TypeMismatch {
                 name: expected.name().unwrap_or("<generic argument>").to_string(),
@@ -623,7 +697,10 @@ impl<'a> AliasResolver<'a> {
         // no generics referenced, etc.) — checked exactly like a
         // non-generic macro's parameter always has been.
         let resolved = self.resolve_type_expr(expected)?;
-        if resolved.accepts(actual) {
+        let int_for_int_alias = matches!(resolved, ResolvedType::Alias { .. })
+            && matches!(resolved.strip_alias(), ResolvedType::Builtin(_))
+            && matches!(actual, ResolvedType::Builtin(_));
+        if resolved.accepts(actual) || int_for_int_alias {
             Ok(())
         } else {
             Err(ResolveError::TypeMismatch {
@@ -683,7 +760,7 @@ impl<'a> AliasResolver<'a> {
 
                             if !allowed_emits.is_empty() {
                                 let actual = self.value_type(&value)?;
-                                if !allowed_emits.iter().any(|ty| ty == &actual) {
+                                if !allowed_emits.iter().any(|ty| ty.accepts(&actual)) {
                                     return Err(ResolveError::EmittedTypeNotDeclared {
                                         actual: describe_type(&actual, self),
                                         declared: allowed_emits
@@ -1108,39 +1185,86 @@ impl<'a> AliasResolver<'a> {
         value: &Value,
         scope: &HashMap<String, Value>,
     ) -> Result<Option<HashMap<String, Value>>, ResolveError> {
-        if let Value::Enum { variant, payload, .. } = value {
-            match pattern {
-                Expr::Identifier { name, .. } if name == variant && payload.is_none() => {
-                    return Ok(Some(HashMap::new()));
-                }
-                Expr::Call { callee, arguments, .. } => {
-                    let Expr::Identifier { name, .. } = callee.as_ref() else {
-                        return Ok(None);
-                    };
-                    if name != variant || arguments.len() != 1 {
-                        return Ok(None);
-                    }
-                    let Some(payload) = payload.as_deref() else {
-                        return Ok(None);
-                    };
-                    if let Expr::Identifier { name: binding, .. } = &arguments[0].value {
-                        let mut bindings = HashMap::new();
-                        if binding != "_" {
-                            bindings.insert(binding.clone(), payload.clone());
-                        }
-                        return Ok(Some(bindings));
-                    }
-                    return Ok((self.eval_value(&arguments[0].value, scope)? == *payload)
-                        .then(HashMap::new));
-                }
-                Expr::EnumVariant { .. } => {
-                    return Ok((self.eval_value(pattern, scope)? == *value).then(HashMap::new));
-                }
-                _ => return Ok(None),
+        if let Value::Enum { symbol, variant, payload, .. } = value
+            && let Some((written, argument)) = self.variant_pattern(pattern, *symbol)?
+        {
+            if written != *variant {
+                return Ok(None);
             }
+            return match (argument, payload.as_deref()) {
+                (None, None) => Ok(Some(HashMap::new())),
+                (Some(Expr::Identifier { name: binding, .. }), Some(payload)) => {
+                    let mut bindings = HashMap::new();
+                    if binding != "_" {
+                        bindings.insert(binding.clone(), payload.clone());
+                    }
+                    Ok(Some(bindings))
+                }
+                (Some(argument), Some(payload)) => {
+                    Ok((self.eval_value(argument, scope)? == *payload).then(HashMap::new))
+                }
+                _ => Ok(None),
+            };
         }
 
         Ok((self.eval_value(pattern, scope)? == *value).then(HashMap::new))
+    }
+
+    /// When `pattern` names one of `enum_symbol`'s variants — bare
+    /// (`Some`, `Some(x)`) or qualified by that enum (`Option<int>.Some(x)`,
+    /// `Color.Green`) — the variant it names and its payload pattern, if
+    /// any. `None` for anything else, which is matched by equality instead.
+    fn variant_pattern<'p>(
+        &self,
+        pattern: &'p Expr,
+        enum_symbol: SymbolId,
+    ) -> Result<Option<(String, Option<&'p Expr>)>, ResolveError> {
+        let (name, qualifier, argument) = match pattern {
+            Expr::Identifier { name, .. } => (name.as_str(), None, None),
+            Expr::Member { object, member, .. } => {
+                let (Expr::Identifier { name: enum_name, .. }, [NamePart::Literal(variant)]) =
+                    (object.as_ref(), member.as_slice())
+                else {
+                    return Ok(None);
+                };
+                (variant.as_str(), Some(enum_name.as_str()), None)
+            }
+            Expr::Call { callee, arguments, .. } if arguments.len() == 1 => {
+                let argument = Some(&arguments[0].value);
+                match callee.as_ref() {
+                    Expr::Identifier { name, .. } => (name.as_str(), None, argument),
+                    Expr::Member { object, member, .. } => {
+                        let (Expr::Identifier { name: enum_name, .. }, [NamePart::Literal(variant)]) =
+                            (object.as_ref(), member.as_slice())
+                        else {
+                            return Ok(None);
+                        };
+                        (variant.as_str(), Some(enum_name.as_str()), argument)
+                    }
+                    _ => return Ok(None),
+                }
+            }
+            Expr::EnumVariant { enum_name, variant, payload, .. } => {
+                (variant.as_str(), Some(enum_name.as_str()), payload.as_deref())
+            }
+            _ => return Ok(None),
+        };
+
+        if let Some(qualifier) = qualifier
+            && self.lookup_symbol(qualifier) != Some(enum_symbol)
+        {
+            return Ok(None);
+        }
+
+        // A variant name may share its spelling with a declaration the
+        // loader renamed; compare what was written.
+        let name = crate::loader::demangle(name);
+        let declaration = self.find_enum_declaration_rc(enum_symbol)?;
+        Ok(declaration
+            .variants
+            .iter()
+            .any(|declared| declared.name == name)
+            .then_some((name, argument)))
     }
 
     /// Resolves a nested struct/enum/type-alias/macro declaration's own
@@ -1168,6 +1292,7 @@ impl<'a> AliasResolver<'a> {
             is_pub: decl.is_pub,
             ty: decl.ty.clone(),
             value: self.splice_expr(&decl.value, scope)?,
+            doc: decl.doc.clone(),
             span: decl.span,
         })
     }

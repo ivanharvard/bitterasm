@@ -14,7 +14,7 @@
 //! just these two.
 
 use std::fmt;
-use crate::token::{Token, TokenKind, Span};
+use crate::token::{DocComment, Token, TokenKind, Span};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LexError {
@@ -66,7 +66,46 @@ impl std::error::Error for LexError {}
 /// );
 /// ```
 pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
-    Lexer::new(source).lex_all()
+    lex_with_docs(source).map(|(tokens, _)| tokens)
+}
+
+/// [`lex`], also returning every `##`/`#!` doc comment in source order.
+/// [`lex`] drops them like any other comment; the loader keeps them so the
+/// parser can attach them to the items they document.
+///
+/// ```
+/// use bitterasm::lexer::lex_with_docs;
+///
+/// let (_, docs) = lex_with_docs("#! A module.\n## A constant.\nconst x = 1\n").unwrap();
+/// assert!(docs[0].is_module);
+/// assert_eq!(docs[1].text, "A constant.");
+/// ```
+pub fn lex_with_docs(source: &str) -> Result<(Vec<Token>, Vec<DocComment>), LexError> {
+    let lexer = Lexer::new(source);
+    lexer.lex_all()
+}
+
+/// Splits a comment line into `(is_module, text)` if it's a doc comment.
+/// `##` documents the next item and `#!` the enclosing file, like Rust's
+/// `///` and `//!`; `###` and longer runs are ordinary comments, so a
+/// `####` banner stays private the way `////` does in Rust. `text` drops
+/// the marker and one separating space, keeping any further indentation.
+///
+/// ```
+/// use bitterasm::lexer::doc_comment;
+///
+/// assert_eq!(doc_comment("##   code"), Some((false, "  code")));
+/// assert_eq!(doc_comment("#! About this file"), Some((true, "About this file")));
+/// assert_eq!(doc_comment("### banner"), None);
+/// ```
+pub fn doc_comment(line: &str) -> Option<(bool, &str)> {
+    let (is_module, rest) = if let Some(rest) = line.strip_prefix("#!") {
+        (true, rest)
+    } else {
+        (false, line.strip_prefix("##").filter(|rest| !rest.starts_with('#'))?)
+    };
+    let rest = rest.strip_suffix('\r').unwrap_or(rest);
+    Some((is_module, rest.strip_prefix(' ').unwrap_or(rest)))
 }
 
 // Lexer
@@ -78,6 +117,7 @@ struct Lexer<'src> {
     pos: usize,
 
     tokens: Vec<Token>,
+    docs: Vec<DocComment>,
 }
 
 impl<'src> Lexer<'src> {
@@ -86,10 +126,11 @@ impl<'src> Lexer<'src> {
             source,
             pos: 0,
             tokens: Vec::new(),
+            docs: Vec::new(),
         }
     }
 
-    fn lex_all(mut self) -> Result<Vec<Token>, LexError> {
+    fn lex_all(mut self) -> Result<(Vec<Token>, Vec<DocComment>), LexError> {
         while !self.is_eof() {
             self.lex_one()?;
         }
@@ -102,8 +143,8 @@ impl<'src> Lexer<'src> {
             )
         );
 
-        Ok(self.tokens)
-    } 
+        Ok((self.tokens, self.docs))
+    }
 
     fn lex_one(&mut self) -> Result<(), LexError> {
         let ch = match self.peek() {
@@ -127,7 +168,7 @@ impl<'src> Lexer<'src> {
 
             // comments
             '#' => {
-                self.skip_line_comment();
+                self.lex_comment();
             }
 
             // identifier/keywords
@@ -619,6 +660,15 @@ impl<'src> Lexer<'src> {
         }
     }
 
+    fn lex_comment(&mut self) {
+        let start = self.pos;
+        self.skip_line_comment();
+        if let Some((is_module, text)) = doc_comment(&self.source[start..self.pos]) {
+            let text = text.trim_end().to_string();
+            self.docs.push(DocComment { is_module, text, span: Span::new(start, self.pos) });
+        }
+    }
+
     fn skip_line_comment(&mut self) {
         while let Some(ch) = self.peek() {
             if ch == '\n' {
@@ -689,6 +739,43 @@ mod tests {
             .into_iter()
             .map(|token| token.kind)
             .collect()
+    }
+
+    fn docs(source: &str) -> Vec<(bool, String)> {
+        lex_with_docs(source)
+            .unwrap()
+            .1
+            .into_iter()
+            .map(|doc| (doc.is_module, doc.text))
+            .collect()
+    }
+
+    #[test]
+    fn lexes_doc_comments_on_the_side() {
+        let source = "#! Module.\n## Item.\n# Private.\n### Banner.\nconst x = 1 ## trailing\n";
+        assert_eq!(
+            docs(source),
+            vec![
+                (true, "Module.".to_string()),
+                (false, "Item.".to_string()),
+                (false, "trailing".to_string()),
+            ]
+        );
+        // The grammar never sees them.
+        assert_eq!(kinds(source), kinds("\n\n\n\nconst x = 1\n"));
+    }
+
+    #[test]
+    fn doc_comment_text_keeps_markdown_indentation() {
+        assert_eq!(
+            docs("##\n##     indented code\n##no space\n## trailing   \r\n"),
+            vec![
+                (false, String::new()),
+                (false, "    indented code".to_string()),
+                (false, "no space".to_string()),
+                (false, "trailing".to_string()),
+            ]
+        );
     }
 
     #[test]

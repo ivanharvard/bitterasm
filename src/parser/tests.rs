@@ -28,6 +28,41 @@ fn parses_import_all() {
 
     assert_eq!(import.module.relative_level, 0);
     assert_eq!(import.items, ImportItems::All);
+    assert!(!import.is_pub);
+}
+
+#[test]
+fn parses_pub_import_as_a_re_export() {
+    let source = "pub from .impl import mov, add\n";
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    let Statement::Import(import) = &program.statements[0] else {
+        panic!("expected import");
+    };
+
+    assert!(import.is_pub);
+    assert_eq!(import.module.relative_level, 1);
+    assert_eq!(import.span.start, 0, "the span starts at `pub`");
+    assert_eq!(crate::printer::print_statement(&program.statements[0], 0), source.trim_end());
+}
+
+#[test]
+fn prints_struct_fields_with_visibility_skip_and_defaults() {
+    let source = "struct W<const N: int>\n{\n    pub value: int,\n    pub skip len: int = N,\n    hidden: int\n}\n";
+    let program = parse(lex(source).unwrap()).unwrap();
+    assert_eq!(crate::printer::print_statement(&program.statements[0], 0), source.trim_end());
+}
+
+#[test]
+fn parses_parent_relative_imports() {
+    for (source, level) in [("from ..util import x\n", 2), ("from ...util import x\n", 3), ("from ....util import x\n", 4)] {
+        let program = parse(lex(source).unwrap()).unwrap();
+        let Statement::Import(import) = &program.statements[0] else {
+            panic!("expected import");
+        };
+        assert_eq!(import.module.relative_level, level, "{source}");
+        assert_eq!(crate::printer::print_statement(&program.statements[0], 0), source.trim_end());
+    }
 }
 
 #[test]
@@ -1647,4 +1682,148 @@ fn fold_and_for_print_back_to_parseable_source() {
         "    @return n\n",
         "}\n",
     ));
+}
+
+fn parse_with_docs(source: &str) -> Program {
+    let (tokens, docs) = crate::lexer::lex_with_docs(source).unwrap();
+    parse_seeded(tokens, docs, &ParserSeed::default()).unwrap().0
+}
+
+fn doc_text(doc: &Option<crate::ast::Doc>) -> Option<&str> {
+    doc.as_ref().map(|doc| doc.text.as_str())
+}
+
+#[test]
+fn attaches_doc_comments_to_the_items_below_them() {
+    let program = parse_with_docs(concat!(
+        "#! The module.\n",
+        "#!\n",
+        "#! More.\n",
+        "\n",
+        "## A macro.\n",
+        "## Second line.\n",
+        "# an ordinary comment in between\n",
+        "\n",
+        "pub macro show(value: int) {\n",
+        "    @emit value\n",
+        "}\n",
+        "## A struct.\n",
+        "struct Point {\n",
+        "    ## Across.\n",
+        "    pub x: int,\n",
+        "    y: int,\n",
+        "}\n",
+        "## An enum.\n",
+        "pub enum Mode {\n",
+        "    ## First.\n",
+        "    A,\n",
+        "    B: int,\n",
+        "}\n",
+        "## A const.\n",
+        "pub const n = 1\n",
+        "## An alias.\n",
+        "type Word = int\n",
+        "## A label.\n",
+        "pub start:\n",
+        "## A syntax.\n",
+        "syntax show(value) = { print $value$ }\n",
+    ));
+
+    assert_eq!(doc_text(&program.doc), Some("The module.\n\nMore."));
+    assert!(program.stray_docs.is_empty(), "{:?}", program.stray_docs);
+
+    let docs: Vec<Option<&str>> = program
+        .statements
+        .iter()
+        .map(|statement| match statement {
+            Statement::Macro(decl) => doc_text(&decl.doc),
+            Statement::Struct(decl) => doc_text(&decl.doc),
+            Statement::Enum(decl) => doc_text(&decl.doc),
+            Statement::Const(decl) => doc_text(&decl.doc),
+            Statement::TypeAlias(decl) => doc_text(&decl.doc),
+            Statement::Label(label) => doc_text(&label.doc),
+            Statement::SyntaxOverride(statement) => doc_text(&statement.doc),
+            other => panic!("unexpected {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        docs,
+        vec![
+            Some("A macro.\nSecond line."),
+            Some("A struct."),
+            Some("An enum."),
+            Some("A const."),
+            Some("An alias."),
+            Some("A label."),
+            Some("A syntax."),
+        ]
+    );
+
+    let Statement::Struct(point) = &program.statements[1] else { panic!("expected a struct") };
+    let fields: Vec<_> = point
+        .fields
+        .iter()
+        .map(|item| match item {
+            StructBodyItem::Field(field) => doc_text(&field.doc),
+            other => panic!("unexpected {other:?}"),
+        })
+        .collect();
+    assert_eq!(fields, vec![Some("Across."), None]);
+
+    let Statement::Enum(mode) = &program.statements[2] else { panic!("expected an enum") };
+    let variants: Vec<_> = mode.variants.iter().map(|variant| doc_text(&variant.doc)).collect();
+    assert_eq!(variants, vec![Some("First."), None]);
+}
+
+#[test]
+fn doc_comments_that_document_nothing_are_stray() {
+    let program = parse_with_docs(concat!(
+        "macro show(value: int) {\n",
+        "    ## Inside a body.\n",
+        "    ## Still inside.\n",
+        "    @emit value\n",
+        "}\n",
+        "## Above an invocation.\n",
+        "show 1\n",
+        "#! Too late for the module.\n",
+        "const n = 1\n",
+        "## At the end.\n",
+    ));
+
+    let Statement::Const(n) = &program.statements[2] else { panic!("expected a const") };
+    assert_eq!(n.doc, None);
+    assert_eq!(program.doc, None);
+
+    let stray: Vec<_> = program.stray_docs.iter().map(|doc| (doc.is_module, doc.text.as_str())).collect();
+    assert_eq!(
+        stray,
+        vec![
+            (false, "Inside a body.\nStill inside."),
+            (false, "Above an invocation."),
+            (true, "Too late for the module."),
+            (false, "At the end."),
+        ]
+    );
+}
+
+#[test]
+fn a_doc_comment_on_the_first_statement_is_not_the_module_doc() {
+    let program = parse_with_docs("## Just the const.\nconst n = 1\n");
+    assert_eq!(program.doc, None);
+    let Statement::Const(n) = &program.statements[0] else { panic!("expected a const") };
+    assert_eq!(doc_text(&n.doc), Some("Just the const."));
+}
+
+#[test]
+fn documents_declarations_inside_blocks() {
+    let program = parse_with_docs(concat!(
+        "@for i in 0..2 {\n",
+        "    ## Register `i`.\n",
+        "    pub const r`i` = i\n",
+        "}\n",
+    ));
+    assert!(program.stray_docs.is_empty(), "{:?}", program.stray_docs);
+    let Statement::Meta(meta) = &program.statements[0] else { panic!("expected `@for`") };
+    let Statement::Const(r) = &meta.body.as_ref().unwrap()[0] else { panic!("expected a const") };
+    assert_eq!(doc_text(&r.doc), Some("Register `i`."));
 }

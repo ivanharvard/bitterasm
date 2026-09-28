@@ -22,6 +22,10 @@ pub fn load_error(error: LoadError, sources: &mut SourceMap) -> Diagnostic {
             }
             diagnostic
         }
+        LoadError::Resolve { path, error } => {
+            let source = std::fs::read_to_string(&path).ok().map(|text| sources.add(&path, text));
+            resolve_error(*error, source)
+        }
         other => Diagnostic::error(other.to_string()),
     }
 }
@@ -46,6 +50,9 @@ pub fn resolve_error(error: ResolveError, source: Option<SourceId>) -> Diagnosti
         InvalidArgumentCount { name, expected, actual, span } => (format!("`{name}` expects {expected} argument(s), but {actual} were supplied"), span),
         ExpectedStructCallee { name, span } => (format!("expected `{name}` to name a struct"), span),
         ExpectedIntValue { span } => ("expected an integer value".into(), span),
+        MetaOutsideMacro { kind, span } => (format!("`{kind}` can only be used inside a macro; call a macro that uses it instead"), span),
+        NonIntOperand { found, hint: None, span } => (format!("expected an integer here, found `{found}`"), span),
+        NonIntOperand { found, hint: Some(hint), span } => (format!("expected an integer here, found `{found}`: {hint}"), span),
         ExpectedStructValue { span } => ("expected a struct value".into(), span),
         ExpectedValueExpression { span } => ("expected a value expression".into(), span),
         UnsupportedMacroStatement { kind, span } => (format!("unsupported `{kind}` statement in macro body"), span),
@@ -64,6 +71,9 @@ pub fn resolve_error(error: ResolveError, source: Option<SourceId>) -> Diagnosti
         AssertionFailed { message, span } => (message.unwrap_or_else(|| "assertion failed".into()), span),
         InvalidAssertMessage { span } => ("assertion message must be a string literal".into(), span),
         TypeMismatch { name, expected, actual, span } => (format!("type mismatch for `{name}`: expected `{expected}`, found `{actual}`"), span),
+        ConversionWithoutReturnType { name, span } => (format!("conversion macro `{name}` must declare its return type (`-> Type`), so `as` can tell what it converts to"), span),
+        ReturnTypeMismatch { name, expected, actual: Some(actual), span } => (format!("`{name}` returned `{actual}`, but its signature declares `-> {expected}`"), span),
+        ReturnTypeMismatch { name, expected, actual: None, span } => (format!("`{name}` returned nothing, but its signature declares `-> {expected}`; to declare what it emits, use `| emits {expected}`"), span),
         InvariantViolated { type_name, invariant, span } => (format!("invariant `{invariant}` was violated for `{type_name}`"), span),
         EmittedTypeNotDeclared { actual, declared, span } => (format!("`@emit`ed value has type `{actual}`, but this macro's `emits` facet(s) only declare {}", declared.iter().map(|ty| format!("`{ty}`")).collect::<Vec<_>>().join(", ")), span),
         CannotCoerce { type_name, span } => (format!("cannot implicitly convert to `{type_name}`"), span),
@@ -74,7 +84,8 @@ pub fn resolve_error(error: ResolveError, source: Option<SourceId>) -> Diagnosti
         ComputedNameNotAllowed { span } => ("computed name is not allowed here".into(), span),
         TopLevelForRequiresRange { span } => ("top-level @for requires a range".into(), span),
     };
-    let diagnostic = Diagnostic::error(message);
+    // Names reach here as the loader's internal names (`bits#3`).
+    let diagnostic = Diagnostic::error(crate::loader::demangle(&message));
     match source {
         Some(id) => diagnostic.primary(id, span, "error occurs here"),
         None => diagnostic,

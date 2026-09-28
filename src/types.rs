@@ -157,6 +157,7 @@ pub struct StructField {
     pub default: Option<Expr>,
 
     pub span: Span,
+    pub doc: Option<crate::ast::Doc>,
 }
 
 /// One item in a struct declaration's body — either a field written

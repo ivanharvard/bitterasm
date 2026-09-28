@@ -9,7 +9,7 @@
 //! definition later. [`Statement::Meta`] is reserved for the `@`-prefixed
 //! directives (e.g. a macro body's `@return`) that make up macro bodies.
 
-use crate::token::{Span, TokenKind};
+use crate::token::{DocComment, Span, TokenKind};
 use crate::types::{
     GenericParameter,
     StructBodyItem,
@@ -21,6 +21,33 @@ use crate::types::{
 pub struct Program {
     pub statements: Vec<Statement>,
     pub span: Span,
+
+    /// The file's leading `#!` block, if any.
+    pub doc: Option<Doc>,
+
+    /// Doc comments that document nothing: a `##` with no item after it
+    /// (or one before something that can't carry docs, like an
+    /// invocation), or a `#!` after the file's first statement. Reported
+    /// by the `unused_doc_comments` lint.
+    pub stray_docs: Vec<DocComment>,
+}
+
+/// A run of `##` (or leading `#!`) lines, joined with newlines: Markdown.
+/// `span` covers the whole run, for tools that report on the doc itself.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Doc {
+    pub text: String,
+    pub span: Span,
+}
+
+impl Doc {
+    /// Joins consecutive doc comment lines into one block.
+    pub fn from_lines(lines: &[DocComment]) -> Option<Self> {
+        let first = lines.first()?;
+        let last = lines.last()?;
+        let text = lines.iter().map(|line| line.text.as_str()).collect::<Vec<_>>().join("\n");
+        Some(Self { text, span: Span::new(first.span.start, last.span.end) })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -58,10 +85,15 @@ pub struct SyntaxOverrideStatement {
     pub name: String,
     pub pattern: crate::facets::syntax::SyntaxPattern,
     pub span: Span,
+    pub doc: Option<Doc>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImportStatement {
+    /// `pub from x import ...` re-exports what it imports: a module that
+    /// imports this one sees those names too. A plain import is private to
+    /// the importing file.
+    pub is_pub: bool,
     pub module: ModulePath,
     pub items: ImportItems,
     pub span: Span,
@@ -85,6 +117,7 @@ pub struct Label {
     pub name: String,
     pub is_pub: bool,
     pub span: Span,
+    pub doc: Option<Doc>,
 }
 
 /// A `from file import label_name` where `label_name` names a `pub` label
@@ -473,6 +506,7 @@ pub struct ConstDeclaration {
     pub ty: Option<TypeExpr>,
     pub value: Expr,
     pub span: Span,
+    pub doc: Option<Doc>,
 }
 
 /// An enum declaration. A variant may be payload-free (`None`) or carry one
@@ -484,6 +518,7 @@ pub struct EnumDeclaration {
     pub generic_params: Vec<GenericParameter>,
     pub variants: Vec<EnumVariantDeclaration>,
     pub span: Span,
+    pub doc: Option<Doc>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -491,6 +526,7 @@ pub struct EnumVariantDeclaration {
     pub name: String,
     pub payload: Option<TypeExpr>,
     pub span: Span,
+    pub doc: Option<Doc>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -501,6 +537,7 @@ pub struct StructDeclaration {
     pub facets: Vec<Facet>,
     pub fields: Vec<StructBodyItem>,
     pub span: Span,
+    pub doc: Option<Doc>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -511,6 +548,7 @@ pub struct TypeAliasDeclaration {
     pub facets: Vec<Facet>,
     pub ty: TypeExpr,
     pub span: Span,
+    pub doc: Option<Doc>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -523,6 +561,7 @@ pub struct MacroDeclaration {
     pub facets: Vec<Facet>,
     pub body: Vec<Statement>,
     pub span: Span,
+    pub doc: Option<Doc>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

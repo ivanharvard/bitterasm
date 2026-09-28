@@ -1,0 +1,6 @@
+# Imports `base` without re-exporting it.
+from .base import *
+
+pub macro show_base() {
+    emit_base
+}

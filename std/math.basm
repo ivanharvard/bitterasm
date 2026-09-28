@@ -1,11 +1,43 @@
-from std.decimal import Decimal, Fraction
+#! Integer math, and fixed-point math on `Decimal` and `Fraction`, all
+#! evaluated at compile time.
+#!
+#! ```
+#! from std.math import *
+#!
+#! macro show(value: int) {
+#!     @emit value
+#! }
+#!
+#! macro demo() {
+#!     show gcd(12, 18)
+#!     show div_floor(-7, 2)
+#!     show sqrt(2, 4).value
+#!     show sin(PI(10), 6).value
+#! }
+#!
+#! demo
+#! ```
+#!
+#! ```emits
+#! 6 -4 14142 0
+#! ```
+#!
+#! Functions that give a `Decimal` take a `precision`: the number of decimal
+#! places to keep, `DEFAULT_PRECISION` unless given. Results are truncated
+#! to that many places, so `sqrt(2, 4)` is 1.4142. Angles are in radians.
 
-# Fixed-point results are truncated to `precision` decimal places. Four
-# guard digits are used internally. Embedded constants support 0..60 places.
+pub from std.decimal import Decimal, Fraction
+
+## The number of decimal places a `Decimal` result keeps when no
+## `precision` is given.
 pub const DEFAULT_PRECISION: int = 16
+## Extra decimal places used inside a calculation, and dropped from its
+## result.
 pub const GUARD_DIGITS: int = 4
+## The most decimal places `PI`, `E` and the other constants can give.
 pub const CONSTANT_DIGITS: int = 60
 
+## The absolute value of `x`.
 pub macro abs(x: int) -> int {
     @if x < 0 {
         @return -x
@@ -14,6 +46,7 @@ pub macro abs(x: int) -> int {
     @return x
 }
 
+## The smaller of `a` and `b`.
 pub macro min(
     a: int,
     b: int
@@ -25,6 +58,7 @@ pub macro min(
     @return b
 }
 
+## The larger of `a` and `b`.
 pub macro max(
     a: int,
     b: int
@@ -36,6 +70,7 @@ pub macro max(
     @return b
 }
 
+## -1, 0 or 1, as `x` is negative, zero or positive.
 pub macro sign(x: int) -> int {
     @if x > 0 {
         @return 1
@@ -48,22 +83,27 @@ pub macro sign(x: int) -> int {
     @return 0
 }
 
+## The absolute value of `x`.
 pub macro abs(x: Decimal) -> Decimal {
     @return Decimal(value = abs(x.value), scale = x.scale)
 }
 
+## The absolute value of `x`.
 pub macro abs(x: Fraction) -> Fraction {
     @return Fraction(n = abs(x.n), d = abs(x.d))
 }
 
+## -1, 0 or 1, as `x` is negative, zero or positive.
 pub macro sign(x: Decimal) -> int {
     @return sign(x.value)
 }
 
+## -1, 0 or 1, as `x` is negative, zero or positive.
 pub macro sign(x: Fraction) -> int {
     @return sign(x.n) * sign(x.d)
 }
 
+## `abs(x)` with the sign of `y`: `abs(x) * sign(y)`, so 0 when `y` is 0.
 pub macro copysign(
     x: int,
     y: int
@@ -71,6 +111,7 @@ pub macro copysign(
     @return abs(x) * sign(y)
 }
 
+## `x`, moved into `lo..=hi` if it's outside. `lo` can't be more than `hi`.
 pub macro clamp(
     x: int,
     lo: int,
@@ -100,6 +141,7 @@ macro _pow_acc(
     @return _pow_acc(base, exponent - 1, accumulator * base)
 }
 
+## `base` to the power `exponent`, which can't be negative.
 pub macro pow(
     base: int,
     exponent: int
@@ -114,6 +156,7 @@ macro _pow10(exponent: int) -> int {
 
 # Exact integer operations. gcd(0,0)=0, lcm is nonnegative, and
 # next_pow_of_two(0)=1. pow_mod requires exponent>=0 and modulus>0.
+## The greatest common divisor of `a` and `b`, never negative. `gcd(0, 0)` is 0.
 pub macro gcd(
     a: int,
     b: int
@@ -125,6 +168,7 @@ pub macro gcd(
     @return gcd(b, a % b)
 }
 
+## The least common multiple of `a` and `b`, never negative.
 pub macro lcm(
     a: int,
     b: int
@@ -136,6 +180,7 @@ pub macro lcm(
     @return abs((a / gcd(a, b)) * b)
 }
 
+## `a / b` rounded down: `div_floor(-7, 2)` is -4, where `/` gives -3.
 pub macro div_floor(
     a: int,
     b: int
@@ -150,6 +195,7 @@ pub macro div_floor(
     @return q
 }
 
+## `a / b` rounded up: `div_ceil(7, 2)` is 4.
 pub macro div_ceil(
     a: int,
     b: int
@@ -157,6 +203,8 @@ pub macro div_ceil(
     @return -div_floor(-a, b)
 }
 
+## The remainder of `a / b` that's never negative: `rem_euclid(-7, 3)` is 2,
+## where `%` gives -1.
 pub macro rem_euclid(
     a: int,
     b: int
@@ -170,6 +218,8 @@ pub macro rem_euclid(
     @return r
 }
 
+## The quotient that goes with `rem_euclid`, so
+## `div_euclid(a, b) * b + rem_euclid(a, b) == a`.
 pub macro div_euclid(
     a: int,
     b: int
@@ -204,6 +254,8 @@ macro _pow_mod(
     )
 }
 
+## `base^exponent % modulus`, without computing `base^exponent` in full.
+## `exponent` can't be negative, and `modulus` must be positive.
 pub macro pow_mod(
     base: int,
     exponent: int,
@@ -235,6 +287,7 @@ macro _iroot(
     @return _iroot(n, degree, next)
 }
 
+## The square root of `x`, rounded down. `x` can't be negative.
 pub macro isqrt(x: int) -> int {
     @assert x >= 0, "isqrt is undefined for negative integers"
     @if x < 2 {
@@ -268,6 +321,7 @@ macro _popcount(
     @return _popcount(x >> 1, count + (x & 1))
 }
 
+## How many bits of `x` are 1. `x` can't be negative.
 pub macro popcount(x: int) -> int {
     @assert x >= 0
     @return _popcount(x, 0)
@@ -284,11 +338,14 @@ macro _ctz(
     @return _ctz(x >> 1, count + 1)
 }
 
+## How many 0 bits come below `x`'s lowest 1 bit. `ctz(0)` is 0.
 pub macro ctz(x: int) -> int {
     @assert x >= 0
     @return _ctz(x, 0)
 }
 
+## How many 0 bits come above `x`'s highest 1 bit, in a `width`-bit value.
+## `x` must fit in `width` bits.
 pub macro clz(
     x: int,
     width: int
@@ -297,6 +354,8 @@ pub macro clz(
     @return width - _bit_length(x, 0)
 }
 
+## `x` rotated left by `amount` bits within a `width`-bit value: bits
+## shifted out at the top come back in at the bottom.
 pub macro rotate_left(
     x: int,
     amount: int,
@@ -307,6 +366,8 @@ pub macro rotate_left(
     @return ((x << shift) | (x >> (width - shift))) & ((1 << width) - 1)
 }
 
+## `x` rotated right by `amount` bits within a `width`-bit value: bits
+## shifted out at the bottom come back in at the top.
 pub macro rotate_right(
     x: int,
     amount: int,
@@ -315,10 +376,13 @@ pub macro rotate_right(
     @return rotate_left(x, -amount, width)
 }
 
+## 1 if `x` is a power of two, else 0. 0 isn't one.
 pub macro is_pow_of_two(x: int) -> int {
     @return x > 0 && (x & (x - 1)) == 0
 }
 
+## The smallest power of two that's at least `x`: `next_pow_of_two(5)` is 8,
+## and `next_pow_of_two(0)` is 1.
 pub macro next_pow_of_two(x: int) -> int {
     @assert x >= 0
     @if x <= 1 {
@@ -353,6 +417,7 @@ macro _result(
     @return Decimal(value = value / _pow10(work - precision), scale = precision)
 }
 
+## The largest integer not above `x`.
 pub macro floor(x: int) -> int {
     @return x
 }
@@ -365,6 +430,7 @@ pub macro floor(x: Fraction) -> int {
     @return div_floor(x.n, x.d)
 }
 
+## The smallest integer not below `x`.
 pub macro ceil(x: int) -> int {
     @return x
 }
@@ -377,6 +443,7 @@ pub macro ceil(x: Fraction) -> int {
     @return div_ceil(x.n, x.d)
 }
 
+## `x` with its fractional part dropped, rounding toward zero.
 pub macro trunc(x: int) -> int {
     @return x
 }
@@ -389,6 +456,8 @@ pub macro trunc(x: Fraction) -> int {
     @return x.n / x.d
 }
 
+## The nearest integer to `x`. Halves round away from zero: 2.5 becomes 3,
+## and -2.5 becomes -3.
 pub macro round(x: int) -> int {
     @return x
 }
@@ -412,6 +481,7 @@ pub macro round(x: Fraction) -> int {
     @return quotient
 }
 
+## `x - floor(x)`, always between 0 and 1: `fract(-2.5)` is 0.5.
 pub macro fract(x: Decimal) -> Decimal {
     @return Decimal(
         value = rem_euclid(x.value, _pow10(x.scale)),
@@ -434,6 +504,7 @@ macro _constant(
     )
 }
 
+## π to `precision` decimal places, at most 60.
 pub macro PI(precision: int = DEFAULT_PRECISION) -> Decimal {
     @return _constant(
         3141592653589793238462643383279502884197169399375105820974940,
@@ -441,6 +512,7 @@ pub macro PI(precision: int = DEFAULT_PRECISION) -> Decimal {
     )
 }
 
+## τ = 2π to `precision` decimal places, at most 60.
 pub macro TAU(precision: int = DEFAULT_PRECISION) -> Decimal {
     @return _constant(
         6283185307179586476925286766559005768394338798750211641949880,
@@ -448,6 +520,7 @@ pub macro TAU(precision: int = DEFAULT_PRECISION) -> Decimal {
     )
 }
 
+## e to `precision` decimal places, at most 60.
 pub macro E(precision: int = DEFAULT_PRECISION) -> Decimal {
     @return _constant(
         2718281828459045235360287471352662497757247093699959574966967,
@@ -455,6 +528,7 @@ pub macro E(precision: int = DEFAULT_PRECISION) -> Decimal {
     )
 }
 
+## √2 to `precision` decimal places, at most 60.
 pub macro SQRT2(precision: int = DEFAULT_PRECISION) -> Decimal {
     @return _constant(
         1414213562373095048801688724209698078569671875376948073176679,
@@ -462,6 +536,7 @@ pub macro SQRT2(precision: int = DEFAULT_PRECISION) -> Decimal {
     )
 }
 
+## ln 2 to `precision` decimal places, at most 60.
 pub macro LN2(precision: int = DEFAULT_PRECISION) -> Decimal {
     @return _constant(
         693147180559945309417232121458176568075500134360255254120680,
@@ -469,6 +544,7 @@ pub macro LN2(precision: int = DEFAULT_PRECISION) -> Decimal {
     )
 }
 
+## ln 10 to `precision` decimal places, at most 60.
 pub macro LN10(precision: int = DEFAULT_PRECISION) -> Decimal {
     @return _constant(
         2302585092994045684017991454684364207601101488628772976033328,
@@ -477,6 +553,8 @@ pub macro LN10(precision: int = DEFAULT_PRECISION) -> Decimal {
 }
 
 # Roots: degree>0; negative radicands require an odd degree.
+## The `degree`th root of `x`. `degree` must be positive, and a negative `x`
+## needs an odd `degree`: `root(-8, 3)` is -2.
 pub macro root(
     x: Decimal,
     degree: int,
@@ -526,6 +604,7 @@ pub macro root(
     )
 }
 
+## The square root of `x`, which can't be negative.
 pub macro sqrt(
     x: Decimal,
     precision: int = DEFAULT_PRECISION
@@ -540,6 +619,7 @@ pub macro sqrt(
     @return root(x, 2, precision)
 }
 
+## `sqrt(x^2 + y^2)`, the length of the hypotenuse.
 pub macro hypot(
     x: Decimal,
     y: Decimal,
@@ -580,6 +660,7 @@ macro _exp_series(
     @return _exp_series(x, scale, k + 1, next, sum + next)
 }
 
+## e to the power `x`.
 pub macro exp(
     x: Decimal,
     precision: int = DEFAULT_PRECISION
@@ -597,6 +678,7 @@ pub macro exp(
     @return _result(series / (1 << -power), work, precision)
 }
 
+## 2 to the power `x`.
 pub macro exp2(
     x: Decimal,
     precision: int = DEFAULT_PRECISION
@@ -608,6 +690,7 @@ pub macro exp2(
     )
 }
 
+## `exp(x) - 1`.
 pub macro expm1(
     x: Decimal,
     precision: int = DEFAULT_PRECISION
@@ -664,6 +747,7 @@ macro _ln_series(
     )
 }
 
+## The natural logarithm of `x`, which must be positive.
 pub macro ln(
     x: Decimal,
     precision: int = DEFAULT_PRECISION
@@ -682,6 +766,7 @@ pub macro ln(
     )
 }
 
+## The base-2 logarithm of `x`, which must be positive.
 pub macro log2(
     x: Decimal,
     precision: int = DEFAULT_PRECISION
@@ -694,6 +779,7 @@ pub macro log2(
     )
 }
 
+## The base-10 logarithm of `x`, which must be positive.
 pub macro log10(
     x: Decimal,
     precision: int = DEFAULT_PRECISION
@@ -706,6 +792,7 @@ pub macro log10(
     )
 }
 
+## `ln(1 + x)`.
 pub macro log1p(
     x: Decimal,
     precision: int = DEFAULT_PRECISION
@@ -717,6 +804,7 @@ pub macro log1p(
     )
 }
 
+## `base` to the power `exponent`. `base` must be positive.
 pub macro pow(
     base: Decimal,
     exponent: Decimal,
@@ -752,6 +840,7 @@ macro _fixed_pow(
     @return _fixed_pow(base, exponent - 1, scale, accumulator * base / scale)
 }
 
+## `base` to an integer power. A negative `exponent` needs a nonzero `base`.
 pub macro pow(
     base: Decimal,
     exponent: int,
@@ -807,6 +896,7 @@ macro _cos_series(
     @return _cos_series(x, scale, k + 1, next, sum + next)
 }
 
+## The sine of `x` radians.
 pub macro sin(
     x: Decimal,
     precision: int = DEFAULT_PRECISION
@@ -820,6 +910,7 @@ pub macro sin(
     )
 }
 
+## The cosine of `x` radians.
 pub macro cos(
     x: Decimal,
     precision: int = DEFAULT_PRECISION
@@ -833,6 +924,7 @@ pub macro cos(
     )
 }
 
+## The tangent of `x` radians. It's an error where the cosine is 0.
 pub macro tan(
     x: Decimal,
     precision: int = DEFAULT_PRECISION
@@ -868,6 +960,7 @@ macro _atan_series(
     )
 }
 
+## The arctangent of `x`, in radians from -π/2 to π/2.
 pub macro atan(
     x: Decimal,
     precision: int = DEFAULT_PRECISION
@@ -918,6 +1011,9 @@ pub macro atan(
     )
 }
 
+## The angle of the point (`x`, `y`) from the positive x axis, in radians
+## from -π to π, using both signs to pick the quadrant. `atan2(0, 0)` is an
+## error.
 pub macro atan2(
     y: Decimal,
     x: Decimal,
@@ -959,6 +1055,7 @@ pub macro atan2(
     @return _result(-_scaled(PI(work), work) / 2, work, precision)
 }
 
+## The arcsine of `x`, in radians. `x` must be between -1 and 1.
 pub macro asin(
     x: Decimal,
     precision: int = DEFAULT_PRECISION
@@ -982,6 +1079,7 @@ pub macro asin(
     )
 }
 
+## The arccosine of `x`, in radians. `x` must be between -1 and 1.
 pub macro acos(
     x: Decimal,
     precision: int = DEFAULT_PRECISION
@@ -995,6 +1093,7 @@ pub macro acos(
 }
 
 # Hyperbolic functions and real inverse domains.
+## The hyperbolic sine of `x`.
 pub macro sinh(
     x: Decimal,
     precision: int = DEFAULT_PRECISION
@@ -1007,6 +1106,7 @@ pub macro sinh(
     )
 }
 
+## The hyperbolic cosine of `x`.
 pub macro cosh(
     x: Decimal,
     precision: int = DEFAULT_PRECISION
@@ -1019,6 +1119,7 @@ pub macro cosh(
     )
 }
 
+## The hyperbolic tangent of `x`.
 pub macro tanh(
     x: Decimal,
     precision: int = DEFAULT_PRECISION
@@ -1031,6 +1132,7 @@ pub macro tanh(
     )
 }
 
+## The inverse hyperbolic sine of `x`.
 pub macro asinh(
     x: Decimal,
     precision: int = DEFAULT_PRECISION
@@ -1044,6 +1146,7 @@ pub macro asinh(
     )
 }
 
+## The inverse hyperbolic cosine of `x`, which must be at least 1.
 pub macro acosh(
     x: Decimal,
     precision: int = DEFAULT_PRECISION
@@ -1058,6 +1161,8 @@ pub macro acosh(
     )
 }
 
+## The inverse hyperbolic tangent of `x`, which must be between -1 and 1,
+## exclusive.
 pub macro atanh(
     x: Decimal,
     precision: int = DEFAULT_PRECISION
@@ -1073,6 +1178,7 @@ pub macro atanh(
     )
 }
 
+## `x` in lowest terms, with a positive denominator: 6/-4 becomes -3/2.
 pub macro simplify(x: Fraction) -> Fraction {
     const divisor = gcd(x.n, x.d)
     const denominator = x.d / divisor

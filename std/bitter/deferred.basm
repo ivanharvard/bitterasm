@@ -1,8 +1,57 @@
-pub enum Op { Add, Sub, Mul, Shr, Band, Span }
+#! Values that depend on where things end up, such as the distance to a
+#! branch target. They're built as `Deferred` expressions that `bitter`
+#! resolves once the image is laid out, and given a width by
+#! `Positioned<N>`.
+#!
+#! ```
+#! from std.binary import bits
+#! from std.bitter.deferred import *
+#!
+#! macro db(value: int) {
+#!     @emit value as bits<8>
+#! }
+#!
+#! macro offset_to(target: int) {
+#!     @emit Positioned<8> { value: span(here(), target) }
+#! }
+#!
+#! offset_to end
+#! db 0xAA
+#! db 0xBB
+#! end:
+#! ```
+#!
+#! ```bytes
+#! 03 aa bb
+#! ```
+#!
+#! `add`, `sub`, `mul`, `shr` and `band` work on `int`s, giving an `int`,
+#! and on `Deferred`s, giving a `Deferred`, so an encoder is written the
+#! same way whether its operand is known yet or not.
 
+## The operation of a `BinOp`.
+pub enum Op {
+    ## `left + right`.
+    Add,
+    ## `left - right`.
+    Sub,
+    ## `left * right`.
+    Mul,
+    ## `left >> right`.
+    Shr,
+    ## `left & right`.
+    Band,
+    ## Bytes from position `left` to position `right`, as in `span`.
+    Span,
+}
+
+## An operation on two `Deferred` values.
 pub struct BinOp {
+    ## What to do.
     pub op: Op,
+    ## The first operand.
     pub left: Deferred,
+    ## The second operand.
     pub right: Deferred,
 }
 
@@ -12,21 +61,27 @@ pub struct BinOp {
 # after the first) knows to translate it from the emitting file's own entry
 # numbering into the merged one. `span`'s `int` endpoints are always
 # positions, so it wraps them in `Pos`, never `Leaf`.
+## A value `bitter` works out after laying out the image. Build one with
+## `here`, `span` and the arithmetic macros rather than by hand.
 pub enum Deferred {
+    ## A plain number.
     Leaf: int,
+    ## A position, such as a label, as a number of entries.
     Pos: int,
+    ## The position of the value being packed.
     Here,
+    ## An operation on two `Deferred` values.
     Node: BinOp,
 }
 
+## The position of the value being packed. Use it only inside the `span`
+## of the value being emitted: stored and used by a different value, it
+## refers to that value's position instead.
 pub macro here() -> Deferred {
     @return Deferred.Here
 }
 
-# ---------------------------------------------------------------
-# add
-# ---------------------------------------------------------------
-
+## `a + b`: an `int` when both are `int`s, else a `Deferred`.
 pub macro add(
     a: int,
     b: int
@@ -63,10 +118,7 @@ pub macro add(
     @return Deferred.Node(BinOp(op = Op.Add, left = a, right = b))
 }
 
-# ---------------------------------------------------------------
-# sub
-# ---------------------------------------------------------------
-
+## `a - b`: an `int` when both are `int`s, else a `Deferred`.
 pub macro sub(
     a: int,
     b: int
@@ -103,10 +155,7 @@ pub macro sub(
     @return Deferred.Node(BinOp(op = Op.Sub, left = a, right = b))
 }
 
-# ---------------------------------------------------------------
-# mul
-# ---------------------------------------------------------------
-
+## `a * b`: an `int` when both are `int`s, else a `Deferred`.
 pub macro mul(
     a: int,
     b: int
@@ -143,12 +192,9 @@ pub macro mul(
     @return Deferred.Node(BinOp(op = Op.Mul, left = a, right = b))
 }
 
-# ---------------------------------------------------------------
-# shr — only (int,int) and (Deferred,int): nothing in std/riscv ever shifts
-# by a not-yet-resolved amount. (int,Deferred)/(Deferred,Deferred) are a
-# trivial, symmetric addition later if something needs them.
-# ---------------------------------------------------------------
-
+# Only (int, int) and (Deferred, int): nothing in std shifts by a
+# not-yet-resolved amount. The other two are a trivial addition if needed.
+## `a >> b`: an `int` when `a` is an `int`, else a `Deferred`.
 pub macro shr(
     a: int,
     b: int
@@ -167,10 +213,8 @@ pub macro shr(
         ))
 }
 
-# ---------------------------------------------------------------
-# band — same reduced shape as shr, same reasoning.
-# ---------------------------------------------------------------
-
+# The same reduced set of overloads as `shr`, for the same reason.
+## `a & b`: an `int` when `a` is an `int`, else a `Deferred`.
 pub macro band(
     a: int,
     b: int
@@ -227,6 +271,9 @@ pub macro band(
 # exactly what `span`'s non-`here()` endpoints ordinarily are (a label
 # name, already a plain `int` by the time a macro body sees it, exactly
 # like `std/riscv`'s branch instructions take one as their `target: int`).
+## The number of bytes from position `start` to position `end`, negative
+## if `end` comes first. Either may be `here()`. Labels are positions, so
+## `span(here(), target)` is a relative branch offset.
 pub macro span(
     start: int,
     end: int
@@ -260,12 +307,11 @@ pub macro span(
         ))
 }
 
-# Pairs a `Deferred` value with the bit width it's meant to occupy once
-# resolved — the one piece of information `bits<N>` normally carries that a
-# bare `Deferred` value can't (a `Deferred.Leaf(5)` alone doesn't say how
-# many bits "5" should occupy; the field it's constructed into does).
-# `bitter` recognizes this struct by name exactly the way it already
-# recognizes `bits`.
+## A `Deferred` value, packed into `width` bits once `bitter` resolves it:
+## what `bits<N>` is to an `int`. A negative value is packed in two's
+## complement.
+# `bitter` recognizes this struct by name, the way it recognizes `bits`.
 pub struct Positioned<const width: int> {
+    ## The value to resolve.
     pub value: Deferred,
 }

@@ -43,6 +43,102 @@ pub(super) enum GenericBinding {
     Const(Option<Int>),
 }
 
+/// A generic type alias applied to arguments — see
+/// `AliasResolver::expand_generic_alias`.
+pub(super) struct AliasExpansion {
+    pub id: SymbolId,
+    pub declaration: Rc<crate::ast::TypeAliasDeclaration>,
+    /// The arguments the alias was applied to, as written.
+    pub args: Vec<TypeArgument>,
+    /// The alias's target, with its parameters substituted.
+    pub ty: TypeExpr,
+    /// The alias's invariants, with its parameters substituted.
+    pub invariants: Vec<Expr>,
+}
+
+/// `ty` with every generic parameter named in `substitutions` replaced by
+/// its argument.
+fn substitute_type(ty: &TypeExpr, substitutions: &HashMap<String, TypeArgument>) -> TypeExpr {
+    match ty {
+        TypeExpr::Named { path, .. } => match path.as_slice() {
+            [name] => match substitutions.get(name) {
+                Some(TypeArgument::Type(replacement)) => replacement.clone(),
+                _ => ty.clone(),
+            },
+            _ => ty.clone(),
+        },
+        TypeExpr::Apply { base, args, span } => TypeExpr::Apply {
+            base: Box::new(substitute_type(base, substitutions)),
+            args: args.iter().map(|arg| substitute_argument(arg, substitutions)).collect(),
+            span: *span,
+        },
+    }
+}
+
+fn substitute_argument(arg: &TypeArgument, substitutions: &HashMap<String, TypeArgument>) -> TypeArgument {
+    // The parser can only tell a type argument from a const one when it
+    // knows the base's signature, so a bare parameter name in either
+    // position becomes whatever argument was written for it.
+    let bare_name = match arg {
+        TypeArgument::Type(TypeExpr::Named { path, .. }) if path.len() == 1 => Some(&path[0]),
+        TypeArgument::Const(Expr::Identifier { name, .. }) => Some(name),
+        _ => None,
+    };
+    if let Some(replacement) = bare_name.and_then(|name| substitutions.get(name)) {
+        return replacement.clone();
+    }
+
+    match arg {
+        TypeArgument::Type(ty) => TypeArgument::Type(substitute_type(ty, substitutions)),
+        TypeArgument::Const(expr) => TypeArgument::Const(substitute_expr(expr, substitutions)),
+        TypeArgument::Wildcard(span) => TypeArgument::Wildcard(*span),
+    }
+}
+
+/// `expr` with every const generic parameter named in `substitutions`
+/// replaced by its argument. Covers the expression forms a type argument or
+/// an invariant is built from.
+fn substitute_expr(expr: &Expr, substitutions: &HashMap<String, TypeArgument>) -> Expr {
+    let sub = |inner: &Expr| Box::new(substitute_expr(inner, substitutions));
+    match expr {
+        // A value takes the span of the parameter it replaces, so two uses
+        // of `Aligned<4>` expand to equal invariants.
+        Expr::Identifier { name, span } => match substitutions.get(name) {
+            Some(TypeArgument::Const(Expr::Integer { raw, .. })) => Expr::Integer { raw: raw.clone(), span: *span },
+            Some(TypeArgument::Const(replacement)) => replacement.clone(),
+            _ => expr.clone(),
+        },
+        Expr::Unary { op, operand, span } => Expr::Unary { op: *op, operand: sub(operand), span: *span },
+        Expr::Binary { left, op, right, span } => {
+            Expr::Binary { left: sub(left), op: *op, right: sub(right), span: *span }
+        }
+        Expr::Member { object, member, span } => {
+            Expr::Member { object: sub(object), member: member.clone(), span: *span }
+        }
+        Expr::Call { callee, arguments, span } => Expr::Call {
+            callee: callee.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| crate::ast::CallArgument {
+                    name: argument.name.clone(),
+                    value: substitute_expr(&argument.value, substitutions),
+                    span: argument.span,
+                })
+                .collect(),
+            span: *span,
+        },
+        Expr::As { value, ty, span } => {
+            Expr::As { value: sub(value), ty: substitute_type(ty, substitutions), span: *span }
+        }
+        Expr::Splice { inner, span } => Expr::Splice { inner: sub(inner), span: *span },
+        Expr::In { value, source, span } => Expr::In { value: sub(value), source: sub(source), span: *span },
+        Expr::Range { start, end, inclusive, span } => {
+            Expr::Range { start: sub(start), end: sub(end), inclusive: *inclusive, span: *span }
+        }
+        _ => expr.clone(),
+    }
+}
+
 /// How `AliasResolver::resolve_label_value` treats a known top-level label
 /// whose position hasn't been recorded yet — i.e. a forward reference.
 /// `Tolerant` (position-discovery pass) substitutes a placeholder so
@@ -179,9 +275,25 @@ pub struct AliasResolver<'a> {
     // never get spliced from another file) always runs as the entry
     // module, which is what this starts out as.
     pub(super) current_module: usize,
+
+    /// The module of the innermost macro whose call failed, for locating
+    /// an error's span in the right file — see `take_error_module`.
+    pub(super) error_module: Option<usize>,
+
+    // Each module's names mapped to the internal names the loader gave
+    // them, indexed by module id (`crate::loader::ModuleOrigins::scopes`).
+    // Empty unless set with `with_module_scopes`.
+    pub(super) module_scopes: Vec<HashMap<String, String>>,
 }
 
 impl<'a> AliasResolver<'a> {
+    /// Lets a name built during resolution (`` x`i` ``) find what it means
+    /// in the module that built it.
+    pub fn with_module_scopes(mut self, scopes: Vec<HashMap<String, String>>) -> Self {
+        self.module_scopes = scopes;
+        self
+    }
+
     /// `consts` is every top-level const already evaluated to an `Int`
     /// (see [`super::ConstEvaluator`]) — needed so a generic const argument
     /// that references one, e.g. `bits<SOME_WIDTH>`, can fold to a
@@ -242,6 +354,8 @@ impl<'a> AliasResolver<'a> {
             alias_decl_cache: RefCell::new(HashMap::new()),
             used_forward_label_placeholder: false,
             current_module: entry_module,
+            error_module: None,
+            module_scopes: Vec::new(),
         }
     }
 
@@ -288,6 +402,13 @@ impl<'a> AliasResolver<'a> {
     /// so far" — called when a top-level `Statement::Label` is walked (see
     /// `main::resolve_and_expand`; nested, in-macro-body labels never call
     /// this, they stay uninvolved in label resolution entirely).
+    /// The module the most recent error arose in — the innermost macro
+    /// whose call failed — if a macro was running. Spans carry no file of
+    /// their own, so this says which file an error's span is in.
+    pub fn take_error_module(&mut self) -> Option<usize> {
+        self.error_module.take()
+    }
+
     pub fn record_label_position(&mut self, id: SymbolId) {
         self.label_positions.insert(id, self.values_emitted.clone());
     }
@@ -358,6 +479,11 @@ impl<'a> AliasResolver<'a> {
         let mut resolved = HashMap::new();
 
         for id in alias_ids {
+            // A generic alias only means something once it's applied to
+            // arguments; `resolve_applied_type` expands it at each use.
+            if !self.find_alias_declaration_rc(id)?.generic_params.is_empty() {
+                continue;
+            }
             let ty = self.resolve_alias(id)?;
             resolved.insert(id, ty);
         }
@@ -395,10 +521,18 @@ impl<'a> AliasResolver<'a> {
             }
         }
 
+        let declaration = self.find_alias_declaration_rc(id)?;
+        if !declaration.generic_params.is_empty() {
+            return Err(ResolveError::InvalidGenericArity {
+                name: self.get_symbol(id).name.clone(),
+                expected: declaration.generic_params.len(),
+                actual: 0,
+                span: declaration.span,
+            });
+        }
+
         self.states.insert(id, AliasState::Visiting);
         self.stack.push(id);
-
-        let declaration = self.find_alias_declaration_rc(id)?;
 
         let result = self.resolve_type_expr(&declaration.ty).and_then(|underlying| {
             self.wrap_if_invariant(id, &declaration, underlying)
@@ -437,7 +571,19 @@ impl<'a> AliasResolver<'a> {
         underlying: ResolvedType,
     ) -> Result<ResolvedType, ResolveError> {
         let invariants = crate::facets::extract_invariants(&declaration.facets);
+        self.wrap_with_invariants(id, declaration, Vec::new(), invariants, underlying)
+    }
 
+    // `wrap_if_invariant` for invariants that may differ from the
+    // declaration's own: a generic alias's, with its arguments substituted.
+    fn wrap_with_invariants(
+        &self,
+        id: SymbolId,
+        declaration: &crate::ast::TypeAliasDeclaration,
+        args: Vec<ResolvedGenericArg>,
+        invariants: Vec<Expr>,
+        underlying: ResolvedType,
+    ) -> Result<ResolvedType, ResolveError> {
         let has_conversions = declaration
             .facets
             .iter()
@@ -466,6 +612,7 @@ impl<'a> AliasResolver<'a> {
 
         Ok(ResolvedType::Alias {
             symbol: id,
+            args,
             binder,
             invariants,
             underlying: Box::new(underlying),
@@ -581,6 +728,10 @@ impl<'a> AliasResolver<'a> {
         args: &[TypeArgument],
         span: Span
     ) -> Result<ResolvedType, ResolveError> {
+        if let Some(expansion) = self.expand_generic_alias(base, args, span)? {
+            return self.resolve_generic_alias(expansion);
+        }
+
         let base_type = self.resolve_type_expr(base)?;
 
         match base_type {
@@ -665,6 +816,90 @@ impl<'a> AliasResolver<'a> {
                 Err(ResolveError::ExpectedType { name, span })
             }
         }
+    }
+
+    /// When `base` names a generic type alias, the alias applied to `args`:
+    /// its target type and invariants with each parameter replaced by the
+    /// argument written for it. `None` when `base` is anything else.
+    /// Substituting the arguments as written, rather than binding their
+    /// values, lets an argument that's still symbolic (a generic macro's
+    /// own `N`, or `...`) flow through the expansion unchanged.
+    pub(super) fn expand_generic_alias(
+        &self,
+        base: &TypeExpr,
+        args: &[TypeArgument],
+        span: Span,
+    ) -> Result<Option<AliasExpansion>, ResolveError> {
+        let TypeExpr::Named { path, .. } = base else {
+            return Ok(None);
+        };
+        let [name] = path.as_slice() else {
+            return Ok(None);
+        };
+        if self.generic_scope.contains_key(name) {
+            return Ok(None);
+        }
+        let Some(id) = self.lookup_symbol(name) else {
+            return Ok(None);
+        };
+        if self.get_symbol(id).kind != SymbolKind::TypeAlias {
+            return Ok(None);
+        }
+        let declaration = self.find_alias_declaration_rc(id)?;
+        if declaration.generic_params.is_empty() {
+            return Ok(None);
+        }
+        if args.len() != declaration.generic_params.len() {
+            return Err(ResolveError::InvalidGenericArity {
+                name: self.get_symbol(id).name.clone(),
+                expected: declaration.generic_params.len(),
+                actual: args.len(),
+                span,
+            });
+        }
+
+        // A const argument that already has a value is substituted as that
+        // value, so it means the same thing inside the alias's module.
+        let substitutions: HashMap<String, TypeArgument> = declaration
+            .generic_params
+            .iter()
+            .zip(args)
+            .map(|(param, arg)| {
+                let arg = match arg {
+                    TypeArgument::Const(expr) => match self.eval_const_expr(expr) {
+                        Ok(value) => TypeArgument::Const(Expr::Integer {
+                            raw: value.to_string(),
+                            span: expr.span(),
+                        }),
+                        Err(_) => arg.clone(),
+                    },
+                    _ => arg.clone(),
+                };
+                (super::structs::param_name(param).to_string(), arg)
+            })
+            .collect();
+
+        let ty = substitute_type(&declaration.ty, &substitutions);
+        let invariants = crate::facets::extract_invariants(&declaration.facets)
+            .iter()
+            .map(|invariant| substitute_expr(invariant, &substitutions))
+            .collect();
+
+        Ok(Some(AliasExpansion { id, declaration, args: args.to_vec(), ty, invariants }))
+    }
+
+    fn resolve_generic_alias(&mut self, expansion: AliasExpansion) -> Result<ResolvedType, ResolveError> {
+        let AliasExpansion { id, declaration, args, ty, invariants } = expansion;
+        if self.stack.contains(&id) {
+            return Err(self.make_cycle_error(id));
+        }
+
+        self.stack.push(id);
+        let underlying = self.resolve_type_expr(&ty);
+        self.stack.pop();
+
+        let args = args.iter().map(|arg| self.resolve_generic_args(arg)).collect::<Result<_, _>>()?;
+        self.wrap_with_invariants(id, &declaration, args, invariants, underlying?)
     }
 
     fn resolve_generic_args(
@@ -1043,7 +1278,7 @@ mod tests {
 
         let resolved = resolver.resolve_alias(ubyte_id).unwrap();
 
-        let ResolvedType::Alias { symbol, binder, invariants, underlying } = resolved else {
+        let ResolvedType::Alias { symbol, binder, invariants, underlying, .. } = resolved else {
             panic!("expected a nominal Alias, got {resolved:?}");
         };
 

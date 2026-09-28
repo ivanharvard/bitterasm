@@ -27,7 +27,7 @@ pub use consts::ConstEvaluator;
 pub use facets::validate as validate_facets;
 pub use macro_body::MacroExpansion;
 pub use symbols::*;
-pub use toplevel::unroll_top_level;
+pub use toplevel::{unroll_module, unroll_top_level};
 pub use types::*;
 pub use values::Value;
 
@@ -237,6 +237,22 @@ pub enum ResolveError {
         span: Span,
     },
 
+    // `@emit`, `@return` or `@assert` at the top level of a file: they only
+    // mean something while a macro runs. `kind` is the keyword, `@emit`.
+    MetaOutsideMacro {
+        kind: String,
+        span: Span,
+    },
+
+    // An operand of an arithmetic operator isn't an `Int`. `found` is its
+    // type; `hint` explains a likely cause, such as `-1 as T` meaning
+    // `-(1 as T)`.
+    NonIntOperand {
+        found: String,
+        hint: Option<String>,
+        span: Span,
+    },
+
     // A `Value` was needed as a struct (for field access) but was an `Int`
     // instead.
     ExpectedStructValue {
@@ -380,6 +396,23 @@ pub enum ResolveError {
         span: Span,
     },
 
+    // A `to`/`from` facet names a macro with no declared return type, so
+    // there's no way to tell which conversion it performs.
+    ConversionWithoutReturnType {
+        name: String,
+        span: Span,
+    },
+
+    // A macro's `@return` value doesn't have the type its signature
+    // declares (`-> Type`), or it returned nothing at all (`actual` is
+    // `None`). `span` is the declared return type.
+    ReturnTypeMismatch {
+        name: String,
+        expected: String,
+        actual: Option<String>,
+        span: Span,
+    },
+
     // A struct's declared `invariant` (see `crate::facets::invariant`)
     // evaluated to `0` (falsy, same `Int` convention as `AssertionFailed`)
     // against the fields/generic args a construction just produced.
@@ -470,6 +503,7 @@ impl ResolveError {
             | Self::FacetNotApplicable { span, .. }
             | Self::DuplicateFacet { span, .. } | Self::InvalidArgumentCount { span, .. }
             | Self::ExpectedStructCallee { span, .. } | Self::ExpectedIntValue { span }
+            | Self::NonIntOperand { span, .. } | Self::MetaOutsideMacro { span, .. }
             | Self::ExpectedStructValue { span } | Self::ExpectedValueExpression { span }
             | Self::UnsupportedMacroStatement { span, .. } | Self::UnsupportedSpliceValue { span }
             | Self::Fold { span, .. }
@@ -480,6 +514,7 @@ impl ResolveError {
             | Self::AmbiguousMacroValue { span, .. } | Self::GenericMacroAsValue { span, .. }
             | Self::AssertionFailed { span, .. }
             | Self::InvalidAssertMessage { span } | Self::TypeMismatch { span, .. }
+            | Self::ReturnTypeMismatch { span, .. } | Self::ConversionWithoutReturnType { span, .. }
             | Self::InvariantViolated { span, .. } | Self::EmittedTypeNotDeclared { span, .. }
             | Self::CannotCoerce { span, .. }
             | Self::AmbiguousConversion { span, .. } | Self::AmbiguousInvariantBinder { span, .. }

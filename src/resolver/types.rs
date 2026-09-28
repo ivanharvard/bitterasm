@@ -45,6 +45,9 @@ pub enum ResolvedType {
     /// shape stays sound either way).
     Alias {
         symbol: SymbolId,
+        /// A generic alias's arguments, e.g. `4` in `Aligned<4>`; empty for
+        /// a non-generic one.
+        args: Vec<ResolvedGenericArg>,
         binder: Option<String>,
         invariants: Vec<Expr>,
         underlying: Box<ResolvedType>,

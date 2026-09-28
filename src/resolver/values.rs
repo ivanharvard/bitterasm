@@ -60,13 +60,10 @@ pub enum Value {
         /// (`AliasResolver::convert_to`), `None` everywhere else (a struct
         /// built by `eval_call_value`/`eval_construct_value` directly, even
         /// through an alias name, isn't tagged — see those functions' own
-        /// comments). Re-resolving this symbol (`AliasResolver::resolve_alias`,
-        /// already memoized) reconstructs the full `ResolvedType::Alias` —
-        /// including any *further* nesting, since "holds all the way down"
-        /// means the outermost alias's own resolution already carries its
-        /// whole chain — so this is the only piece `Value` itself needs to
-        /// remember; see `AliasResolver::value_type`.
-        nominal: Option<SymbolId>,
+        /// comments). The full `ResolvedType::Alias`, including any further
+        /// nesting ("holds all the way down") and, for a generic alias, the
+        /// arguments it was applied to — see `AliasResolver::value_type`.
+        nominal: Option<Box<ResolvedType>>,
     },
 
     /// The value of a `pub` label imported from another file (Phase 5, see
@@ -152,6 +149,16 @@ impl<'a> AliasResolver<'a> {
         let ResolvedType::Enum { symbol, args } = self.resolve_value_type_expr(&ty, scope)? else {
             return Err(ResolveError::ExpectedType { name: enum_name.to_string(), span });
         };
+        // `Option.Some(1)`: a generic enum's arguments are never inferred.
+        let generic_params = self.find_enum_declaration_rc(symbol)?.generic_params.len();
+        if args.len() != generic_params {
+            return Err(ResolveError::InvalidGenericArity {
+                name: crate::loader::demangle(enum_name),
+                expected: generic_params,
+                actual: args.len(),
+                span,
+            });
+        }
         let expected_payload = self.instantiate_enum_payload(symbol, &args, variant, span)?;
         let payload = match (expected_payload, arguments) {
             (None, []) => None,
@@ -236,17 +243,19 @@ impl<'a> AliasResolver<'a> {
             },
 
             // `` acc_`i` ``: settle the name, then read it exactly like an
-            // identifier. A private top-level name in this module was
-            // renamed to `name#module` by the loader, which couldn't
-            // rewrite a name it didn't know yet, so that spelling is tried
-            // first — the same precedence a plain reference gets.
+            // identifier. The loader rewrote every name it could see to an
+            // internal name, but couldn't rewrite this one, so it's looked
+            // up in this module's scope the same way: a local binding
+            // first, then whatever the name means in this module.
             Expr::SplicedIdentifier { name, span } => {
                 let name = self.resolve_spliced_name(name, scope)?;
-                let private = format!("{name}#{}", self.current_module);
-                let name = if !scope.contains_key(&name) && self.lookup_symbol(&private).is_some() {
-                    private
-                } else {
+                let name = if scope.contains_key(&name) {
                     name
+                } else if let Some(internal) = self.scoped_name(&name) {
+                    internal
+                } else {
+                    let own = format!("{name}#{}", self.current_module);
+                    if self.lookup_symbol(&own).is_some() { own } else { name }
                 };
                 self.eval_value(&Expr::Identifier { name, span: *span }, scope)
             }
@@ -447,11 +456,31 @@ impl<'a> AliasResolver<'a> {
     ) -> Result<Expr, ResolveError> {
         match expr {
             Expr::Integer { .. } => Ok(expr.clone()),
-            Expr::Unary { op, operand, span } => Ok(Expr::Unary {
-                op: *op,
-                operand: Box::new(self.materialize_int_expr(operand, scope)?),
-                span: *span,
-            }),
+            Expr::Unary { op, operand, span } => {
+                let materialized = match self.materialize_int_expr(operand, scope) {
+                    // `-1 as T` parses as `-(1 as T)`, since `as` binds more
+                    // tightly than any prefix operator.
+                    Err(ResolveError::NonIntOperand { found, span: operand_span, .. })
+                        if matches!(operand.as_ref(), Expr::As { .. }) =>
+                    {
+                        let op = match op {
+                            crate::ast::UnaryOp::Negate => "-",
+                            crate::ast::UnaryOp::Not => "!",
+                            crate::ast::UnaryOp::BitNot => "~",
+                        };
+                        return Err(ResolveError::NonIntOperand {
+                            found,
+                            hint: Some(format!(
+                                "`as` binds more tightly than `{op}`, so `{op}x as T` means `{op}(x as T)`; \
+                                 write `({op}x) as T`"
+                            )),
+                            span: operand_span,
+                        });
+                    }
+                    other => other?,
+                };
+                Ok(Expr::Unary { op: *op, operand: Box::new(materialized), span: *span })
+            }
             Expr::Binary { left, op, right, span } => Ok(Expr::Binary {
                 left: Box::new(self.materialize_int_expr(left, scope)?),
                 op: *op,
@@ -471,8 +500,17 @@ impl<'a> AliasResolver<'a> {
                 // arithmetic on one isn't supported yet; route it through
                 // `std.bitter.deferred`'s `sub`/`mul`/`span` instead, the
                 // same way a same-file `here()` value already has to.
-                Value::Struct { .. } | Value::Enum { .. } | Value::Macro(_) | Value::ExternLabel { .. } => {
-                    Err(ResolveError::ExpectedIntValue { span: other.span() })
+                Value::ExternLabel { .. } => Err(ResolveError::NonIntOperand {
+                    found: "a label from another file".to_string(),
+                    hint: Some(
+                        "its position isn't known until linking; use `std.bitter.deferred`'s `add`, `sub` or `span`"
+                            .to_string(),
+                    ),
+                    span: other.span(),
+                }),
+                value @ (Value::Struct { .. } | Value::Enum { .. } | Value::Macro(_)) => {
+                    let ty = self.value_type(&value)?;
+                    Err(ResolveError::NonIntOperand { found: describe_type(&ty, self), hint: None, span: other.span() })
                 }
             },
         }
@@ -711,7 +749,7 @@ impl<'a> AliasResolver<'a> {
             let expected = self.field_type(&struct_ty, &field_name, span)?;
             let actual = self.value_type(&value)?;
 
-            if actual != expected {
+            if actual != expected && !self.int_fits_alias(&expected, &value, span)? {
                 return Err(ResolveError::TypeMismatch {
                     name: field_name,
                     expected: describe_type(&expected, self),
@@ -1133,7 +1171,7 @@ impl<'a> AliasResolver<'a> {
         }
 
         match target {
-            ResolvedType::Alias { symbol, binder, invariants, underlying } => {
+            ResolvedType::Alias { symbol, binder, invariants, underlying, .. } => {
                 let mut layer_scope: HashMap<String, Value> = HashMap::new();
 
                 if let Some(binder) = binder {
@@ -1152,7 +1190,7 @@ impl<'a> AliasResolver<'a> {
 
                 let converted = self.convert_to_inner(value, underlying, span, allow_explicit)?;
 
-                Ok(tag_nominal(converted, *symbol))
+                Ok(tag_nominal(converted, target))
             }
 
             ResolvedType::Struct { symbol, args } => match &value {
@@ -1218,6 +1256,27 @@ impl<'a> AliasResolver<'a> {
         }
     }
 
+    /// Whether a plain `int` can be used where `expected`, an alias of
+    /// `int`, is required. Unlike a struct, an integer has nowhere to record
+    /// that `as` checked it (see `tag_nominal`), so the alias's invariants
+    /// are checked wherever the integer is used as one instead; a violation
+    /// is an error. `Ok(false)` when `expected` isn't an alias of `int` or
+    /// `value` isn't an integer.
+    pub(super) fn int_fits_alias(
+        &mut self,
+        expected: &ResolvedType,
+        value: &Value,
+        span: Span,
+    ) -> Result<bool, ResolveError> {
+        let is_int_alias = matches!(expected, ResolvedType::Alias { .. })
+            && matches!(expected.strip_alias(), ResolvedType::Builtin(BuiltinType::Int));
+        if !is_int_alias || !matches!(value, Value::Int(_)) {
+            return Ok(false);
+        }
+        self.convert_to(value.clone(), expected, span)?;
+        Ok(true)
+    }
+
     fn try_explicit_conversion(
         &mut self,
         value: &Value,
@@ -1232,11 +1291,10 @@ impl<'a> AliasResolver<'a> {
         if let Some(target_value) = self.type_argument_value(target)? {
             to_scope.insert("target".to_string(), target_value);
         }
+        let owner = resolved_type_symbol(source_ty);
         for template in self.type_facet_exprs(source_ty, "to")? {
-            if self.template_returns(&template, target)?
-                && self.template_accepts(&template, &to_scope)
-            {
-                candidates.push((template, to_scope.clone(), resolved_type_symbol(source_ty)));
+            if self.conversion_fits(&template, &to_scope, target, owner)? {
+                candidates.push((template, to_scope.clone(), owner));
             }
         }
 
@@ -1245,11 +1303,10 @@ impl<'a> AliasResolver<'a> {
         if let Some(target_value) = self.type_argument_value(target)? {
             from_scope.insert("target".to_string(), target_value);
         }
+        let owner = resolved_type_symbol(target);
         for template in self.type_facet_exprs(target, "from")? {
-            if self.template_returns(&template, target)?
-                && self.template_accepts(&template, &from_scope)
-            {
-                candidates.push((template, from_scope.clone(), resolved_type_symbol(target)));
+            if self.conversion_fits(&template, &from_scope, target, owner)? {
+                candidates.push((template, from_scope.clone(), owner));
             }
         }
 
@@ -1377,42 +1434,76 @@ impl<'a> AliasResolver<'a> {
         self.find_macro_declaration(symbol)
     }
 
-    fn template_returns(&mut self, template: &Expr, target: &ResolvedType) -> Result<bool, ResolveError> {
-        let return_ty = self.template_macro(template)?.return_ty.clone();
-        let Some(return_ty) = return_ty else {
+    /// Whether a `to`/`from` template converts `scope`'s `source` into
+    /// `target`: its macro accepts the arguments the template passes, with
+    /// generic parameters inferred exactly as in a call, and returns
+    /// `target`. Checked as the module that declared the conversion, where
+    /// its names mean what they were written to mean. A template whose
+    /// arguments don't fit is for some other conversion, so it's skipped;
+    /// a macro with no return type could never be matched, so it's an
+    /// error rather than a silent skip.
+    fn conversion_fits(
+        &mut self,
+        template: &Expr,
+        scope: &HashMap<String, Value>,
+        target: &ResolvedType,
+        owner: Option<SymbolId>,
+    ) -> Result<bool, ResolveError> {
+        match owner {
+            Some(owner) => {
+                let module = self.symbol_module(owner);
+                self.with_module(module, |this| this.conversion_fits_here(template, scope, target))
+            }
+            None => self.conversion_fits_here(template, scope, target),
+        }
+    }
+
+    fn conversion_fits_here(
+        &mut self,
+        template: &Expr,
+        scope: &HashMap<String, Value>,
+        target: &ResolvedType,
+    ) -> Result<bool, ResolveError> {
+        let declaration = self.template_macro(template)?.clone();
+        let Some(return_ty) = &declaration.return_ty else {
+            return Err(ResolveError::ConversionWithoutReturnType {
+                name: crate::ast::literal_name(&declaration.name).unwrap_or_default(),
+                span: template.span(),
+            });
+        };
+        let Expr::Call { arguments, .. } = template else {
             return Ok(false);
         };
-        let returned = self.resolve_type_expr(&return_ty)?;
-        if returned == *target {
-            return Ok(true);
-        }
+
+        let Ok(values) = arguments
+            .iter()
+            .map(|argument| self.eval_value(&argument.value, scope))
+            .collect::<Result<Vec<_>, _>>()
+        else {
+            return Ok(false);
+        };
+        let Ok((_, bindings)) = self.bind_macro_arguments(&declaration, values) else {
+            return Ok(false);
+        };
+
+        let outer_generics = std::mem::replace(&mut self.generic_scope, bindings);
+        let returned = self.resolve_type_expr(return_ty);
+        self.generic_scope = outer_generics;
+        let Ok(returned) = returned else {
+            return Ok(false);
+        };
 
         // A conversion macro may name a generic destination without fixing
-        // its arguments; the facet's `target` binding supplies them. This is
-        // intentionally only a wildcard when the declaration omitted every
-        // argument, never when it returned a different specialization.
-        Ok(matches!(
+        // its arguments (`-> Fixed`, or `-> Fixed<...>`); the facet's
+        // `target` binding supplies them. Never a different specialization.
+        let unspecialized = matches!(
             (returned.strip_alias(), target.strip_alias()),
             (
                 ResolvedType::Struct { symbol: returned_symbol, args: returned_args },
                 ResolvedType::Struct { symbol: target_symbol, .. },
             ) if returned_symbol == target_symbol && returned_args.is_empty()
-        ))
-    }
-
-    fn template_accepts(&mut self, template: &Expr, scope: &HashMap<String, Value>) -> bool {
-        let Expr::Call { arguments, .. } = template else { return false };
-        let Ok(declaration) = self.template_macro(template).cloned() else { return false };
-        let required = declaration.params.iter().filter(|param| param.default.is_none()).count();
-        if arguments.len() < required || arguments.len() > declaration.params.len() {
-            return false;
-        }
-        arguments.iter().zip(&declaration.params).all(|(argument, param)| {
-            let Ok(value) = self.eval_value(&argument.value, scope) else { return false };
-            let Ok(actual) = self.value_type(&value) else { return false };
-            let Ok(expected) = self.resolve_type_expr(&param.ty) else { return false };
-            expected.accepts(&actual)
-        })
+        );
+        Ok(returned == *target || unspecialized || returned.accepts(target))
     }
 
     /// Resolves a bare name that isn't bound in the current scope against
@@ -1514,15 +1605,20 @@ impl<'a> AliasResolver<'a> {
     /// whichever importer happens to be the first to reference it, not at
     /// `check`/`compile` time for the module that actually declared it.
     pub fn resolve_all_const_values(&mut self) -> Result<(), ResolveError> {
-        let consts: Vec<(String, Span)> = self
+        let consts: Vec<(SymbolId, String, Span)> = self
             .symbols
             .iter()
             .filter(|symbol| symbol.kind == SymbolKind::Const)
-            .map(|symbol| (symbol.name.clone(), symbol.span))
+            .map(|symbol| (symbol.id, symbol.name.clone(), symbol.span))
             .collect();
 
-        for (name, span) in consts {
-            self.resolve_const_value(&name, span)?;
+        for (id, name, span) in consts {
+            if let Err(error) = self.resolve_const_value(&name, span) {
+                if self.error_module.is_none() {
+                    self.error_module = Some(self.symbol_module(id));
+                }
+                return Err(error);
+            }
         }
 
         Ok(())
@@ -1575,9 +1671,11 @@ impl<'a> AliasResolver<'a> {
     /// `Expr::Identifier` arm).
     pub(super) fn resolve_extern_label_value(&mut self, id: SymbolId) -> Result<Value, ResolveError> {
         let extern_label = self.find_extern_label_declaration(id)?;
+        // The declaration carries the loader's internal name; the linker
+        // knows the label by the name its file declared.
         Ok(Value::ExternLabel {
             module: extern_label.module.clone(),
-            name: extern_label.name.clone(),
+            name: crate::loader::demangle(&extern_label.name),
         })
     }
 
@@ -1673,18 +1771,7 @@ impl<'a> AliasResolver<'a> {
                 args: args.clone(),
             },
 
-            Value::Struct { symbol, args, nominal: Some(alias), .. } => {
-                let resolved = self.resolve_alias(*alias)?;
-
-                debug_assert!(
-                    matches!(&resolved, ResolvedType::Alias { .. }),
-                    "a Value tagged `nominal` should only ever be tagged with a symbol that \
-                     actually resolves to ResolvedType::Alias — {symbol:?}/{args:?} tagged with \
-                     {alias:?}, which resolved to {resolved:?} instead",
-                );
-
-                resolved
-            }
+            Value::Struct { nominal: Some(alias), .. } => (**alias).clone(),
 
             Value::Struct { symbol, args, nominal: None, .. } => ResolvedType::Struct {
                 symbol: *symbol,
@@ -1735,10 +1822,10 @@ impl<'a> AliasResolver<'a> {
 // such an alias needs its own `as` at that point too. A known scope
 // boundary of today's `Value` shape, not an oversight — see
 // `Value::Struct::nominal`'s doc.
-fn tag_nominal(value: Value, symbol: SymbolId) -> Value {
+fn tag_nominal(value: Value, alias: &ResolvedType) -> Value {
     match value {
-        Value::Struct { symbol: inner_symbol, args, fields, .. } => {
-            Value::Struct { symbol: inner_symbol, args, fields, nominal: Some(symbol) }
+        Value::Struct { symbol, args, fields, .. } => {
+            Value::Struct { symbol, args, fields, nominal: Some(Box::new(alias.clone())) }
         }
 
         Value::Int(_) | Value::Macro(_) | Value::Enum { .. } | Value::ExternLabel { .. } => value,
@@ -2440,6 +2527,7 @@ mod tests {
         let ubyte_id = symbols.lookup("UByte").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+        let ubyte = resolver.resolve_alias(ubyte_id).unwrap();
 
         let mut scope = HashMap::new();
         scope.insert("v".to_string(), Value::Int(Int::from(50)));
@@ -2452,7 +2540,7 @@ mod tests {
                 symbol: bits_id,
                 args: vec![ResolvedGenericArg::Const(Int::from(8))],
                 fields: vec![("value".to_string(), Value::Int(Int::from(50)))],
-                nominal: Some(ubyte_id),
+                nominal: Some(Box::new(ubyte)),
             }
         );
     }
@@ -2586,6 +2674,7 @@ const converted = original as Sized<derived_len, Order.Second>
         let ubyte_id = symbols.lookup("UByte").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+        let ubyte = resolver.resolve_alias(ubyte_id).unwrap();
 
         let value = resolver
             .resolve_const_value("FIVE", crate::token::Span::new(0, 0))
@@ -2597,7 +2686,7 @@ const converted = original as Sized<derived_len, Order.Second>
                 symbol: bits_id,
                 args: vec![ResolvedGenericArg::Const(Int::from(8))],
                 fields: vec![("value".to_string(), Value::Int(Int::from(5)))],
-                nominal: Some(ubyte_id),
+                nominal: Some(Box::new(ubyte)),
             }
         );
     }
@@ -2610,6 +2699,7 @@ const converted = original as Sized<derived_len, Order.Second>
         let ubyte_id = symbols.lookup("UByte").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+        let ubyte = resolver.resolve_alias(ubyte_id).unwrap();
 
         let invocations = find_invocations(&program, "use_five");
         assert_eq!(invocations.len(), 1);
@@ -2622,7 +2712,7 @@ const converted = original as Sized<derived_len, Order.Second>
                 symbol: bits_id,
                 args: vec![ResolvedGenericArg::Const(Int::from(8))],
                 fields: vec![("value".to_string(), Value::Int(Int::from(5)))],
-                nominal: Some(ubyte_id),
+                nominal: Some(Box::new(ubyte)),
             }]
         );
     }

@@ -65,6 +65,21 @@ impl SourceMap {
         self.files.get(id.0)
     }
 
+    /// The file at `path`, if it's been added, when `span` lies inside it.
+    pub fn find_span_in(&self, path: &Path, span: crate::token::Span) -> Option<SourceId> {
+        let canonical = std::fs::canonicalize(path).ok();
+        self.files
+            .iter()
+            .position(|file| {
+                (file.name == path
+                    || canonical.as_ref().is_some_and(|canonical| {
+                        std::fs::canonicalize(&file.name).ok().as_ref() == Some(canonical)
+                    }))
+                    && file.source.get(span.start..span.end).is_some()
+            })
+            .map(SourceId)
+    }
+
     pub fn locate_span(&self, span: crate::token::Span, needle: Option<&str>) -> Option<SourceId> {
         let candidates: Vec<_> = self.files.iter().enumerate().filter(|(_, file)| {
             let Some(text) = file.source.get(span.start..span.end) else { return false };

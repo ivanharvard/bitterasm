@@ -1,3 +1,24 @@
+#! The PDP-10: 36-bit words, 16 accumulators, and a representative subset
+#! of its instructions, all in the one word format.
+#!
+#! ```
+#! from std.pdp10.impl import *
+#!
+#! movei ac1, 0, Index(0), 42
+#! ```
+#!
+#! ```bytes
+#! 04 08 80 00 2a
+#! ```
+#!
+#! Each instruction takes its operands as the manual's fields: accumulator
+#! `ac`, indirect bit `i`, index register `x`, and address `y`. The machine
+#! is word-addressed, so a word has no byte order; `bitter` packs its 36
+#! bits into 5 bytes with 4 zero bits above them.
+#!
+#! Opcodes are from the DEC PDP-10 System Reference Manual (DEC-10-HGAA-D),
+#! Appendix A.
+
 from std.binary import *
 from std.bitfield import *
 
@@ -10,9 +31,12 @@ from std.bitfield import *
 # one is the stack pointer, if any), and picking one would be inventing a
 # convention this language has no business asserting.
 
+## An accumulator number, 0 to 15.
 pub type AC = bits<4>
 
 @for i in 0..16 {
+    ## An accumulator. None is wired to zero, and there are no ABI names:
+    ## each PDP-10 operating system had its own conventions.
     pub const ac`i` = AC(i)
 }
 
@@ -24,9 +48,14 @@ pub type AC = bits<4>
 # double as an index register — but each gets its own alias so a struct
 # field stays self-documenting about which role it plays).
 
+## The 9-bit opcode.
 pub type Opcode = bits<9>
+## The indirect bit: 1 means `y` holds the address of the operand's address.
 pub type Indirect = bits<1>
+## An index register number. Any accumulator but 0 can be one; 0 means
+## none.
 pub type Index = bits<4>
+## An 18-bit address.
 pub type Addr = bits<18>
 
 # =================
@@ -50,6 +79,8 @@ pub type Addr = bits<18>
 # byte-addressable, so byte order isn't a property it has (see
 # `std.bitter.byte_order`'s own doc comment). `bitter`'s packer pads this
 # struct's 36 bits to 5 bytes on its own, with no help needed here.
+## The PDP-10 instruction word: opcode (9 bits), `ac` (4), `i` (1), `x` (4)
+## and `y` (18), most significant first.
 pub struct Instr {
     opcode: Opcode,
     ac: AC,
@@ -71,7 +102,10 @@ pub struct Instr {
 # HALT is documented in the manual's own word-format chart as `JRST 4,` —
 # opcode 0254 with the ac field fixed to 4, not a separate opcode of its
 # own.
-pub macro halt() -> Instr {
+## Stops the processor. It's `JRST 4,`.
+pub macro halt()
+    | emits Instr
+{
     @emit Instr(
         opcode = Opcode(0o254),
         ac = AC(4),
@@ -81,11 +115,14 @@ pub macro halt() -> Instr {
     )
 }
 
+## Jumps to the effective address.
 pub macro jrst(
     i: int,
     x: Index,
     y: int
-) -> Instr {
+)
+    | emits Instr
+{
     @emit Instr(
         opcode = Opcode(0o254),
         ac = AC(0),
@@ -95,11 +132,15 @@ pub macro jrst(
     )
 }
 
+## Jumps to the effective address. `JUMPA` is `JUMP` with the "always"
+## condition.
 pub macro jumpa(
     i: int,
     x: Index,
     y: int
-) -> Instr {
+)
+    | emits Instr
+{
     @emit Instr(
         opcode = Opcode(0o324),
         ac = AC(0),
@@ -109,12 +150,16 @@ pub macro jumpa(
     )
 }
 
+## Loads the effective address itself, not what's there, into `ac`: an
+## immediate load.
 pub macro movei(
     ac: AC,
     i: int,
     x: Index,
     y: int
-) -> Instr {
+)
+    | emits Instr
+{
     @emit Instr(
         opcode = Opcode(0o201),
         ac = ac,
@@ -124,12 +169,15 @@ pub macro movei(
     )
 }
 
+## Loads the word at the effective address into `ac`.
 pub macro move(
     ac: AC,
     i: int,
     x: Index,
     y: int
-) -> Instr {
+)
+    | emits Instr
+{
     @emit Instr(
         opcode = Opcode(0o200),
         ac = ac,
@@ -139,12 +187,15 @@ pub macro move(
     )
 }
 
+## Stores `ac` at the effective address.
 pub macro movem(
     ac: AC,
     i: int,
     x: Index,
     y: int
-) -> Instr {
+)
+    | emits Instr
+{
     @emit Instr(
         opcode = Opcode(0o202),
         ac = ac,
@@ -158,12 +209,16 @@ pub macro movem(
 # AC-to-AC arithmetic: the first 16 words of memory (addresses 0-17 octal)
 # are wired to the accumulators themselves, so `add(ac1, 0, 0, 2)` adds
 # `ac2` into `ac1` with no separate register-register format needed.
+## Adds the word at the effective address into `ac`. Addresses 0 to 15 are
+## the accumulators, so `add(ac1, 0, Index(0), 2)` adds `ac2` into `ac1`.
 pub macro add(
     ac: AC,
     i: int,
     x: Index,
     y: int
-) -> Instr {
+)
+    | emits Instr
+{
     @emit Instr(
         opcode = Opcode(0o270),
         ac = ac,
@@ -173,12 +228,15 @@ pub macro add(
     )
 }
 
+## Adds the effective address itself into `ac`.
 pub macro addi(
     ac: AC,
     i: int,
     x: Index,
     y: int
-) -> Instr {
+)
+    | emits Instr
+{
     @emit Instr(
         opcode = Opcode(0o271),
         ac = ac,
@@ -188,12 +246,15 @@ pub macro addi(
     )
 }
 
+## Subtracts the word at the effective address from `ac`.
 pub macro sub(
     ac: AC,
     i: int,
     x: Index,
     y: int
-) -> Instr {
+)
+    | emits Instr
+{
     @emit Instr(
         opcode = Opcode(0o274),
         ac = ac,
@@ -203,12 +264,15 @@ pub macro sub(
     )
 }
 
+## ANDs the word at the effective address into `ac`.
 pub macro and(
     ac: AC,
     i: int,
     x: Index,
     y: int
-) -> Instr {
+)
+    | emits Instr
+{
     @emit Instr(
         opcode = Opcode(0o404),
         ac = ac,
@@ -222,12 +286,16 @@ pub macro and(
 # not equal — PDP-10's actual conditional-control-flow primitive. It never
 # needs a PC-relative delta the way RISC-V's `beq`/`bne` do (no `here()`,
 # no `Positioned<N>`): "skip the next instruction" needs no address at all.
+## Compares `ac` with the effective address itself, and skips the next
+## instruction if they're not equal.
 pub macro cain(
     ac: AC,
     i: int,
     x: Index,
     y: int
-) -> Instr {
+)
+    | emits Instr
+{
     @emit Instr(
         opcode = Opcode(0o306),
         ac = ac,
@@ -237,12 +305,15 @@ pub macro cain(
     )
 }
 
+## Swaps `ac` with the word at the effective address.
 pub macro exch(
     ac: AC,
     i: int,
     x: Index,
     y: int
-) -> Instr {
+)
+    | emits Instr
+{
     @emit Instr(
         opcode = Opcode(0o250),
         ac = ac,

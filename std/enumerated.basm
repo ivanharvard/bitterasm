@@ -1,7 +1,10 @@
+#! `Enumerated<T>`: a value paired with its position.
+
+## A value and its index, as `enumerate` in `std.array` produces.
 pub struct Enumerated<T>
 {
+    ## The position, counting from 0.
     pub index: int,
+    ## The value at that position.
     pub value: T
 }
-
-

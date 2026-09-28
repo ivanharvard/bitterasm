@@ -7,6 +7,7 @@
 
 <p align="center">Making Assembly Sweeter.</p>
 
+<!-- ANCHOR: overview -->
 ## What BitterASM is
 
 BitterASM is a metalanguage for constructing assembly languages. It defines the semantics and metaprogramming machinery needed to build an ISA, while assuming essentially nothing about the target architecture itself.
@@ -47,6 +48,7 @@ The payoff for assuming almost nothing is:
 - **Room for the unknown** — future architectures that aren't neatly binary, register-based, or von Neumann at all don't require changes to BitterASM itself.
 
 The tradeoff is symmetric: the fewer assumptions the language makes, the more an architecture package has to define for itself. That's the bitter part. The resulting portability, auditability, and extensibility are the sweet part.
+<!-- ANCHOR_END: overview -->
 
 ## Status
 
@@ -79,6 +81,13 @@ binary. See [examples/x86_64/hello.basm](examples/x86_64/hello.basm) for a
 runnable example. `bitterasm compile` and `bitter encode` run the two halves
 separately.
 
-For CLI usage — formatting, diagnostics/lints, `@fold`, the `.em` format,
-executable formats, and macro-default semantics — see
-[docs/reference.md](docs/reference.md).
+## Documentation
+
+The BitterASM book in [docs/book](docs/book/src/SUMMARY.md) is a guide to
+the whole language: macros, meta keywords, types, generics, modules, labels
+and sections, and how `bitter` packs bytes. Every example in it is compiled
+by `cargo test`. To read it locally:
+
+```sh
+mdbook serve docs/book --open
+```

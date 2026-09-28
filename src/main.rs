@@ -1,10 +1,10 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::io::IsTerminal;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgMatches, Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 
 use bitterasm::ast::Statement;
 use bitterasm::expander::MacroTable;
@@ -92,6 +92,32 @@ enum Command {
         verbose: bool,
     },
 
+    /// Generate Markdown reference pages from `##` and `#!` doc comments:
+    /// one page per module, plus an `index.md` listing them.
+    Doc {
+        /// .basm files, or directories to search for them.
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+
+        /// The directory to write the pages to.
+        #[arg(short, long, default_value = "doc")]
+        output: PathBuf,
+
+        /// Write nothing; fail if the pages in `--output` (or the
+        /// `--summary` list) are out of date.
+        #[arg(long, conflicts_with = "test")]
+        check: bool,
+
+        /// An mdBook `SUMMARY.md` to list the pages in, between
+        /// `<!-- bitterasm doc: begin -->` and `<!-- bitterasm doc: end -->`.
+        #[arg(long, value_name = "SUMMARY.md", conflicts_with = "test")]
+        summary: Option<PathBuf>,
+
+        /// Compile the examples in doc comments instead of writing pages.
+        #[arg(long)]
+        test: bool,
+    },
+
     /// Format .basm files in place according to bitterasm.toml.
     #[command(alias = "fmt")]
     Format {
@@ -109,7 +135,13 @@ enum Command {
 }
 
 fn main() {
-    let cli = Cli::parse();
+    let matches = Cli::command().get_matches();
+    let mut cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
+    if let (Some((_, command_matches)), Command::Compile { diagnostics, .. } | Command::Check { diagnostics, .. }) =
+        (matches.subcommand(), &mut cli.command)
+    {
+        diagnostics.levels_in_order = lint_levels_in_order(command_matches);
+    }
 
     match cli.command {
         Command::Compile { path, output, verbose, diagnostics } => {
@@ -122,8 +154,173 @@ fn main() {
             expand(&path, depth, lines, chars, output, verbose)
         }
 
+        Command::Doc { paths, output, check, summary, test } => {
+            if test { test_docs(&paths) } else { write_docs(&paths, &output, check, summary.as_deref()) }
+        }
+
         Command::Format { paths, check, config } => format_files(paths, check, config),
     }
+}
+
+fn doc_files(paths: &[PathBuf]) -> Vec<PathBuf> {
+    match bitterasm::doc::collect_files(paths) {
+        Ok(files) if files.is_empty() => {
+            eprintln!("no .basm files found");
+            std::process::exit(1);
+        }
+        Ok(files) => files,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn write_docs(paths: &[PathBuf], output: &Path, check: bool, summary: Option<&Path>) {
+    let fail = |message: String| -> ! {
+        eprintln!("{message}");
+        std::process::exit(1);
+    };
+    let reference = bitterasm::doc::generate(&doc_files(paths)).unwrap_or_else(|error| fail(error.to_string()));
+
+    // The pages' links in `SUMMARY.md` go from its own directory to `output`.
+    let summary_update = summary.map(|summary_path| {
+        let current = std::fs::read_to_string(summary_path)
+            .unwrap_or_else(|error| fail(format!("failed to read {}: {error}", summary_path.display())));
+        let base = link_base(summary_path, output);
+        let updated = bitterasm::doc::update_summary(&current, &reference, &base)
+            .unwrap_or_else(|error| fail(format!("{}: {error}", summary_path.display())));
+        (summary_path, current, updated)
+    });
+
+    if check {
+        let mut stale: Vec<String> = reference
+            .pages
+            .iter()
+            .filter(|page| std::fs::read_to_string(output.join(&page.path)).ok().as_ref() != Some(&page.markdown))
+            .map(|page| output.join(&page.path).display().to_string())
+            .collect();
+        // A page for a module that's gone is out of date too.
+        let expected: HashSet<PathBuf> = reference.pages.iter().map(|page| output.join(&page.path)).collect();
+        let mut existing = Vec::new();
+        markdown_files(output, &mut existing);
+        stale.extend(existing.into_iter().filter(|path| !expected.contains(path)).map(|path| path.display().to_string()));
+        if let Some((path, current, updated)) = &summary_update
+            && current != updated
+        {
+            stale.push(path.display().to_string());
+        }
+        if !stale.is_empty() {
+            stale.sort();
+            for name in &stale {
+                eprintln!("out of date: {name}");
+            }
+            fail("run `bitterasm doc` without `--check` to regenerate".to_string());
+        }
+        println!("{} page(s) in {} are up to date", reference.pages.len(), output.display());
+        return;
+    }
+
+    for page in &reference.pages {
+        let path = output.join(&page.path);
+        let written = path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| std::fs::write(&path, &page.markdown));
+        if let Err(error) = written {
+            fail(format!("failed to write {}: {error}", path.display()));
+        }
+    }
+    // Pages of modules that no longer exist. They could as well be someone's
+    // own notes, so they're only pointed out, never deleted.
+    let expected: HashSet<PathBuf> = reference.pages.iter().map(|page| output.join(&page.path)).collect();
+    let mut existing = Vec::new();
+    markdown_files(output, &mut existing);
+    for path in existing.into_iter().filter(|path| !expected.contains(path)) {
+        eprintln!("warning: {} isn't a page of this reference; delete it if it's an old one", path.display());
+    }
+    if let Some((path, _, updated)) = summary_update {
+        if let Err(error) = std::fs::write(path, updated) {
+            fail(format!("failed to write {}: {error}", path.display()));
+        }
+    }
+    println!("wrote {} page(s) to {}", reference.pages.len(), output.display());
+}
+
+fn markdown_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            markdown_files(&path, out);
+        } else if path.extension().is_some_and(|extension| extension == "md") {
+            out.push(path);
+        }
+    }
+}
+
+// `output` as a link prefix from the directory `summary` is in:
+// `docs/book/src/SUMMARY.md` and `docs/book/src/std/reference` give
+// `std/reference/`.
+fn link_base(summary: &Path, output: &Path) -> String {
+    let absolute = |path: &Path| {
+        std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
+    };
+    let from = absolute(summary.parent().unwrap_or(Path::new(".")));
+    let to = absolute(output);
+    let shared = from.components().zip(to.components()).take_while(|(a, b)| a == b).count();
+    let ups = from.components().count() - shared;
+    let mut base = "../".repeat(ups);
+    for component in to.components().skip(shared) {
+        base.push_str(&component.as_os_str().to_string_lossy());
+        base.push('/');
+    }
+    base
+}
+
+fn test_docs(paths: &[PathBuf]) {
+    let examples = match bitterasm::doc::examples(&doc_files(paths)) {
+        Ok(examples) => examples,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    };
+
+    let bitterasm = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("bitterasm"));
+    let runner = bitterasm::doc::doctest::Runner {
+        bitter: find_bitter(&bitterasm),
+        bitterasm,
+        cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+    };
+
+    let mut checked = 0;
+    let mut failures = Vec::new();
+    for (index, module) in examples.iter().enumerate() {
+        failures.extend(module.errors.iter().cloned());
+        let scratch = std::env::temp_dir().join(format!("bitterasm-doc-{}-{index}", std::process::id()));
+        let report = runner.run(&module.blocks, &scratch);
+        checked += report.checked;
+        failures.extend(report.failures);
+    }
+
+    for failure in &failures {
+        eprintln!("error: {failure}\n");
+    }
+    println!("{} of {checked} doc example(s) passed", checked - failures.len().min(checked));
+    if !failures.is_empty() {
+        std::process::exit(1);
+    }
+}
+
+// `bitter` ships alongside `bitterasm`; otherwise look on PATH.
+fn find_bitter(bitterasm: &Path) -> Option<PathBuf> {
+    let name = if cfg!(windows) { "bitter.exe" } else { "bitter" };
+    let beside = bitterasm.parent().map(|dir| dir.join(name));
+    beside
+        .into_iter()
+        .chain(std::env::var_os("PATH").iter().flat_map(std::env::split_paths).map(|dir| dir.join(name)))
+        .find(|path| path.is_file())
 }
 
 #[cfg(test)]
@@ -142,6 +339,22 @@ mod cli_tests {
         assert_eq!(path, PathBuf::from("program.basm"));
         assert!(matches!(diagnostics.diagnostic_format, CliDiagnosticFormat::Json));
         assert_eq!(diagnostics.deny, ["unused"]);
+    }
+
+    #[test]
+    fn lint_flags_apply_in_command_line_order() {
+        let matches = Cli::command().get_matches_from([
+            "bitterasm", "check", "program.basm", "-D", "all", "-A", "unused", "-W", "unreachable_code",
+        ]);
+        let (_, check) = matches.subcommand().unwrap();
+        assert_eq!(
+            lint_levels_in_order(check),
+            [
+                ("all".to_string(), LintLevel::Deny),
+                ("unused".to_string(), LintLevel::Allow),
+                ("unreachable_code".to_string(), LintLevel::Warn),
+            ]
+        );
     }
 }
 
@@ -290,7 +503,8 @@ fn pub_label_positions(
 
 enum CompileError {
     Load(loader::LoadError),
-    Resolve(resolver::ResolveError),
+    /// The file the error's span is in, when it's known.
+    Resolve(resolver::ResolveError, Option<PathBuf>),
 }
 
 impl From<loader::LoadError> for CompileError {
@@ -298,7 +512,7 @@ impl From<loader::LoadError> for CompileError {
 }
 
 impl From<resolver::ResolveError> for CompileError {
-    fn from(error: resolver::ResolveError) -> Self { Self::Resolve(error) }
+    fn from(error: resolver::ResolveError) -> Self { Self::Resolve(error, None) }
 }
 
 /// Labels `--verbose`'s status lines for `compile`, which (unlike `expand`)
@@ -371,13 +585,16 @@ fn resolve_and_expand(path: &Path, verbose: Option<&VerboseReporter>) -> Result<
         resolver::LabelMode::Tolerant,
         HashMap::new(),
         entry_module,
-    );
+    )
+    .with_module_scopes(origins.scopes().to_vec());
 
     // Every struct/alias in the program is resolved up front, whether or
     // not any invocation actually reaches it — a broken declaration fails
     // the whole command, the same way a real compiler wouldn't skip type
     // checking an unreachable function.
-    resolve_structs_and_aliases(&mut discovery)?;
+    resolve_structs_and_aliases(&mut discovery).map_err(|error| {
+        CompileError::Resolve(error, discovery.take_error_module().map(|module| origins.path(module).to_path_buf()))
+    })?;
 
     // Expand every top-level invocation (`mov r1, 7`, or a macro calling
     // another macro) in program order, against an empty scope — nothing at
@@ -391,7 +608,8 @@ fn resolve_and_expand(path: &Path, verbose: Option<&VerboseReporter>) -> Result<
         Some((&mut emitted, &mut generated)),
         &statement_modules,
         verbose_ctx.as_ref(),
-    )?;
+    )
+    .map_err(|(error, module)| CompileError::Resolve(error, Some(origins.path(module).to_path_buf())))?;
 
     // A wrong placeholder only ever changes what gets emitted at some
     // point, never how *many* values get emitted (see
@@ -454,9 +672,12 @@ fn resolve_and_expand(path: &Path, verbose: Option<&VerboseReporter>) -> Result<
         resolver::LabelMode::Strict,
         label_positions,
         entry_module,
-    );
+    )
+    .with_module_scopes(origins.scopes().to_vec());
 
-    resolve_structs_and_aliases(&mut alias_resolver)?;
+    resolve_structs_and_aliases(&mut alias_resolver).map_err(|error| {
+        CompileError::Resolve(error, alias_resolver.take_error_module().map(|module| origins.path(module).to_path_buf()))
+    })?;
 
     let mut emitted = Vec::new();
     let mut generated = Vec::new();
@@ -468,7 +689,8 @@ fn resolve_and_expand(path: &Path, verbose: Option<&VerboseReporter>) -> Result<
         Some((&mut emitted, &mut generated)),
         &statement_modules,
         None,
-    )?;
+    )
+    .map_err(|(error, module)| CompileError::Resolve(error, Some(origins.path(module).to_path_buf())))?;
 
     let pub_labels = pub_label_positions(&program, &symbols, alias_resolver.label_positions());
     let sections = alias_resolver.take_emitted_sections();
@@ -526,7 +748,7 @@ fn walk_top_level(
     mut collect: Option<(&mut Vec<Value>, &mut Vec<Statement>)>,
     statement_modules: &[usize],
     verbose: Option<&VerboseCompileContext>,
-) -> Result<(), resolver::ResolveError> {
+) -> Result<(), (resolver::ResolveError, usize)> {
     for (index, statement) in program.statements.iter().enumerate() {
         match statement {
             Statement::Invocation(invocation) => {
@@ -543,7 +765,12 @@ fn walk_top_level(
                     }
                 }
 
-                let expansion = result?;
+                // The module the error arose in: the innermost failing
+                // macro's, or else this statement's own.
+                let expansion = result.map_err(|error| {
+                    let module = alias_resolver.take_error_module().unwrap_or(statement_modules[index]);
+                    (error, module)
+                })?;
                 if let Some((emitted, generated)) = collect.as_mut() {
                     emitted.extend(expansion.emitted);
                     generated.extend(expansion.generated);
@@ -591,6 +818,47 @@ struct DiagnosticCliOptions {
     /// Promote a lint to errors and prevent source-level lowering.
     #[arg(short = 'F', long = "forbid", value_name = "LINT")]
     forbid: Vec<String>,
+
+    /// Every `-A`/`-W`/`-D`/`-F`, in command-line order, so a later flag
+    /// overrides an earlier one (`-D all -A unused` allows `unused`). Filled
+    /// in by `main` from clap's argument positions; empty when the options
+    /// were built some other way.
+    #[arg(skip)]
+    levels_in_order: Vec<(String, LintLevel)>,
+}
+
+impl DiagnosticCliOptions {
+    fn lint_levels(&self) -> Vec<(String, LintLevel)> {
+        if !self.levels_in_order.is_empty() {
+            return self.levels_in_order.clone();
+        }
+        [
+            (&self.allow, LintLevel::Allow),
+            (&self.warn, LintLevel::Warn),
+            (&self.deny, LintLevel::Deny),
+            (&self.forbid, LintLevel::Forbid),
+        ]
+        .into_iter()
+        .flat_map(|(selectors, level)| selectors.iter().map(move |selector| (selector.clone(), level)))
+        .collect()
+    }
+}
+
+fn lint_levels_in_order(matches: &ArgMatches) -> Vec<(String, LintLevel)> {
+    let mut levels = Vec::new();
+    for (id, level) in [
+        ("allow", LintLevel::Allow),
+        ("warn", LintLevel::Warn),
+        ("deny", LintLevel::Deny),
+        ("forbid", LintLevel::Forbid),
+    ] {
+        let (Some(values), Some(indices)) = (matches.get_many::<String>(id), matches.indices_of(id)) else {
+            continue;
+        };
+        levels.extend(indices.zip(values).map(|(index, value)| (index, value.clone(), level)));
+    }
+    levels.sort_by_key(|(index, ..)| *index);
+    levels.into_iter().map(|(_, selector, level)| (selector, level)).collect()
 }
 
 struct DiagnosticRun {
@@ -609,15 +877,8 @@ fn prepare_diagnostics(path: &Path, options: &DiagnosticCliOptions) -> Result<Di
         Some(config_path) => diagnostics::load_lint_config(&config_path)?,
         None => LintConfig::default(),
     };
-    for (selectors, level) in [
-        (&options.allow, LintLevel::Allow),
-        (&options.warn, LintLevel::Warn),
-        (&options.deny, LintLevel::Deny),
-        (&options.forbid, LintLevel::Forbid),
-    ] {
-        for selector in selectors {
-            config.set(selector, level)?;
-        }
+    for (selector, level) in options.lint_levels() {
+        config.set(&selector, level)?;
     }
     let format = match options.diagnostic_format {
         CliDiagnosticFormat::Terminal => DiagnosticFormat::Terminal,
@@ -652,10 +913,11 @@ fn analyze(path: &Path, options: DiagnosticCliOptions, verbose: Option<&VerboseR
     // so every span here still belongs to the source file we render.
     match loader::load_entry_program(path) {
         Ok(program) => {
-            let warnings = diagnostics::lint_program(
+            let warnings = diagnostics::lint_program_with(
                 &program,
                 diagnostic_run.source_id,
                 &diagnostic_run.config,
+                |import| loader::imports_modules(import, path),
             );
             if emit_diagnostics(&warnings, &diagnostic_run) {
                 std::process::exit(1);
@@ -681,8 +943,11 @@ fn analyze(path: &Path, options: DiagnosticCliOptions, verbose: Option<&VerboseR
             emit_diagnostics(&[diagnostic], &diagnostic_run);
             std::process::exit(1);
         }
-        Err(CompileError::Resolve(error)) => {
-            let source = diagnostic_run.sources.locate_span(error.span(), error.source_needle());
+        Err(CompileError::Resolve(error, file)) => {
+            let needle = error.source_needle().map(loader::demangle);
+            let source = file
+                .and_then(|file| diagnostic_run.sources.find_span_in(&file, error.span()))
+                .or_else(|| diagnostic_run.sources.locate_span(error.span(), needle.as_deref()));
             let diagnostic = diagnostics::resolve_error(error, source);
             emit_diagnostics(&[diagnostic], &diagnostic_run);
             std::process::exit(1);

@@ -1,33 +1,48 @@
-# Layout directives `bitter` gives meaning to when it packs an image.
-#
-# `align n` emits an `Align<n>` entry: as many zero bytes as it takes for
-# the next entry to start at a multiple of `n` bytes from the start of the
-# image. How many that is depends on everything before it, so `bitter` works
-# it out while laying the image out; `span` across one counts the padding.
-#
-# Only meaningful as a whole emitted entry, not as a field inside another
-# struct.
+#! Padding that depends on the final layout, which only `bitter` knows:
+#! `align` and `pad_image`. Emit them as whole values, never as fields
+#! inside another struct.
+#!
+#! ```
+#! from std.binary import bits
+#! from std.bitter.layout import align
+#!
+#! macro db(value: int) {
+#!     @emit value as bits<8>
+#! }
+#!
+#! db 1
+#! align 4
+#! db 2
+#! ```
+#!
+#! ```bytes
+#! 01 00 00 00 02
+#! ```
 
+## Zero bytes up to the next multiple of `n` bytes from the start of the
+## image. `align` emits one. A `span` across it counts the padding.
 pub struct Align<const n: int>
     | invariant n > 0
 {
 }
 
+## Pads with zeros so the next value starts at a multiple of `n` bytes from
+## the start of the image.
 pub macro align(n: int) {
     @emit Align<n> {}
 }
 
-# `pad_image n` pads the finished image with zeros to a multiple of `n`
-# bytes, wherever it's written — for a file format whose size must be
-# rounded up (PE rounds its sections to 512 bytes), since a header written
-# at the start of the program can't emit anything at the end of it. It
-# takes no space where it appears, so `span` and `std.bitter.link`'s
-# `image_end` measure the image without this padding.
+## Zero bytes at the end of the image, up to a multiple of `n` bytes.
+## `pad_image` emits one.
 pub struct PadImage<const n: int>
     | invariant n > 0
 {
 }
 
+## Pads the finished image with zeros to a multiple of `n` bytes, wherever
+## it's written, for formats whose size must be rounded up (PE rounds its
+## sections to 512 bytes). It takes no space where it appears, so `span` and
+## `std.bitter.link`'s `image_end` measure the image without the padding.
 pub macro pad_image(n: int) {
     @emit PadImage<n> {}
 }

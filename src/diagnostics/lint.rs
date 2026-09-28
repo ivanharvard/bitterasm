@@ -1,5 +1,5 @@
 use super::{Diagnostic, Severity, SourceId};
-use crate::ast::{Expr, Facet, FacetPayload, ImportItems, MacroDeclaration, NamePart, Program, Statement};
+use crate::ast::{literal_name, Expr, Facet, FacetPayload, ImportItems, MacroDeclaration, NamePart, Program, Statement};
 use crate::token::Span;
 use crate::types::{StructBodyItem, TypeArgument, TypeExpr};
 use serde::Serialize;
@@ -18,6 +18,10 @@ impl LintName {
     pub const GENERATED_DECLARATIONS: Self = Self("generated_declarations");
     pub const UNFULFILLED_EXPECTATION: Self = Self("unfulfilled_lint_expectation");
     pub const FOLD_WITHOUT_NEXT: Self = Self("fold_without_next");
+    pub const UNUSED_DOC_COMMENTS: Self = Self("unused_doc_comments");
+    /// Allowed by default, and not in `all`: turned on by a library that
+    /// wants every public item documented.
+    pub const MISSING_DOCS: Self = Self("missing_docs");
 
     pub const fn as_str(self) -> &'static str { self.0 }
 
@@ -29,13 +33,15 @@ impl LintName {
             "generated_declarations" => Some(Self::GENERATED_DECLARATIONS),
             "unfulfilled_lint_expectation" => Some(Self::UNFULFILLED_EXPECTATION),
             "fold_without_next" => Some(Self::FOLD_WITHOUT_NEXT),
+            "unused_doc_comments" => Some(Self::UNUSED_DOC_COMMENTS),
+            "missing_docs" => Some(Self::MISSING_DOCS),
             _ => None,
         }
     }
 
     pub fn group(name: &str) -> Option<&'static [Self]> {
         match name {
-            "unused" => Some(&[Self::UNUSED_PARAMETER, Self::UNUSED_IMPORT]),
+            "unused" => Some(&[Self::UNUSED_PARAMETER, Self::UNUSED_IMPORT, Self::UNUSED_DOC_COMMENTS]),
             "all" | "warnings" => Some(&[
                 Self::UNUSED_PARAMETER,
                 Self::UNUSED_IMPORT,
@@ -43,6 +49,7 @@ impl LintName {
                 Self::GENERATED_DECLARATIONS,
                 Self::UNFULFILLED_EXPECTATION,
                 Self::FOLD_WITHOUT_NEXT,
+                Self::UNUSED_DOC_COMMENTS,
             ]),
             _ => None,
         }
@@ -77,6 +84,7 @@ impl Default for LintConfig {
         for lint in LintName::group("all").unwrap() {
             levels.insert(*lint, LintLevel::Warn);
         }
+        levels.insert(LintName::MISSING_DOCS, LintLevel::Allow);
         Self { levels }
     }
 }
@@ -86,16 +94,20 @@ impl LintConfig {
         self.levels.get(&lint).copied().unwrap_or(LintLevel::Warn)
     }
 
+    /// Sets `selector`'s level, overriding any earlier setting, except that
+    /// a forbidden lint stays forbidden.
     pub fn set(&mut self, selector: &str, level: LintLevel) -> Result<(), String> {
-        if let Some(lint) = LintName::named(selector) {
-            self.levels.insert(lint, level);
-            return Ok(());
+        let lints = match (LintName::named(selector), LintName::group(selector)) {
+            (Some(lint), _) => vec![lint],
+            (None, Some(group)) => group.to_vec(),
+            (None, None) => return Err(format!("unknown lint or lint group `{selector}`")),
+        };
+        for lint in lints {
+            if self.level(lint) != LintLevel::Forbid {
+                self.levels.insert(lint, level);
+            }
         }
-        if let Some(group) = LintName::group(selector) {
-            for lint in group { self.levels.insert(*lint, level); }
-            return Ok(());
-        }
-        Err(format!("unknown lint or lint group `{selector}`"))
+        Ok(())
     }
 }
 
@@ -129,6 +141,18 @@ fn parse_lint_config(source: &str, display_path: &str) -> Result<LintConfig, Str
 }
 
 pub fn lint_program(program: &Program, source: SourceId, config: &LintConfig) -> Vec<Diagnostic> {
+    lint_program_with(program, source, config, |_| false)
+}
+
+/// `lint_program`, told which imports name modules in a directory (`from
+/// std.riscv import native`) rather than declarations. Those names are
+/// never referenced by name, so they're never reported as unused.
+pub fn lint_program_with(
+    program: &Program,
+    source: SourceId,
+    config: &LintConfig,
+    imports_modules: impl Fn(&crate::ast::ImportStatement) -> bool,
+) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     let mut references = HashSet::new();
     for statement in &program.statements {
@@ -136,6 +160,10 @@ pub fn lint_program(program: &Program, source: SourceId, config: &LintConfig) ->
     }
     for statement in &program.statements {
         let Statement::Import(import) = statement else { continue };
+        // A re-exported name is used by whoever imports this file.
+        if import.is_pub || imports_modules(import) {
+            continue;
+        }
         let ImportItems::Names(names) = &import.items else { continue };
         for name in names {
             if !references.contains(name) {
@@ -152,10 +180,40 @@ pub fn lint_program(program: &Program, source: SourceId, config: &LintConfig) ->
             }
         }
     }
+    // A macro counts as documented when any of its overloads here is.
+    let documented_macros: HashSet<String> = program
+        .statements
+        .iter()
+        .filter_map(|statement| match statement {
+            Statement::Macro(declaration) if declaration.doc.is_some() => literal_name(&declaration.name),
+            _ => None,
+        })
+        .collect();
+    let mut reported_macros = HashSet::new();
     for statement in &program.statements {
         if let Statement::Macro(declaration) = statement {
-            lint_macro(declaration, source, config, &mut diagnostics);
+            let undocumented = declaration.is_pub
+                && literal_name(&declaration.name).is_some_and(|name| {
+                    !documented_macros.contains(&name) && reported_macros.insert(name)
+                });
+            lint_macro(declaration, source, config, undocumented, &mut diagnostics);
         }
+    }
+    lint_missing_docs(program, source, config, &mut diagnostics);
+    for doc in &program.stray_docs {
+        let diagnostic = if doc.is_module {
+            Diagnostic::warning(
+                LintName::UNUSED_DOC_COMMENTS,
+                "module doc comment after the file's first statement",
+            )
+            .primary(source, doc.span, "`#!` only documents the file from its top")
+            .help("move it above the first statement, or use `##` to document the next declaration")
+        } else {
+            Diagnostic::warning(LintName::UNUSED_DOC_COMMENTS, "doc comment documents nothing")
+                .primary(source, doc.span, "not directly above a declaration, variant or field")
+                .help("use `#` for an ordinary comment")
+        };
+        emit_lint(diagnostic, config.level(LintName::UNUSED_DOC_COMMENTS), &mut diagnostics);
     }
     let mut folds = FoldLint {
         source,
@@ -272,10 +330,51 @@ fn collect_type_references(ty: &TypeExpr, names: &mut HashSet<String>) {
     }
 }
 
+fn missing_docs(kind: &str, name: &str, span: Span, source: SourceId) -> Diagnostic {
+    Diagnostic::warning(LintName::MISSING_DOCS, format!("public {kind} `{name}` has no doc comment"))
+        .primary(source, span, "undocumented")
+        .help("add a `##` comment above it")
+}
+
+// Every `pub` declaration but a macro (see `lint_macro`), and the file
+// itself, which is documented by a leading `#!` block.
+fn lint_missing_docs(program: &Program, source: SourceId, config: &LintConfig, diagnostics: &mut Vec<Diagnostic>) {
+    let level = config.level(LintName::MISSING_DOCS);
+    if matches!(level, LintLevel::Allow | LintLevel::Expect) {
+        return;
+    }
+    if program.doc.is_none() {
+        let diagnostic = Diagnostic::warning(LintName::MISSING_DOCS, "this file has no `#!` doc comment")
+            .primary(source, Span::new(0, 0), "undocumented module")
+            .help("describe the file with `#!` lines at its top");
+        emit_lint(diagnostic, level, diagnostics);
+    }
+    for statement in &program.statements {
+        let (kind, name, is_pub, doc, span) = match statement {
+            Statement::Struct(declaration) => ("struct", &declaration.name, declaration.is_pub, &declaration.doc, declaration.span),
+            Statement::Enum(declaration) => ("enum", &declaration.name, declaration.is_pub, &declaration.doc, declaration.span),
+            Statement::TypeAlias(declaration) => ("type", &declaration.name, declaration.is_pub, &declaration.doc, declaration.span),
+            Statement::Const(declaration) => ("const", &declaration.name, declaration.is_pub, &declaration.doc, declaration.span),
+            Statement::Label(label) => {
+                if label.is_pub && label.doc.is_none() {
+                    emit_lint(missing_docs("label", &label.name, label.span, source), level, diagnostics);
+                }
+                continue;
+            }
+            _ => continue,
+        };
+        if is_pub && doc.is_none() {
+            let name = literal_name(name).unwrap_or_else(|| "<spliced>".to_string());
+            emit_lint(missing_docs(kind, &name, span, source), level, diagnostics);
+        }
+    }
+}
+
 fn lint_macro(
     declaration: &MacroDeclaration,
     source: SourceId,
     global: &LintConfig,
+    undocumented: bool,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     let directives = facet_directives(&declaration.facets);
@@ -325,6 +424,16 @@ fn lint_macro(
     };
     folds.statements(&declaration.body);
     occurred.extend(folds.occurred);
+
+    if undocumented {
+        occurred.insert(LintName::MISSING_DOCS);
+        let name = literal_name(&declaration.name).unwrap_or_default();
+        emit_lint(
+            missing_docs("macro", &name, declaration.span, source),
+            effective_level(LintName::MISSING_DOCS, global, &directives),
+            diagnostics,
+        );
+    }
 
     for (lint, level, span) in directives {
         if level == LintLevel::Expect && !occurred.contains(&lint) {
@@ -555,7 +664,7 @@ fn struct_items_contain_next(items: &[StructBodyItem]) -> bool {
     })
 }
 
-fn is_lint_facet(name: &str) -> bool {
+pub fn is_lint_facet(name: &str) -> bool {
     matches!(name, "allow" | "expect" | "warn" | "deny" | "forbid")
 }
 
@@ -613,12 +722,26 @@ fn statement_span(statement: &Statement) -> Span {
 
 fn collect_statement_identifiers(statement: &Statement, names: &mut HashSet<String>) {
     match statement {
-        Statement::Const(value) => collect_expr_identifiers(&value.value, names),
+        Statement::Const(value) => {
+            collect_name_splice_identifiers(&value.name, names);
+            collect_expr_identifiers(&value.value, names);
+        }
         Statement::Invocation(value) => value.operands.iter().for_each(|expr| collect_expr_identifiers(expr, names)),
         Statement::Meta(value) => collect_meta_identifiers(value, names),
-        Statement::Struct(_) | Statement::Enum(_) | Statement::TypeAlias(_) |
+        // A declaration a macro generates is evaluated where it lands, but
+        // its name is spliced while the macro runs (`` struct Word`n` ``).
+        Statement::Struct(value) => collect_name_splice_identifiers(&value.name, names),
+        Statement::Enum(value) => collect_name_splice_identifiers(&value.name, names),
+        Statement::TypeAlias(value) => collect_name_splice_identifiers(&value.name, names),
+        Statement::Macro(value) => collect_name_splice_identifiers(&value.name, names),
         Statement::Import(_) | Statement::Label(_) | Statement::ExternLabel(_) | Statement::Section(_) |
-        Statement::Macro(_) | Statement::SyntaxOverride(_) => {}
+        Statement::SyntaxOverride(_) => {}
+    }
+}
+
+fn collect_name_splice_identifiers(name: &crate::ast::SplicedName, names: &mut HashSet<String>) {
+    for part in name {
+        if let crate::ast::NamePart::Splice(expr) = part { collect_expr_identifiers(expr, names); }
     }
 }
 
@@ -643,7 +766,10 @@ fn collect_expr_identifiers(expr: &Expr, names: &mut HashSet<String>) {
                 if let crate::ast::NamePart::Splice(expr) = part { collect_expr_identifiers(expr, names); }
             }
         }
-        Expr::Member { object, .. } => collect_expr_identifiers(object, names),
+        Expr::Member { object, member, .. } => {
+            collect_expr_identifiers(object, names);
+            collect_name_splice_identifiers(member, names);
+        }
         Expr::Call { callee, arguments, .. } => {
             collect_expr_identifiers(callee, names);
             arguments.iter().for_each(|arg| collect_expr_identifiers(&arg.value, names));
@@ -738,6 +864,16 @@ mod tests {
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].lint, Some(LintName::UNUSED_PARAMETER));
         assert_eq!(diagnostics[0].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn a_parameter_spliced_into_a_generated_name_or_a_field_is_used() {
+        let diagnostics = lint(
+            "macro make(n: int) {\n    struct Wrap`n` {\n        pub value: int,\n    }\n}\n\
+             macro nth(arr: int, i: int) {\n    @emit arr.__el`i`\n}\n",
+            &LintConfig::default(),
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }
 
     #[test]

@@ -1,11 +1,34 @@
+#! Stepped ranges of integers, for `@for`.
+#!
+#! ```
+#! from std.iter import range
+#!
+#! macro countdown() {
+#!     @for i in range(10, 0, -3) {
+#!         @emit i
+#!     }
+#! }
+#!
+#! countdown
+#! ```
+#!
+#! ```emits
+#! 10 7 4 1
+#! ```
+
 from std.math import abs
 
+## The integers from `start` up to (or down to) `stop`, not including it,
+## every `step`. `range` builds one. `step` can't be 0, and has to point from
+## `start` towards `stop`.
 pub struct Range<const start: int, const stop: int, const step: int>
     | invariant step != 0
     | invariant (step > 0 && stop > start) || (step < 0 && stop < start)
 {
     @for i in 0..abs(stop - start) {
-        @if i % abs(step) == 0 {
+        # A struct body's `@if` can't call a macro; whether the remainder is
+        # zero doesn't depend on the divisor's sign anyway.
+        @if i % step == 0 {
             # Although we call it __el`i`, we just need a distinct name
             # for each element. This is the easiest way to do that.
             pub __el`i`: int
@@ -13,6 +36,7 @@ pub struct Range<const start: int, const stop: int, const step: int>
     }
 }
 
+## A `Range` from `start` to `stop`, not including `stop`, every `step`.
 pub macro range(
     start: int,
     stop: int,

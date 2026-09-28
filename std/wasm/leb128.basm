@@ -1,16 +1,40 @@
+#! LEB128, the variable-length integer encoding WebAssembly uses for every
+#! index, count and constant: 7 bits per byte, low bits first, with the top
+#! bit set on every byte but the last.
+#!
+#! ```
+#! from std.wasm.leb128 import *
+#!
+#! macro leb(value: int) {
+#!     @emit uleb128(value)
+#! }
+#!
+#! macro sleb(value: int) {
+#!     @emit sleb128(value)
+#! }
+#!
+#! leb 624485
+#! sleb -123456
+#! ```
+#!
+#! ```bytes
+#! e5 8e 26
+#! c0 bb 78
+#! ```
+
 from std.binary import *
 from std.bitfield import *
 
-# One LEB128 group, always 8 bits wide (7 payload bits plus a continuation
-# bit) — its own alias, the same reasoning `std/riscv`/`std/pdp10` give
+# `Byte` is its own alias, the same reasoning `std/riscv`/`std/pdp10` give
 # every instruction-word field: `bits<8>` alone can't be constructed with
 # plain call syntax (a bare generic struct needs a brace literal), and
 # giving the width a name keeps every signature below self-documenting.
+## A byte.
 pub type Byte = bits<8>
 
-# A fixed-length run of bytes, meant to be `bitter`-packed directly (as a
-# LEB128 encoding here, or as a whole instruction's bytes in
-# `std/wasm/impl.basm`). Deliberately not `std.array`'s `Array<T, N>`:
+## `N` bytes, packed by `bitter` in order: a LEB128 encoding, or a whole
+## instruction.
+# Deliberately not `std.array`'s `Array<T, N>`:
 # `Array` carries a `len: int` bookkeeping field alongside its elements,
 # which is exactly what `bitter`'s packer can't handle — it walks every
 # field of any struct it doesn't specifically recognize and expects each to
@@ -46,7 +70,8 @@ pub struct Bytes<const N: int>
 # shape decided in the body" pattern `std/array.basm`'s `updated`/`reversed`
 # already use (`-> Array<T, ...>`).
 
-# Number of 7-bit groups `value` needs as unsigned LEB128.
+## How many bytes `value`, which can't be negative, takes as unsigned
+## LEB128.
 pub macro uleb128_length(value: int) -> int {
     @assert value >= 0, "uleb128_length expects a non-negative value"
     @if value < 0x80 {
@@ -75,13 +100,9 @@ macro leb128_group(
     }
 }
 
-# Encodes `value` as unsigned LEB128 into exactly `n` bytes. `n` is normally
-# `uleb128_length(value)` (that's what plain `uleb128` below does); passing
-# a larger `n` produces a non-minimal encoding, padded with zero groups up
-# to `n` — the WASM spec explicitly permits this (up to a value's max byte
-# count for its bit width), which is how a section-length prefix can be
-# given a fixed width before the length it measures is actually known (see
-# `std/wasm/impl.basm`).
+## `value` as unsigned LEB128 in exactly `n` bytes. A larger `n` than
+## `uleb128_length(value)` pads with zero groups, which WebAssembly allows,
+## to give a field a fixed width.
 pub macro uleb128_padded(
     value: int,
     n: int
@@ -93,6 +114,8 @@ pub macro uleb128_padded(
     }
 }
 
+## `value`, which can't be negative, as unsigned LEB128 in as few bytes as
+## possible.
 pub macro uleb128(value: int) -> Bytes<...> {
     @return uleb128_padded(value, uleb128_length(value))
 }
@@ -107,9 +130,9 @@ pub macro uleb128(value: int) -> Bytes<...> {
 # termination rule differs, since a negative value's high groups are all
 # `0x7F` rather than all `0x00` and never reach exactly zero.
 
-# Number of 7-bit groups `value` needs as signed LEB128 — stops once the
-# remaining bits are pure sign-extension of the last emitted group's own
-# sign bit, matching the standard SLEB128 encoding loop's termination test.
+## How many bytes `value` takes as signed LEB128.
+# Stops once the remaining bits are pure sign-extension of the last group's
+# sign bit, the standard SLEB128 termination test.
 pub macro sleb128_length(value: int) -> int {
     const group = value & 0x7F
     const rest = value >> 7
@@ -120,7 +143,8 @@ pub macro sleb128_length(value: int) -> int {
     }
 }
 
-# See `uleb128_padded` — same idea, signed termination rule.
+## `value` as signed LEB128 in exactly `n` bytes, sign-extended to fill any
+## extra ones.
 pub macro sleb128_padded(
     value: int,
     n: int
@@ -132,6 +156,7 @@ pub macro sleb128_padded(
     }
 }
 
+## `value` as signed LEB128 in as few bytes as possible.
 pub macro sleb128(value: int) -> Bytes<...> {
     @return sleb128_padded(value, sleb128_length(value))
 }

@@ -1,13 +1,39 @@
-from .impl import *
+#! RISC-V RV32I written as expressions instead of mnemonics:
+#! `a0 = a1 + a2`, `a1 = mem[sp + 8]`, `if (a0 != zero) goto loop`.
+#!
+#! ```
+#! from std.riscv.c_like import *
+#!
+#! loop:
+#!     a0 <- a0 + -1
+#!     if (a0 != zero) goto loop
+#!     a1 = mem[sp + 8]
+#! ```
+#!
+#! ```bytes
+#! 13 05 f5 ff
+#! e3 1e 05 fe
+#! 83 25 81 00
+#! ```
+#!
+#! - A register-register operation uses `=`, and one with an immediate uses
+#!   `<-`: `a0 = a0 + a1` is `add`, and `a0 <- a0 + 1` is `addi`.
+#! - `>>>` is a logical shift right, and `>>` an arithmetic one.
+#! - Loads and stores smaller than a word name their width before `mem`:
+#!   `i8`, `u8`, `i16` or `u16`.
+#! - Unsigned comparisons (`sltu`, `sltiu`, `bltu`, `bgeu`), `lui`, `auipc`,
+#!   `ecall` and `ebreak` have no C-like spelling, and keep their plain
+#!   `name a, b, c` syntax.
+#!
+#! Import this instead of `std.riscv.native`, never alongside it: both
+#! assign syntax to the same instructions.
 
-# A second, C-flavored surface syntax for the same `impl.basm` instructions
-# `native.basm` already covers — no instruction mnemonic required anywhere
-# here, on purpose: every pattern below is unanchored (see
-# `facets::syntax::is_anchored`'s doc), so the parser tries all of them
-# against every statement instead of dispatching by a leading name. Import
-# this instead of (never alongside — see the loader's
-# `ConflictingSyntaxOverride`) `native.basm` to write RISC-V as ordinary
-# expressions instead of memorizing mnemonics.
+pub from .impl import *
+
+# Every pattern below is unanchored (see `facets::syntax::is_anchored`'s
+# doc), so the parser tries all of them against every statement instead of
+# dispatching by a leading name. Importing it next to `native.basm` is a
+# `ConflictingSyntaxOverride`.
 #
 # Two real ambiguities this has to design around, both from the same root
 # cause: a capture matches *any* expression, so nothing about the tokens

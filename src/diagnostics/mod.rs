@@ -6,6 +6,6 @@ mod source_map;
 
 pub use diagnostic::{Diagnostic, Label, LabelStyle, Severity};
 pub use errors::{lex_error, load_error, parse_error, resolve_error};
-pub use lint::{lint_program, load_lint_config, LintConfig, LintLevel, LintName};
+pub use lint::{is_lint_facet, lint_program, lint_program_with, load_lint_config, LintConfig, LintLevel, LintName};
 pub use renderer::{render, DiagnosticFormat, RenderOptions};
 pub use source_map::{SourceFile, SourceId, SourceMap};

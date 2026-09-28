@@ -1,0 +1,4 @@
+# `show_base` still reaches `base` through `middle`'s own import.
+from .lib.middle import show_base
+
+show_base

@@ -148,6 +148,7 @@ impl<'a> AliasResolver<'a> {
                 .map(|param| GenericParameter::Type { name: param.clone(), bound: None, span })
                 .collect(),
             facets: Vec::new(),
+            doc: None,
             fields: accumulators
                 .iter()
                 .zip(&params)
@@ -158,6 +159,7 @@ impl<'a> AliasResolver<'a> {
                         is_pub: true,
                         is_skip: false,
                         default: None,
+                        doc: None,
                         span,
                     })
                 })
