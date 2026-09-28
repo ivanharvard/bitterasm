@@ -617,12 +617,26 @@ fn statement_span(statement: &Statement) -> Span {
 
 fn collect_statement_identifiers(statement: &Statement, names: &mut HashSet<String>) {
     match statement {
-        Statement::Const(value) => collect_expr_identifiers(&value.value, names),
+        Statement::Const(value) => {
+            collect_name_splice_identifiers(&value.name, names);
+            collect_expr_identifiers(&value.value, names);
+        }
         Statement::Invocation(value) => value.operands.iter().for_each(|expr| collect_expr_identifiers(expr, names)),
         Statement::Meta(value) => collect_meta_identifiers(value, names),
-        Statement::Struct(_) | Statement::Enum(_) | Statement::TypeAlias(_) |
+        // A declaration a macro generates is evaluated where it lands, but
+        // its name is spliced while the macro runs (`` struct Word`n` ``).
+        Statement::Struct(value) => collect_name_splice_identifiers(&value.name, names),
+        Statement::Enum(value) => collect_name_splice_identifiers(&value.name, names),
+        Statement::TypeAlias(value) => collect_name_splice_identifiers(&value.name, names),
+        Statement::Macro(value) => collect_name_splice_identifiers(&value.name, names),
         Statement::Import(_) | Statement::Label(_) | Statement::ExternLabel(_) | Statement::Section(_) |
-        Statement::Macro(_) | Statement::SyntaxOverride(_) => {}
+        Statement::SyntaxOverride(_) => {}
+    }
+}
+
+fn collect_name_splice_identifiers(name: &crate::ast::SplicedName, names: &mut HashSet<String>) {
+    for part in name {
+        if let crate::ast::NamePart::Splice(expr) = part { collect_expr_identifiers(expr, names); }
     }
 }
 
@@ -647,7 +661,10 @@ fn collect_expr_identifiers(expr: &Expr, names: &mut HashSet<String>) {
                 if let crate::ast::NamePart::Splice(expr) = part { collect_expr_identifiers(expr, names); }
             }
         }
-        Expr::Member { object, .. } => collect_expr_identifiers(object, names),
+        Expr::Member { object, member, .. } => {
+            collect_expr_identifiers(object, names);
+            collect_name_splice_identifiers(member, names);
+        }
         Expr::Call { callee, arguments, .. } => {
             collect_expr_identifiers(callee, names);
             arguments.iter().for_each(|arg| collect_expr_identifiers(&arg.value, names));
@@ -742,6 +759,16 @@ mod tests {
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].lint, Some(LintName::UNUSED_PARAMETER));
         assert_eq!(diagnostics[0].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn a_parameter_spliced_into_a_generated_name_or_a_field_is_used() {
+        let diagnostics = lint(
+            "macro make(n: int) {\n    struct Wrap`n` {\n        pub value: int,\n    }\n}\n\
+             macro nth(arr: int, i: int) {\n    @emit arr.__el`i`\n}\n",
+            &LintConfig::default(),
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }
 
     #[test]
