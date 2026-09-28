@@ -647,6 +647,12 @@ fn resolve_import_paths(
     }
 }
 
+/// Whether `import` names modules in a directory (`from std.riscv import
+/// native`) rather than declarations in one module.
+pub fn imports_modules(import: &ImportStatement, importer: &Path) -> bool {
+    matches!(resolve_import_paths(import, importer), Ok(ImportResolution::Package(_)))
+}
+
 fn import_targets(import: &ImportStatement, importer: &Path) -> Result<Vec<PathBuf>, LoadError> {
     Ok(match resolve_import_paths(import, importer)? {
         ImportResolution::Plain(target_path) => vec![target_path],

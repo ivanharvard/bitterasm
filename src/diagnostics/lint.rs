@@ -129,6 +129,18 @@ fn parse_lint_config(source: &str, display_path: &str) -> Result<LintConfig, Str
 }
 
 pub fn lint_program(program: &Program, source: SourceId, config: &LintConfig) -> Vec<Diagnostic> {
+    lint_program_with(program, source, config, |_| false)
+}
+
+/// `lint_program`, told which imports name modules in a directory (`from
+/// std.riscv import native`) rather than declarations. Those names are
+/// never referenced by name, so they're never reported as unused.
+pub fn lint_program_with(
+    program: &Program,
+    source: SourceId,
+    config: &LintConfig,
+    imports_modules: impl Fn(&crate::ast::ImportStatement) -> bool,
+) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     let mut references = HashSet::new();
     for statement in &program.statements {
@@ -137,7 +149,7 @@ pub fn lint_program(program: &Program, source: SourceId, config: &LintConfig) ->
     for statement in &program.statements {
         let Statement::Import(import) = statement else { continue };
         // A re-exported name is used by whoever imports this file.
-        if import.is_pub {
+        if import.is_pub || imports_modules(import) {
             continue;
         }
         let ImportItems::Names(names) = &import.items else { continue };

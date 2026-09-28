@@ -654,10 +654,11 @@ fn analyze(path: &Path, options: DiagnosticCliOptions, verbose: Option<&VerboseR
     // so every span here still belongs to the source file we render.
     match loader::load_entry_program(path) {
         Ok(program) => {
-            let warnings = diagnostics::lint_program(
+            let warnings = diagnostics::lint_program_with(
                 &program,
                 diagnostic_run.source_id,
                 &diagnostic_run.config,
+                |import| loader::imports_modules(import, path),
             );
             if emit_diagnostics(&warnings, &diagnostic_run) {
                 std::process::exit(1);

@@ -49,6 +49,16 @@ error. An import that's never used gets the `unused_import` warning.
 If the module path names a directory, the listed names are modules in it:
 `from std.riscv import native` means `from std.riscv.native import *`.
 
+```basm
+from std.riscv import native
+
+add a0, a1, a2
+```
+
+```bytes
+33 85 c5 00
+```
+
 ## The search path
 
 A relative path starts with dots. One dot is the importing file's own
