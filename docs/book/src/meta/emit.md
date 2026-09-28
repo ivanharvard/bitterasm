@@ -66,8 +66,12 @@ to go. See
 
 ## Restricting what a macro emits: `emits`
 
-The `emits` facet declares which types a macro may emit. Emitting anything
-else is a compile error. Give several `emits` facets to allow several types.
+The `emits` facet declares which types a macro may emit. It's optional, but
+if it's there, it's enforced: emitting anything else is a compile error.
+Give several `emits` facets to allow several types, and use a
+[wildcard](../generics/wildcards.md) to allow any instance of a generic
+type, as in `| emits bits<...>`. This is how instruction macros declare what
+they encode to; `->` is only for what a macro [returns](../macros/returning.md).
 
 ```basm
 from std.binary import bits
@@ -95,6 +99,10 @@ macro byte(value: int)
 }
 
 byte 0x41
+```
+
+```error
+`@emit`ed value has type `int`, but this macro's `emits` facet(s) only declare `bits<8>`
 ```
 
 A macro with no `emits` facet may emit anything.

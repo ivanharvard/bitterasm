@@ -71,7 +71,9 @@ pub struct Instr {
 # HALT is documented in the manual's own word-format chart as `JRST 4,` —
 # opcode 0254 with the ac field fixed to 4, not a separate opcode of its
 # own.
-pub macro halt() -> Instr {
+pub macro halt()
+    | emits Instr
+{
     @emit Instr(
         opcode = Opcode(0o254),
         ac = AC(4),
@@ -85,7 +87,9 @@ pub macro jrst(
     i: int,
     x: Index,
     y: int
-) -> Instr {
+)
+    | emits Instr
+{
     @emit Instr(
         opcode = Opcode(0o254),
         ac = AC(0),
@@ -99,7 +103,9 @@ pub macro jumpa(
     i: int,
     x: Index,
     y: int
-) -> Instr {
+)
+    | emits Instr
+{
     @emit Instr(
         opcode = Opcode(0o324),
         ac = AC(0),
@@ -114,7 +120,9 @@ pub macro movei(
     i: int,
     x: Index,
     y: int
-) -> Instr {
+)
+    | emits Instr
+{
     @emit Instr(
         opcode = Opcode(0o201),
         ac = ac,
@@ -129,7 +137,9 @@ pub macro move(
     i: int,
     x: Index,
     y: int
-) -> Instr {
+)
+    | emits Instr
+{
     @emit Instr(
         opcode = Opcode(0o200),
         ac = ac,
@@ -144,7 +154,9 @@ pub macro movem(
     i: int,
     x: Index,
     y: int
-) -> Instr {
+)
+    | emits Instr
+{
     @emit Instr(
         opcode = Opcode(0o202),
         ac = ac,
@@ -163,7 +175,9 @@ pub macro add(
     i: int,
     x: Index,
     y: int
-) -> Instr {
+)
+    | emits Instr
+{
     @emit Instr(
         opcode = Opcode(0o270),
         ac = ac,
@@ -178,7 +192,9 @@ pub macro addi(
     i: int,
     x: Index,
     y: int
-) -> Instr {
+)
+    | emits Instr
+{
     @emit Instr(
         opcode = Opcode(0o271),
         ac = ac,
@@ -193,7 +209,9 @@ pub macro sub(
     i: int,
     x: Index,
     y: int
-) -> Instr {
+)
+    | emits Instr
+{
     @emit Instr(
         opcode = Opcode(0o274),
         ac = ac,
@@ -208,7 +226,9 @@ pub macro and(
     i: int,
     x: Index,
     y: int
-) -> Instr {
+)
+    | emits Instr
+{
     @emit Instr(
         opcode = Opcode(0o404),
         ac = ac,
@@ -227,7 +247,9 @@ pub macro cain(
     i: int,
     x: Index,
     y: int
-) -> Instr {
+)
+    | emits Instr
+{
     @emit Instr(
         opcode = Opcode(0o306),
         ac = ac,
@@ -242,7 +264,9 @@ pub macro exch(
     i: int,
     x: Index,
     y: int
-) -> Instr {
+)
+    | emits Instr
+{
     @emit Instr(
         opcode = Opcode(0o250),
         ac = ac,

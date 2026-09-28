@@ -78,47 +78,69 @@ macro op_with_byte(
 # so this file, like `std/pdp10/impl.basm`'s `jrst`/`jumpa`, never imports
 # `std.bitter.deferred`.
 
-pub macro unreachable() -> Byte {
+pub macro unreachable()
+    | emits Byte
+{
     @emit Byte(0x00)
 }
 
-pub macro nop() -> Byte {
+pub macro nop()
+    | emits Byte
+{
     @emit Byte(0x01)
 }
 
-pub macro block(blocktype: Byte) -> OpWithImm<1> {
+pub macro block(blocktype: Byte)
+    | emits OpWithImm<1>
+{
     @emit op_with_byte(0x02, blocktype)
 }
 
-pub macro loop(blocktype: Byte) -> OpWithImm<1> {
+pub macro loop(blocktype: Byte)
+    | emits OpWithImm<1>
+{
     @emit op_with_byte(0x03, blocktype)
 }
 
-pub macro if_(blocktype: Byte) -> OpWithImm<1> {
+pub macro if_(blocktype: Byte)
+    | emits OpWithImm<1>
+{
     @emit op_with_byte(0x04, blocktype)
 }
 
-pub macro else_() -> Byte {
+pub macro else_()
+    | emits Byte
+{
     @emit Byte(0x05)
 }
 
-pub macro end() -> Byte {
+pub macro end()
+    | emits Byte
+{
     @emit Byte(0x0B)
 }
 
-pub macro br(depth: int) -> OpWithImm<...> {
+pub macro br(depth: int)
+    | emits OpWithImm<...>
+{
     @emit op_with_uleb128(0x0C, depth)
 }
 
-pub macro br_if(depth: int) -> OpWithImm<...> {
+pub macro br_if(depth: int)
+    | emits OpWithImm<...>
+{
     @emit op_with_uleb128(0x0D, depth)
 }
 
-pub macro return_() -> Byte {
+pub macro return_()
+    | emits Byte
+{
     @emit Byte(0x0F)
 }
 
-pub macro call(func_index: int) -> OpWithImm<...> {
+pub macro call(func_index: int)
+    | emits OpWithImm<...>
+{
     @emit op_with_uleb128(0x10, func_index)
 }
 
@@ -126,7 +148,9 @@ pub macro call(func_index: int) -> OpWithImm<...> {
 # parametric instructions
 # =================
 
-pub macro drop() -> Byte {
+pub macro drop()
+    | emits Byte
+{
     @emit Byte(0x1A)
 }
 
@@ -134,15 +158,21 @@ pub macro drop() -> Byte {
 # variable instructions
 # =================
 
-pub macro local_get(index: int) -> OpWithImm<...> {
+pub macro local_get(index: int)
+    | emits OpWithImm<...>
+{
     @emit op_with_uleb128(0x20, index)
 }
 
-pub macro local_set(index: int) -> OpWithImm<...> {
+pub macro local_set(index: int)
+    | emits OpWithImm<...>
+{
     @emit op_with_uleb128(0x21, index)
 }
 
-pub macro local_tee(index: int) -> OpWithImm<...> {
+pub macro local_tee(index: int)
+    | emits OpWithImm<...>
+{
     @emit op_with_uleb128(0x22, index)
 }
 
@@ -154,26 +184,38 @@ pub macro local_tee(index: int) -> OpWithImm<...> {
 # "Status" section, the same way `std/pdp10` shipped with a representative
 # subset rather than every DEC PRM opcode.
 
-pub macro i32_const(value: int) -> OpWithImm<...> {
+pub macro i32_const(value: int)
+    | emits OpWithImm<...>
+{
     @emit op_with_sleb128(0x41, value)
 }
 
-pub macro i32_eqz() -> Byte {
+pub macro i32_eqz()
+    | emits Byte
+{
     @emit Byte(0x45)
 }
 
-pub macro i32_lt_s() -> Byte {
+pub macro i32_lt_s()
+    | emits Byte
+{
     @emit Byte(0x48)
 }
 
-pub macro i32_add() -> Byte {
+pub macro i32_add()
+    | emits Byte
+{
     @emit Byte(0x6A)
 }
 
-pub macro i32_sub() -> Byte {
+pub macro i32_sub()
+    | emits Byte
+{
     @emit Byte(0x6B)
 }
 
-pub macro i32_mul() -> Byte {
+pub macro i32_mul()
+    | emits Byte
+{
     @emit Byte(0x6C)
 }

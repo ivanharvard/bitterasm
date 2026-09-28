@@ -254,7 +254,9 @@ pub macro mov(
     rd: Reg,
     rs: Reg,
     w: int
-) -> Bytes<...> {
+)
+    | emits Bytes<...>
+{
     @emit reg_reg_instr(0x89, rd, rs, w)
 }
 
@@ -268,7 +270,9 @@ pub macro mov(
     rd: Reg,
     imm: int,
     w: int
-) -> Bytes<...> {
+)
+    | emits Bytes<...>
+{
     const need_rex = w == 1 || reg_ext(rd) == 1
     const rex = rex_byte(w, 0, 0, reg_ext(rd))
     const opcode = Byte(0xB8 + reg_field(rd))
@@ -289,32 +293,38 @@ pub macro add(
     rd: Reg,
     rs: Reg,
     w: int
-) -> Bytes<...> { @emit reg_reg_instr(0x01, rd, rs, w) }
+)
+    | emits Bytes<...> { @emit reg_reg_instr(0x01, rd, rs, w) }
 pub macro or(
     rd: Reg,
     rs: Reg,
     w: int
-) -> Bytes<...> { @emit reg_reg_instr(0x09, rd, rs, w) }
+)
+    | emits Bytes<...> { @emit reg_reg_instr(0x09, rd, rs, w) }
 pub macro and(
     rd: Reg,
     rs: Reg,
     w: int
-) -> Bytes<...> { @emit reg_reg_instr(0x21, rd, rs, w) }
+)
+    | emits Bytes<...> { @emit reg_reg_instr(0x21, rd, rs, w) }
 pub macro sub(
     rd: Reg,
     rs: Reg,
     w: int
-) -> Bytes<...> { @emit reg_reg_instr(0x29, rd, rs, w) }
+)
+    | emits Bytes<...> { @emit reg_reg_instr(0x29, rd, rs, w) }
 pub macro xor(
     rd: Reg,
     rs: Reg,
     w: int
-) -> Bytes<...> { @emit reg_reg_instr(0x31, rd, rs, w) }
+)
+    | emits Bytes<...> { @emit reg_reg_instr(0x31, rd, rs, w) }
 pub macro cmp(
     rd: Reg,
     rs: Reg,
     w: int
-) -> Bytes<...> { @emit reg_reg_instr(0x39, rd, rs, w) }
+)
+    | emits Bytes<...> { @emit reg_reg_instr(0x39, rd, rs, w) }
 
 # reg,imm32 forms overload their reg,reg counterparts. `Reg` is a distinct
 # `bits<4>` type, so the resolver selects the encoding by operand type.
@@ -322,32 +332,38 @@ pub macro add(
     rd: Reg,
     imm: int,
     w: int
-) -> Bytes<...> { @emit reg_imm_instr(0x81, 0, rd, imm, 4, w) }
+)
+    | emits Bytes<...> { @emit reg_imm_instr(0x81, 0, rd, imm, 4, w) }
 pub macro or(
     rd: Reg,
     imm: int,
     w: int
-) -> Bytes<...> { @emit reg_imm_instr(0x81, 1, rd, imm, 4, w) }
+)
+    | emits Bytes<...> { @emit reg_imm_instr(0x81, 1, rd, imm, 4, w) }
 pub macro and(
     rd: Reg,
     imm: int,
     w: int
-) -> Bytes<...> { @emit reg_imm_instr(0x81, 4, rd, imm, 4, w) }
+)
+    | emits Bytes<...> { @emit reg_imm_instr(0x81, 4, rd, imm, 4, w) }
 pub macro sub(
     rd: Reg,
     imm: int,
     w: int
-) -> Bytes<...> { @emit reg_imm_instr(0x81, 5, rd, imm, 4, w) }
+)
+    | emits Bytes<...> { @emit reg_imm_instr(0x81, 5, rd, imm, 4, w) }
 pub macro xor(
     rd: Reg,
     imm: int,
     w: int
-) -> Bytes<...> { @emit reg_imm_instr(0x81, 6, rd, imm, 4, w) }
+)
+    | emits Bytes<...> { @emit reg_imm_instr(0x81, 6, rd, imm, 4, w) }
 pub macro cmp(
     rd: Reg,
     imm: int,
     w: int
-) -> Bytes<...> { @emit reg_imm_instr(0x81, 7, rd, imm, 4, w) }
+)
+    | emits Bytes<...> { @emit reg_imm_instr(0x81, 7, rd, imm, 4, w) }
 
 # =================
 # test
@@ -356,12 +372,14 @@ pub macro test(
     rd: Reg,
     rs: Reg,
     w: int
-) -> Bytes<...> { @emit reg_reg_instr(0x85, rd, rs, w) }
+)
+    | emits Bytes<...> { @emit reg_reg_instr(0x85, rd, rs, w) }
 pub macro test(
     rd: Reg,
     imm: int,
     w: int
-) -> Bytes<...> { @emit reg_imm_instr(0xF7, 0, rd, imm, 4, w) }
+)
+    | emits Bytes<...> { @emit reg_imm_instr(0xF7, 0, rd, imm, 4, w) }
 
 # =================
 # memory operands (Phase 3)
@@ -793,7 +811,8 @@ pub macro mov(
     dst: MemOperand,
     rs: Reg,
     w: int
-) -> Bytes<...> { @emit mem_reg_instr(0x89, dst, rs, w) }
+)
+    | emits Bytes<...> { @emit mem_reg_instr(0x89, dst, rs, w) }
 
 # `mov`'s load direction (`0x8B`, "r, r/m" — reg field is the destination this
 # time, `mem_reg_instr`'s `rs` parameter slot filled by `rd` instead of the
@@ -813,85 +832,101 @@ pub macro mov(
     rd: Reg,
     src: MemOperand,
     w: int
-) -> Bytes<...> { @emit mem_reg_instr(0x8B, src, rd, w) }
+)
+    | emits Bytes<...> { @emit mem_reg_instr(0x8B, src, rd, w) }
 
 pub macro add(
     dst: MemOperand,
     rs: Reg,
     w: int
-) -> Bytes<...> { @emit mem_reg_instr(0x01, dst, rs, w) }
+)
+    | emits Bytes<...> { @emit mem_reg_instr(0x01, dst, rs, w) }
 pub macro or(
     dst: MemOperand,
     rs: Reg,
     w: int
-) -> Bytes<...> { @emit mem_reg_instr(0x09, dst, rs, w) }
+)
+    | emits Bytes<...> { @emit mem_reg_instr(0x09, dst, rs, w) }
 pub macro and(
     dst: MemOperand,
     rs: Reg,
     w: int
-) -> Bytes<...> { @emit mem_reg_instr(0x21, dst, rs, w) }
+)
+    | emits Bytes<...> { @emit mem_reg_instr(0x21, dst, rs, w) }
 pub macro sub(
     dst: MemOperand,
     rs: Reg,
     w: int
-) -> Bytes<...> { @emit mem_reg_instr(0x29, dst, rs, w) }
+)
+    | emits Bytes<...> { @emit mem_reg_instr(0x29, dst, rs, w) }
 pub macro xor(
     dst: MemOperand,
     rs: Reg,
     w: int
-) -> Bytes<...> { @emit mem_reg_instr(0x31, dst, rs, w) }
+)
+    | emits Bytes<...> { @emit mem_reg_instr(0x31, dst, rs, w) }
 pub macro cmp(
     dst: MemOperand,
     rs: Reg,
     w: int
-) -> Bytes<...> { @emit mem_reg_instr(0x39, dst, rs, w) }
+)
+    | emits Bytes<...> { @emit mem_reg_instr(0x39, dst, rs, w) }
 pub macro test(
     dst: MemOperand,
     rs: Reg,
     w: int
-) -> Bytes<...> { @emit mem_reg_instr(0x85, dst, rs, w) }
+)
+    | emits Bytes<...> { @emit mem_reg_instr(0x85, dst, rs, w) }
 
 # `0xC7 /0`, not `0xB8+reg` — see `mem_imm_instr`'s own comment above.
 pub macro mov(
     dst: MemOperand,
     imm: int,
     w: int
-) -> Bytes<...> { @emit mem_imm_instr(0xC7, 0, dst, imm, w) }
+)
+    | emits Bytes<...> { @emit mem_imm_instr(0xC7, 0, dst, imm, w) }
 pub macro add(
     dst: MemOperand,
     imm: int,
     w: int
-) -> Bytes<...> { @emit mem_imm_instr(0x81, 0, dst, imm, w) }
+)
+    | emits Bytes<...> { @emit mem_imm_instr(0x81, 0, dst, imm, w) }
 pub macro or(
     dst: MemOperand,
     imm: int,
     w: int
-) -> Bytes<...> { @emit mem_imm_instr(0x81, 1, dst, imm, w) }
+)
+    | emits Bytes<...> { @emit mem_imm_instr(0x81, 1, dst, imm, w) }
 pub macro and(
     dst: MemOperand,
     imm: int,
     w: int
-) -> Bytes<...> { @emit mem_imm_instr(0x81, 4, dst, imm, w) }
+)
+    | emits Bytes<...> { @emit mem_imm_instr(0x81, 4, dst, imm, w) }
 pub macro sub(
     dst: MemOperand,
     imm: int,
     w: int
-) -> Bytes<...> { @emit mem_imm_instr(0x81, 5, dst, imm, w) }
+)
+    | emits Bytes<...> { @emit mem_imm_instr(0x81, 5, dst, imm, w) }
 pub macro xor(
     dst: MemOperand,
     imm: int,
     w: int
-) -> Bytes<...> { @emit mem_imm_instr(0x81, 6, dst, imm, w) }
+)
+    | emits Bytes<...> { @emit mem_imm_instr(0x81, 6, dst, imm, w) }
 pub macro cmp(
     dst: MemOperand,
     imm: int,
     w: int
-) -> Bytes<...> { @emit mem_imm_instr(0x81, 7, dst, imm, w) }
+)
+    | emits Bytes<...> { @emit mem_imm_instr(0x81, 7, dst, imm, w) }
 pub macro test(
     dst: MemOperand,
     imm: int,
     w: int
-) -> Bytes<...> { @emit mem_imm_instr(0xF7, 0, dst, imm, w) }
+)
+    | emits Bytes<...> { @emit mem_imm_instr(0xF7, 0, dst, imm, w) }
 
 # =================
 # control flow: jmp/jcc/call/ret (Phase 4)
@@ -954,7 +989,9 @@ pub struct Rel32Instr2 {
 # fixed size, known here at macro-expansion time since there's no
 # variable-length
 # encoding in this instruction at all (unlike, say, Phase 3's memory operands).
-pub macro jmp(target: int) -> Rel32Instr {
+pub macro jmp(target: int)
+    | emits Rel32Instr
+{
     @emit Rel32Instr(
         opcode = Byte(0xE9),
         rel32 = LittleEndian<Positioned<32>, 32> { value: Positioned<32> { value: rel32_offset(
@@ -965,7 +1002,9 @@ pub macro jmp(target: int) -> Rel32Instr {
 }
 
 # `call rel32` — same shape as `jmp`, different opcode, still 5 bytes total.
-pub macro call(target: int) -> Rel32Instr {
+pub macro call(target: int)
+    | emits Rel32Instr
+{
     @emit Rel32Instr(
         opcode = Byte(0xE8),
         rel32 = LittleEndian<Positioned<32>, 32> { value: Positioned<32> { value: rel32_offset(
@@ -1003,41 +1042,73 @@ macro jcc_instr(
 # `jb`/`jae`, `ja`/`jbe`, `jl`/`jge`, `jle`/`jg`, `js`/`jns`, `jo`/`jno`,
 # `jp`/`jnp`
 # are each other's exact bit-complement — `tttn` vs `tttn⊕1`).
-pub macro je(target: int) -> Rel32Instr2 { @emit jcc_instr(0x4, target) }
-pub macro jne(target: int) -> Rel32Instr2 { @emit jcc_instr(0x5, target) }
-pub macro jb(target: int) -> Rel32Instr2 { @emit jcc_instr(0x2, target) }
-pub macro jae(target: int) -> Rel32Instr2 { @emit jcc_instr(0x3, target) }
-pub macro ja(target: int) -> Rel32Instr2 { @emit jcc_instr(0x7, target) }
-pub macro jbe(target: int) -> Rel32Instr2 { @emit jcc_instr(0x6, target) }
-pub macro jl(target: int) -> Rel32Instr2 { @emit jcc_instr(0xC, target) }
-pub macro jge(target: int) -> Rel32Instr2 { @emit jcc_instr(0xD, target) }
-pub macro jle(target: int) -> Rel32Instr2 { @emit jcc_instr(0xE, target) }
-pub macro jg(target: int) -> Rel32Instr2 { @emit jcc_instr(0xF, target) }
-pub macro js(target: int) -> Rel32Instr2 { @emit jcc_instr(0x8, target) }
-pub macro jns(target: int) -> Rel32Instr2 { @emit jcc_instr(0x9, target) }
-pub macro jo(target: int) -> Rel32Instr2 { @emit jcc_instr(0x0, target) }
-pub macro jno(target: int) -> Rel32Instr2 { @emit jcc_instr(0x1, target) }
-pub macro jp(target: int) -> Rel32Instr2 { @emit jcc_instr(0xA, target) }
-pub macro jnp(target: int) -> Rel32Instr2 { @emit jcc_instr(0xB, target) }
+pub macro je(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0x4, target) }
+pub macro jne(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0x5, target) }
+pub macro jb(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0x2, target) }
+pub macro jae(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0x3, target) }
+pub macro ja(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0x7, target) }
+pub macro jbe(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0x6, target) }
+pub macro jl(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0xC, target) }
+pub macro jge(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0xD, target) }
+pub macro jle(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0xE, target) }
+pub macro jg(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0xF, target) }
+pub macro js(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0x8, target) }
+pub macro jns(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0x9, target) }
+pub macro jo(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0x0, target) }
+pub macro jno(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0x1, target) }
+pub macro jp(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0xA, target) }
+pub macro jnp(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0xB, target) }
 
 # The SDM's synonyms for the same 16 condition codes — every alternate spelling
 # its `Jcc` table lists, so code written against any of them assembles as-is.
-pub macro jz(target: int) -> Rel32Instr2 { @emit jcc_instr(0x4, target) }
-pub macro jnz(target: int) -> Rel32Instr2 { @emit jcc_instr(0x5, target) }
-pub macro jc(target: int) -> Rel32Instr2 { @emit jcc_instr(0x2, target) }
-pub macro jnae(target: int) -> Rel32Instr2 { @emit jcc_instr(0x2, target) }
-pub macro jnc(target: int) -> Rel32Instr2 { @emit jcc_instr(0x3, target) }
-pub macro jnb(target: int) -> Rel32Instr2 { @emit jcc_instr(0x3, target) }
-pub macro jnbe(target: int) -> Rel32Instr2 { @emit jcc_instr(0x7, target) }
-pub macro jna(target: int) -> Rel32Instr2 { @emit jcc_instr(0x6, target) }
-pub macro jnge(target: int) -> Rel32Instr2 { @emit jcc_instr(0xC, target) }
-pub macro jnl(target: int) -> Rel32Instr2 { @emit jcc_instr(0xD, target) }
-pub macro jng(target: int) -> Rel32Instr2 { @emit jcc_instr(0xE, target) }
-pub macro jnle(target: int) -> Rel32Instr2 { @emit jcc_instr(0xF, target) }
-pub macro jpe(target: int) -> Rel32Instr2 { @emit jcc_instr(0xA, target) }
-pub macro jpo(target: int) -> Rel32Instr2 { @emit jcc_instr(0xB, target) }
+pub macro jz(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0x4, target) }
+pub macro jnz(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0x5, target) }
+pub macro jc(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0x2, target) }
+pub macro jnae(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0x2, target) }
+pub macro jnc(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0x3, target) }
+pub macro jnb(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0x3, target) }
+pub macro jnbe(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0x7, target) }
+pub macro jna(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0x6, target) }
+pub macro jnge(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0xC, target) }
+pub macro jnl(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0xD, target) }
+pub macro jng(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0xE, target) }
+pub macro jnle(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0xF, target) }
+pub macro jpe(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0xA, target) }
+pub macro jpo(target: int)
+    | emits Rel32Instr2 { @emit jcc_instr(0xB, target) }
 
-pub macro ret() -> Byte {
+pub macro ret()
+    | emits Byte
+{
     @emit Byte(0xC3)
 }
 
@@ -1081,31 +1152,37 @@ pub macro shl(
     rd: Reg,
     imm: int,
     w: int
-) -> Bytes<...> { @emit reg_imm_instr(0xC1, 4, rd, imm, 1, w) }
+)
+    | emits Bytes<...> { @emit reg_imm_instr(0xC1, 4, rd, imm, 1, w) }
 pub macro shl_cl(
     rd: Reg,
     w: int
-) -> Bytes<...> { @emit reg_imm_instr(0xD3, 4, rd, 0, 0, w) }
+)
+    | emits Bytes<...> { @emit reg_imm_instr(0xD3, 4, rd, 0, 0, w) }
 
 pub macro shr(
     rd: Reg,
     imm: int,
     w: int
-) -> Bytes<...> { @emit reg_imm_instr(0xC1, 5, rd, imm, 1, w) }
+)
+    | emits Bytes<...> { @emit reg_imm_instr(0xC1, 5, rd, imm, 1, w) }
 pub macro shr_cl(
     rd: Reg,
     w: int
-) -> Bytes<...> { @emit reg_imm_instr(0xD3, 5, rd, 0, 0, w) }
+)
+    | emits Bytes<...> { @emit reg_imm_instr(0xD3, 5, rd, 0, 0, w) }
 
 pub macro sar(
     rd: Reg,
     imm: int,
     w: int
-) -> Bytes<...> { @emit reg_imm_instr(0xC1, 7, rd, imm, 1, w) }
+)
+    | emits Bytes<...> { @emit reg_imm_instr(0xC1, 7, rd, imm, 1, w) }
 pub macro sar_cl(
     rd: Reg,
     w: int
-) -> Bytes<...> { @emit reg_imm_instr(0xD3, 7, rd, 0, 0, w) }
+)
+    | emits Bytes<...> { @emit reg_imm_instr(0xD3, 7, rd, 0, 0, w) }
 
 # =================
 # lea (Phase 5)
@@ -1128,7 +1205,8 @@ pub macro lea(
     rd: Reg,
     src: MemOperand,
     w: int
-) -> Bytes<...> { @emit mem_reg_instr(0x8D, src, rd, w) }
+)
+    | emits Bytes<...> { @emit mem_reg_instr(0x8D, src, rd, w) }
 
 # =================
 # RIP-relative label operands
@@ -1215,14 +1293,18 @@ pub macro test(dst: RipLabel, rs: Reg, w: int) { rip_label_instr 0x85, dst, rs, 
 # to select in 64-bit mode at all (the default, and only, operand size for a GPR
 # push/pop here is 64 bits — REX.W would be redundant, so this file never emits
 # it).
-pub macro push(rd: Reg) -> Bytes<...> {
+pub macro push(rd: Reg)
+    | emits Bytes<...>
+{
     const need_rex = reg_ext(rd) == 1
     const rex = rex_byte(0, 0, 0, reg_ext(rd))
     const opcode = Byte(0x50 + reg_field(rd))
     @emit instr(need_rex, rex, opcode, 0, Byte(0), 0, 0)
 }
 
-pub macro pop(rd: Reg) -> Bytes<...> {
+pub macro pop(rd: Reg)
+    | emits Bytes<...>
+{
     const need_rex = reg_ext(rd) == 1
     const rex = rex_byte(0, 0, 0, reg_ext(rd))
     const opcode = Byte(0x58 + reg_field(rd))
@@ -1238,6 +1320,8 @@ pub macro pop(rd: Reg) -> Bytes<...> {
 # registers, so unlike every other macro in this file there is no addressing
 # mode, operand size, or register argument for this instruction to encode at
 # all — same zero-operand shape as `ret` above.
-pub macro syscall() -> Bytes<2> {
+pub macro syscall()
+    | emits Bytes<2>
+{
     @emit Bytes<2> { __el0: Byte(0x0F), __el1: Byte(0x05) }
 }

@@ -13,7 +13,7 @@ pub struct Array<T, const N: int>
 macro oob_check<T>(
     arr: Array<T, ...>,
     index: int
-) -> int {
+) {
     @assert index >= 0, "Arrays do not support negative indices"
     @assert index < arr.len, "Index is greater than Array length"
 }

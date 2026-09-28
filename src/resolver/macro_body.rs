@@ -348,6 +348,7 @@ impl<'a> AliasResolver<'a> {
                     continue;
                 }
                 expansion.returned = body_result.returned;
+                self.check_return_type(declaration, expansion.returned.as_ref())?;
 
                 let after_hooks = crate::facets::extract_exprs(&declaration.facets, "after");
                 if !after_hooks.is_empty() {
@@ -380,6 +381,41 @@ impl<'a> AliasResolver<'a> {
             self.current_section = previous_section;
         }
         result
+    }
+
+    /// Checks a finished call's return value against the `-> Type` its
+    /// signature declares, resolved against this call's generic bindings
+    /// (so `-> Array<T, N + 1>` means this call's `T` and `N`). No
+    /// conversion happens, the same as for arguments. `-> Type` promises a
+    /// return value, so returning nothing is an error too; what a macro
+    /// emits is declared separately, with `| emits`.
+    fn check_return_type(
+        &mut self,
+        declaration: &MacroDeclaration,
+        returned: Option<&Value>,
+    ) -> Result<(), ResolveError> {
+        let Some(return_ty) = &declaration.return_ty else {
+            return Ok(());
+        };
+        let expected = self.resolve_type_expr(return_ty)?;
+        let Some(value) = returned else {
+            return Err(ResolveError::ReturnTypeMismatch {
+                name: macro_display_name(&declaration.name),
+                expected: describe_type(&expected, self),
+                actual: None,
+                span: return_ty.span(),
+            });
+        };
+        let actual = self.value_type(value)?;
+        if !expected.accepts(&actual) && !self.int_fits_alias(&expected, value, return_ty.span())? {
+            return Err(ResolveError::ReturnTypeMismatch {
+                name: macro_display_name(&declaration.name),
+                expected: describe_type(&expected, self),
+                actual: Some(describe_type(&actual, self)),
+                span: return_ty.span(),
+            });
+        }
+        Ok(())
     }
 
     /// Binds `declaration`'s params against already-evaluated `arguments`,
@@ -715,7 +751,7 @@ impl<'a> AliasResolver<'a> {
 
                             if !allowed_emits.is_empty() {
                                 let actual = self.value_type(&value)?;
-                                if !allowed_emits.iter().any(|ty| ty == &actual) {
+                                if !allowed_emits.iter().any(|ty| ty.accepts(&actual)) {
                                     return Err(ResolveError::EmittedTypeNotDeclared {
                                         actual: describe_type(&actual, self),
                                         declared: allowed_emits

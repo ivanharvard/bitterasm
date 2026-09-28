@@ -10,8 +10,8 @@ pub type bool         = bits<1>
 pub const true: bool  = 1
 pub const false: bool = 0
 
-# Returns `true` if the given value fits inside `width` many bits
-pub macro fits_inside_width(width: int, value: int) -> bool
+# 1 if the given value fits inside `width` many bits, else 0
+pub macro fits_inside_width(width: int, value: int) -> int
 {
     @return value >= 0 && value < (1 << width)
 }

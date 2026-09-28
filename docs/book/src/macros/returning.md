@@ -21,13 +21,54 @@ show max(3, 9)
 9
 ```
 
-`-> int` declares the return type. It's optional, but it documents the macro,
-and it's needed when the macro is passed as an argument (see
+`-> int` declares the return type. It's optional, but if it's there, it's
+enforced. It's also needed when the macro is passed as an argument (see
 [Macros as parameters](../generics/macro-parameters.md)) or used as a
 [conversion](../types/conversions.md).
 
-> **Note:** The compiler doesn't yet check `@return` values against the
-> declared return type.
+The returned value must have the declared type. As with arguments, nothing
+is converted automatically:
+
+```basm,fail
+from std.binary import bits
+
+macro byte() -> bits<8> {
+    @return 5
+}
+
+macro emit_byte(b: bits<8>) {
+    @emit b
+}
+
+emit_byte byte()
+```
+
+```error
+`byte` returned `int`, but its signature declares `-> bits<8>`
+```
+
+Write `@return 5 as bits<8>` instead.
+
+`->` is only about returning. A macro that declares `-> T` must return a
+`T`, so declaring a return type on a macro that only emits is an error:
+
+```basm,fail
+from std.binary import bits
+
+macro nop() -> bits<8> {
+    @emit 0x90 as bits<8>
+}
+
+nop
+```
+
+```error
+`nop` returned nothing, but its signature declares `-> bits<8>`
+```
+
+To declare what a macro emits, use the
+[`emits` facet](../meta/emit.md#restricting-what-a-macro-emits-emits)
+instead: `macro nop() | emits bits<8> { ... }`.
 
 ## Returning versus emitting
 

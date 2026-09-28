@@ -69,7 +69,9 @@ pub struct DeferredLeb128<const N: int>
 pub macro deferred_uleb128(
     value: Deferred,
     n: int
-) -> DeferredLeb128<...> {
+)
+    | emits DeferredLeb128<...>
+{
     @emit DeferredLeb128<n> {
         @for i in 0..n {
             __el`i`: deferred_leb128_group(value, i, n),
@@ -85,14 +87,18 @@ pub macro deferred_uleb128(
 # section kind (Table/Memory/Global/Start/Element/Data aren't covered
 # here). `std/` is meant to grow, per the README's own "Status" section.
 
-pub macro byte(value: int) -> Byte {
+pub macro byte(value: int)
+    | emits Byte
+{
     @emit Byte(value)
 }
 
 # The 8-byte preamble every module starts with: magic (`\0asm`) then
 # version 1. Neither is length-prefixed — there's nothing optional or
 # variable-length about it to measure.
-pub macro header() -> Bytes<8> {
+pub macro header()
+    | emits Bytes<8>
+{
     @emit Bytes<8> {
         __el0: Byte(0x00),
         __el1: Byte(0x61),
@@ -108,7 +114,9 @@ pub macro header() -> Bytes<8> {
 # A function type with no parameters and exactly one result — the one
 # shape this MVP subset needs. `0x60` is the functype form marker every
 # WASM function type starts with.
-pub macro func_type_0_to_1(result: Byte) -> Bytes<4> {
+pub macro func_type_0_to_1(result: Byte)
+    | emits Bytes<4>
+{
     @emit Bytes<4> {
         __el0: Byte(0x60),
         __el1: Byte(0x00),

@@ -69,6 +69,8 @@ pub fn resolve_error(error: ResolveError, source: Option<SourceId>) -> Diagnosti
         InvalidAssertMessage { span } => ("assertion message must be a string literal".into(), span),
         TypeMismatch { name, expected, actual, span } => (format!("type mismatch for `{name}`: expected `{expected}`, found `{actual}`"), span),
         ConversionWithoutReturnType { name, span } => (format!("conversion macro `{name}` must declare its return type (`-> Type`), so `as` can tell what it converts to"), span),
+        ReturnTypeMismatch { name, expected, actual: Some(actual), span } => (format!("`{name}` returned `{actual}`, but its signature declares `-> {expected}`"), span),
+        ReturnTypeMismatch { name, expected, actual: None, span } => (format!("`{name}` returned nothing, but its signature declares `-> {expected}`; to declare what it emits, use `| emits {expected}`"), span),
         InvariantViolated { type_name, invariant, span } => (format!("invariant `{invariant}` was violated for `{type_name}`"), span),
         EmittedTypeNotDeclared { actual, declared, span } => (format!("`@emit`ed value has type `{actual}`, but this macro's `emits` facet(s) only declare {}", declared.iter().map(|ty| format!("`{ty}`")).collect::<Vec<_>>().join(", ")), span),
         CannotCoerce { type_name, span } => (format!("cannot implicitly convert to `{type_name}`"), span),
