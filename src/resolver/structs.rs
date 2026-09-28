@@ -605,14 +605,17 @@ impl TypeSymbolNames for AliasResolver<'_> {
 pub(super) fn describe_type(ty: &ResolvedType, symbols: &impl TypeSymbolNames) -> String {
     match ty {
         ResolvedType::Builtin(BuiltinType::Int) => "int".to_string(),
-        ResolvedType::Struct { symbol, .. } => symbols.type_symbol_name(*symbol),
-        ResolvedType::Enum { symbol, .. } => symbols.type_symbol_name(*symbol),
+        ResolvedType::Struct { symbol, args } | ResolvedType::Enum { symbol, args } => {
+            format!("{}{}", symbols.type_symbol_name(*symbol), describe_args(args, symbols))
+        }
         ResolvedType::TypeParameter { name } => name.clone(),
 
         // The alias's own name reads better in a diagnostic than its
         // underlying struct's — "expected `uint8_t`, got `int`" over
         // "expected `bits`, got `int`".
-        ResolvedType::Alias { symbol, .. } => symbols.type_symbol_name(*symbol),
+        ResolvedType::Alias { symbol, args, .. } => {
+            format!("{}{}", symbols.type_symbol_name(*symbol), describe_args(args, symbols))
+        }
 
         ResolvedType::MacroType { params, ret } => {
             let params = params.iter().map(|param| describe_type(param, symbols)).collect::<Vec<_>>().join(", ");
@@ -622,6 +625,23 @@ pub(super) fn describe_type(ty: &ResolvedType, symbols: &impl TypeSymbolNames) -
             }
         }
     }
+}
+
+// `<8, T>`, or nothing for a type without generic arguments.
+fn describe_args(args: &[ResolvedGenericArg], symbols: &impl TypeSymbolNames) -> String {
+    if args.is_empty() {
+        return String::new();
+    }
+    let args: Vec<String> = args
+        .iter()
+        .map(|arg| match arg {
+            ResolvedGenericArg::Type(ty) => describe_type(ty, symbols),
+            ResolvedGenericArg::Const(value) => value.to_string(),
+            ResolvedGenericArg::ConstParam(name) => name.clone(),
+            ResolvedGenericArg::Wildcard => "...".to_string(),
+        })
+        .collect();
+    format!("<{}>", args.join(", "))
 }
 
 #[cfg(test)]

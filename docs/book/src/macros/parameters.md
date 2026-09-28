@@ -36,7 +36,7 @@ emit_byte 65
 ```
 
 ```error
-type mismatch for `b`: expected `bits`, found `int`
+type mismatch for `b`: expected `bits<8>`, found `int`
 ```
 
 Convert explicitly with [`as`](../types/conversions.md):

@@ -12,7 +12,7 @@ int>`.
 | Type parameter | `T` | a type | `Pair<T>`, used as `Pair<int>` |
 | Const parameter | `const N: int` | a value known at compile time | `bits<const width: int>`, used as `bits<8>` |
 
-Structs, enums and macros can be generic. Type aliases currently can't.
+Structs, enums, type aliases and macros can all be generic.
 
 ## Generic structs
 

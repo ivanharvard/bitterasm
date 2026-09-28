@@ -60,13 +60,10 @@ pub enum Value {
         /// (`AliasResolver::convert_to`), `None` everywhere else (a struct
         /// built by `eval_call_value`/`eval_construct_value` directly, even
         /// through an alias name, isn't tagged — see those functions' own
-        /// comments). Re-resolving this symbol (`AliasResolver::resolve_alias`,
-        /// already memoized) reconstructs the full `ResolvedType::Alias` —
-        /// including any *further* nesting, since "holds all the way down"
-        /// means the outermost alias's own resolution already carries its
-        /// whole chain — so this is the only piece `Value` itself needs to
-        /// remember; see `AliasResolver::value_type`.
-        nominal: Option<SymbolId>,
+        /// comments). The full `ResolvedType::Alias`, including any further
+        /// nesting ("holds all the way down") and, for a generic alias, the
+        /// arguments it was applied to — see `AliasResolver::value_type`.
+        nominal: Option<Box<ResolvedType>>,
     },
 
     /// The value of a `pub` label imported from another file (Phase 5, see
@@ -1135,7 +1132,7 @@ impl<'a> AliasResolver<'a> {
         }
 
         match target {
-            ResolvedType::Alias { symbol, binder, invariants, underlying } => {
+            ResolvedType::Alias { symbol, binder, invariants, underlying, .. } => {
                 let mut layer_scope: HashMap<String, Value> = HashMap::new();
 
                 if let Some(binder) = binder {
@@ -1154,7 +1151,7 @@ impl<'a> AliasResolver<'a> {
 
                 let converted = self.convert_to_inner(value, underlying, span, allow_explicit)?;
 
-                Ok(tag_nominal(converted, *symbol))
+                Ok(tag_nominal(converted, target))
             }
 
             ResolvedType::Struct { symbol, args } => match &value {
@@ -1677,18 +1674,7 @@ impl<'a> AliasResolver<'a> {
                 args: args.clone(),
             },
 
-            Value::Struct { symbol, args, nominal: Some(alias), .. } => {
-                let resolved = self.resolve_alias(*alias)?;
-
-                debug_assert!(
-                    matches!(&resolved, ResolvedType::Alias { .. }),
-                    "a Value tagged `nominal` should only ever be tagged with a symbol that \
-                     actually resolves to ResolvedType::Alias — {symbol:?}/{args:?} tagged with \
-                     {alias:?}, which resolved to {resolved:?} instead",
-                );
-
-                resolved
-            }
+            Value::Struct { nominal: Some(alias), .. } => (**alias).clone(),
 
             Value::Struct { symbol, args, nominal: None, .. } => ResolvedType::Struct {
                 symbol: *symbol,
@@ -1739,10 +1725,10 @@ impl<'a> AliasResolver<'a> {
 // such an alias needs its own `as` at that point too. A known scope
 // boundary of today's `Value` shape, not an oversight — see
 // `Value::Struct::nominal`'s doc.
-fn tag_nominal(value: Value, symbol: SymbolId) -> Value {
+fn tag_nominal(value: Value, alias: &ResolvedType) -> Value {
     match value {
-        Value::Struct { symbol: inner_symbol, args, fields, .. } => {
-            Value::Struct { symbol: inner_symbol, args, fields, nominal: Some(symbol) }
+        Value::Struct { symbol, args, fields, .. } => {
+            Value::Struct { symbol, args, fields, nominal: Some(Box::new(alias.clone())) }
         }
 
         Value::Int(_) | Value::Macro(_) | Value::Enum { .. } | Value::ExternLabel { .. } => value,
@@ -2444,6 +2430,7 @@ mod tests {
         let ubyte_id = symbols.lookup("UByte").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+        let ubyte = resolver.resolve_alias(ubyte_id).unwrap();
 
         let mut scope = HashMap::new();
         scope.insert("v".to_string(), Value::Int(Int::from(50)));
@@ -2456,7 +2443,7 @@ mod tests {
                 symbol: bits_id,
                 args: vec![ResolvedGenericArg::Const(Int::from(8))],
                 fields: vec![("value".to_string(), Value::Int(Int::from(50)))],
-                nominal: Some(ubyte_id),
+                nominal: Some(Box::new(ubyte)),
             }
         );
     }
@@ -2590,6 +2577,7 @@ const converted = original as Sized<derived_len, Order.Second>
         let ubyte_id = symbols.lookup("UByte").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+        let ubyte = resolver.resolve_alias(ubyte_id).unwrap();
 
         let value = resolver
             .resolve_const_value("FIVE", crate::token::Span::new(0, 0))
@@ -2601,7 +2589,7 @@ const converted = original as Sized<derived_len, Order.Second>
                 symbol: bits_id,
                 args: vec![ResolvedGenericArg::Const(Int::from(8))],
                 fields: vec![("value".to_string(), Value::Int(Int::from(5)))],
-                nominal: Some(ubyte_id),
+                nominal: Some(Box::new(ubyte)),
             }
         );
     }
@@ -2614,6 +2602,7 @@ const converted = original as Sized<derived_len, Order.Second>
         let ubyte_id = symbols.lookup("UByte").unwrap();
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+        let ubyte = resolver.resolve_alias(ubyte_id).unwrap();
 
         let invocations = find_invocations(&program, "use_five");
         assert_eq!(invocations.len(), 1);
@@ -2626,7 +2615,7 @@ const converted = original as Sized<derived_len, Order.Second>
                 symbol: bits_id,
                 args: vec![ResolvedGenericArg::Const(Int::from(8))],
                 fields: vec![("value".to_string(), Value::Int(Int::from(5)))],
-                nominal: Some(ubyte_id),
+                nominal: Some(Box::new(ubyte)),
             }]
         );
     }

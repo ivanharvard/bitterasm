@@ -563,7 +563,15 @@ impl<'a> AliasResolver<'a> {
             }
         }
 
-        if let TypeExpr::Apply { base, args, .. } = expected {
+        if let TypeExpr::Apply { base, args, span: apply_span } = expected {
+            if let Some(expansion) = self.expand_generic_alias(base, args, *apply_span)? {
+                let nominal = !expansion.invariants.is_empty()
+                    || expansion.declaration.facets.iter().any(|facet| matches!(facet.name.as_str(), "to" | "from"));
+                if !nominal {
+                    return self.unify_type_expr(&expansion.ty, actual, generic_names, scope, span);
+                }
+            }
+
             let actual_name = describe_type(actual, self);
             let mismatch = || ResolveError::TypeMismatch {
                 name: expected.name().unwrap_or("<generic argument>").to_string(),

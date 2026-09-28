@@ -79,7 +79,7 @@ use_even 6 as bits<8>
 ```
 
 ```error
-type mismatch for `b`: expected `EvenByte`, found `bits`
+type mismatch for `b`: expected `EvenByte`, found `bits<8>`
 ```
 
 And `as` rejects values that break the rule:
@@ -131,6 +131,56 @@ type mismatch for `x`: expected `uint`, found `int`
 
 Use an alias of `int` for its check (`const n = x as uint`), and type
 parameters as `int`. Aliases of structs don't have this limit.
+
+## Generic aliases
+
+An alias can take [generic parameters](../generics/index.md). Each use
+substitutes its arguments into the alias's target and invariants:
+
+```basm
+from std.binary import bits
+
+type Word<const n: int> = bits<n>
+
+type Aligned<const n: int> = bits<16>
+    | invariant v % n == 0
+
+macro emit_word(w: Word<12>) {
+    @emit w
+}
+
+macro emit_aligned(a: Aligned<4>) {
+    @emit a
+}
+
+emit_word 5 as bits<12>
+emit_aligned 8 as Aligned<4>
+```
+
+```emits
+bits<12> { value: 5 }
+bits<16> { value: 8 }
+```
+
+`Word<12>` is just another name for `bits<12>`. `Aligned<4>` and
+`Aligned<2>` are different types, each with its own rule:
+
+```basm,fail
+from std.binary import bits
+
+type Aligned<const n: int> = bits<16>
+    | invariant v % n == 0
+
+macro emit_aligned(a: Aligned<4>) {
+    @emit a
+}
+
+emit_aligned 8 as Aligned<2>
+```
+
+```error
+expected `Aligned<4>`, found `Aligned<2>`
+```
 
 ## Layers
 
