@@ -371,7 +371,7 @@ impl<'a> AliasResolver<'a> {
     /// — the bindings its own `T`/`const N` params picked up along the way,
     /// inferred from each argument's actual type (see `unify_type_expr`).
     /// Empty for a non-generic macro, which type-checks exactly as before.
-    fn bind_macro_arguments(
+    pub(super) fn bind_macro_arguments(
         &mut self,
         declaration: &MacroDeclaration,
         arguments: Vec<Value>,

@@ -1231,11 +1231,10 @@ impl<'a> AliasResolver<'a> {
         if let Some(target_value) = self.type_argument_value(target)? {
             to_scope.insert("target".to_string(), target_value);
         }
+        let owner = resolved_type_symbol(source_ty);
         for template in self.type_facet_exprs(source_ty, "to")? {
-            if self.template_returns(&template, target)?
-                && self.template_accepts(&template, &to_scope)
-            {
-                candidates.push((template, to_scope.clone(), resolved_type_symbol(source_ty)));
+            if self.conversion_fits(&template, &to_scope, target, owner)? {
+                candidates.push((template, to_scope.clone(), owner));
             }
         }
 
@@ -1244,11 +1243,10 @@ impl<'a> AliasResolver<'a> {
         if let Some(target_value) = self.type_argument_value(target)? {
             from_scope.insert("target".to_string(), target_value);
         }
+        let owner = resolved_type_symbol(target);
         for template in self.type_facet_exprs(target, "from")? {
-            if self.template_returns(&template, target)?
-                && self.template_accepts(&template, &from_scope)
-            {
-                candidates.push((template, from_scope.clone(), resolved_type_symbol(target)));
+            if self.conversion_fits(&template, &from_scope, target, owner)? {
+                candidates.push((template, from_scope.clone(), owner));
             }
         }
 
@@ -1376,42 +1374,76 @@ impl<'a> AliasResolver<'a> {
         self.find_macro_declaration(symbol)
     }
 
-    fn template_returns(&mut self, template: &Expr, target: &ResolvedType) -> Result<bool, ResolveError> {
-        let return_ty = self.template_macro(template)?.return_ty.clone();
-        let Some(return_ty) = return_ty else {
+    /// Whether a `to`/`from` template converts `scope`'s `source` into
+    /// `target`: its macro accepts the arguments the template passes, with
+    /// generic parameters inferred exactly as in a call, and returns
+    /// `target`. Checked as the module that declared the conversion, where
+    /// its names mean what they were written to mean. A template whose
+    /// arguments don't fit is for some other conversion, so it's skipped;
+    /// a macro with no return type could never be matched, so it's an
+    /// error rather than a silent skip.
+    fn conversion_fits(
+        &mut self,
+        template: &Expr,
+        scope: &HashMap<String, Value>,
+        target: &ResolvedType,
+        owner: Option<SymbolId>,
+    ) -> Result<bool, ResolveError> {
+        match owner {
+            Some(owner) => {
+                let module = self.symbol_module(owner);
+                self.with_module(module, |this| this.conversion_fits_here(template, scope, target))
+            }
+            None => self.conversion_fits_here(template, scope, target),
+        }
+    }
+
+    fn conversion_fits_here(
+        &mut self,
+        template: &Expr,
+        scope: &HashMap<String, Value>,
+        target: &ResolvedType,
+    ) -> Result<bool, ResolveError> {
+        let declaration = self.template_macro(template)?.clone();
+        let Some(return_ty) = &declaration.return_ty else {
+            return Err(ResolveError::ConversionWithoutReturnType {
+                name: crate::ast::literal_name(&declaration.name).unwrap_or_default(),
+                span: template.span(),
+            });
+        };
+        let Expr::Call { arguments, .. } = template else {
             return Ok(false);
         };
-        let returned = self.resolve_type_expr(&return_ty)?;
-        if returned == *target {
-            return Ok(true);
-        }
+
+        let Ok(values) = arguments
+            .iter()
+            .map(|argument| self.eval_value(&argument.value, scope))
+            .collect::<Result<Vec<_>, _>>()
+        else {
+            return Ok(false);
+        };
+        let Ok((_, bindings)) = self.bind_macro_arguments(&declaration, values) else {
+            return Ok(false);
+        };
+
+        let outer_generics = std::mem::replace(&mut self.generic_scope, bindings);
+        let returned = self.resolve_type_expr(return_ty);
+        self.generic_scope = outer_generics;
+        let Ok(returned) = returned else {
+            return Ok(false);
+        };
 
         // A conversion macro may name a generic destination without fixing
-        // its arguments; the facet's `target` binding supplies them. This is
-        // intentionally only a wildcard when the declaration omitted every
-        // argument, never when it returned a different specialization.
-        Ok(matches!(
+        // its arguments (`-> Fixed`, or `-> Fixed<...>`); the facet's
+        // `target` binding supplies them. Never a different specialization.
+        let unspecialized = matches!(
             (returned.strip_alias(), target.strip_alias()),
             (
                 ResolvedType::Struct { symbol: returned_symbol, args: returned_args },
                 ResolvedType::Struct { symbol: target_symbol, .. },
             ) if returned_symbol == target_symbol && returned_args.is_empty()
-        ))
-    }
-
-    fn template_accepts(&mut self, template: &Expr, scope: &HashMap<String, Value>) -> bool {
-        let Expr::Call { arguments, .. } = template else { return false };
-        let Ok(declaration) = self.template_macro(template).cloned() else { return false };
-        let required = declaration.params.iter().filter(|param| param.default.is_none()).count();
-        if arguments.len() < required || arguments.len() > declaration.params.len() {
-            return false;
-        }
-        arguments.iter().zip(&declaration.params).all(|(argument, param)| {
-            let Ok(value) = self.eval_value(&argument.value, scope) else { return false };
-            let Ok(actual) = self.value_type(&value) else { return false };
-            let Ok(expected) = self.resolve_type_expr(&param.ty) else { return false };
-            expected.accepts(&actual)
-        })
+        );
+        Ok(returned == *target || unspecialized || returned.accepts(target))
     }
 
     /// Resolves a bare name that isn't bound in the current scope against

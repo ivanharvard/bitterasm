@@ -380,6 +380,13 @@ pub enum ResolveError {
         span: Span,
     },
 
+    // A `to`/`from` facet names a macro with no declared return type, so
+    // there's no way to tell which conversion it performs.
+    ConversionWithoutReturnType {
+        name: String,
+        span: Span,
+    },
+
     // A struct's declared `invariant` (see `crate::facets::invariant`)
     // evaluated to `0` (falsy, same `Int` convention as `AssertionFailed`)
     // against the fields/generic args a construction just produced.
@@ -480,6 +487,7 @@ impl ResolveError {
             | Self::AmbiguousMacroValue { span, .. } | Self::GenericMacroAsValue { span, .. }
             | Self::AssertionFailed { span, .. }
             | Self::InvalidAssertMessage { span } | Self::TypeMismatch { span, .. }
+            | Self::ConversionWithoutReturnType { span, .. }
             | Self::InvariantViolated { span, .. } | Self::EmittedTypeNotDeclared { span, .. }
             | Self::CannotCoerce { span, .. }
             | Self::AmbiguousConversion { span, .. } | Self::AmbiguousInvariantBinder { span, .. }

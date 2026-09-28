@@ -118,15 +118,57 @@ for.
 
 ## Writing conversion macros
 
-A conversion macro is only used if its signature fits exactly:
+A conversion macro is matched like an ordinary call: `as` passes it the
+facet's arguments, infers its generic parameters, and checks that it returns
+the destination type.
 
-- **It must declare its return type.** For a generic destination, write the
-  bare type name, `-> Fixed`, not `-> Fixed<...>`.
-- **Its parameters must be concrete types.** A generic conversion macro,
-  such as `f<const S: int>(x: Fixed<S>)`, isn't used; write `x: Fixed<...>`
-  instead.
+- It can be generic, and its return type can use a wildcard:
 
-> **Warning:** A conversion macro that doesn't fit is skipped silently. If
-> the destination is a one-field struct, `as` then falls back to wrapping the
-> value, which gives a different result with no error. Test conversions to
-> one-field structs.
+```basm
+struct Fixed<const scale: int>
+    | to fixed_to_int(source)
+{
+    pub raw: int,
+}
+
+macro fixed_to_int<const S: int>(f: Fixed<S>) -> int {
+    @return f.raw >> S
+}
+
+macro show(value: int) {
+    @emit value
+}
+
+show (Fixed<4> { raw: 80 }) as int
+```
+
+```emits
+5
+```
+
+- A conversion whose macro doesn't accept the source is simply for other
+  types, and `as` moves on to the next one.
+- **It must declare its return type**, or `as` can't tell what it converts
+  to:
+
+```basm,fail
+struct Cents
+    | from dollars_to_cents(source)
+{
+    pub amount: int,
+}
+
+macro dollars_to_cents(dollars: int) {
+    @return Cents(dollars * 100)
+}
+
+macro emit_cents(c: Cents) {
+    @emit c
+}
+
+emit_cents 3 as Cents
+```
+
+```error
+conversion macro `dollars_to_cents` must declare its return type
+```
