@@ -312,7 +312,8 @@ fn pub_label_positions(
 
 enum CompileError {
     Load(loader::LoadError),
-    Resolve(resolver::ResolveError),
+    /// The file the error's span is in, when it's known.
+    Resolve(resolver::ResolveError, Option<PathBuf>),
 }
 
 impl From<loader::LoadError> for CompileError {
@@ -320,7 +321,7 @@ impl From<loader::LoadError> for CompileError {
 }
 
 impl From<resolver::ResolveError> for CompileError {
-    fn from(error: resolver::ResolveError) -> Self { Self::Resolve(error) }
+    fn from(error: resolver::ResolveError) -> Self { Self::Resolve(error, None) }
 }
 
 /// Labels `--verbose`'s status lines for `compile`, which (unlike `expand`)
@@ -400,7 +401,9 @@ fn resolve_and_expand(path: &Path, verbose: Option<&VerboseReporter>) -> Result<
     // not any invocation actually reaches it — a broken declaration fails
     // the whole command, the same way a real compiler wouldn't skip type
     // checking an unreachable function.
-    resolve_structs_and_aliases(&mut discovery)?;
+    resolve_structs_and_aliases(&mut discovery).map_err(|error| {
+        CompileError::Resolve(error, discovery.take_error_module().map(|module| origins.path(module).to_path_buf()))
+    })?;
 
     // Expand every top-level invocation (`mov r1, 7`, or a macro calling
     // another macro) in program order, against an empty scope — nothing at
@@ -414,7 +417,8 @@ fn resolve_and_expand(path: &Path, verbose: Option<&VerboseReporter>) -> Result<
         Some((&mut emitted, &mut generated)),
         &statement_modules,
         verbose_ctx.as_ref(),
-    )?;
+    )
+    .map_err(|(error, module)| CompileError::Resolve(error, Some(origins.path(module).to_path_buf())))?;
 
     // A wrong placeholder only ever changes what gets emitted at some
     // point, never how *many* values get emitted (see
@@ -480,7 +484,9 @@ fn resolve_and_expand(path: &Path, verbose: Option<&VerboseReporter>) -> Result<
     )
     .with_module_scopes(origins.scopes().to_vec());
 
-    resolve_structs_and_aliases(&mut alias_resolver)?;
+    resolve_structs_and_aliases(&mut alias_resolver).map_err(|error| {
+        CompileError::Resolve(error, alias_resolver.take_error_module().map(|module| origins.path(module).to_path_buf()))
+    })?;
 
     let mut emitted = Vec::new();
     let mut generated = Vec::new();
@@ -492,7 +498,8 @@ fn resolve_and_expand(path: &Path, verbose: Option<&VerboseReporter>) -> Result<
         Some((&mut emitted, &mut generated)),
         &statement_modules,
         None,
-    )?;
+    )
+    .map_err(|(error, module)| CompileError::Resolve(error, Some(origins.path(module).to_path_buf())))?;
 
     let pub_labels = pub_label_positions(&program, &symbols, alias_resolver.label_positions());
     let sections = alias_resolver.take_emitted_sections();
@@ -550,7 +557,7 @@ fn walk_top_level(
     mut collect: Option<(&mut Vec<Value>, &mut Vec<Statement>)>,
     statement_modules: &[usize],
     verbose: Option<&VerboseCompileContext>,
-) -> Result<(), resolver::ResolveError> {
+) -> Result<(), (resolver::ResolveError, usize)> {
     for (index, statement) in program.statements.iter().enumerate() {
         match statement {
             Statement::Invocation(invocation) => {
@@ -567,7 +574,12 @@ fn walk_top_level(
                     }
                 }
 
-                let expansion = result?;
+                // The module the error arose in: the innermost failing
+                // macro's, or else this statement's own.
+                let expansion = result.map_err(|error| {
+                    let module = alias_resolver.take_error_module().unwrap_or(statement_modules[index]);
+                    (error, module)
+                })?;
                 if let Some((emitted, generated)) = collect.as_mut() {
                     emitted.extend(expansion.emitted);
                     generated.extend(expansion.generated);
@@ -740,9 +752,11 @@ fn analyze(path: &Path, options: DiagnosticCliOptions, verbose: Option<&VerboseR
             emit_diagnostics(&[diagnostic], &diagnostic_run);
             std::process::exit(1);
         }
-        Err(CompileError::Resolve(error)) => {
+        Err(CompileError::Resolve(error, file)) => {
             let needle = error.source_needle().map(loader::demangle);
-            let source = diagnostic_run.sources.locate_span(error.span(), needle.as_deref());
+            let source = file
+                .and_then(|file| diagnostic_run.sources.find_span_in(&file, error.span()))
+                .or_else(|| diagnostic_run.sources.locate_span(error.span(), needle.as_deref()));
             let diagnostic = diagnostics::resolve_error(error, source);
             emit_diagnostics(&[diagnostic], &diagnostic_run);
             std::process::exit(1);

@@ -89,7 +89,21 @@ pub enum Option<T> {
 ```
 
 Write the type arguments when making a value: `Option<int>.Some(42)` and
-`Option<int>.None`. They aren't inferred.
+`Option<int>.None`. They aren't inferred:
+
+```basm,fail
+from std.option import Option
+
+macro emit_option(o: Option<int>) {
+    @emit o
+}
+
+emit_option Option.Some(42)
+```
+
+```error
+`Option` expects 1 generic argument(s), but 0 were supplied
+```
 
 ## Enums as settings
 

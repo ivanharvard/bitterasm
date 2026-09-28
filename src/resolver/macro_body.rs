@@ -373,6 +373,15 @@ impl<'a> AliasResolver<'a> {
             }
         })();
 
+        // Innermost first: an error keeps the module of the deepest call
+        // it passed through. A call that succeeds forgets any error a
+        // nested call raised and something recovered from.
+        match &result {
+            Err(_) if self.error_module.is_none() => self.error_module = Some(self.current_module),
+            Err(_) => {}
+            Ok(_) => self.error_module = None,
+        }
+
         self.macro_call_stack.pop();
         self.generic_scope = previous_generic_scope;
         self.next_target = previous_next_target;

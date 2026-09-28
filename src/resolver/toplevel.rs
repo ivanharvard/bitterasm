@@ -352,10 +352,13 @@ fn unroll_meta(
             Ok(())
         }
 
-        // Every other meta (`@emit`, `@return`, `@assert`) only
-        // makes sense inside a macro body — the same
-        // `UnsupportedMacroStatement`-shaped rejection `walk_macro_body`
-        // already gives it there, just reached at the top level instead.
+        // `@emit`, `@return` and `@assert` only mean something while a
+        // macro runs.
+        "emit" | "return" | "assert" => Err(ResolveError::MetaOutsideMacro {
+            kind: format!("@{}", meta.name),
+            span: meta.span,
+        }),
+
         other => Err(ResolveError::UnsupportedMacroStatement {
             kind: format!("@{other}"),
             span: meta.span,
@@ -620,7 +623,7 @@ mod tests {
     #[test]
     fn a_bare_top_level_emit_is_rejected() {
         let error = unroll("@emit 5\n").unwrap_err();
-        assert!(matches!(error, ResolveError::UnsupportedMacroStatement { .. }));
+        assert!(matches!(error, ResolveError::MetaOutsideMacro { .. }));
     }
 
     fn const_names(program: &Program) -> Vec<String> {

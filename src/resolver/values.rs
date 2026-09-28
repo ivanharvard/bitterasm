@@ -149,6 +149,16 @@ impl<'a> AliasResolver<'a> {
         let ResolvedType::Enum { symbol, args } = self.resolve_value_type_expr(&ty, scope)? else {
             return Err(ResolveError::ExpectedType { name: enum_name.to_string(), span });
         };
+        // `Option.Some(1)`: a generic enum's arguments are never inferred.
+        let generic_params = self.find_enum_declaration_rc(symbol)?.generic_params.len();
+        if args.len() != generic_params {
+            return Err(ResolveError::InvalidGenericArity {
+                name: crate::loader::demangle(enum_name),
+                expected: generic_params,
+                actual: args.len(),
+                span,
+            });
+        }
         let expected_payload = self.instantiate_enum_payload(symbol, &args, variant, span)?;
         let payload = match (expected_payload, arguments) {
             (None, []) => None,
@@ -446,11 +456,31 @@ impl<'a> AliasResolver<'a> {
     ) -> Result<Expr, ResolveError> {
         match expr {
             Expr::Integer { .. } => Ok(expr.clone()),
-            Expr::Unary { op, operand, span } => Ok(Expr::Unary {
-                op: *op,
-                operand: Box::new(self.materialize_int_expr(operand, scope)?),
-                span: *span,
-            }),
+            Expr::Unary { op, operand, span } => {
+                let materialized = match self.materialize_int_expr(operand, scope) {
+                    // `-1 as T` parses as `-(1 as T)`, since `as` binds more
+                    // tightly than any prefix operator.
+                    Err(ResolveError::NonIntOperand { found, span: operand_span, .. })
+                        if matches!(operand.as_ref(), Expr::As { .. }) =>
+                    {
+                        let op = match op {
+                            crate::ast::UnaryOp::Negate => "-",
+                            crate::ast::UnaryOp::Not => "!",
+                            crate::ast::UnaryOp::BitNot => "~",
+                        };
+                        return Err(ResolveError::NonIntOperand {
+                            found,
+                            hint: Some(format!(
+                                "`as` binds more tightly than `{op}`, so `{op}x as T` means `{op}(x as T)`; \
+                                 write `({op}x) as T`"
+                            )),
+                            span: operand_span,
+                        });
+                    }
+                    other => other?,
+                };
+                Ok(Expr::Unary { op: *op, operand: Box::new(materialized), span: *span })
+            }
             Expr::Binary { left, op, right, span } => Ok(Expr::Binary {
                 left: Box::new(self.materialize_int_expr(left, scope)?),
                 op: *op,
@@ -470,8 +500,17 @@ impl<'a> AliasResolver<'a> {
                 // arithmetic on one isn't supported yet; route it through
                 // `std.bitter.deferred`'s `sub`/`mul`/`span` instead, the
                 // same way a same-file `here()` value already has to.
-                Value::Struct { .. } | Value::Enum { .. } | Value::Macro(_) | Value::ExternLabel { .. } => {
-                    Err(ResolveError::ExpectedIntValue { span: other.span() })
+                Value::ExternLabel { .. } => Err(ResolveError::NonIntOperand {
+                    found: "a label from another file".to_string(),
+                    hint: Some(
+                        "its position isn't known until linking; use `std.bitter.deferred`'s `add`, `sub` or `span`"
+                            .to_string(),
+                    ),
+                    span: other.span(),
+                }),
+                value @ (Value::Struct { .. } | Value::Enum { .. } | Value::Macro(_)) => {
+                    let ty = self.value_type(&value)?;
+                    Err(ResolveError::NonIntOperand { found: describe_type(&ty, self), hint: None, span: other.span() })
                 }
             },
         }
@@ -1566,15 +1605,20 @@ impl<'a> AliasResolver<'a> {
     /// whichever importer happens to be the first to reference it, not at
     /// `check`/`compile` time for the module that actually declared it.
     pub fn resolve_all_const_values(&mut self) -> Result<(), ResolveError> {
-        let consts: Vec<(String, Span)> = self
+        let consts: Vec<(SymbolId, String, Span)> = self
             .symbols
             .iter()
             .filter(|symbol| symbol.kind == SymbolKind::Const)
-            .map(|symbol| (symbol.name.clone(), symbol.span))
+            .map(|symbol| (symbol.id, symbol.name.clone(), symbol.span))
             .collect();
 
-        for (name, span) in consts {
-            self.resolve_const_value(&name, span)?;
+        for (id, name, span) in consts {
+            if let Err(error) = self.resolve_const_value(&name, span) {
+                if self.error_module.is_none() {
+                    self.error_module = Some(self.symbol_module(id));
+                }
+                return Err(error);
+            }
         }
 
         Ok(())

@@ -276,6 +276,10 @@ pub struct AliasResolver<'a> {
     // module, which is what this starts out as.
     pub(super) current_module: usize,
 
+    /// The module of the innermost macro whose call failed, for locating
+    /// an error's span in the right file — see `take_error_module`.
+    pub(super) error_module: Option<usize>,
+
     // Each module's names mapped to the internal names the loader gave
     // them, indexed by module id (`crate::loader::ModuleOrigins::scopes`).
     // Empty unless set with `with_module_scopes`.
@@ -350,6 +354,7 @@ impl<'a> AliasResolver<'a> {
             alias_decl_cache: RefCell::new(HashMap::new()),
             used_forward_label_placeholder: false,
             current_module: entry_module,
+            error_module: None,
             module_scopes: Vec::new(),
         }
     }
@@ -397,6 +402,13 @@ impl<'a> AliasResolver<'a> {
     /// so far" — called when a top-level `Statement::Label` is walked (see
     /// `main::resolve_and_expand`; nested, in-macro-body labels never call
     /// this, they stay uninvolved in label resolution entirely).
+    /// The module the most recent error arose in — the innermost macro
+    /// whose call failed — if a macro was running. Spans carry no file of
+    /// their own, so this says which file an error's span is in.
+    pub fn take_error_module(&mut self) -> Option<usize> {
+        self.error_module.take()
+    }
+
     pub fn record_label_position(&mut self, id: SymbolId) {
         self.label_positions.insert(id, self.values_emitted.clone());
     }

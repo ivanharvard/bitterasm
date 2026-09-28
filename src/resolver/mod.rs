@@ -237,6 +237,22 @@ pub enum ResolveError {
         span: Span,
     },
 
+    // `@emit`, `@return` or `@assert` at the top level of a file: they only
+    // mean something while a macro runs. `kind` is the keyword, `@emit`.
+    MetaOutsideMacro {
+        kind: String,
+        span: Span,
+    },
+
+    // An operand of an arithmetic operator isn't an `Int`. `found` is its
+    // type; `hint` explains a likely cause, such as `-1 as T` meaning
+    // `-(1 as T)`.
+    NonIntOperand {
+        found: String,
+        hint: Option<String>,
+        span: Span,
+    },
+
     // A `Value` was needed as a struct (for field access) but was an `Int`
     // instead.
     ExpectedStructValue {
@@ -487,6 +503,7 @@ impl ResolveError {
             | Self::FacetNotApplicable { span, .. }
             | Self::DuplicateFacet { span, .. } | Self::InvalidArgumentCount { span, .. }
             | Self::ExpectedStructCallee { span, .. } | Self::ExpectedIntValue { span }
+            | Self::NonIntOperand { span, .. } | Self::MetaOutsideMacro { span, .. }
             | Self::ExpectedStructValue { span } | Self::ExpectedValueExpression { span }
             | Self::UnsupportedMacroStatement { span, .. } | Self::UnsupportedSpliceValue { span }
             | Self::Fold { span, .. }

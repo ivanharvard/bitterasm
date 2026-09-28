@@ -27,6 +27,18 @@ instruction, which is a macro some architecture package provides.
 | `@if`, `@for`, `@fold`/`@next` | ✓ | ✓ | ✓ | ✓ |
 | `@match` | ✓ | ✓ | | |
 
+`@emit`, `@return` and `@assert` only mean something while a macro runs:
+
+```basm,fail
+const WIDTH = 8
+
+@assert WIDTH % 8 == 0
+```
+
+```error
+`@assert` can only be used inside a macro
+```
+
 At the top level, `@for` and `@if` repeat or choose *statements*: they can
 generate declarations and calls. In a struct declaration they choose
 *fields*, and in a construction they choose *field values*. See

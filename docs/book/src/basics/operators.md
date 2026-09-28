@@ -141,3 +141,17 @@ show (6 & 3) == 2
 Since `as` binds tightly, `a + b as T` means `a + (b as T)`, and
 `-1 as T` means `-(1 as T)`. Write `(a + b) as T` and `(-1) as T`. See
 [Conversions](../types/conversions.md).
+
+```basm,fail
+from std.ctypes import int8_t
+
+macro emit_byte(b: int8_t) {
+    @emit b
+}
+
+emit_byte -1 as int8_t
+```
+
+```error
+`as` binds more tightly than `-`, so `-x as T` means `-(x as T)`; write `(-x) as T`
+```
