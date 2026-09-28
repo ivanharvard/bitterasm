@@ -42,7 +42,7 @@ name_length 7
 ## Matching enums
 
 Matching is most useful with [enums](../types/enums.md). Name a variant by
-itself, without its enum's name:
+itself, or qualified by its enum:
 
 ```basm
 enum Color {
@@ -54,7 +54,7 @@ enum Color {
 macro code(c: Color) {
     @match c {
         Red => { @emit 1 }
-        Green => { @emit 2 }
+        Color.Green => { @emit 2 }
         _ => { @emit 3 }
     }
 }
@@ -80,7 +80,7 @@ enum Shape {
 
 macro area(s: Shape) {
     @match s {
-        Circle(r) => { @emit 3 * r * r }
+        Shape.Circle(r) => { @emit 3 * r * r }
         Square(w) => { @emit w * w }
         Empty => { @emit 0 }
     }
@@ -96,10 +96,35 @@ area Shape.Empty
 ```
 
 `Variant(expression)`, where the expression isn't a plain name, matches only
-when the payload equals it.
+when the payload equals it. Qualified forms work the same way:
+`Shape.Circle(r)`, and for a generic enum, `Option<int>.Some(v)`.
 
-> **Note:** Write variant patterns without the enum's name. A pattern like
-> `Color.Green` currently never matches.
+A pattern that isn't a variant, such as a constant holding an enum value, is
+compared with `==`:
+
+```basm
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+const FAVORITE = Color.Blue
+
+macro is_favorite(c: Color) {
+    @match c {
+        FAVORITE => { @emit 1 }
+        _ => { @emit 0 }
+    }
+}
+
+is_favorite Color.Blue
+is_favorite Color.Red
+```
+
+```emits
+1 0
+```
 
 ## Returning from a match
 
@@ -110,7 +135,7 @@ from std.option import Option
 
 macro unwrap_or(o: Option<int>, fallback: int) -> int {
     @match o {
-        Some(v) => { @return v }
+        Option<int>.Some(v) => { @return v }
         None => { @return fallback }
     }
 }

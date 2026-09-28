@@ -1108,41 +1108,86 @@ impl<'a> AliasResolver<'a> {
         value: &Value,
         scope: &HashMap<String, Value>,
     ) -> Result<Option<HashMap<String, Value>>, ResolveError> {
-        // A variant name in a pattern may share its spelling with a
-        // declaration the loader renamed it after; compare what was written.
-        if let Value::Enum { variant, payload, .. } = value {
-            match pattern {
-                Expr::Identifier { name, .. } if crate::loader::demangle(name) == *variant && payload.is_none() => {
-                    return Ok(Some(HashMap::new()));
-                }
-                Expr::Call { callee, arguments, .. } => {
-                    let Expr::Identifier { name, .. } = callee.as_ref() else {
-                        return Ok(None);
-                    };
-                    if crate::loader::demangle(name) != *variant || arguments.len() != 1 {
-                        return Ok(None);
-                    }
-                    let Some(payload) = payload.as_deref() else {
-                        return Ok(None);
-                    };
-                    if let Expr::Identifier { name: binding, .. } = &arguments[0].value {
-                        let mut bindings = HashMap::new();
-                        if binding != "_" {
-                            bindings.insert(binding.clone(), payload.clone());
-                        }
-                        return Ok(Some(bindings));
-                    }
-                    return Ok((self.eval_value(&arguments[0].value, scope)? == *payload)
-                        .then(HashMap::new));
-                }
-                Expr::EnumVariant { .. } => {
-                    return Ok((self.eval_value(pattern, scope)? == *value).then(HashMap::new));
-                }
-                _ => return Ok(None),
+        if let Value::Enum { symbol, variant, payload, .. } = value
+            && let Some((written, argument)) = self.variant_pattern(pattern, *symbol)?
+        {
+            if written != *variant {
+                return Ok(None);
             }
+            return match (argument, payload.as_deref()) {
+                (None, None) => Ok(Some(HashMap::new())),
+                (Some(Expr::Identifier { name: binding, .. }), Some(payload)) => {
+                    let mut bindings = HashMap::new();
+                    if binding != "_" {
+                        bindings.insert(binding.clone(), payload.clone());
+                    }
+                    Ok(Some(bindings))
+                }
+                (Some(argument), Some(payload)) => {
+                    Ok((self.eval_value(argument, scope)? == *payload).then(HashMap::new))
+                }
+                _ => Ok(None),
+            };
         }
 
         Ok((self.eval_value(pattern, scope)? == *value).then(HashMap::new))
+    }
+
+    /// When `pattern` names one of `enum_symbol`'s variants — bare
+    /// (`Some`, `Some(x)`) or qualified by that enum (`Option<int>.Some(x)`,
+    /// `Color.Green`) — the variant it names and its payload pattern, if
+    /// any. `None` for anything else, which is matched by equality instead.
+    fn variant_pattern<'p>(
+        &self,
+        pattern: &'p Expr,
+        enum_symbol: SymbolId,
+    ) -> Result<Option<(String, Option<&'p Expr>)>, ResolveError> {
+        let (name, qualifier, argument) = match pattern {
+            Expr::Identifier { name, .. } => (name.as_str(), None, None),
+            Expr::Member { object, member, .. } => {
+                let (Expr::Identifier { name: enum_name, .. }, [NamePart::Literal(variant)]) =
+                    (object.as_ref(), member.as_slice())
+                else {
+                    return Ok(None);
+                };
+                (variant.as_str(), Some(enum_name.as_str()), None)
+            }
+            Expr::Call { callee, arguments, .. } if arguments.len() == 1 => {
+                let argument = Some(&arguments[0].value);
+                match callee.as_ref() {
+                    Expr::Identifier { name, .. } => (name.as_str(), None, argument),
+                    Expr::Member { object, member, .. } => {
+                        let (Expr::Identifier { name: enum_name, .. }, [NamePart::Literal(variant)]) =
+                            (object.as_ref(), member.as_slice())
+                        else {
+                            return Ok(None);
+                        };
+                        (variant.as_str(), Some(enum_name.as_str()), argument)
+                    }
+                    _ => return Ok(None),
+                }
+            }
+            Expr::EnumVariant { enum_name, variant, payload, .. } => {
+                (variant.as_str(), Some(enum_name.as_str()), payload.as_deref())
+            }
+            _ => return Ok(None),
+        };
+
+        if let Some(qualifier) = qualifier
+            && self.lookup_symbol(qualifier) != Some(enum_symbol)
+        {
+            return Ok(None);
+        }
+
+        // A variant name may share its spelling with a declaration the
+        // loader renamed; compare what was written.
+        let name = crate::loader::demangle(name);
+        let declaration = self.find_enum_declaration_rc(enum_symbol)?;
+        Ok(declaration
+            .variants
+            .iter()
+            .any(|declared| declared.name == name)
+            .then_some((name, argument)))
     }
 
     /// Resolves a nested struct/enum/type-alias/macro declaration's own
