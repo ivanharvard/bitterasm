@@ -47,6 +47,13 @@ fn parses_pub_import_as_a_re_export() {
 }
 
 #[test]
+fn prints_struct_fields_with_visibility_skip_and_defaults() {
+    let source = "struct W<const N: int>\n{\n    pub value: int,\n    pub skip len: int = N,\n    hidden: int\n}\n";
+    let program = parse(lex(source).unwrap()).unwrap();
+    assert_eq!(crate::printer::print_statement(&program.statements[0], 0), source.trim_end());
+}
+
+#[test]
 fn parses_named_imports() {
     let program =
         parse(lex("from tinycpu.native import mov, add\n").unwrap())

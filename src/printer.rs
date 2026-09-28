@@ -247,10 +247,13 @@ fn print_struct_body_item(item: &StructBodyItem, indent: usize) -> String {
 
 fn print_struct_field(field: &StructField, indent: usize) -> String {
     format!(
-        "{pad}{name}: {ty}",
+        "{pad}{pub_kw}{skip_kw}{name}: {ty}{default}",
         pad = INDENT.repeat(indent),
+        pub_kw = if field.is_pub { "pub " } else { "" },
+        skip_kw = if field.is_skip { "skip " } else { "" },
         name = print_spliced_name(&field.name),
         ty = print_type_expr(&field.ty),
+        default = field.default.as_ref().map(|value| format!(" = {}", print_expr(value))).unwrap_or_default(),
     )
 }
 
