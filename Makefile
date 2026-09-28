@@ -9,3 +9,6 @@ compare:
 fmt:
 	bitterasm fmt .
 
+mdbook:
+	bitterasm doc std -o docs/book/src/std/reference --summary docs/book/src/SUMMARY.md
+	mdbook serve docs/book --open
