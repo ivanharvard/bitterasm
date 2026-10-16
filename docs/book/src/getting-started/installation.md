@@ -24,7 +24,11 @@ these directories, in order:
 
 1. The current directory.
 2. Each directory in `BITTERASM_PATH` (separated like `PATH`).
-3. `~/.bitterasm`.
+3. On non-Apple Unix, `$XDG_DATA_HOME/bitterasm` (defaulting to
+   `~/.local/share/bitterasm`).
+4. On non-Apple Unix, each `$XDG_DATA_DIRS/bitterasm` (defaulting to
+   `/usr/local/share/bitterasm` and `/usr/share/bitterasm`).
+5. The legacy install root `~/.bitterasm`.
 
 So a program anywhere on disk finds the installed `std`, and a project's own
 `std/` directory takes priority over it. See [Imports](../modules/imports.md).

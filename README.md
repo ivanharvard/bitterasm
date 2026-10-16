@@ -69,8 +69,11 @@ every prompt, including those of the optional `bitterasm-lsp` install script.
 
 Absolute imports such as `from std.x86_64.nasm import *` are looked up, in
 order, under the current directory, each directory in `BITTERASM_PATH`
-(separated like `PATH`), and finally `~/.bitterasm`. So programs anywhere on
-disk find the installed `std`, and a project's own `std/` takes priority over it.
+(separated like `PATH`), the XDG data roots on non-Apple Unix, and finally the
+legacy root `~/.bitterasm`. The XDG roots are `$XDG_DATA_HOME/bitterasm` and
+each `$XDG_DATA_DIRS/bitterasm`, with the standard XDG defaults. So programs
+anywhere on disk find the installed `std`, and a project's own `std/` takes
+priority over it.
 
 `bitter build program.basm` runs the whole pipeline — compile, link, and pack —
 in one command, and writes the bytes marked executable. `bitter` knows no

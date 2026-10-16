@@ -101,7 +101,11 @@ An absolute path (`std.binary`) is looked up in these directories, in order:
 
 1. The current directory.
 2. Each directory in `BITTERASM_PATH`, which is separated like `PATH`.
-3. `~/.bitterasm`, where the installer puts `std`.
+3. On non-Apple Unix, `$XDG_DATA_HOME/bitterasm` (defaulting to
+   `~/.local/share/bitterasm`).
+4. On non-Apple Unix, each `$XDG_DATA_DIRS/bitterasm` (defaulting to
+   `/usr/local/share/bitterasm` and `/usr/share/bitterasm`).
+5. The legacy install root `~/.bitterasm`, where the installer puts `std`.
 
 So a project can override a library by putting its own copy earlier in the
 search path.
