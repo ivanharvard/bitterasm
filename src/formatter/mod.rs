@@ -23,7 +23,26 @@ use signature::normalize_macro_signatures;
 use wrapping::{split_inline_facets, wrap_code, wrap_comment, wrap_doc_comment};
 
 /// Formats whitespace while retaining every source token and comment.
+/// The most formatting passes `format_source` runs while the output keeps
+/// changing. One pass wraps one list per long line, so a line with several
+/// long lists needs a pass for each.
+const MAX_PASSES: usize = 8;
+
+/// Formats `source`. The result is stable: formatting it again changes
+/// nothing, which is what `bitterasm format --check` relies on.
 pub fn format_source(source: &str, config: &FormatConfig) -> Result<String, String> {
+    let mut formatted = format_pass(source, config)?;
+    for _ in 1..MAX_PASSES {
+        let again = format_pass(&formatted, config)?;
+        if again == formatted {
+            break;
+        }
+        formatted = again;
+    }
+    Ok(formatted)
+}
+
+fn format_pass(source: &str, config: &FormatConfig) -> Result<String, String> {
     let newline = match config.newline_style {
         NewlineStyle::Auto if source.contains("\r\n") => "\r\n",
         NewlineStyle::Windows => "\r\n",
@@ -409,6 +428,39 @@ mod tests {
             format_source(source, &config).unwrap(),
             "pub macro encode()\n    | -> int\n{\n}\n"
         );
+    }
+
+    #[test]
+    fn keeps_a_short_signature_that_opens_its_body_on_one_line() {
+        let source = "macro add(x: int, y: int) -> int {\n    @return x + y\n}\n";
+        assert_eq!(format_source(source, &FormatConfig::default()).unwrap(), source);
+    }
+
+    #[test]
+    fn still_lays_out_a_list_left_open_one_item_per_line() {
+        let source = "const x = call(first, second,\nthird)\n";
+        assert_eq!(
+            format_source(source, &FormatConfig::default()).unwrap(),
+            "const x = call(\n    first,\n    second,\n    third\n)\n"
+        );
+    }
+
+    #[test]
+    fn puts_the_closer_of_an_outer_list_on_its_own_line() {
+        let source = "macro apply(x: int, f: macro(\nint\n) -> int) -> int {\n@return f(x)\n}\n";
+        assert_eq!(
+            format_source(source, &FormatConfig::default()).unwrap(),
+            "macro apply(\n    x: int,\n    f: macro(\n        int\n    ) -> int\n) -> int {\n    @return f(x)\n}\n"
+        );
+    }
+
+    #[test]
+    fn wraps_every_long_list_on_a_line_in_one_run() {
+        let config = FormatConfig { max_width: 40, ..Default::default() };
+        let source = "const x = f(aaaa, bbbb, cccc) | f(dddd, eeee, ffff) | f(gggg, hhhh)\n";
+        let once = format_source(source, &config).unwrap();
+        assert_eq!(format_source(&once, &config).unwrap(), once);
+        assert!(once.lines().all(|line| line.len() <= 40), "{once}");
     }
 
     #[test]

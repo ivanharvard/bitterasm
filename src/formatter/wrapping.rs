@@ -131,6 +131,12 @@ pub(super) fn wrap_code(
     let mut breaks = Vec::new();
     let mut openings = Vec::new();
     let mut closings = Vec::new();
+    // Which list each comma belongs to: the position of the bracket opened
+    // on this line that encloses it, or `None` for a list opened on an
+    // earlier line. Two lists at the same depth, like the closed `(...)` and
+    // the open `{` of `macro f(a, b) {`, are different lists.
+    let mut open_here: Vec<usize> = Vec::new();
+    let mut break_lists: Vec<Option<usize>> = Vec::new();
     for token in tokens {
         match token.kind {
             TokenKind::Less if previous.is_some_and(|previous| {
@@ -144,9 +150,13 @@ pub(super) fn wrap_code(
             TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => {
                 local.push(token.kind.clone());
                 openings.push((token.span.end.saturating_sub(source_start), local.len()));
+                open_here.push(token.span.start);
             }
             TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
                 closings.push((token.span.start.saturating_sub(source_start), local.len()));
+                // Brackets nest, so this closes the innermost one opened on
+                // this line, or else one opened earlier.
+                open_here.pop();
                 local.pop();
             }
             TokenKind::Comma
@@ -156,28 +166,38 @@ pub(super) fn wrap_code(
                             && local.len() > outer.len()) =>
             {
                 breaks.push((token.span.end.saturating_sub(source_start), local.len()));
+                break_lists.push(open_here.last().copied());
             }
             _ => {}
         }
         previous = Some(token);
     }
 
-    let starts_multiline_list = local.len() > outer.len() && !breaks.is_empty();
+    // A line that opens a list and leaves it open after one of its commas
+    // continues that list on the next lines, so it's laid out one item per
+    // line even when it fits. A comma inside a list that's already closed
+    // again doesn't count.
+    let starts_multiline_list = break_lists
+        .iter()
+        .any(|list| list.is_some_and(|opener| open_here.contains(&opener)));
     if first_indent.chars().count() + content.chars().count() <= config.max_width
         && !starts_multiline_list
     {
-        if leading_closers == 0 {
-            if let Some((position, depth)) = closings.iter().find(|(_, depth)| *depth <= outer.len()) {
-                if !content[..*position].trim().is_empty() {
-                    return vec![
-                        format!("{first_indent}{}", content[..*position].trim()),
-                        format!(
-                            "{}{}",
-                            make_indent(depth.saturating_sub(1) + depth_bias, config),
-                            content[*position..].trim()
-                        ),
-                    ];
-                }
+        // A line that closes a list opened on an earlier line, after other
+        // code, puts that closer on its own line: `) -> int) -> int {`
+        // becomes `) -> int` and `) -> int {`. Leading closers don't count;
+        // they already start the line.
+        let still_open = outer.len().saturating_sub(leading_closers);
+        if let Some((position, depth)) = closings.iter().find(|(_, depth)| *depth <= still_open) {
+            if !content[..*position].trim().is_empty() {
+                return vec![
+                    format!("{first_indent}{}", content[..*position].trim()),
+                    format!(
+                        "{}{}",
+                        make_indent(depth.saturating_sub(1) + depth_bias, config),
+                        content[*position..].trim()
+                    ),
+                ];
             }
         }
         return vec![format!("{first_indent}{content}")];
@@ -212,7 +232,16 @@ pub(super) fn wrap_code(
         lines.push(format!("{item_indent}{}", content[start..body_end].trim()));
     }
     if body_end < content.len() {
-        let closing_indent = make_indent(list_depth.saturating_sub(1) + depth_bias, config);
+        // Indent the rest the way it would be as a line of its own: one
+        // level out for each closer it starts with, so `))` closing two
+        // lists lands where a second formatting pass would put it.
+        let closers = tokens
+            .iter()
+            .skip_while(|token| token.span.start.saturating_sub(source_start) < body_end)
+            .take_while(|token| matches!(token.kind, TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace))
+            .count()
+            .max(1);
+        let closing_indent = make_indent(list_depth.saturating_sub(closers) + depth_bias, config);
         lines.push(format!("{closing_indent}{}", content[body_end..].trim()));
     }
     lines
