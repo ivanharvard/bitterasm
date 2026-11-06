@@ -8,89 +8,176 @@
 <p align="center">Making Assembly Sweeter.</p>
 
 <!-- ANCHOR: overview -->
-## What BitterASM is
+## What is BitterASM?
+BitterASM is a metalanguage for constructing assembly languages, inspired by several existing assemblers with syntax similar to Rust.
 
-BitterASM is a metalanguage for constructing assembly languages. It defines the semantics and metaprogramming machinery needed to build an ISA, while assuming essentially nothing about the target architecture itself.
+## Motivations and Philosophy
 
-Traditional assemblers bake in a specific architecture: registers, instructions, opcodes, addressing modes, and binary encoding are all privileged, built-in concepts. That works fine until you want something the assembler's authors didn't anticipate — a pseudo-instruction, an alternate syntax, a non-binary target, a research architecture. Then you're stuck extending the assembler itself.
+Traditional assemblers often expose developers to design choices that would be considered poor ergonomics in modern programming languages and tooling. There are several existing approaches to reconciling these flaws, but almost all of them fail:
 
-BitterASM inverts this. The language core knows nothing about:
+Approach | Why it fails to entirely solve the issue
+---------|----------------------------------
+Using a macro assembler | Improves code reuse, but retains weak scoping and little to no typing
+Creating a higher level programming language | Ignores the issue entirely, forcing assembly developers to learn an entirely new language
+Extending an existing assembler with new directives or instructions | Often hackish and relies on non-public APIs
+Improving assembler tooling (linters, language servers, etc.) | Improves the developer experience without resolving the language design limitation
+Multi-architecture/multi-syntax languages | Often requires parallel development to maintain each syntax or architecture
 
-```text
-registers, instructions, opcodes, operands, immediates,
-addresses, word sizes, endianness, calling conventions,
-sections, labels, binary
+Instead of isolated improvements, BitterASM combines these approaches to provide assembly developers with a stronger development cycle in a language that will have a gentle learning curve for most assembly developers. BitterASM's goal is to provide a language that can theoretically support any assembly language---past, present, or future---such that the benefits of BitterASM are not just isolated to a single architecture or syntax family (or even the most common ones).
+
+To ensure this is possible, BitterASM attempts to make as few assumptions about the architecture as possible. The complexity lies instead in the code that defines the architecture. 
+
+## Features
+
+The only primitive inside of BitterASM is an `int`, an arbitrarily sized signed integer. From this you can construct other types:
+```basm
+type uint = int
+    | invariant x >= 0
 ```
 
-Every one of those is defined in ordinary BitterASM code — as libraries, architecture packages, and evaluators. The complexity of a real ISA lives where it belongs: in the code describing that ISA, not in the language interpreting it.
+Or pack types together:
+```basm
+## `value / 10^scale`
+pub struct Decimal
+    | invariant source.scale >= 0
+{
+    ## The digits, as an integer.
+    pub value: int,
+    ## How many of those digits come after the decimal point.
+    pub scale: int
+}
+```
 
-## The core ideas
+And create macros that take in your constructed types:
+```basm
+pub macro mov(
+    rd: Reg,
+    imm: int,
+    w: int
+)
+    | emits Bytes<...>
+{
+    const need_rex = w == 1 || reg_ext(rd) == 1
+    const rex = rex_byte(w, 0, 0, reg_ext(rd))
+    const opcode = Byte(0xB8 + reg_field(rd))
+    const imm_len = 4 + 4 * w
+    @emit instr(need_rex, rex, opcode, 0, Byte(0), imm, imm_len)
+}
+```
 
-**Instructions are macros, not language features.** `mov` isn't a built-in instruction declaration — it's a macro someone wrote and exposed publicly. There's no fundamental distinction between a "real" instruction and a "pseudo" one at the language level; both are just macros that expand into some encoding.
+Some macros emit values into an `.em` file that can be interpreted by some evaluator (one called `bitter` is provided for you, and converts your `.em` into binary machine code). Other macros simply return values, similar to functions in other programming languages. Some macros do both!
 
-**Syntax is an interface, not part of the ISA.** Because instructions are macros with their own invocation syntax, the same underlying x86 machinery could support `mov rax, 3`, an arrow-style `rax <- 3`, or something else entirely — all sharing one architecture implementation underneath.
+Some `type`s, `struct`s, and `macro`s have been provided for you in the `std` library, though you are free to implement your own! 
 
-**Abstraction does not imply optimization.** What you expand is what you get. If a macro expands `clear rax` into `xor rax, rax`, that's the macro author's explicit choice. BitterASM never second-guesses it by picking a "faster" sequence on its own. A macro can implement sophisticated code selection, but that logic belongs to the macro author, not the language.
+Don't like an architecture's instructions? Build your own pseudoinstruction!
+```basm
+## Sets up a stack frame with `locals` bytes of local storage.
+pub macro fn_prologue(locals: uint) {
+    push rbp
+    mov rbp, rsp
+    sub rsp, locals
+}
 
-**Even bits are a library concept.** The only thing BitterASM assumes is `Int` — an architecture-neutral, arbitrary-precision integer. Binary (`bit`, `bits<N>`) is defined in terms of `Int` in the standard library, not built into the language. `3` is just the mathematical integer three until some library gives it a binary interpretation. This leaves room for architectures that aren't binary at all.
+fn_prologue 16      # push rbp; mov rbp, rsp; sub rsp, 16
+```
 
-**Evaluators own the output contract, not the language.** BitterASM source describes behavior; an evaluator decides what running that behavior produces. A binary evaluator turns assembly into machine code. A different evaluator could target something else entirely. Language semantics (`Int`, `struct`, `type`, `macro`, pattern matching, imports, generics) mean the same thing everywhere — only the output effect changes.
+Don't like the syntax? Change the import!
+```basm
+from std.x86_64.att import *
+```
+```basm
+from std.x86_64.intel import *
+```
+```basm
+from std.x86_64.nasm import *
+```
 
-**Imports compose modules; they don't grant magic.** `from x86_64.intel import *` works because that package defines `mov` and `rax` — not because the language has special knowledge of x86. Importing a binary library doesn't secretly switch the language into "binary mode"; binary is just one ordinary abstraction among many.
+Or make your own!
+```basm
+syntax add(rd, rs1, rs2) = { $rd$ = $rs1$ + $rs2$ }
+```
 
-## Why bother
+## "Hello, World!" in x86-64 NASM-style BitterASM vs NASM
 
-The payoff for assuming almost nothing is:
+As stated before, for most assembly developers, there will be a very gentle learning curve if the architecture you are targeting already has definitions written in BitterASM. For instance, these are two equivalent programs!
 
-- **Portability** — the same metaprogramming core builds tiny pedagogical ISAs, real architectures like RISC-V, and pathologically complex ones like x86-64, without special-casing any of them.
-- **Auditable, structured assembly** — instructions and their expansions are ordinary, inspectable code rather than opaque tables inside an assembler binary.
-- **Alternate syntaxes for free** — because syntax lives with the macros that define it, an architecture can offer multiple front-ends (native, AT&T-style, "pretty," even something Pythonic) over one shared implementation.
-- **Room for the unknown** — future architectures that aren't neatly binary, register-based, or von Neumann at all don't require changes to BitterASM itself.
+<table>
+<tr>
+<th>x86-64 NASM-style BitterASM</th>
+<th>NASM</th>
+</tr>
+<tr>
+<td>
 
-The tradeoff is symmetric: the fewer assumptions the language makes, the more an architecture package has to define for itself. That's the bitter part. The resulting portability, auditability, and extensibility are the sweet part.
-<!-- ANCHOR_END: overview -->
+```basm
+from std.x86_64.nasm import *
+from std.formats.elf import *
 
-## Status
+elf64_executable EM_X86_64, _start
 
-BitterASM is an early-stage project: a Rust compiler (lexer, parser, resolver, formatter) for the language itself, a separate `bitter` binary evaluator that packs emitted values into machine code, and a growing `std` library written in BitterASM. Expect the language, the evaluator contract, and the standard library to change as the design settles.
+const text = "Hello, World!\n"
+
+section .rodata
+msg:
+    db text
+
+section .text
+pub _start:
+    mov eax, 1          # sys_write
+    mov edi, 1          # stdout
+    lea rsi, [rel msg]  # buffer
+    mov edx, text.len   # length
+    syscall
+
+    mov eax, 60         # sys_exit
+    xor edi, edi        # status 0
+    syscall
+```
+
+</td>
+<td>
+
+```nasm
+global _start
+
+section .rodata
+msg:
+    db "Hello, World!", 10
+len equ $ - msg
+
+section .text
+_start:
+    mov eax, 1          ; sys_write
+    mov edi, 1          ; stdout
+    lea rsi, [rel msg]  ; buffer
+    mov edx, len        ; length
+    syscall
+
+    mov eax, 60         ; sys_exit
+    xor edi, edi        ; status 0
+    syscall
+```
+
+</td>
+</tr>
+</table>
 
 ## Installation
 
-Requires a Rust toolchain (`cargo`). From a clone of this repository:
-
-```sh
-make install    # or: ./install.sh
+```bash
+git clone https://github.com/ivanharvard/bitterasm
+# optional LSP for VSCode, in the same parent directory
+git clone https://github.com/ivanharvard/bitterasm-lsp   
+cd bitterasm && ./install.sh
 ```
-
-This interactively builds and installs `bitterasm` (the compiler) and/or `bitter`
-(the binary evaluator) to `~/.bitterasm/bin`, and copies `std/` to `~/.bitterasm/std`.
-Add `~/.bitterasm/bin` to your `PATH` if prompted. Pass `-y` to answer yes to
-every prompt, including those of the optional `bitterasm-lsp` install script.
-
-Absolute imports such as `from std.x86_64.nasm import *` are looked up, in
-order, under the current directory, each directory in `BITTERASM_PATH`
-(separated like `PATH`), the XDG data roots on non-Apple Unix, and finally the
-legacy root `~/.bitterasm`. The XDG roots are `$XDG_DATA_HOME/bitterasm` and
-each `$XDG_DATA_DIRS/bitterasm`, with the standard XDG defaults. So programs
-anywhere on disk find the installed `std`, and a project's own `std/` takes
-priority over it.
-
-`bitter build program.basm` runs the whole pipeline — compile, link, and pack —
-in one command, and writes the bytes marked executable. `bitter` knows no
-executable format itself: like instructions, ELF, PE and Mach-O headers are
-ordinary BitterASM code in `std.formats`, which a program invokes first thing,
-e.g. `elf64_executable EM_X86_64, _start`. Without one, the output is a flat
-binary. See [examples/x86_64/hello.basm](examples/x86_64/hello.basm) for a
-runnable example. `bitterasm compile` and `bitter encode` run the two halves
-separately.
+<!-- ANCHOR_END: overview -->
 
 ## Documentation
 
-The BitterASM book in [docs/book](docs/book/src/SUMMARY.md) is a guide to
-the whole language: macros, meta keywords, types, generics, modules, labels
-and sections, and how `bitter` packs bytes. Every example in it is compiled
-by `cargo test`. To read it locally:
+[ivanharvard.github.io/bitterasm](https://ivanharvard.github.io/bitterasm/)
 
-```sh
-mdbook serve docs/book --open
-```
+### AI Disclosure
+
+Much of the documentation was AI generated and reviewed by a human. Before full release, the documentation will be rewritten.
+
+
