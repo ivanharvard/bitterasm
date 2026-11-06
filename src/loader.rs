@@ -1571,16 +1571,7 @@ fn rename_generic_parameter(param: &mut GenericParameter, renames: &mut Renamer)
     match param {
         GenericParameter::Const { ty, .. } => rename_type_expr(ty, renames),
 
-        GenericParameter::Type { bound: Some(bound), .. } => {
-            for param in &mut bound.params {
-                rename_type_expr(param, renames);
-            }
-            if let Some(ret) = &mut bound.ret {
-                rename_type_expr(ret, renames);
-            }
-        }
-
-        GenericParameter::Type { bound: None, .. } => {}
+        GenericParameter::Type { .. } => {}
     }
 }
 
@@ -1603,6 +1594,15 @@ fn rename_type_expr(ty: &mut TypeExpr, renames: &mut Renamer) {
                     TypeArgument::Const(expr) => rename_expr(expr, renames),
                     TypeArgument::Wildcard(_) => {}
                 }
+            }
+        }
+
+        TypeExpr::Macro { params, ret, .. } => {
+            for param in params {
+                rename_type_expr(param, renames);
+            }
+            if let Some(ret) = ret {
+                rename_type_expr(ret, renames);
             }
         }
     }

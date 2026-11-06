@@ -426,6 +426,13 @@ pub enum ResolveError {
     // `crate::facets::emits`) and one of its `@emit`s produced a value
     // whose type isn't any of them. A macro with no `emits` facet at all
     // is unconstrained and never raises this.
+    /// `@emit` of a value that isn't data: a macro, or a struct or enum
+    /// holding one.
+    EmittedCompileTimeValue {
+        type_name: String,
+        span: Span,
+    },
+
     EmittedTypeNotDeclared {
         actual: String,
         declared: Vec<String>,
@@ -516,6 +523,7 @@ impl ResolveError {
             | Self::InvalidAssertMessage { span } | Self::TypeMismatch { span, .. }
             | Self::ReturnTypeMismatch { span, .. } | Self::ConversionWithoutReturnType { span, .. }
             | Self::InvariantViolated { span, .. } | Self::EmittedTypeNotDeclared { span, .. }
+            | Self::EmittedCompileTimeValue { span, .. }
             | Self::CannotCoerce { span, .. }
             | Self::AmbiguousConversion { span, .. } | Self::AmbiguousInvariantBinder { span, .. }
             | Self::Internal { span, .. } | Self::ForLoopTooLarge { span }

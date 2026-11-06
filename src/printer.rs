@@ -17,7 +17,7 @@ use crate::ast::{
     MacroDeclaration, MacroParameter, NamePart, Statement, StructDeclaration, UnaryOp,
 };
 use crate::token::TokenKind;
-use crate::types::{FnBound, GenericParameter, StructBodyItem, StructField, TypeArgument, TypeExpr};
+use crate::types::{GenericParameter, StructBodyItem, StructField, TypeArgument, TypeExpr};
 
 const INDENT: &str = "    ";
 
@@ -304,10 +304,7 @@ pub fn print_generic_params(params: &[GenericParameter]) -> String {
                 format!("const {name}: {}", print_type_expr(ty))
             }
 
-            GenericParameter::Type { name, bound: None, .. } => name.clone(),
-            GenericParameter::Type { name, bound: Some(bound), .. } => {
-                format!("{name}: {}", print_fn_bound(bound))
-            }
+            GenericParameter::Type { name, .. } => name.clone(),
         })
         .collect::<Vec<_>>()
         .join(", ");
@@ -461,14 +458,14 @@ pub fn print_type_expr(ty: &TypeExpr) -> String {
 
             format!("{}<{args}>", print_type_expr(base))
         }
-    }
-}
 
-pub fn print_fn_bound(bound: &FnBound) -> String {
-    let params = bound.params.iter().map(print_type_expr).collect::<Vec<_>>().join(", ");
-    match &bound.ret {
-        Some(ret) => format!("Fn({params}) -> {}", print_type_expr(ret)),
-        None => format!("Fn({params})"),
+        TypeExpr::Macro { params, ret, .. } => {
+            let params = params.iter().map(print_type_expr).collect::<Vec<_>>().join(", ");
+            match ret {
+                Some(ret) => format!("macro({params}) -> {}", print_type_expr(ret)),
+                None => format!("macro({params})"),
+            }
+        }
     }
 }
 

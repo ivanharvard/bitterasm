@@ -26,6 +26,16 @@ Types exist only at compile time. The compiler uses them to:
 - **Describe output.** A struct's fields tell an evaluator like `bitter` how
   to lay out bits. See [Packing bytes with `bitter`](../output/bitter.md).
 
+## Data types and compile-time types
+
+Every data type is built from `int`. Data is anything that can end up in
+the output: it can be emitted and packed into bits.
+
+A few types describe compile-time machinery instead, for type safety and
+more expressive macros. The first is the [macro type](../macros/macro-parameters.md),
+such as `macro(int) -> int`. A value of one of these types can be passed to a
+macro and named with `const`, but it is never data: it can't be emitted.
+
 ## No automatic conversions
 
 A value never changes type on its own. To turn one type into another, convert

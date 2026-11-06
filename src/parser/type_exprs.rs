@@ -9,6 +9,14 @@ impl Parser {
     pub(super) fn parse_type_expr(&mut self) -> Result<TypeExpr, ParseError> {
         let start = self.current().span.start;
 
+        // if this is a macro type, parse it and return early
+        if self.check(&TokenKind::Macro) {
+            return self.parse_macro_type();
+        }
+
+        // otherwise, check for a named type, which is either a single 
+        // identifier or a module-qualified path of identifiers 
+        // separated by dots, e.g. `foo.bar.Baz`.
         let mut path = Vec::new();
 
         path.push(self.expect_identifier()?);
@@ -38,25 +46,17 @@ impl Parser {
         Ok(ty)
     }
 
-    // `Fn(T, U) -> S` (or `Fn(T, U)` with no declared return) — a generic
-    // type parameter's bound, given the parser is sitting on the `Fn`
-    // identifier (not yet consumed). Mirrors `macros::parse_macro_declaration`'s
-    // own param-list/return-type grammar, minus the name and body a
-    // declaration has and this doesn't need: this only describes a
-    // *signature* a bound value must match, not a definition. `Fn` is
-    // recognized by name here, not a keyword — bitterasm has no general
-    // trait system, just this one bound shape (see `GenericParameter::Type::bound`).
-    fn parse_fn_bound(&mut self) -> Result<FnBound, ParseError> {
+    // `macro(T, U) -> S` (or `macro(T, U)` with no declared return), a macro
+    // type, given the parser is sitting on the `macro` keyword (not yet
+    // consumed). Mirrors `macros::parse_macro_declaration`'s own
+    // param-list/return-type grammar, minus the name and body a declaration
+    // has: this only describes a signature, not a definition. The return
+    // type is parsed with `parse_type_expr` too, so in `macro() -> macro(int)
+    // -> int` the second `->` belongs to the inner macro type.
+    fn parse_macro_type(&mut self) -> Result<TypeExpr, ParseError> {
         let start = self.current().span.start;
 
-        let name = self.expect_identifier()?;
-        if name != "Fn" {
-            return Err(ParseError::new(
-                format!("expected a `Fn(...)` bound, found `{name}`"),
-                self.previous().span,
-            ));
-        }
-
+        self.expect_simple(TokenKind::Macro)?;
         self.expect_simple(TokenKind::LParen)?;
         self.skip_newlines();
 
@@ -86,7 +86,7 @@ impl Parser {
             None
         };
 
-        Ok(FnBound {
+        Ok(TypeExpr::Macro {
             params,
             ret,
             span: Span::new(start, end),
@@ -247,20 +247,25 @@ impl Parser {
                 TokenKind::Identifier(_) => {
                     let name = self.expect_identifier()?;
 
-                    let mut end = self.previous().span.end;
+                    let end = self.previous().span.end;
 
-                    let bound = if self.check(&TokenKind::Colon) {
-                        self.advance();
-                        let bound = self.parse_fn_bound()?;
-                        end = bound.span.end;
-                        Some(bound)
-                    } else {
-                        None
-                    };
+                    // `<F: ...>`: type parameters take no bounds. The two
+                    // likely intents each get a pointer to what to write.
+                    if self.check(&TokenKind::Colon) {
+                        let colon = self.current().span;
+                        let message = if matches!(self.tokens.get(self.pos + 1).map(|token| &token.kind), Some(TokenKind::Macro)) {
+                            format!(
+                                "a type parameter can't have a bound; give the macro parameter a macro type instead, \
+                                 like `f: macro(int) -> int`, and drop `{name}`"
+                            )
+                        } else {
+                            format!("a type parameter can't have a type; for a const parameter, write `const {name}: ...`")
+                        };
+                        return Err(ParseError::new(message, colon));
+                    }
 
                     parameters.push(GenericParameter::Type {
                         name,
-                        bound,
                         span: Span::new(start, end),
                     });
                 }

@@ -116,7 +116,7 @@ pub macro last<T>(arr: Array<T, ...>) -> T
 
 ## A new array holding `f` of each element, in order. `f` is any macro
 ## that takes a `T` and returns a `U`.
-pub macro mapped<T, U, F: Fn(T) -> U>(arr: Array<T, ...>, f: F) -> Array<U, ...>
+pub macro mapped<T, U>(arr: Array<T, ...>, f: macro(T) -> U) -> Array<U, ...>
 {
     @return Array<U, arr.len> {
         @for i in 0..arr.len {

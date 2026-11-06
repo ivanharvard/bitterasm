@@ -65,7 +65,7 @@ use crate::ast::{
 };
 use crate::eval::Int;
 use crate::token::Span;
-use crate::types::{FnBound, GenericParameter, TypeArgument, TypeExpr};
+use crate::types::{TypeArgument, TypeExpr};
 
 use super::aliases::{AliasResolver, GenericBinding};
 use super::fold::{KeptValue, NextTarget};
@@ -481,14 +481,6 @@ impl<'a> AliasResolver<'a> {
             scope.insert(param.name.clone(), value);
         }
 
-        // Checked *before* the completeness check below, not after: a bound
-        // may mention other free generics that appear nowhere in any value
-        // parameter's own type (`Fn(A, B) -> R`'s `A`/`B`/`R`), and this is
-        // what infers those — so a generic that's only ever reachable
-        // through another param's bound still counts as resolved by the
-        // time completeness is checked.
-        self.check_generic_bounds(declaration, &generic_names, &mut generic_scope)?;
-
         for param in &declaration.generic_params {
             let name = param_name(param);
             if !generic_scope.contains_key(name) {
@@ -510,82 +502,6 @@ impl<'a> AliasResolver<'a> {
         }
 
         Ok((scope, generic_scope))
-    }
-
-    /// Checks every one of `declaration`'s own generic type params that
-    /// carries an `F: Fn(...)` bound (`GenericParameter::Type::bound`)
-    /// against whatever `F` actually got inferred to, once every value
-    /// parameter's own type has already been unified — see the call site in
-    /// `bind_macro_arguments`. A param with no bound, or one that's still
-    /// unbound at this point (nothing in the value-parameter list ever
-    /// mentioned it), is skipped: the former has nothing to check, the
-    /// latter is caught right after by the ordinary "every generic must be
-    /// bound" completeness check with its own clearer error.
-    fn check_generic_bounds(
-        &mut self,
-        declaration: &MacroDeclaration,
-        generic_names: &HashSet<&str>,
-        scope: &mut HashMap<String, GenericBinding>,
-    ) -> Result<(), ResolveError> {
-        for param in &declaration.generic_params {
-            let GenericParameter::Type { name, bound: Some(bound), span } = param else {
-                continue;
-            };
-            let Some(GenericBinding::Type(actual)) = scope.get(name.as_str()).cloned() else {
-                continue;
-            };
-
-            self.unify_fn_bound(name, bound, &actual, generic_names, scope, *span)?;
-        }
-
-        Ok(())
-    }
-
-    /// Checks that `actual` — a generic type param's own already-inferred
-    /// binding — satisfies `bound`'s `Fn(...)` shape, param-by-param and
-    /// against its return type. `bound` may itself mention *other* still-free
-    /// generics (`Fn(A, B) -> R`'s `A`/`B`/`R`, never appearing in any value
-    /// parameter's own declared type) — those get inferred right here, the
-    /// same way `unify_type_expr` infers anything else, which is what lets
-    /// `macro foo<F, A, B, R> | where F: Fn(A, B) -> R` work without `A`/`B`/`R`
-    /// needing a value parameter of their own.
-    fn unify_fn_bound(
-        &mut self,
-        param_name: &str,
-        bound: &FnBound,
-        actual: &ResolvedType,
-        generic_names: &HashSet<&str>,
-        scope: &mut HashMap<String, GenericBinding>,
-        span: Span,
-    ) -> Result<(), ResolveError> {
-        let mismatch = |this: &Self| ResolveError::TypeMismatch {
-            name: param_name.to_string(),
-            expected: crate::printer::print_fn_bound(bound),
-            actual: describe_type(actual, this),
-            span,
-        };
-
-        let ResolvedType::MacroType { params: actual_params, ret: actual_ret } = actual else {
-            return Err(mismatch(self));
-        };
-
-        if bound.params.len() != actual_params.len() {
-            return Err(mismatch(self));
-        }
-
-        for (param, actual_param) in bound.params.iter().zip(actual_params) {
-            self.unify_type_expr(param, actual_param, generic_names, scope, span)?;
-        }
-
-        match (&bound.ret, actual_ret) {
-            (None, None) => {}
-            (Some(ret), Some(actual_ret)) => {
-                self.unify_type_expr(ret, actual_ret, generic_names, scope, span)?;
-            }
-            _ => return Err(mismatch(self)),
-        }
-
-        Ok(())
     }
 
     /// Binds `expected`'s free occurrences of one of `declaration`'s own
@@ -693,6 +609,40 @@ impl<'a> AliasResolver<'a> {
             return Ok(());
         }
 
+        // A macro type, e.g. `mapped`'s `f: macro(T) -> U`: match the
+        // passed macro's signature part by part, which is what infers `T`
+        // and `U` from it. A macro with no return only matches a type with
+        // no `->`, and the other way around.
+        if let TypeExpr::Macro { params, ret, .. } = expected {
+            let mismatch = |this: &Self| ResolveError::TypeMismatch {
+                name: "<type>".to_string(),
+                expected: crate::printer::print_type_expr(expected),
+                actual: describe_type(actual, this),
+                span,
+            };
+
+            let ResolvedType::MacroType { params: actual_params, ret: actual_ret } = actual else {
+                return Err(mismatch(self));
+            };
+            if params.len() != actual_params.len() {
+                return Err(mismatch(self));
+            }
+
+            for (param, actual_param) in params.iter().zip(actual_params) {
+                self.unify_type_expr(param, actual_param, generic_names, scope, span)?;
+            }
+
+            match (ret, actual_ret) {
+                (None, None) => {}
+                (Some(ret), Some(actual_ret)) => {
+                    self.unify_type_expr(ret, actual_ret, generic_names, scope, span)?;
+                }
+                _ => return Err(mismatch(self)),
+            }
+
+            return Ok(());
+        }
+
         // An ordinary, non-generic leaf type (`int`, a concrete struct with
         // no generics referenced, etc.) — checked exactly like a
         // non-generic macro's parameter always has been.
@@ -757,6 +707,18 @@ impl<'a> AliasResolver<'a> {
                     "emit" => match meta.args.as_slice() {
                         [expr] => {
                             let value = self.eval_value(expr, &scope)?;
+
+                            // Only data can be emitted. A struct may hold a
+                            // macro (`Array<macro(int), 4>` is a fine
+                            // compile-time table), but then it isn't data
+                            // either, so look inside it too.
+                            if holds_macro(&value) {
+                                let actual = self.value_type(&value)?;
+                                return Err(ResolveError::EmittedCompileTimeValue {
+                                    type_name: describe_type(&actual, self),
+                                    span: expr.span(),
+                                });
+                            }
 
                             if !allowed_emits.is_empty() {
                                 let actual = self.value_type(&value)?;
@@ -1009,11 +971,15 @@ impl<'a> AliasResolver<'a> {
                         .iter()
                         .map(|operand| self.eval_value(operand, &scope))
                         .collect::<Result<Vec<_>, _>>()?;
-                    let (symbol, declaration) = self.resolve_macro_overload(
-                        &invocation.name,
-                        &arguments,
-                        invocation.span,
-                    )?;
+                    // `f(1)` or `f 1` where `f` is a macro-typed parameter
+                    // runs the macro it's bound to. As in an expression
+                    // call, the value in scope wins over a declared macro
+                    // with the same name. The arguments are checked inside
+                    // `run_macro_body_inner`, like any call's.
+                    let (symbol, declaration) = match scope.get(&invocation.name) {
+                        Some(Value::Macro(symbol)) => (*symbol, self.find_macro_declaration_rc(*symbol)?),
+                        _ => self.resolve_macro_overload(&invocation.name, &arguments, invocation.span)?,
+                    };
                     let nested = self.run_macro_body_inner(symbol, &declaration, arguments)?;
                     emitted.extend(nested.emitted);
                     generated.extend(nested.generated);
@@ -1515,6 +1481,17 @@ fn reify_value(value: &Value, span: Span) -> Result<Expr, ResolveError> {
     }
 }
 
+/// Whether `value` is or contains a macro, which makes it compile-time
+/// machinery rather than data.
+fn holds_macro(value: &Value) -> bool {
+    match value {
+        Value::Macro(_) => true,
+        Value::Struct { fields, .. } => fields.iter().any(|(_, field)| holds_macro(field)),
+        Value::Enum { payload, .. } => payload.as_deref().is_some_and(holds_macro),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -1985,6 +1962,94 @@ mod tests {
         match resolver.run_macro_body(symbol, declaration, vec![], &mut Vec::new()) {
             Err(ResolveError::AmbiguousMacroValue { name, .. }) => assert_eq!(name, "overloaded"),
             other => panic!("expected an ambiguous-macro-value error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_a_macro_with_the_wrong_signature() {
+        let program = parse_fixture("macro_parameter.basm");
+
+        let declaration = find_macro(&program, "verify_wrong_signature_rejected");
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
+        let symbol = symbols.lookup("verify_wrong_signature_rejected").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        match resolver.run_macro_body(symbol, declaration, vec![], &mut Vec::new()) {
+            Err(ResolveError::TypeMismatch { expected, actual, .. }) => {
+                assert_eq!(expected, "macro(int) -> int");
+                assert_eq!(actual, "macro(int, int) -> int");
+            }
+            other => panic!("expected a type mismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_macro_typed_parameter_can_be_called_as_a_statement() {
+        let program = parse_fixture("macro_parameter.basm");
+
+        let declaration = find_macro(&program, "verify_statement_call");
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
+        let symbol = symbols.lookup("verify_statement_call").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        // `each_of_two` calls `f(1)` and `f 2` as statements, so `show`'s
+        // emits come out in order.
+        let result = resolver
+            .run_macro_body(symbol, declaration, vec![], &mut Vec::new())
+            .unwrap();
+        assert_eq!(result.emitted, vec![Value::Int(Int::from(1)), Value::Int(Int::from(2))]);
+    }
+
+    #[test]
+    fn rejects_emitting_a_macro() {
+        let program = parse_fixture("macro_parameter.basm");
+
+        let declaration = find_macro(&program, "verify_macro_not_emitted");
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
+        let symbol = symbols.lookup("verify_macro_not_emitted").unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+
+        match resolver.run_macro_body(symbol, declaration, vec![], &mut Vec::new()) {
+            Err(ResolveError::EmittedCompileTimeValue { type_name, .. }) => assert_eq!(type_name, "macro(int) -> int"),
+            other => panic!("expected an emitted-compile-time-value error, got {other:?}"),
+        }
+    }
+
+    fn run_fixture_macro(name: &str) -> Result<MacroExpansion, ResolveError> {
+        let program = parse_fixture("macro_parameter.basm");
+        let declaration = find_macro(&program, name);
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
+        let symbol = symbols.lookup(name).unwrap();
+        let consts = HashMap::new();
+        let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
+        resolver.run_macro_body(symbol, declaration, vec![], &mut Vec::new())
+    }
+
+    #[test]
+    fn a_struct_can_hold_a_macro_and_pass_it_on() {
+        let result = run_fixture_macro("verify_struct_holding_a_macro_is_usable").unwrap();
+        assert_eq!(result.emitted, vec![Value::Int(Int::from(8))]);
+    }
+
+    #[test]
+    fn rejects_emitting_a_struct_that_holds_a_macro() {
+        match run_fixture_macro("verify_struct_holding_a_macro_not_emitted") {
+            Err(ResolveError::EmittedCompileTimeValue { type_name, .. }) => assert_eq!(type_name, "Holder"),
+            other => panic!("expected an emitted-compile-time-value error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_a_macro_that_returns_nothing_where_a_return_is_expected() {
+        match run_fixture_macro("verify_no_return_macro_rejected_where_a_return_is_expected") {
+            Err(ResolveError::TypeMismatch { expected, actual, .. }) => {
+                assert_eq!(expected, "macro(int) -> int");
+                assert_eq!(actual, "macro(int)");
+            }
+            other => panic!("expected a type mismatch, got {other:?}"),
         }
     }
 

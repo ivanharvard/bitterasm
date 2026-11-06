@@ -620,8 +620,8 @@ pub(super) fn describe_type(ty: &ResolvedType, symbols: &impl TypeSymbolNames) -
         ResolvedType::MacroType { params, ret } => {
             let params = params.iter().map(|param| describe_type(param, symbols)).collect::<Vec<_>>().join(", ");
             match ret {
-                Some(ret) => format!("Fn({params}) -> {}", describe_type(ret, symbols)),
-                None => format!("Fn({params})"),
+                Some(ret) => format!("macro({params}) -> {}", describe_type(ret, symbols)),
+                None => format!("macro({params})"),
             }
         }
     }

@@ -6,9 +6,9 @@ macro double(x: int) -> int {
     @return x * 2
 }
 
-macro apply<F: Fn(
+macro apply(x: int, f: macro(
     int
-) -> int>(x: int, f: F) -> int {
+) -> int) -> int {
     @return f(x)
 }
 
@@ -38,4 +38,50 @@ macro overloaded(
 
 macro verify_overloaded_macro_rejected() {
     @emit apply(3, overloaded)
+}
+
+macro add(x: int, y: int) -> int {
+    @return x + y
+}
+
+macro verify_wrong_signature_rejected() {
+    @emit apply(3, add)
+}
+
+macro show(value: int) {
+    @emit value
+}
+
+macro each_of_two(f: macro(int)) {
+    f(1)
+    f 2
+}
+
+macro verify_statement_call() {
+    each_of_two(show)
+}
+
+macro leak(f: macro(int) -> int) {
+    @emit f
+}
+
+macro verify_macro_not_emitted() {
+    leak(double)
+}
+
+struct Holder {
+    f: macro(int) -> int
+}
+
+macro verify_struct_holding_a_macro_is_usable() {
+    const holder = Holder { f: double }
+    @emit apply(4, holder.f)
+}
+
+macro verify_struct_holding_a_macro_not_emitted() {
+    @emit Holder { f: double }
+}
+
+macro verify_no_return_macro_rejected_where_a_return_is_expected() {
+    @emit apply(3, show)
 }

@@ -327,6 +327,10 @@ fn collect_type_references(ty: &TypeExpr, names: &mut HashSet<String>) {
                 }
             }
         }
+        TypeExpr::Macro { params, ret, .. } => {
+            params.iter().for_each(|param| collect_type_references(param, names));
+            if let Some(ret) = ret { collect_type_references(ret, names); }
+        }
     }
 }
 
@@ -726,7 +730,12 @@ fn collect_statement_identifiers(statement: &Statement, names: &mut HashSet<Stri
             collect_name_splice_identifiers(&value.name, names);
             collect_expr_identifiers(&value.value, names);
         }
-        Statement::Invocation(value) => value.operands.iter().for_each(|expr| collect_expr_identifiers(expr, names)),
+        // The called name counts too: `f(1)` as a statement uses a
+        // macro-typed parameter `f`.
+        Statement::Invocation(value) => {
+            names.insert(value.name.clone());
+            value.operands.iter().for_each(|expr| collect_expr_identifiers(expr, names));
+        }
         Statement::Meta(value) => collect_meta_identifiers(value, names),
         // A declaration a macro generates is evaluated where it lands, but
         // its name is spliced while the macro runs (`` struct Word`n` ``).
@@ -864,6 +873,12 @@ mod tests {
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].lint, Some(LintName::UNUSED_PARAMETER));
         assert_eq!(diagnostics[0].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn a_macro_parameter_called_as_a_statement_is_used() {
+        let diagnostics = lint("macro each(f: macro(int)) {\n    f(1)\n    f 2\n}\n", &LintConfig::default());
+        assert!(diagnostics.is_empty(), "{diagnostics:#?}");
     }
 
     #[test]

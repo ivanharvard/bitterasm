@@ -490,6 +490,12 @@ fn substitute_type_expr(ty: &TypeExpr, substitutions: &HashMap<String, Expr>) ->
                 .collect(),
             span: *span,
         },
+
+        TypeExpr::Macro { params, ret, span } => TypeExpr::Macro {
+            params: params.iter().map(|param| substitute_type_expr(param, substitutions)).collect(),
+            ret: ret.as_ref().map(|ret| Box::new(substitute_type_expr(ret, substitutions))),
+            span: *span,
+        },
     }
 }
 

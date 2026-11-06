@@ -434,9 +434,35 @@ fn rejects_required_macro_parameter_after_default() {
 }
 
 #[test]
-fn parses_a_generic_param_with_an_fn_bound() {
+fn rejects_a_bound_on_a_type_parameter() {
+    let error = parse(lex("macro apply<F: macro(int) -> int>(f: F) {\n}\n").unwrap()).unwrap_err();
+    assert!(error.message.contains("f: macro(int) -> int"), "unexpected message: {}", error.message);
+}
+
+#[test]
+fn suggests_const_for_a_typed_generic_parameter() {
+    let error = parse(lex("struct Wide<N: int> {\n}\n").unwrap()).unwrap_err();
+    assert!(error.message.contains("const N"), "unexpected message: {}", error.message);
+}
+
+#[test]
+fn parses_a_macro_type_returning_a_macro_type() {
+    let program = parse(lex("macro make() -> macro(int) -> int {\n}\n").unwrap()).unwrap();
+
+    let Statement::Macro(decl) = &program.statements[0] else {
+        panic!("expected macro declaration");
+    };
+    let Some(TypeExpr::Macro { params, ret: Some(inner), .. }) = &decl.return_ty else {
+        panic!("expected a macro return type, got {:?}", decl.return_ty);
+    };
+    assert_eq!(params.len(), 1);
+    assert!(matches!(inner.as_ref(), TypeExpr::Named { path, .. } if path == &["int"]));
+}
+
+#[test]
+fn parses_a_macro_typed_parameter() {
     let program = parse(
-        lex("macro apply<F: Fn(int) -> int>(x: int, f: F) -> int {\n    @return f(x)\n}\n").unwrap(),
+        lex("macro apply(f: macro(int, T) -> int, x: int) -> int {\n    @return f(x)\n}\n").unwrap(),
     )
     .unwrap();
 
@@ -444,46 +470,59 @@ fn parses_a_generic_param_with_an_fn_bound() {
         panic!("expected macro declaration");
     };
 
-    let GenericParameter::Type { name, bound: Some(bound), .. } = &decl.generic_params[0] else {
-        panic!("expected a bounded generic param, got {:?}", decl.generic_params[0]);
+    let TypeExpr::Macro { params, ret, .. } = &decl.params[0].ty else {
+        panic!("expected a macro type, got {:?}", decl.params[0].ty);
     };
-    assert_eq!(name, "F");
-    assert!(matches!(bound.params.as_slice(), [TypeExpr::Named { path, .. }] if path == &["int"]));
     assert!(matches!(
-        bound.ret.as_deref(),
-        Some(TypeExpr::Named { path, .. }) if path == &["int"]
+        params.as_slice(),
+        [TypeExpr::Named { path: int, .. }, TypeExpr::Named { path: t, .. }] if int == &["int"] && t == &["T"]
     ));
-
-    // `f`'s own type is an ordinary generic name, exactly like `value: T`
-    // already works for a plain (unbounded) type param — the bound lives on
-    // `F`'s declaration, not on `f`'s.
-    assert!(matches!(&decl.params[1].ty, TypeExpr::Named { path, .. } if path == &["F"]));
+    assert!(matches!(ret.as_deref(), Some(TypeExpr::Named { path, .. }) if path == &["int"]));
 
     assert_eq!(
         crate::printer::print_statement(&program.statements[0], 0),
-        "macro apply<F: Fn(int) -> int>(x: int, f: F) -> int\n{\n    @return f(x)\n}"
+        "macro apply(f: macro(int, T) -> int, x: int) -> int\n{\n    @return f(x)\n}"
     );
 }
 
 #[test]
-fn parses_an_fn_bound_with_no_declared_return() {
-    let program = parse(lex("macro run<F: Fn(int)>(f: F) {\n    f(1)\n}\n").unwrap()).unwrap();
+fn parses_a_macro_type_with_no_return() {
+    let program = parse(lex("macro run(f: macro(int)) {\n    f(1)\n}\n").unwrap()).unwrap();
 
     let Statement::Macro(decl) = &program.statements[0] else {
         panic!("expected macro declaration");
     };
 
-    let GenericParameter::Type { bound: Some(bound), .. } = &decl.generic_params[0] else {
-        panic!("expected a bounded generic param, got {:?}", decl.generic_params[0]);
+    let TypeExpr::Macro { params, ret, .. } = &decl.params[0].ty else {
+        panic!("expected a macro type, got {:?}", decl.params[0].ty);
     };
-    assert_eq!(bound.params.len(), 1);
-    assert!(bound.ret.is_none());
+    assert_eq!(params.len(), 1);
+    assert!(ret.is_none());
 }
 
 #[test]
-fn rejects_an_unrecognized_generic_bound() {
-    let error = parse(lex("macro run<F: NotFn(int)>(f: F) {\n}\n").unwrap()).unwrap_err();
-    assert!(error.message.contains("Fn(...)"), "unexpected message: {}", error.message);
+fn parses_a_macro_type_with_no_parameters() {
+    let program = parse(lex("macro run(f: macro() -> int) -> int {\n    @return f()\n}\n").unwrap()).unwrap();
+
+    let Statement::Macro(decl) = &program.statements[0] else {
+        panic!("expected macro declaration");
+    };
+    assert!(matches!(&decl.params[0].ty, TypeExpr::Macro { params, ret: Some(_), .. } if params.is_empty()));
+}
+
+#[test]
+fn parses_a_macro_type_spanning_multiple_lines() {
+    let program = parse(lex("macro run(f: macro(\n    int,\n    int\n) -> int) {\n}\n").unwrap()).unwrap();
+
+    let Statement::Macro(decl) = &program.statements[0] else {
+        panic!("expected macro declaration");
+    };
+    assert!(matches!(&decl.params[0].ty, TypeExpr::Macro { params, .. } if params.len() == 2));
+}
+
+#[test]
+fn rejects_fn_as_a_macro_type() {
+    assert!(parse(lex("macro run(f: Fn(int) -> int) {\n}\n").unwrap()).is_err());
 }
 
 #[test]

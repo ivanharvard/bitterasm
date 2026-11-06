@@ -145,7 +145,7 @@ impl<'a> AliasResolver<'a> {
             is_pub: false,
             generic_params: params
                 .iter()
-                .map(|param| GenericParameter::Type { name: param.clone(), bound: None, span })
+                .map(|param| GenericParameter::Type { name: param.clone(), span })
                 .collect(),
             facets: Vec::new(),
             doc: None,

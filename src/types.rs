@@ -32,13 +32,23 @@ pub enum TypeExpr {
         args: Vec<TypeArgument>,
         span: Span,
     },
+
+    // A macro's signature, e.g., `macro(int) -> int`, or `macro(int)` for
+    // one that returns nothing. Compile-time only: a value of this type is
+    // never data, so it can't be emitted.
+    Macro {
+        params: Vec<TypeExpr>,
+        ret: Option<Box<TypeExpr>>,
+        span: Span,
+    },
 }
 
 impl TypeExpr {
     pub fn span(&self) -> Span {
         match self {
             TypeExpr::Named { span, .. }
-            | TypeExpr::Apply { span, .. } => *span,
+            | TypeExpr::Apply { span, .. }
+            | TypeExpr::Macro { span, .. } => *span,
         }
     }
 
@@ -64,6 +74,7 @@ impl TypeExpr {
         match self {
             TypeExpr::Named { path, .. } => path.last().map(String::as_str),
             TypeExpr::Apply { base, .. } => base.name(),
+            TypeExpr::Macro { .. } => None,
         }
     }
 }
@@ -95,35 +106,8 @@ pub enum GenericParameter {
 
     Type {
         name: String,
-
-        /// `F: Fn(T) -> S` — an optional constraint on an otherwise-opaque
-        /// type parameter, checked once `F` is inferred (from an ordinary
-        /// value parameter typed `f: F`, exactly the way any other generic
-        /// type param is): `F` must actually resolve to a macro whose own
-        /// signature matches, giving a clear error right at the call site
-        /// rather than a confusing one wherever the body eventually calls
-        /// `f(...)`. Deliberately just this one bound shape for now (no
-        /// general trait system) — see `resolver::macro_body::AliasResolver::check_generic_bounds`.
-        /// `None` leaves `F` a plain, uninterpreted type parameter, same as
-        /// today — nothing about calling it is checked ahead of time, same
-        /// as any other unsupported operation a generic macro body might
-        /// attempt.
-        bound: Option<FnBound>,
-
         span: Span,
     }
-}
-
-/// `Fn(T, U) -> S` (or `Fn(T, U)` with no declared return) — the only
-/// generic-parameter bound bitterasm understands today, naming the call
-/// signature a bound generic param's value (a macro passed by name) must
-/// have. See
-/// `GenericParameter::Type::bound`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct FnBound {
-    pub params: Vec<TypeExpr>,
-    pub ret: Option<Box<TypeExpr>>,
-    pub span: Span,
 }
 
 // ===============

@@ -106,6 +106,7 @@ countdown 3
 
 - [Parameters and defaults](parameters.md)
 - [Returning values](returning.md)
+- [Macros as parameters](macro-parameters.md): passing a macro to a macro.
 - [Overloading](overloading.md): several macros with one name.
 - [Recursion](recursion.md): macros that call themselves.
 - [Hooks: `before` and `after`](hooks.md): code that runs around a macro.
@@ -113,5 +114,4 @@ countdown 3
 - [Generating declarations](generating.md): macros that declare constants and
   types.
 
-Macros can also be generic, and can take other macros as arguments. See
-[Generics](../generics/index.md).
+Macros can also be generic. See [Generics](../generics/index.md).

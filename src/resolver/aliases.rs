@@ -72,6 +72,11 @@ fn substitute_type(ty: &TypeExpr, substitutions: &HashMap<String, TypeArgument>)
             args: args.iter().map(|arg| substitute_argument(arg, substitutions)).collect(),
             span: *span,
         },
+        TypeExpr::Macro { params, ret, span } => TypeExpr::Macro {
+            params: params.iter().map(|param| substitute_type(param, substitutions)).collect(),
+            ret: ret.as_ref().map(|ret| Box::new(substitute_type(ret, substitutions))),
+            span: *span,
+        },
     }
 }
 
@@ -635,6 +640,10 @@ impl<'a> AliasResolver<'a> {
             TypeExpr::Apply { base, args, span} => {
                 self.resolve_applied_type(base, args, *span)
             }
+
+            TypeExpr::Macro { params, ret, .. } => {
+                self.resolve_macro_type(params, ret.as_deref())
+            },
         }
     }
 
@@ -808,14 +817,34 @@ impl<'a> AliasResolver<'a> {
                 })
             }
 
-            // A macro's type has no `<...>` application syntax of its own
-            // (see `crate::types::FnBound`'s doc) — same rejection as
-            // `Builtin`/`TypeParameter` above.
+            // A macro type has no `<...>` application syntax of its own —
+            // same rejection as `Builtin`/`TypeParameter` above.
             ResolvedType::MacroType { .. } => {
                 let name = base.name().unwrap_or("<type>").to_string();
                 Err(ResolveError::ExpectedType { name, span })
             }
         }
+    }
+
+    pub(super) fn resolve_macro_type(
+        &mut self,
+        params: &[TypeExpr],
+        ret: Option<&TypeExpr>,
+    ) -> Result<ResolvedType, ResolveError> {
+        let resolved_params = params
+            .iter()
+            .map(|param| self.resolve_type_expr(param))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let resolved_ret = match ret {
+            Some(ret) => Some(Box::new(self.resolve_type_expr(ret)?)),
+            None => None,
+        };
+
+        Ok(ResolvedType::MacroType {
+            params: resolved_params,
+            ret: resolved_ret,
+        })
     }
 
     /// When `base` names a generic type alias, the alias applied to `args`:

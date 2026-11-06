@@ -23,7 +23,7 @@ show max(3, 9)
 
 `-> int` declares the return type. It's optional, but if it's there, it's
 enforced. It's also needed when the macro is passed as an argument (see
-[Macros as parameters](../generics/macro-parameters.md)) or used as a
+[Macros as parameters](macro-parameters.md)) or used as a
 [conversion](../types/conversions.md).
 
 The returned value must have the declared type. As with arguments, nothing

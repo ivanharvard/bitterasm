@@ -91,7 +91,7 @@ that takes a `T` and returns a `U`.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `mapped(arr, f)` | `<T, U, F: Fn(T) -> U>`, `arr: Array<T, ...>`, `f: F` | returns `Array<U, ...>` |  |
+| `mapped(arr, f)` | `<T, U>`, `arr: Array<T, ...>`, `f: macro(T) -> U` | returns `Array<U, ...>` |  |
 
 ### `array_from_struct`
 

@@ -241,11 +241,8 @@ pub fn reify_value(ids: &TypeIds, value: &Value) -> EmittedValue {
         },
 
         // Compile-time-only metaprogramming machinery, not data — see
-        // `Value::Macro`'s doc. A well-typed program never reaches `@emit`
-        // with one in hand: a macro's own return type or a struct field can
-        // never be declared with a generic bound to it, only an ordinary
-        // *value* parameter (`f: F`, with `F` itself bound elsewhere by an
-        // `Fn(...)` constraint) can.
+        // `Value::Macro`'s doc. `@emit` rejects a macro, and any struct or
+        // enum holding one, before it's recorded, so none ever gets here.
         Value::Macro(_) => unreachable!(
             "a macro is compile-time-only metaprogramming machinery and can never reach emission"
         ),

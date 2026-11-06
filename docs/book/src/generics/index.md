@@ -76,4 +76,3 @@ A generic overload loses to a non-generic one that also fits. See
   `Array<T, N + 1>`.
 - [Wildcards: `...`](wildcards.md): accepting any argument without naming
   it.
-- [Macros as parameters](macro-parameters.md): passing a macro to a macro.

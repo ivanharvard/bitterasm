@@ -33,15 +33,13 @@ pub enum Value {
 
     /// A macro passed by its bare name, e.g. `square` in `mapped(arr,
     /// square)` — only ever produced for a non-generic, non-overloaded
-    /// macro (`AliasResolver::resolve_macro_value`), and only ever
-    /// meaningful at compile time: it's bound to an ordinary value
-    /// parameter typed with a generic name (`f: F`), where `F` itself
-    /// carries an `F: Fn(T) -> S` bound checked against it
-    /// (`macro_body::AliasResolver::check_generic_bounds`) — never a
-    /// special-cased "macro type" of its own. Invoked from inside that
-    /// macro's own body (`AliasResolver::eval_bound_macro_call`) like any
-    /// other macro call, never emitted or stored in a struct field — see
-    /// `emit::reify_value`.
+    /// macro (`AliasResolver::resolve_macro_value`). Its type is a macro
+    /// type such as `macro(int) -> int` (`ResolvedType::MacroType`),
+    /// checked against a parameter's declared one like any other type.
+    /// Compile-time only: it can be called (`eval_bound_macro_call`, or a
+    /// statement call in `walk_macro_body`), named with `const`, and held in
+    /// a struct, but never emitted — `walk_macro_body`'s `@emit` rejects it,
+    /// even inside a struct or enum.
     Macro(SymbolId),
 
     Enum {
@@ -999,6 +997,17 @@ impl<'a> AliasResolver<'a> {
                     span: *span,
                 })
             }
+            TypeExpr::Macro { params, ret, span } => Ok(TypeExpr::Macro {
+                params: params
+                    .iter()
+                    .map(|param| self.materialize_type_const_args(param, scope))
+                    .collect::<Result<_, _>>()?,
+                ret: match ret {
+                    Some(ret) => Some(Box::new(self.materialize_type_const_args(ret, scope)?)),
+                    None => None,
+                },
+                span: *span,
+            }),
         }
     }
 
@@ -1242,10 +1251,8 @@ impl<'a> AliasResolver<'a> {
                 Err(ResolveError::ExpectedType { name: name.clone(), span })
             }
 
-            // A macro value's own type is always exactly equal to the
-            // signature that bound it in the first place (`check_generic_bounds`
-            // already checked that once) — nothing else ever needs
-            // converting *into* one.
+            // A macro value converts only to its own exact signature —
+            // nothing else ever converts *into* a macro type.
             ResolvedType::MacroType { .. } => {
                 if self.value_type(&value)? == *target {
                     Ok(value)
