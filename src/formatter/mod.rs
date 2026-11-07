@@ -7,6 +7,7 @@ mod config;
 mod generics;
 mod indentation;
 mod labels;
+mod patterns;
 mod signature;
 mod wrapping;
 
@@ -19,8 +20,9 @@ use indentation::{
     update_delimiters, update_generic_depth,
 };
 use labels::label_body_lines;
+use patterns::split_facet_body;
 use signature::normalize_macro_signatures;
-use wrapping::{split_inline_facets, wrap_code, wrap_comment, wrap_doc_comment};
+use wrapping::{split_inline_facets, wrap_code, wrap_comment, wrap_doc_comment, Surroundings};
 
 /// Formats whitespace while retaining every source token and comment.
 /// The most formatting passes `format_source` runs while the output keeps
@@ -59,10 +61,15 @@ fn format_pass(source: &str, config: &FormatConfig) -> Result<String, String> {
         Vec::new()
     };
     let mut delimiters = Vec::new();
+    // The line each open delimiter was opened on, in step with `delimiters`.
+    let mut opened_on: Vec<usize> = Vec::new();
     let mut generic_depth: usize = 0;
     let mut facet_blocks = Vec::new();
     let mut blank_lines = 0usize;
     let mut in_doc_fence = false;
+    // Whether this line continues an `@` statement that broke after a comma
+    // outside any brackets, like `@next a = 1,` / `b = 2`.
+    let mut continues = false;
     let mut result = Vec::new();
     let mut offset = 0usize;
 
@@ -75,6 +82,7 @@ fn format_pass(source: &str, config: &FormatConfig) -> Result<String, String> {
         let content = line.trim();
 
         if content.is_empty() {
+            continues = false;
             if !result.is_empty() && blank_lines < config.max_blank_lines {
                 result.push(String::new());
             }
@@ -96,11 +104,20 @@ fn format_pass(source: &str, config: &FormatConfig) -> Result<String, String> {
             let is_facet = is_facet(&line_tokens);
             let facet_indent = config.indent_facets && is_facet;
             let label_indent = label_body.get(line_index).copied().unwrap_or(false);
-            let depth_bias = facet_blocks.len() + usize::from(facet_indent) + usize::from(label_indent);
-            let line_depth = delimiters.len().saturating_sub(leading_closers)
+            let depth_bias = facet_blocks.len()
+                + usize::from(facet_indent)
+                + usize::from(label_indent)
+                + usize::from(continues);
+            // Brackets opened together on one line, like `Node(BinOp(`,
+            // indent what's inside them once, not once each.
+            let still_open = &opened_on[..opened_on.len().saturating_sub(leading_closers)];
+            let shared = shared_openers(still_open);
+            let line_depth = delimiters.len().saturating_sub(leading_closers + shared)
                 + generic_depth.saturating_sub(leading_generic_closers)
                 + depth_bias;
             let indent = make_indent(line_depth, config);
+            let mut body_split = false;
+            let split_closers = split_leading_closers(content, &line_tokens, offset, &opened_on);
 
             if lexer::doc_comment(content).is_some() {
                 result.extend(wrap_doc_comment(content, &indent, config.comment_width, &mut in_doc_fence));
@@ -114,22 +131,49 @@ fn format_pass(source: &str, config: &FormatConfig) -> Result<String, String> {
                 config,
             ) {
                 result.extend(lines);
+            } else if let Some(first) = split_closers {
+                // `) }` closing brackets opened on different lines: each
+                // goes on its own line, where it would line up alone. The
+                // rest keeps this line's indentation.
+                let still_open = &opened_on[..opened_on.len() - first.count];
+                let depth = delimiters.len() - first.count - shared_openers(still_open)
+                    + generic_depth.saturating_sub(leading_generic_closers)
+                    + depth_bias;
+                result.push(format!("{}{}", make_indent(depth, config), content[..first.end].trim()));
+                result.push(format!("{indent}{}", content[first.end..].trim()));
+            } else if let Some(lines) = split_facet_body(
+                content,
+                &line_tokens,
+                offset,
+                line_depth,
+                line_depth.saturating_sub(usize::from(facet_indent)),
+                config,
+            ) {
+                body_split = true;
+                result.extend(lines);
             } else {
                 result.extend(wrap_code(
                     content,
                     &line_tokens,
                     offset,
-                    &delimiters,
-                    generic_depth,
-                    depth_bias,
+                    &Surroundings { outer: &delimiters, shared, generic_depth, depth_bias },
                     config,
                 ));
             }
 
             let previous_depth = delimiters.len();
             update_delimiters(&mut delimiters, &line_tokens);
+            if !line_tokens.is_empty() {
+                continues = (continues || line_tokens[0].kind == TokenKind::At)
+                    && line_tokens.last().is_some_and(|token| token.kind == TokenKind::Comma)
+                    && delimiters.len() == previous_depth;
+            }
+            update_opened_on(&mut opened_on, &line_tokens, line_index);
             update_generic_depth(&mut generic_depth, &line_tokens);
+            // A body moved off its facet line is indented as the
+            // declaration's, not the facet's.
             if config.indent_facets
+                && !body_split
                 && (facet_indent || contains_facet(&line_tokens))
                 && line_tokens.iter().any(|token| token.kind == TokenKind::LBrace)
                 && delimiters.len() > previous_depth
@@ -145,6 +189,52 @@ fn format_pass(source: &str, config: &FormatConfig) -> Result<String, String> {
         result.pop();
     }
     Ok(result.join(newline) + newline)
+}
+
+/// The closers a line starts with that were all opened on one line, when
+/// the line goes on to close brackets from another line too.
+struct FirstClosers {
+    count: usize,
+    end: usize,
+}
+
+fn split_leading_closers(
+    content: &str,
+    tokens: &[&crate::token::Token],
+    line_offset: usize,
+    opened_on: &[usize],
+) -> Option<FirstClosers> {
+    let closers = leading_closers(tokens).min(opened_on.len());
+    let innermost = *opened_on.last()?;
+    let count = opened_on[opened_on.len() - closers..]
+        .iter()
+        .rev()
+        .take_while(|line| **line == innermost)
+        .count();
+    if count == 0 || count == closers {
+        return None;
+    }
+    let source_start = tokens.first().map_or(line_offset, |token| token.span.start);
+    let end = tokens[count - 1].span.end - source_start;
+    (end < content.len()).then_some(FirstClosers { count, end })
+}
+
+/// How many of these open delimiters were opened on the same line as the
+/// one before them.
+fn shared_openers(opened_on: &[usize]) -> usize {
+    opened_on.windows(2).filter(|pair| pair[0] == pair[1]).count()
+}
+
+fn update_opened_on(opened_on: &mut Vec<usize>, tokens: &[&crate::token::Token], line_index: usize) {
+    for token in tokens {
+        match token.kind {
+            TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => opened_on.push(line_index),
+            TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
+                opened_on.pop();
+            }
+            _ => {}
+        }
+    }
 }
 
 fn is_top_level_declaration(content: &str) -> bool {
@@ -175,6 +265,104 @@ mod tests {
         assert!(formatted.contains("@assert precision >= 0 && precision <= 60, \"precision"));
         let tokens = crate::lexer::lex(&formatted).unwrap();
         crate::parser::parse(tokens).expect("formatted output should remain parseable");
+    }
+
+    #[test]
+    fn never_wraps_inside_a_syntax_pattern() {
+        let config = FormatConfig { max_width: 60, ..Default::default() };
+        let source = "syntax mov(a, b) = { mov $a$, $b$, $a$, $b$, $a$, $b$, $a$, $b$, $a$ }\n";
+        let formatted = format_source(source, &config).unwrap();
+        assert!(formatted.contains("= { mov $a$, $b$, $a$, $b$, $a$, $b$, $a$, $b$, $a$ }"));
+        let source = "macro m(a: int, b: int)\n    | syntax { [$a$+$b$] } { @return Pair(a, b, a, b, a, b, a) }\n";
+        let formatted = format_source(source, &config).unwrap();
+        assert!(formatted.contains("| syntax { [$a$+$b$] }\n"), "{formatted}");
+    }
+
+    #[test]
+    fn moves_a_long_syntax_body_onto_its_own_lines() {
+        let config = FormatConfig { max_width: 50, ..Default::default() };
+        let source = "macro m(a: int, b: int)\n    | syntax { m $a$, $b$ } { @return Pair(a, b, a, b) }\n";
+        assert_eq!(
+            format_source(source, &config).unwrap(),
+            "macro m(a: int, b: int)\n    | syntax { m $a$, $b$ }\n{\n    @return Pair(a, b, a, b)\n}\n"
+        );
+    }
+
+    #[test]
+    fn keeps_a_short_syntax_body_on_the_facet_line() {
+        let source = "macro m(a: int)\n    | syntax { m $a$ } { @emit a }\n";
+        assert_eq!(format_source(source, &FormatConfig::default()).unwrap(), source);
+    }
+
+    #[test]
+    fn a_multiline_syntax_body_opens_on_its_own_line() {
+        let source = "macro m(a: int)\n    | syntax { m $a$ } {\n        @emit a\n        @emit a\n    }\n";
+        assert_eq!(
+            format_source(source, &FormatConfig::default()).unwrap(),
+            "macro m(a: int)\n    | syntax { m $a$ }\n{\n    @emit a\n    @emit a\n}\n"
+        );
+    }
+
+    #[test]
+    fn wraps_the_list_with_the_commas_not_an_earlier_bracket_at_its_depth() {
+        let config = FormatConfig { max_width: 40, ..Default::default() };
+        let source = "macro z() -> int {\n@return f(x)[0] + g(aaaaaaaa, bbbbbbbbbb, cccccccccc)\n}\n";
+        assert_eq!(
+            format_source(source, &config).unwrap(),
+            "macro z() -> int {\n    @return f(x)[0] + g(\n        aaaaaaaa,\n        bbbbbbbbbb,\n        cccccccccc\n    )\n}\n"
+        );
+    }
+
+    #[test]
+    fn a_label_followed_by_a_blank_line_has_no_body() {
+        let source = "start:\nnop\nstart_end:\n\nheader\n";
+        assert_eq!(
+            format_source(source, &FormatConfig::default()).unwrap(),
+            "start:\n    nop\nstart_end:\n\nheader\n"
+        );
+    }
+
+    #[test]
+    fn brackets_opened_on_one_line_indent_once() {
+        let source = "macro m() {\n@return Node(Pair(\na = 1,\nb = 2\n))\n}\n";
+        assert_eq!(
+            format_source(source, &FormatConfig::default()).unwrap(),
+            "macro m() {\n    @return Node(Pair(\n        a = 1,\n        b = 2\n    ))\n}\n"
+        );
+    }
+
+    #[test]
+    fn closers_from_different_lines_go_on_their_own_lines() {
+        let source = "macro m()\n    | emits Bytes<...>\n{\n@emit f(\n1,\n2\n) }\n";
+        assert_eq!(
+            format_source(source, &FormatConfig::default()).unwrap(),
+            "macro m()\n    | emits Bytes<...>\n{\n    @emit f(\n        1,\n        2\n    )\n}\n"
+        );
+    }
+
+    #[test]
+    fn a_trailing_comment_does_not_make_a_line_wrap() {
+        let config = FormatConfig { max_width: 30, ..Default::default() };
+        let source = "field add(a, b), 4    # a comment past the width\n";
+        assert_eq!(format_source(source, &config).unwrap(), source);
+    }
+
+    #[test]
+    fn moves_an_emits_body_off_its_facet_line() {
+        let source = "macro m()\n    | emits Bytes<...> {\n    @emit 1\n}\n";
+        assert_eq!(
+            format_source(source, &FormatConfig::default()).unwrap(),
+            "macro m()\n    | emits Bytes<...>\n{\n    @emit 1\n}\n"
+        );
+    }
+
+    #[test]
+    fn indents_the_continuation_of_a_meta_statement() {
+        let source = "macro m() {\n@next a = 1,\nb = 2,\nc = 3\n@emit a\n}\n";
+        assert_eq!(
+            format_source(source, &FormatConfig::default()).unwrap(),
+            "macro m() {\n    @next a = 1,\n        b = 2,\n        c = 3\n    @emit a\n}\n"
+        );
     }
 
     #[test]

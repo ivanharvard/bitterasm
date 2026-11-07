@@ -1,7 +1,8 @@
 //! Which lines belong to a label's body, for `indent_label_bodies`: the
 //! lines after a top-level label (`start:`, `pub _start:`, `.loop:`), up to
 //! the next label, `section`, or declaration. A `const` doesn't end a body;
-//! data often names its own length right under its label.
+//! data often names its own length right under its label. A label followed
+//! by a blank line has no body.
 
 use crate::token::{Token, TokenKind};
 
@@ -58,8 +59,10 @@ pub(super) fn label_body_lines(source: &str, tokens: &[Token]) -> Vec<bool> {
 
     for (index, kind) in kinds.iter().enumerate() {
         flags.push(match kind {
+            // A label with a blank line under it marks a place, like
+            // `types_end:`, and has no body.
             LineKind::Label => {
-                in_body = true;
+                in_body = kinds.get(index + 1).is_some_and(|next| *next != LineKind::Blank);
                 false
             }
             LineKind::Boundary => {

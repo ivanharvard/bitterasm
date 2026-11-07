@@ -1,6 +1,7 @@
 use crate::token::{Token, TokenKind};
 
 use super::indentation::{leading_closers, leading_generic_closers, make_indent};
+use super::patterns::pattern_mask;
 use super::FormatConfig;
 
 pub(super) fn split_inline_facets(
@@ -109,18 +110,38 @@ pub(super) fn wrap_doc_comment(
     lines
 }
 
+/// How wide the code on a line is, leaving out a trailing comment: a
+/// comment lined up with the ones around it may run past `max_width`.
+pub(super) fn code_width(content: &str, tokens: &[&Token], line_offset: usize) -> usize {
+    let source_start = tokens.first().map_or(line_offset, |token| token.span.start);
+    let end = tokens.last().map_or(content.len(), |token| token.span.end - source_start);
+    content[..end.min(content.len())].chars().count()
+}
+
+/// What's open around a line when it starts.
+pub(super) struct Surroundings<'a> {
+    /// The brackets still open from earlier lines, outermost first.
+    pub outer: &'a [TokenKind],
+    /// How many of `outer` share a line with the one before them, and so
+    /// add no indentation.
+    pub shared: usize,
+    pub generic_depth: usize,
+    /// Indentation levels added on top, for facets, label bodies and
+    /// statement continuations.
+    pub depth_bias: usize,
+}
+
 pub(super) fn wrap_code(
     content: &str,
     tokens: &[&Token],
     line_offset: usize,
-    outer: &[TokenKind],
-    outer_generic_depth: usize,
-    depth_bias: usize,
+    around: &Surroundings,
     config: &FormatConfig,
 ) -> Vec<String> {
+    let Surroundings { outer, shared, generic_depth: outer_generic_depth, depth_bias } = *around;
     let leading_closers = leading_closers(tokens);
     let leading_generic_closers = leading_generic_closers(tokens);
-    let base_depth = outer.len().saturating_sub(leading_closers)
+    let base_depth = outer.len().saturating_sub(leading_closers + shared)
         + outer_generic_depth.saturating_sub(leading_generic_closers)
         + depth_bias;
     let first_indent = make_indent(base_depth, config);
@@ -129,7 +150,6 @@ pub(super) fn wrap_code(
     let mut generic_depth = outer_generic_depth;
     let mut previous: Option<&Token> = None;
     let mut breaks = Vec::new();
-    let mut openings = Vec::new();
     let mut closings = Vec::new();
     // Which list each comma belongs to: the position of the bracket opened
     // on this line that encloses it, or `None` for a list opened on an
@@ -137,7 +157,10 @@ pub(super) fn wrap_code(
     // the open `{` of `macro f(a, b) {`, are different lists.
     let mut open_here: Vec<usize> = Vec::new();
     let mut break_lists: Vec<Option<usize>> = Vec::new();
-    for token in tokens {
+    // Where each bracket opened on this line closes, by its opener's start.
+    let mut closed_at: Vec<(usize, usize)> = Vec::new();
+    let in_pattern = pattern_mask(tokens);
+    for (token, _) in tokens.iter().zip(&in_pattern).filter(|(_, masked)| !**masked) {
         match token.kind {
             TokenKind::Less if previous.is_some_and(|previous| {
                 previous.span.end == token.span.start
@@ -149,14 +172,16 @@ pub(super) fn wrap_code(
             }
             TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => {
                 local.push(token.kind.clone());
-                openings.push((token.span.end.saturating_sub(source_start), local.len()));
                 open_here.push(token.span.start);
             }
             TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
-                closings.push((token.span.start.saturating_sub(source_start), local.len()));
+                let position = token.span.start.saturating_sub(source_start);
+                closings.push((position, local.len()));
                 // Brackets nest, so this closes the innermost one opened on
                 // this line, or else one opened earlier.
-                open_here.pop();
+                if let Some(opener) = open_here.pop() {
+                    closed_at.push((opener, position));
+                }
                 local.pop();
             }
             TokenKind::Comma
@@ -180,7 +205,7 @@ pub(super) fn wrap_code(
     let starts_multiline_list = break_lists
         .iter()
         .any(|list| list.is_some_and(|opener| open_here.contains(&opener)));
-    if first_indent.chars().count() + content.chars().count() <= config.max_width
+    if first_indent.chars().count() + code_width(content, tokens, line_offset) <= config.max_width
         && !starts_multiline_list
     {
         // A line that closes a list opened on an earlier line, after other
@@ -194,7 +219,7 @@ pub(super) fn wrap_code(
                     format!("{first_indent}{}", content[..*position].trim()),
                     format!(
                         "{}{}",
-                        make_indent(depth.saturating_sub(1) + depth_bias, config),
+                        make_indent(depth.saturating_sub(1 + shared) + depth_bias, config),
                         content[*position..].trim()
                     ),
                 ];
@@ -206,23 +231,38 @@ pub(super) fn wrap_code(
         return vec![format!("{first_indent}{content}")];
     }
 
+    // Break the outermost list that has commas. Other brackets at the same
+    // depth, like the `(x)` in `f(x) + g(a, b)`, aren't that list.
     let list_depth = breaks.iter().map(|(_, depth)| *depth).min().unwrap();
+    let list = breaks.iter()
+        .zip(&break_lists)
+        .find(|((_, depth), _)| *depth == list_depth)
+        .and_then(|(_, list)| *list);
     let list_breaks: Vec<_> = breaks.iter()
-        .filter(|(_, depth)| *depth == list_depth)
-        .map(|(position, _)| *position)
+        .zip(&break_lists)
+        .filter(|((_, depth), owner)| *depth == list_depth && **owner == list)
+        .map(|((position, _), _)| *position)
         .collect();
-    let body_start = openings.iter()
-        .find(|(_, depth)| *depth == list_depth)
-        .map_or(0, |(position, _)| *position);
-    let body_end = closings.iter()
-        .find(|(position, depth)| *depth == list_depth && *position > body_start)
-        .map_or(content.len(), |(position, _)| *position);
+    let (body_start, body_end) = match list {
+        Some(opener) => (
+            opener.saturating_sub(source_start) + 1,
+            closed_at.iter()
+                .find(|(open, _)| *open == opener)
+                .map_or(content.len(), |(_, close)| *close),
+        ),
+        None => (
+            0,
+            closings.iter()
+                .find(|(position, depth)| *depth == list_depth && *position > 0)
+                .map_or(content.len(), |(position, _)| *position),
+        ),
+    };
 
     let mut lines = Vec::new();
     if body_start > 0 {
         lines.push(format!("{first_indent}{}", content[..body_start].trim()));
     }
-    let item_indent = make_indent(list_depth + depth_bias, config);
+    let item_indent = make_indent(list_depth.saturating_sub(shared) + depth_bias, config);
     let mut start = body_start;
     for end in list_breaks.into_iter().filter(|end| *end <= body_end) {
         lines.push(format!("{item_indent}{}", content[start..end].trim()));
@@ -241,7 +281,7 @@ pub(super) fn wrap_code(
             .take_while(|token| matches!(token.kind, TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace))
             .count()
             .max(1);
-        let closing_indent = make_indent(list_depth.saturating_sub(closers) + depth_bias, config);
+        let closing_indent = make_indent(list_depth.saturating_sub(closers + shared) + depth_bias, config);
         lines.push(format!("{closing_indent}{}", content[body_end..].trim()));
     }
     lines
