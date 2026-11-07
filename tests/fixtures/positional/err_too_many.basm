@@ -1,0 +1,8 @@
+from std.array import Array
+
+macro demo() {
+    # `len` is derived, so a third value has nowhere to go.
+    const a = Array<int, 2>(1, 2, 3)
+}
+
+demo

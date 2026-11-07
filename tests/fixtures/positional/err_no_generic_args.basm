@@ -1,0 +1,7 @@
+from std.array import Array
+
+macro demo() {
+    const a = Array(1, 2)
+}
+
+demo

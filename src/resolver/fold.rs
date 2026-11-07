@@ -270,7 +270,7 @@ impl<'a> AliasResolver<'a> {
                 })
             }
 
-            Expr::Call { callee, arguments, span } => {
+            Expr::Call { callee, generic_args, arguments, span } if generic_args.is_empty() => {
                 if let Expr::Identifier { name, .. } = callee.as_ref() {
                     let bound = match scope.get(name) {
                         Some(Value::Macro(symbol)) => Some(*symbol),

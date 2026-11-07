@@ -188,6 +188,7 @@ impl Parser {
                     .collect();
                 Ok(Some(Expr::Call {
                     callee: Box::new(Expr::Identifier { name, span: start_span }),
+                    generic_args: Vec::new(),
                     arguments,
                     span,
                 }))

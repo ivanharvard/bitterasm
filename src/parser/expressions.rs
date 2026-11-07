@@ -147,11 +147,15 @@ impl Parser {
                         continue;
                     }
 
+                    // `Array<int, 3>(10, 20, 30)`: fields by position.
+                    if self.check(&TokenKind::LParen) {
+                        left = self.finish_call_with(left, generic_args)?;
+                        continue;
+                    }
+
                     if !self.check(&TokenKind::LBrace) {
                         return Err(ParseError::new(
-                            "expected `{` after generic arguments in a brace-literal \
-                             construction (a generic callee without a trailing `{ ... }` \
-                             isn't supported here)",
+                            "expected `{` or `(` after generic arguments, to construct the struct",
                             self.current().span,
                         ));
                     }
@@ -607,6 +611,10 @@ impl Parser {
     // function calls
     // =============
     fn finish_call(&mut self, callee: Expr) -> Result<Expr, ParseError> {
+        self.finish_call_with(callee, Vec::new())
+    }
+
+    fn finish_call_with(&mut self, callee: Expr, generic_args: Vec<TypeArgument>) -> Result<Expr, ParseError> {
         let start = callee.span().start;
 
         self.expect_simple(TokenKind::LParen)?;
@@ -642,6 +650,7 @@ impl Parser {
 
         Ok(Expr::Call {
             callee: Box::new(callee),
+            generic_args,
             arguments,
             span: Span::new(start, closing.span.end),
         })

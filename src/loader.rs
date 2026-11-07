@@ -1641,8 +1641,16 @@ fn rename_expr(expr: &mut Expr, renames: &mut Renamer) {
 
         Expr::Member { object, .. } => rename_expr(object, renames),
 
-        Expr::Call { callee, arguments, .. } => {
+        Expr::Call { callee, generic_args, arguments, .. } => {
             rename_expr(callee, renames);
+
+            for arg in generic_args {
+                match arg {
+                    TypeArgument::Type(ty) => rename_type_expr(ty, renames),
+                    TypeArgument::Const(expr) => rename_expr(expr, renames),
+                    TypeArgument::Wildcard(_) => {}
+                }
+            }
 
             for argument in arguments {
                 rename_expr(&mut argument.value, renames);

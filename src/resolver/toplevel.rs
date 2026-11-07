@@ -127,6 +127,7 @@ fn unroll_statements(
                     let struct_name = format!("__fold${name}");
                     out.push(Statement::Struct(fold_result_struct(&struct_name, &accumulators, decl.span)));
                     decl.value = Expr::Call {
+                        generic_args: Vec::new(),
                         callee: Box::new(Expr::Identifier { name: struct_name, span: decl.span }),
                         arguments: accumulators
                             .iter()

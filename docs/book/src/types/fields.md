@@ -100,7 +100,7 @@ macro walk<const N: int>(arr: Array<int, N>) {
     @emit arr.len
 }
 
-walk Array<int, 2> { __el0: 7, __el1: 8 }
+walk Array<int, 2>(7, 8)
 ```
 
 ```emits

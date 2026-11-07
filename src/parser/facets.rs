@@ -79,6 +79,7 @@ impl Parser {
             let close = self.current().span;
             self.expect_simple(TokenKind::RParen)?;
             FacetPayload::Expr(Expr::Call {
+                generic_args: Vec::new(),
                 callee: Box::new(Expr::Identifier {
                     name: "lints".to_string(),
                     span: open,

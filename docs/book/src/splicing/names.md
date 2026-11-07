@@ -49,7 +49,7 @@ macro reversed_sum<const N: int>(arr: Array<int, N>) {
     }
 }
 
-reversed_sum Array<int, 3> { __el0: 1, __el1: 2, __el2: 3 }
+reversed_sum Array<int, 3>(1, 2, 3)
 ```
 
 ```emits

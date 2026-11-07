@@ -201,8 +201,13 @@ pub(super) fn referenced_identifiers(expr: &crate::ast::Expr) -> Vec<String> {
             }
             Expr::Integer { .. } | Expr::String { .. } => {}
             Expr::Member { object, .. } => stack.push(object),
-            Expr::Call { callee, arguments, .. } => {
+            Expr::Call { callee, generic_args, arguments, .. } => {
                 stack.push(callee);
+                for arg in generic_args {
+                    if let TypeArgument::Const(expr) = arg {
+                        stack.push(expr);
+                    }
+                }
                 stack.extend(arguments.iter().map(|arg| &arg.value));
             }
             Expr::EnumVariant { generic_args, payload, .. } => {

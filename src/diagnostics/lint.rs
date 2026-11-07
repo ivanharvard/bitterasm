@@ -779,8 +779,15 @@ fn collect_expr_identifiers(expr: &Expr, names: &mut HashSet<String>) {
             collect_expr_identifiers(object, names);
             collect_name_splice_identifiers(member, names);
         }
-        Expr::Call { callee, arguments, .. } => {
+        Expr::Call { callee, generic_args, arguments, .. } => {
             collect_expr_identifiers(callee, names);
+            for argument in generic_args {
+                match argument {
+                    TypeArgument::Type(ty) => collect_type_references(ty, names),
+                    TypeArgument::Const(expr) => collect_expr_identifiers(expr, names),
+                    TypeArgument::Wildcard(_) => {}
+                }
+            }
             arguments.iter().for_each(|arg| collect_expr_identifiers(&arg.value, names));
         }
         Expr::EnumVariant { enum_name, generic_args, payload, .. } => {

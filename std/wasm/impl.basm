@@ -84,7 +84,7 @@ macro op_with_byte(
 ) -> OpWithImm<1> {
     @return OpWithImm<1> {
         opcode: Byte(opcode),
-        imm: Bytes<1> { __el0: immediate }
+        imm: Bytes<1>(immediate)
     }
 }
 

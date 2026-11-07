@@ -317,12 +317,19 @@ impl<'a> AliasResolver<'a> {
                 }
             }
 
-            Expr::Call { callee, arguments, span } => {
-                if let Expr::Member { object, member, .. } = callee.as_ref() {
-                    if let Expr::Identifier { name, .. } = object.as_ref() {
-                        let member = self.resolve_spliced_name(member, scope)?;
-                        return self.eval_enum_variant(name, &[], &member, arguments, *span, scope);
-                    }
+            Expr::Call { callee, generic_args, arguments, span } => {
+                if let Expr::Member { object, member, .. } = callee.as_ref()
+                    && generic_args.is_empty()
+                    && let Expr::Identifier { name, .. } = object.as_ref()
+                {
+                    let member = self.resolve_spliced_name(member, scope)?;
+                    return self.eval_enum_variant(name, &[], &member, arguments, *span, scope);
+                }
+                // Only a generic struct's name parses with `<...>` before
+                // `(...)` (macros register no generic signature), so this
+                // is always a construction.
+                if !generic_args.is_empty() {
+                    return self.eval_call_value(callee, generic_args, arguments, *span, scope);
                 }
                 if let Expr::Identifier { name, .. } = callee.as_ref() {
                     // A bound `f: F` parameter (e.g. `f` in `mapped`'s
@@ -338,7 +345,7 @@ impl<'a> AliasResolver<'a> {
                         return self.eval_macro_call(name, arguments, *span, scope);
                     }
                 }
-                self.eval_call_value(callee, arguments, *span, scope)
+                self.eval_call_value(callee, generic_args, arguments, *span, scope)
             }
 
             Expr::EnumVariant { enum_name, generic_args, variant, payload, span } => {
@@ -614,6 +621,7 @@ impl<'a> AliasResolver<'a> {
     fn eval_call_value(
         &mut self,
         callee: &Expr,
+        generic_args: &[TypeArgument],
         arguments: &[CallArgument],
         span: Span,
         scope: &Scope,
@@ -632,39 +640,72 @@ impl<'a> AliasResolver<'a> {
         // through this path yet (only the underlying struct's, via
         // `check_struct_invariants` below) — only `as`/a checked `const`
         // check an alias's own invariant, once those exist.
-        let ResolvedType::Struct { symbol, args } = resolved.strip_alias().clone() else {
+        let ResolvedType::Struct { symbol, args: bare_args } = resolved.strip_alias().clone() else {
             return Err(ResolveError::ExpectedStructCallee {
                 name: name.clone(),
                 span: *callee_span,
             });
         };
 
-        let declaration = self.find_struct_declaration_rc(symbol)?;
-        let declared_fields: Vec<(String, bool, Option<Expr>)> = declaration
-            .fields
-            .iter()
-            .filter_map(|item| match item {
-                StructBodyItem::Field(field) => literal_name(&field.name)
-                    .map(|name| (name, field.is_pub, field.default.clone())),
+        // `Array<int, 3>(...)`: the same arguments a brace literal takes.
+        let args = if generic_args.is_empty() {
+            bare_args
+        } else {
+            self.resolve_construct_generic_args(symbol, generic_args, span, scope)?
+        };
 
-                // `@for`/`@if`-generated fields aren't visible through
-                // this paren-call construction path yet — it predates
-                // generative struct bodies and doesn't set up the
-                // generic-const scope their `@for`/`@if` would need to
-                // unroll against. Brace-literal construction is where that
-                // support belongs.
-                StructBodyItem::For { .. } | StructBodyItem::If { .. }
-                | StructBodyItem::Fold { .. } | StructBodyItem::Next { .. } => None,
-            })
-            .collect();
+        let declaration = self.find_struct_declaration_rc(symbol)?;
+        let generates_fields = declaration.fields.iter().any(|item| !matches!(item, StructBodyItem::Field(_)));
+        // Which fields a positional argument fills, in order.
+        let mut positional: Option<Vec<String>> = None;
+        let declared_fields: Vec<(String, bool, Option<Expr>)> = if generates_fields {
+            // `@for`/`@if` fields exist only once the generic arguments
+            // are known, so they come from the instantiated struct, in
+            // the order it declares them.
+            if generic_args.is_empty() && !declaration.generic_params.is_empty() {
+                return Err(ResolveError::InvalidGenericArity {
+                    name: name.clone(),
+                    expected: declaration.generic_params.len(),
+                    actual: 0,
+                    span: *callee_span,
+                });
+            }
+            let instantiated = self.instantiate_struct_fields_named(symbol, &args)?;
+            // A `skip` field (`Array`'s `len`) is derived, not an element:
+            // positional arguments pass over it, and only naming it sets it.
+            positional = Some(
+                instantiated
+                    .iter()
+                    .filter(|(_, _, _, is_skip, _)| !is_skip)
+                    .map(|(name, ..)| name.clone())
+                    .collect(),
+            );
+            instantiated
+                .iter()
+                .map(|(name, _, is_pub, _, default)| (name.clone(), *is_pub, default.clone()))
+                .collect()
+        } else {
+            declaration
+                .fields
+                .iter()
+                .filter_map(|item| match item {
+                    StructBodyItem::Field(field) => {
+                        literal_name(&field.name).map(|name| (name, field.is_pub, field.default.clone()))
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
 
         let field_names: Vec<String> = declared_fields.iter().map(|(name, ..)| name.clone()).collect();
+        let positional = positional.unwrap_or_else(|| field_names.clone());
         let required_count = declared_fields.iter().filter(|(_, _, default)| default.is_none()).count();
+        let positional_count = arguments.iter().filter(|argument| argument.name.is_none()).count();
 
-        if arguments.len() < required_count || arguments.len() > field_names.len() {
+        if arguments.len() < required_count || arguments.len() > field_names.len() || positional_count > positional.len() {
             return Err(ResolveError::InvalidArgumentCount {
                 name: name.clone(),
-                expected: field_names.len(),
+                expected: positional.len(),
                 actual: arguments.len(),
                 span,
             });
@@ -699,7 +740,12 @@ impl<'a> AliasResolver<'a> {
                     explicit.clone()
                 }
 
-                None => field_names[index].clone(),
+                None => positional.get(index).cloned().ok_or_else(|| ResolveError::InvalidArgumentCount {
+                    name: name.clone(),
+                    expected: positional.len(),
+                    actual: arguments.len(),
+                    span,
+                })?,
             };
 
             let value = self.eval_value(&argument.value, scope)?;
@@ -771,12 +817,10 @@ impl<'a> AliasResolver<'a> {
     }
 
     /// `Array<u8, N> { field: value, ... }` — the brace-literal counterpart
-    /// of `eval_call_value`, which predates generative struct bodies and
-    /// can only see a struct's flat, non-`@for`/`@if` fields (see that
-    /// function's comment). This one goes through
-    /// `structs::AliasResolver::instantiate_struct_fields_named` instead, so
-    /// every field the concrete instantiation actually generates —
-    /// including `@for`/`@if`-produced ones — is visible to match against.
+    /// of `eval_call_value`. Goes through
+    /// `structs::AliasResolver::instantiate_struct_fields_named`, so every
+    /// field the concrete instantiation generates — including
+    /// `@for`/`@if`-produced ones — is visible to match against.
     fn eval_construct_value(
         &mut self,
         callee: &Expr,

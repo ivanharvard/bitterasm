@@ -58,7 +58,7 @@ macro offsets<const N: int>(lengths: Array<int, N>) {
     @emit table_size
 }
 
-offsets Array<int, 3> { __el0: 4, __el1: 2, __el2: 5 }
+offsets Array<int, 3>(4, 2, 5)
 ```
 
 ```emits

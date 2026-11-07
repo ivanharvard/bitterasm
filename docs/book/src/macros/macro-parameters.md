@@ -106,7 +106,7 @@ macro show_all<const N: int>(values: Array<int, N>) {
     }
 }
 
-show_all mapped(Array<int, 3> { __el0: 1, __el1: 2, __el2: 3 }, double)
+show_all mapped(Array<int, 3>(1, 2, 3), double)
 ```
 
 ```emits

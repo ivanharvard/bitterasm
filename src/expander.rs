@@ -516,8 +516,16 @@ pub fn substitute_expr(expr: &Expr, substitutions: &HashMap<String, Expr>) -> Ex
             span: *span,
         },
 
-        Expr::Call { callee, arguments, span } => Expr::Call {
+        Expr::Call { callee, generic_args, arguments, span } => Expr::Call {
             callee: Box::new(substitute_expr(callee, substitutions)),
+            generic_args: generic_args
+                .iter()
+                .map(|arg| match arg {
+                    TypeArgument::Type(ty) => TypeArgument::Type(substitute_type_expr(ty, substitutions)),
+                    TypeArgument::Const(expr) => TypeArgument::Const(substitute_expr(expr, substitutions)),
+                    TypeArgument::Wildcard(span) => TypeArgument::Wildcard(*span),
+                })
+                .collect(),
             arguments: arguments
                 .iter()
                 .map(|argument| CallArgument {

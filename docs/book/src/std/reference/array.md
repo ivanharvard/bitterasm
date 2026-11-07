@@ -18,7 +18,7 @@ macro double(x: int) -> int {
     @return x * 2
 }
 
-const values = Array<int, 3> { __el0: 10, __el1: 20, __el2: 30 }
+const values = Array<int, 3>(10, 20, 30)
 
 show_all reversed(values)
 show_all mapped(appended(values, 40), double)
@@ -29,9 +29,9 @@ show_all mapped(appended(values, 40), double)
 20 40 60 80
 ```
 
-An array is built with its elements named `__el0`, `__el1`, ..., or by an
-`@for` inside the construction. `@for v in values` visits the elements
-in order.
+An array is built from its elements in order, as above, or by an `@for`
+inside a brace construction, which names them `__el0`, `__el1`, ....
+`@for v in values` visits the elements in order.
 
 ## Macros
 

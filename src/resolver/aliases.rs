@@ -122,8 +122,9 @@ fn substitute_expr(expr: &Expr, substitutions: &HashMap<String, TypeArgument>) -
         Expr::Member { object, member, span } => {
             Expr::Member { object: sub(object), member: member.clone(), span: *span }
         }
-        Expr::Call { callee, arguments, span } => Expr::Call {
+        Expr::Call { callee, generic_args, arguments, span } => Expr::Call {
             callee: callee.clone(),
+            generic_args: generic_args.iter().map(|arg| substitute_argument(arg, substitutions)).collect(),
             arguments: arguments
                 .iter()
                 .map(|argument| crate::ast::CallArgument {

@@ -193,6 +193,9 @@ pub enum Expr {
 
     Call {
         callee: Box<Expr>,
+        /// A struct's generic arguments, as in `Array<int, 3>(10, 20, 30)`.
+        /// Empty for every other call.
+        generic_args: Vec<TypeArgument>,
         arguments: Vec<CallArgument>,
         span: Span,
     },

@@ -668,9 +668,12 @@ impl<'a> AliasResolver<'a> {
         template: &Expr,
         scope: &Scope,
     ) -> Result<MacroExpansion, ResolveError> {
-        let Expr::Call { callee, arguments, span } = template else {
+        let Expr::Call { callee, generic_args, arguments, span } = template else {
             return Err(ResolveError::ExpectedValueExpression { span: template.span() });
         };
+        if !generic_args.is_empty() {
+            return Err(ResolveError::ExpectedValueExpression { span: *span });
+        }
         let Expr::Identifier { name, .. } = callee.as_ref() else {
             return Err(ResolveError::ExpectedValueExpression { span: *span });
         };
@@ -1123,9 +1126,12 @@ impl<'a> AliasResolver<'a> {
         let Some(current) = self.macro_call_stack.last().copied() else {
             return Ok(None);
         };
-        let Expr::Call { callee, arguments, span } = expr else {
+        let Expr::Call { callee, generic_args, arguments, span } = expr else {
             return Ok(None);
         };
+        if !generic_args.is_empty() {
+            return Ok(None);
+        }
         let Expr::Identifier { name, .. } = callee.as_ref() else {
             return Ok(None);
         };
@@ -1300,8 +1306,16 @@ impl<'a> AliasResolver<'a> {
                 span: *span,
             }),
 
-            Expr::Call { callee, arguments, span } => Ok(Expr::Call {
+            Expr::Call { callee, generic_args, arguments, span } => Ok(Expr::Call {
                 callee: Box::new(self.splice_expr(callee, scope)?),
+                generic_args: generic_args
+                    .iter()
+                    .map(|arg| match arg {
+                        TypeArgument::Type(ty) => Ok(TypeArgument::Type(ty.clone())),
+                        TypeArgument::Const(expr) => Ok(TypeArgument::Const(self.splice_expr(expr, scope)?)),
+                        TypeArgument::Wildcard(span) => Ok(TypeArgument::Wildcard(*span)),
+                    })
+                    .collect::<Result<_, ResolveError>>()?,
                 arguments: arguments
                     .iter()
                     .map(|argument| {

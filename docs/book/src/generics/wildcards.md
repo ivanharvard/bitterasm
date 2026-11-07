@@ -14,8 +14,8 @@ macro show(value: int) {
     @emit value
 }
 
-show count(Array<int, 2> { __el0: 1, __el1: 2 })
-show count(Array<int, 3> { __el0: 1, __el1: 2, __el2: 3 })
+show count(Array<int, 2>(1, 2))
+show count(Array<int, 3>(1, 2, 3))
 ```
 
 ```emits

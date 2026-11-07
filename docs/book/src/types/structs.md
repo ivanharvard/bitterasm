@@ -64,8 +64,9 @@ emit_point Point(1)
 `Point` expects 2 argument(s), but 1 were supplied
 ```
 
-A [generic struct](../generics/index.md) is constructed with braces:
-`Pair<int> { a: 1, b: 2 }`.
+A [generic struct](../generics/index.md) is constructed with its generic
+arguments first, then braces or parentheses: `Pair<int> { a: 1, b: 2 }` or
+`Pair<int>(1, 2)`.
 
 ## Reading fields
 
@@ -134,7 +135,7 @@ macro show_all<const N: int>(values: Array<int, N>) {
     }
 }
 
-show_all Array<int, 3> { __el0: 7, __el1: 8, __el2: 9 }
+show_all Array<int, 3>(7, 8, 9)
 ```
 
 ```emits
@@ -160,12 +161,17 @@ macro show_all<const N: int>(values: Array<int, N>) {
     }
 }
 
-show_all squares(Array<int, 4> { __el0: 0, __el1: 0, __el2: 0, __el3: 0 })
+show_all squares(Array<int, 4>(0, 0, 0, 0))
 ```
 
 ```emits
 0 1 4 9
 ```
+
+Positional arguments fill generated fields too, in order: that's how
+`Array<int, 3>(7, 8, 9)` above gives `__el0`, `__el1` and `__el2` their
+values. A `skip` field such as `len` is passed over, since it's derived;
+naming it is the only way to set it.
 
 `` __el`i` `` builds the field names `__el0`, `__el1`, ... See
 [Spliced names](../splicing/names.md).

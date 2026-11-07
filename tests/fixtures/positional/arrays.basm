@@ -1,0 +1,33 @@
+from std.array import Array, get
+
+macro show(value: int) {
+    @emit value
+}
+
+macro twice(value: int) -> int {
+    @return value * 2
+}
+
+# Four bytes, with no generic parameters: its fields still come from `@for`.
+struct Word {
+    @for i in 0..4 {
+        pub b`i`: int,
+    }
+}
+
+macro demo() {
+    const n = 3
+    const a = Array<int, n>(10, 20, twice(15))
+    show get(a, 0)
+    show get(a, 2)
+    show a.len
+
+    # Positional and named arguments mix, as in any struct call.
+    const b = Array<int, 2>(1, __el1 = 2)
+    show get(b, 1)
+
+    const w = Word(7, 8, 9, 10)
+    show w.b3
+}
+
+demo

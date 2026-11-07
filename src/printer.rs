@@ -523,10 +523,11 @@ pub fn print_expr(expr: &Expr) -> String {
             format!("{}.{}", print_expr(object), print_spliced_name(member))
         }
 
-        Expr::Call { callee, arguments, .. } => {
+        Expr::Call { callee, generic_args, arguments, .. } => {
+            let generics = print_generic_arguments(generic_args);
             let args = arguments.iter().map(print_call_argument).collect::<Vec<_>>().join(", ");
 
-            format!("{}({args})", print_expr(callee))
+            format!("{}{generics}({args})", print_expr(callee))
         }
 
         Expr::EnumVariant { enum_name, generic_args, variant, payload, .. } => {
