@@ -87,7 +87,7 @@ bytes, since it isn't known until layout, and 5 hold any size.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `size start, end` | `start: int`, `end: int` | emits `DeferredLeb128<5>` |  |
+| `size start, end` | `start: label`, `end: label` | emits `DeferredLeb128<5>` |  |
 
 ### `section_header`
 
@@ -96,7 +96,7 @@ A section's id, such as `TYPE_SECTION`, and its size. Put the label
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `section_header id, start, end` | `id: int`, `start: int`, `end: int` |  |  |
+| `section_header id, start, end` | `id: int`, `start: label`, `end: label` |  |  |
 
 ### `params`
 

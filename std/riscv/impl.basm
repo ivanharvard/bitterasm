@@ -316,7 +316,7 @@ macro b_type(
     funct3: int,
     rs1: Reg,
     rs2: Reg,
-    target: int
+    target: label
 ) -> LittleEndian<BType, 32> {
     const offset = span(here(), target)
     @return LittleEndian<BType, 32> { value: BType(
@@ -346,7 +346,7 @@ macro u_type(
 macro j_type(
     opcode: int,
     rd: Reg,
-    target: int
+    target: label
 ) -> LittleEndian<JType, 32> {
     const offset = span(here(), target)
     @return LittleEndian<JType, 32> { value: JType(
@@ -737,42 +737,42 @@ pub macro sw(rs2: Reg, offset: int, rs1: Reg)
 # a choice made here — see the BType declaration's own doc comment.
 
 ## Branches to the label `target` if `rs1 == rs2`.
-pub macro beq(rs1: Reg, rs2: Reg, target: int)
+pub macro beq(rs1: Reg, rs2: Reg, target: label)
     | emits LittleEndian<BType, 32>
 {
     @emit b_type(BRANCH, 0b000, rs1, rs2, target)
 }
 
 ## Branches to the label `target` if `rs1 != rs2`.
-pub macro bne(rs1: Reg, rs2: Reg, target: int)
+pub macro bne(rs1: Reg, rs2: Reg, target: label)
     | emits LittleEndian<BType, 32>
 {
     @emit b_type(BRANCH, 0b001, rs1, rs2, target)
 }
 
 ## Branches to the label `target` if `rs1 < rs2` as signed numbers.
-pub macro blt(rs1: Reg, rs2: Reg, target: int)
+pub macro blt(rs1: Reg, rs2: Reg, target: label)
     | emits LittleEndian<BType, 32>
 {
     @emit b_type(BRANCH, 0b100, rs1, rs2, target)
 }
 
 ## Branches to the label `target` if `rs1 >= rs2` as signed numbers.
-pub macro bge(rs1: Reg, rs2: Reg, target: int)
+pub macro bge(rs1: Reg, rs2: Reg, target: label)
     | emits LittleEndian<BType, 32>
 {
     @emit b_type(BRANCH, 0b101, rs1, rs2, target)
 }
 
 ## Branches to the label `target` if `rs1 < rs2` as unsigned numbers.
-pub macro bltu(rs1: Reg, rs2: Reg, target: int)
+pub macro bltu(rs1: Reg, rs2: Reg, target: label)
     | emits LittleEndian<BType, 32>
 {
     @emit b_type(BRANCH, 0b110, rs1, rs2, target)
 }
 
 ## Branches to the label `target` if `rs1 >= rs2` as unsigned numbers.
-pub macro bgeu(rs1: Reg, rs2: Reg, target: int)
+pub macro bgeu(rs1: Reg, rs2: Reg, target: label)
     | emits LittleEndian<BType, 32>
 {
     @emit b_type(BRANCH, 0b111, rs1, rs2, target)
@@ -810,7 +810,7 @@ pub macro auipc(
 
 ## Jumps to the label `target` and puts the address of the next instruction
 ## in `rd`. `jal ra, f` calls `f`; `jal zero, l` just jumps.
-pub macro jal(rd: Reg, target: int)
+pub macro jal(rd: Reg, target: label)
     | emits LittleEndian<JType, 32>
 {
     @emit j_type(JAL, rd, target)
@@ -857,7 +857,7 @@ pub macro li(rd: Reg, imm: int) {
 
 ## Loads the address of the label `symbol` into `rd`: `auipc` for the upper
 ## 20 bits of the distance, then `addi` for the rest.
-pub macro la(rd: Reg, symbol: int) {
+pub macro la(rd: Reg, symbol: label) {
     # Both halves measure from the `auipc`, and the `addi` sits 4 bytes
     # after it. The upper part rounds up for the same reason as `li`'s.
     @emit LittleEndian<UTypeLate, 32> { value: UTypeLate(

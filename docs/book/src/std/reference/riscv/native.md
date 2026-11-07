@@ -316,7 +316,7 @@ Branches to the label `target` if `rs1 == rs2`.
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `beq rs1, rs2, target` | `rs1: Reg`, `rs2: Reg`, `target: int` | emits `LittleEndian<BType, 32>` |  | [`std.riscv.impl`](impl.md) |
+| `beq rs1, rs2, target` | `rs1: Reg`, `rs2: Reg`, `target: label` | emits `LittleEndian<BType, 32>` |  | [`std.riscv.impl`](impl.md) |
 
 ### `bne`
 
@@ -324,7 +324,7 @@ Branches to the label `target` if `rs1 != rs2`.
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `bne rs1, rs2, target` | `rs1: Reg`, `rs2: Reg`, `target: int` | emits `LittleEndian<BType, 32>` |  | [`std.riscv.impl`](impl.md) |
+| `bne rs1, rs2, target` | `rs1: Reg`, `rs2: Reg`, `target: label` | emits `LittleEndian<BType, 32>` |  | [`std.riscv.impl`](impl.md) |
 
 ### `blt`
 
@@ -332,7 +332,7 @@ Branches to the label `target` if `rs1 < rs2` as signed numbers.
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `blt rs1, rs2, target` | `rs1: Reg`, `rs2: Reg`, `target: int` | emits `LittleEndian<BType, 32>` |  | [`std.riscv.impl`](impl.md) |
+| `blt rs1, rs2, target` | `rs1: Reg`, `rs2: Reg`, `target: label` | emits `LittleEndian<BType, 32>` |  | [`std.riscv.impl`](impl.md) |
 
 ### `bge`
 
@@ -340,7 +340,7 @@ Branches to the label `target` if `rs1 >= rs2` as signed numbers.
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `bge rs1, rs2, target` | `rs1: Reg`, `rs2: Reg`, `target: int` | emits `LittleEndian<BType, 32>` |  | [`std.riscv.impl`](impl.md) |
+| `bge rs1, rs2, target` | `rs1: Reg`, `rs2: Reg`, `target: label` | emits `LittleEndian<BType, 32>` |  | [`std.riscv.impl`](impl.md) |
 
 ### `bltu`
 
@@ -348,7 +348,7 @@ Branches to the label `target` if `rs1 < rs2` as unsigned numbers.
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `bltu rs1, rs2, target` | `rs1: Reg`, `rs2: Reg`, `target: int` | emits `LittleEndian<BType, 32>` |  | [`std.riscv.impl`](impl.md) |
+| `bltu rs1, rs2, target` | `rs1: Reg`, `rs2: Reg`, `target: label` | emits `LittleEndian<BType, 32>` |  | [`std.riscv.impl`](impl.md) |
 
 ### `bgeu`
 
@@ -356,7 +356,7 @@ Branches to the label `target` if `rs1 >= rs2` as unsigned numbers.
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `bgeu rs1, rs2, target` | `rs1: Reg`, `rs2: Reg`, `target: int` | emits `LittleEndian<BType, 32>` |  | [`std.riscv.impl`](impl.md) |
+| `bgeu rs1, rs2, target` | `rs1: Reg`, `rs2: Reg`, `target: label` | emits `LittleEndian<BType, 32>` |  | [`std.riscv.impl`](impl.md) |
 
 ### `lui`
 
@@ -381,7 +381,7 @@ in `rd`. `jal ra, f` calls `f`; `jal zero, l` just jumps.
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jal rd, target` | `rd: Reg`, `target: int` | emits `LittleEndian<JType, 32>` |  | [`std.riscv.impl`](impl.md) |
+| `jal rd, target` | `rd: Reg`, `target: label` | emits `LittleEndian<JType, 32>` |  | [`std.riscv.impl`](impl.md) |
 
 ### `li`
 
@@ -400,7 +400,7 @@ Loads the address of the label `symbol` into `rd`: `auipc` for the upper
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `la rd, symbol` | `rd: Reg`, `symbol: int` |  |  | [`std.riscv.impl`](impl.md) |
+| `la rd, symbol` | `rd: Reg`, `symbol: label` |  |  | [`std.riscv.impl`](impl.md) |
 
 ### `ascii`
 

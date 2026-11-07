@@ -75,7 +75,7 @@ pub fn resolve_error(error: ResolveError, source: Option<SourceId>) -> Diagnosti
         ReturnTypeMismatch { name, expected, actual: Some(actual), span } => (format!("`{name}` returned `{actual}`, but its signature declares `-> {expected}`"), span),
         ReturnTypeMismatch { name, expected, actual: None, span } => (format!("`{name}` returned nothing, but its signature declares `-> {expected}`; to declare what it emits, use `| emits {expected}`"), span),
         InvariantViolated { type_name, invariant, span } => (format!("invariant `{invariant}` was violated for `{type_name}`"), span),
-        EmittedCompileTimeValue { type_name, span } => (format!("can't `@emit` a value of type `{type_name}`: a macro is compile-time only, not data"), span),
+        EmittedCompileTimeValue { type_name, span } => (format!("can't `@emit` a value of type `{type_name}`: it's compile-time only, not data"), span),
         EmittedTypeNotDeclared { actual, declared, span } => (format!("`@emit`ed value has type `{actual}`, but this macro's `emits` facet(s) only declare {}", declared.iter().map(|ty| format!("`{ty}`")).collect::<Vec<_>>().join(", ")), span),
         CannotCoerce { type_name, span } => (format!("cannot implicitly convert to `{type_name}`"), span),
         AmbiguousConversion { source, target, span } => (format!("multiple conversions from `{source}` to `{target}` apply"), span),

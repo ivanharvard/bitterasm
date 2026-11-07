@@ -6,8 +6,8 @@ macro three() {
     }
 }
 
-macro show(position: int) {
-    @emit position
+macro show(position: label) {
+    @emit position as int
 }
 
 three

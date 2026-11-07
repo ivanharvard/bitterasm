@@ -2,8 +2,8 @@ macro noop() {
     @emit 1
 }
 
-macro reads_target(target: int) {
-    @emit target
+macro reads_target(target: label) {
+    @emit target as int
 }
 
 loop_start:

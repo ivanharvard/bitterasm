@@ -37,7 +37,7 @@ execution starts at, and the segment loads at `vm_address`.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `macho64_executable cpu_type, cpu_subtype, entry, vm_address` | `cpu_type: int`, `cpu_subtype: int`, `entry: int`, `vm_address: int = 0x100000000` |  |  |
+| `macho64_executable cpu_type, cpu_subtype, entry, vm_address` | `cpu_type: int`, `cpu_subtype: int`, `entry: label`, `vm_address: int = 0x100000000` |  |  |
 
 ## Constants
 

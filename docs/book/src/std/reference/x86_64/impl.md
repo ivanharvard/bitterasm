@@ -316,7 +316,7 @@ instruction. To address a label, use a `RipLabel` instead.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jmp target` | `target: int` | emits `Rel32Instr` | Jumps to the label `target`. |
+| `jmp target` | `target: label` | emits `Rel32Instr` | Jumps to the label `target`. |
 | `jmp r` | `r: Reg` | emits `Bytes<...>` | Jumps to the address in `r`. |
 | `jmp src` | `src: MemOperand` | emits `Bytes<...>` | Jumps to the address stored at `src`. |
 | `jmp src, size` | `src: MemOperand`, `size: OperandSize` | emits `Bytes<...>` | `jmp src`; `size` must be `qword`. |
@@ -325,7 +325,7 @@ instruction. To address a label, use a `RipLabel` instead.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `call target` | `target: int` | emits `Rel32Instr` | Pushes the address of the next instruction and jumps to the label `target`. |
+| `call target` | `target: label` | emits `Rel32Instr` | Pushes the address of the next instruction and jumps to the label `target`. |
 | `call r` | `r: Reg` | emits `Bytes<...>` | Calls the address in `r`. |
 | `call src` | `src: MemOperand` | emits `Bytes<...>` | Calls the address stored at `src`. |
 | `call src, size` | `src: MemOperand`, `size: OperandSize` | emits `Bytes<...>` | `call src`; `size` must be `qword`. |
@@ -336,7 +336,7 @@ Jumps to the label `target` if equal (ZF = 1).
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `je target` | `target: int` | emits `Rel32Instr2` |  |
+| `je target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jne`
 
@@ -344,7 +344,7 @@ Jumps to the label `target` if not equal (ZF = 0).
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jne target` | `target: int` | emits `Rel32Instr2` |  |
+| `jne target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jb`
 
@@ -352,7 +352,7 @@ Jumps to the label `target` if below, unsigned (CF = 1).
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jb target` | `target: int` | emits `Rel32Instr2` |  |
+| `jb target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jae`
 
@@ -360,7 +360,7 @@ Jumps to the label `target` if above or equal, unsigned (CF = 0).
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jae target` | `target: int` | emits `Rel32Instr2` |  |
+| `jae target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `ja`
 
@@ -368,7 +368,7 @@ Jumps to the label `target` if above, unsigned.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `ja target` | `target: int` | emits `Rel32Instr2` |  |
+| `ja target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jbe`
 
@@ -376,7 +376,7 @@ Jumps to the label `target` if below or equal, unsigned.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jbe target` | `target: int` | emits `Rel32Instr2` |  |
+| `jbe target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jl`
 
@@ -384,7 +384,7 @@ Jumps to the label `target` if less, signed.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jl target` | `target: int` | emits `Rel32Instr2` |  |
+| `jl target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jge`
 
@@ -392,7 +392,7 @@ Jumps to the label `target` if greater or equal, signed.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jge target` | `target: int` | emits `Rel32Instr2` |  |
+| `jge target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jle`
 
@@ -400,7 +400,7 @@ Jumps to the label `target` if less or equal, signed.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jle target` | `target: int` | emits `Rel32Instr2` |  |
+| `jle target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jg`
 
@@ -408,7 +408,7 @@ Jumps to the label `target` if greater, signed.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jg target` | `target: int` | emits `Rel32Instr2` |  |
+| `jg target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `js`
 
@@ -416,7 +416,7 @@ Jumps to the label `target` if the result was negative (SF = 1).
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `js target` | `target: int` | emits `Rel32Instr2` |  |
+| `js target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jns`
 
@@ -424,7 +424,7 @@ Jumps to the label `target` if the result wasn't negative (SF = 0).
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jns target` | `target: int` | emits `Rel32Instr2` |  |
+| `jns target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jo`
 
@@ -432,7 +432,7 @@ Jumps to the label `target` on signed overflow (OF = 1).
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jo target` | `target: int` | emits `Rel32Instr2` |  |
+| `jo target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jno`
 
@@ -440,7 +440,7 @@ Jumps to the label `target` without signed overflow (OF = 0).
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jno target` | `target: int` | emits `Rel32Instr2` |  |
+| `jno target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jp`
 
@@ -448,7 +448,7 @@ Jumps to the label `target` if the parity flag is set (PF = 1).
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jp target` | `target: int` | emits `Rel32Instr2` |  |
+| `jp target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jnp`
 
@@ -456,7 +456,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jnp target` | `target: int` | emits `Rel32Instr2` |  |
+| `jnp target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jz`
 
@@ -464,7 +464,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jz target` | `target: int` | emits `Rel32Instr2` |  |
+| `jz target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jnz`
 
@@ -472,7 +472,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jnz target` | `target: int` | emits `Rel32Instr2` |  |
+| `jnz target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jc`
 
@@ -480,7 +480,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jc target` | `target: int` | emits `Rel32Instr2` |  |
+| `jc target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jnae`
 
@@ -488,7 +488,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jnae target` | `target: int` | emits `Rel32Instr2` |  |
+| `jnae target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jnc`
 
@@ -496,7 +496,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jnc target` | `target: int` | emits `Rel32Instr2` |  |
+| `jnc target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jnb`
 
@@ -504,7 +504,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jnb target` | `target: int` | emits `Rel32Instr2` |  |
+| `jnb target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jnbe`
 
@@ -512,7 +512,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jnbe target` | `target: int` | emits `Rel32Instr2` |  |
+| `jnbe target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jna`
 
@@ -520,7 +520,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jna target` | `target: int` | emits `Rel32Instr2` |  |
+| `jna target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jnge`
 
@@ -528,7 +528,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jnge target` | `target: int` | emits `Rel32Instr2` |  |
+| `jnge target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jnl`
 
@@ -536,7 +536,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jnl target` | `target: int` | emits `Rel32Instr2` |  |
+| `jnl target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jng`
 
@@ -544,7 +544,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jng target` | `target: int` | emits `Rel32Instr2` |  |
+| `jng target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jnle`
 
@@ -552,7 +552,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jnle target` | `target: int` | emits `Rel32Instr2` |  |
+| `jnle target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jpe`
 
@@ -560,7 +560,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jpe target` | `target: int` | emits `Rel32Instr2` |  |
+| `jpe target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `jpo`
 
@@ -568,7 +568,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jpo target` | `target: int` | emits `Rel32Instr2` |  |
+| `jpo target` | `target: label` | emits `Rel32Instr2` |  |
 
 ### `ret`
 
@@ -1461,7 +1461,7 @@ must be within 127 bytes.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `loop target` | `target: int` | emits `Rel8Instr` |  |
+| `loop target` | `target: label` | emits `Rel8Instr` |  |
 
 ### `loope`
 
@@ -1470,7 +1470,7 @@ Decrements `rcx`, then jumps to the label `target` if it isn't 0 and ZF = 1.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `loope target` | `target: int` | emits `Rel8Instr` |  |
+| `loope target` | `target: label` | emits `Rel8Instr` |  |
 
 ### `loopz`
 
@@ -1478,7 +1478,7 @@ Decrements `rcx`, then jumps to the label `target` if it isn't 0 and ZF = 1.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `loopz target` | `target: int` | emits `Rel8Instr` |  |
+| `loopz target` | `target: label` | emits `Rel8Instr` |  |
 
 ### `loopne`
 
@@ -1487,7 +1487,7 @@ Decrements `rcx`, then jumps to the label `target` if it isn't 0 and ZF = 0.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `loopne target` | `target: int` | emits `Rel8Instr` |  |
+| `loopne target` | `target: label` | emits `Rel8Instr` |  |
 
 ### `loopnz`
 
@@ -1495,7 +1495,7 @@ Decrements `rcx`, then jumps to the label `target` if it isn't 0 and ZF = 0.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `loopnz target` | `target: int` | emits `Rel8Instr` |  |
+| `loopnz target` | `target: label` | emits `Rel8Instr` |  |
 
 ### `jrcxz`
 
@@ -1503,7 +1503,7 @@ Jumps to the label `target` if `rcx` is 0. `target` must be within 127 bytes.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jrcxz target` | `target: int` | emits `Rel8Instr` |  |
+| `jrcxz target` | `target: label` | emits `Rel8Instr` |  |
 
 ### `jecxz`
 
@@ -1512,7 +1512,7 @@ bytes.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jecxz target` | `target: int` | emits `Rel8Instr2` |  |
+| `jecxz target` | `target: label` | emits `Rel8Instr2` |  |
 
 ### `nop`
 
@@ -2209,7 +2209,7 @@ instruction: NASM's `[rel label]`.
 
 | Field | Type | Description |
 |---|---|---|
-| `target` | `int` | The label. |
+| `target` | `label` | The label. |
 
 ### `RipRelInstr`
 

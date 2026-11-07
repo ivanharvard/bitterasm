@@ -1,0 +1,32 @@
+# `label` and `int` are different types, so one name can take either.
+macro show(value: int) {
+    @emit value
+}
+
+macro target(at: label) {
+    @emit 1000 + at as int
+}
+
+macro target(n: int) {
+    @emit n
+}
+
+macro same(a: label, b: label) {
+    show a == b
+}
+
+first:
+    show 7
+second:
+    target first
+    target 42
+    target second
+    same first, first
+    same first, second
+
+macro stored() {
+    const where = second
+    target where
+}
+
+stored

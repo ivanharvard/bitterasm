@@ -6,8 +6,8 @@
 # does, with no special-casing needed on the call site.
 from .extern_label_dep import target
 
-macro mark(n: int) {
-    @emit n
+macro mark(n: label) {
+    @emit n as int
 }
 
 mark target

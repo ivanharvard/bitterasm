@@ -713,10 +713,10 @@ impl<'a> AliasResolver<'a> {
                             let value = self.eval_value(expr, &scope)?;
 
                             // Only data can be emitted. A struct may hold a
-                            // macro (`Array<macro(int), 4>` is a fine
-                            // compile-time table), but then it isn't data
-                            // either, so look inside it too.
-                            if holds_macro(&value) {
+                            // macro or a label (`Array<macro(int), 4>` is a
+                            // fine compile-time table), but then it isn't
+                            // data either, so look inside it too.
+                            if holds_compile_time_value(&value) {
                                 let actual = self.value_type(&value)?;
                                 return Err(ResolveError::EmittedCompileTimeValue {
                                     type_name: describe_type(&actual, self),
@@ -1490,19 +1490,40 @@ impl<'a> AliasResolver<'a> {
 fn reify_value(value: &Value, span: Span) -> Result<Expr, ResolveError> {
     match value {
         Value::Int(int) => Ok(Expr::Integer { raw: int.to_string(), span }),
-        Value::Struct { .. } | Value::Enum { .. } | Value::Macro(_) | Value::ExternLabel { .. } => {
+        Value::Struct { .. } | Value::Enum { .. } | Value::Macro(_) | Value::ExternLabel { .. } | Value::Label(_) => {
             Err(ResolveError::UnsupportedSpliceValue { span })
         }
     }
 }
 
-/// Whether `value` is or contains a macro, which makes it compile-time
-/// machinery rather than data.
-fn holds_macro(value: &Value) -> bool {
+/// Whether `value` is or contains a macro or a label, which makes it
+/// compile-time machinery rather than data.
+fn holds_compile_time_value(value: &Value) -> bool {
     match value {
-        Value::Macro(_) => true,
-        Value::Struct { fields, .. } => fields.iter().any(|(_, field)| holds_macro(field)),
-        Value::Enum { payload, .. } => payload.as_deref().is_some_and(holds_macro),
+        Value::Macro(_) | Value::Label(_) => true,
+        // An empty `Array<label, 0>` holds no label, but its type still
+        // names one.
+        Value::Struct { args, fields, .. } => {
+            args.iter().any(arg_is_compile_time) || fields.iter().any(|(_, field)| holds_compile_time_value(field))
+        }
+        Value::Enum { args, payload, .. } => {
+            args.iter().any(arg_is_compile_time) || payload.as_deref().is_some_and(holds_compile_time_value)
+        }
+        _ => false,
+    }
+}
+
+fn arg_is_compile_time(arg: &super::ResolvedGenericArg) -> bool {
+    match arg {
+        super::ResolvedGenericArg::Type(ty) => type_is_compile_time(ty),
+        _ => false,
+    }
+}
+
+fn type_is_compile_time(ty: &ResolvedType) -> bool {
+    match ty.strip_alias() {
+        ResolvedType::Builtin(super::BuiltinType::Label) | ResolvedType::MacroType { .. } => true,
+        ResolvedType::Struct { args, .. } | ResolvedType::Enum { args, .. } => args.iter().any(arg_is_compile_time),
         _ => false,
     }
 }

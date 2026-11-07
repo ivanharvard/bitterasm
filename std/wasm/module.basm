@@ -199,7 +199,7 @@ pub macro u32(value: int)
 ## The number of bytes from label `start` to label `end`, as unsigned
 ## LEB128: the size before a section or a function body. It always takes 5
 ## bytes, since it isn't known until layout, and 5 hold any size.
-pub macro size(start: int, end: int)
+pub macro size(start: label, end: label)
     | emits DeferredLeb128<5>
 {
     deferred_uleb128 span(start, end), 5
@@ -209,8 +209,8 @@ pub macro size(start: int, end: int)
 ## `start` right after it and `end` after the section's contents.
 pub macro section_header(
     id: int,
-    start: int,
-    end: int
+    start: label,
+    end: label
 ) {
     byte id
     size start, end

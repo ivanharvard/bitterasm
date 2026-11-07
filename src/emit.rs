@@ -170,7 +170,7 @@ pub fn write_em<W: Write>(
 fn value_contains_extern_label(value: &Value) -> bool {
     match value {
         Value::ExternLabel { .. } => true,
-        Value::Int(_) | Value::Macro(_) => false,
+        Value::Int(_) | Value::Macro(_) | Value::Label(_) => false,
         Value::Struct { fields, .. } => fields.iter().any(|(_, field)| value_contains_extern_label(field)),
         Value::Enum { payload, .. } => payload.as_deref().is_some_and(value_contains_extern_label),
     }
@@ -403,6 +403,9 @@ pub fn reify_value(ids: &TypeIds, value: &Value) -> EmittedValue {
         Value::Macro(_) => unreachable!(
             "a macro is compile-time-only metaprogramming machinery and can never reach emission"
         ),
+        // Same as `Value::Macro`: `@emit` rejects a label, and anything
+        // holding one.
+        Value::Label(_) => unreachable!("a label is compile-time only and can never reach emission"),
 
         // Phase 5 (`docs/sections-and-linking/PROGRESS.md`): a `pub` label
         // imported from another file, not yet resolved to a real position
@@ -437,6 +440,9 @@ fn reify_generic_arg(ids: &TypeIds, arg: &ResolvedGenericArg) -> EmittedGenericA
 fn reify_type(ids: &TypeIds, ty: &ResolvedType) -> EmittedType {
     match ty {
         ResolvedType::Builtin(BuiltinType::Int) => EmittedType::Builtin { name: "int".to_string() },
+        ResolvedType::Builtin(BuiltinType::Label) => {
+            unreachable!("a label is compile-time only, so no emitted value's type mentions one")
+        }
 
         ResolvedType::Struct { symbol, args } => EmittedType::Struct {
             id: ids.id(*symbol),

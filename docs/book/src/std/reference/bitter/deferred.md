@@ -15,7 +15,7 @@ macro db(value: int) {
     @emit value as bits<8>
 }
 
-macro offset_to(target: int) {
+macro offset_to(target: label) {
     @emit Positioned<8> { value: span(here(), target) }
 }
 
@@ -90,9 +90,9 @@ refers to that value's position instead.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `span(start, end)` | `start: int`, `end: int` | returns `Deferred` | The number of bytes from position `start` to position `end`, negative if `end` comes first. Either may be `here()`. Labels are positions, so `span(here(), target)` is a relative branch offset. |
-| `span(start, end)` | `start: Deferred`, `end: int` | returns `Deferred` |  |
-| `span(start, end)` | `start: int`, `end: Deferred` | returns `Deferred` |  |
+| `span(start, end)` | `start: label`, `end: label` | returns `Deferred` | The number of bytes from position `start` to position `end`, negative if `end` comes first. Either may be `here()`. Labels are positions, so `span(here(), target)` is a relative branch offset. |
+| `span(start, end)` | `start: Deferred`, `end: label` | returns `Deferred` |  |
+| `span(start, end)` | `start: label`, `end: Deferred` | returns `Deferred` |  |
 
 ## Types
 

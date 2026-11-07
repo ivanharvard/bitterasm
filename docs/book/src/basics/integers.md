@@ -1,6 +1,6 @@
 # Integers
 
-`int` is BitterASM's only built-in type. An `int` is a mathematical integer:
+`int` is BitterASM's only built-in data type. An `int` is a mathematical integer:
 it has **arbitrary precision** and no width, so it never overflows or wraps.
 
 ```basm

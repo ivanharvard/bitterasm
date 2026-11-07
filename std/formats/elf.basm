@@ -76,7 +76,7 @@ macro elf_ident(class: int) {
 ## `flags` is the header's `e_flags`, which some architectures give meaning.
 pub macro elf64_executable(
     machine: int,
-    entry: int,
+    entry: label,
     load_address: int = 0x400000,
     segment_flags: int = 5,
     flags: int = 0
@@ -110,7 +110,7 @@ pub macro elf64_executable(
 ## RV32. The parameters mean what they do for `elf64_executable`.
 pub macro elf32_executable(
     machine: int,
-    entry: int,
+    entry: label,
     load_address: int = 0x10000,
     segment_flags: int = 5,
     flags: int = 0

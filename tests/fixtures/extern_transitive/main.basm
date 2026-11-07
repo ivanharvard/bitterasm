@@ -5,7 +5,7 @@ from .labels import marker
 
 macro show() {
     @emit read_marker()
-    @emit marker
+    @emit marker as int
 }
 
 show

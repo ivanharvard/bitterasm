@@ -85,6 +85,24 @@ pub enum Value {
         module: String,
         name: String,
     },
+
+    /// A label, of type `label`: a position in the emitted stream, which
+    /// isn't a number — its byte address isn't known until `bitter` lays
+    /// out the image. Compile-time only, like a macro: it can be passed,
+    /// stored and compared, but not emitted or used in arithmetic.
+    /// `label as int` is the one way out: a local label's entry position,
+    /// or an imported one's `ExternLabel`, for `std.bitter.deferred` to
+    /// build on.
+    Label(LabelValue),
+}
+
+/// Which label a `Value::Label` is.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LabelValue {
+    /// A label in this file: how many values are emitted before it.
+    Local(Int),
+    /// A `pub` label imported from another file — see `Value::ExternLabel`.
+    Extern { module: String, name: String },
 }
 
 // Lazy-resolve-and-memoize state for a top-level const's `Value`, mirroring
@@ -311,7 +329,7 @@ impl<'a> AliasResolver<'a> {
                         })
                 }
 
-                Value::Int(_) | Value::Enum { .. } | Value::Macro(_) | Value::ExternLabel { .. } => {
+                Value::Int(_) | Value::Enum { .. } | Value::Macro(_) | Value::ExternLabel { .. } | Value::Label(_) => {
                     Err(ResolveError::ExpectedStructValue { span: *span })
                 }
                 }
@@ -511,6 +529,17 @@ impl<'a> AliasResolver<'a> {
                     found: "a label from another file".to_string(),
                     hint: Some(
                         "its position isn't known until linking; use `std.bitter.deferred`'s `add`, `sub` or `span`"
+                            .to_string(),
+                    ),
+                    span: other.span(),
+                }),
+                // A position isn't a number: its byte address isn't known
+                // until layout.
+                Value::Label(_) => Err(ResolveError::NonIntOperand {
+                    found: "a label".to_string(),
+                    hint: Some(
+                        "a label is a position, not a number; use `std.bitter.deferred`'s `span`, `add` or `sub`, \
+                         or `label as int` for its entry position"
                             .to_string(),
                     ),
                     span: other.span(),
@@ -1077,7 +1106,7 @@ impl<'a> AliasResolver<'a> {
                 Ok(Int::from(index))
             }
             Value::Enum { .. } | Value::Struct { .. } | Value::Macro(_)
-            | Value::ExternLabel { .. } => {
+            | Value::ExternLabel { .. } | Value::Label(_) => {
                 Err(ResolveError::ExpectedIntValue { span: expr.span() })
             }
         }
@@ -1288,9 +1317,18 @@ impl<'a> AliasResolver<'a> {
                 // `Value::Int` — an identity conversion, not a real
                 // coercion.
                 Value::Int(_) | Value::ExternLabel { .. } => Ok(value),
+                // `label as int`: its position, for `std.bitter.deferred`.
+                Value::Label(LabelValue::Local(position)) => Ok(Value::Int(position)),
+                Value::Label(LabelValue::Extern { module, name }) => Ok(Value::ExternLabel { module, name }),
                 Value::Struct { .. } | Value::Enum { .. } | Value::Macro(_) => {
                     Err(ResolveError::ExpectedIntValue { span })
                 }
+            },
+
+            // Only a label is a label: no number names a position.
+            ResolvedType::Builtin(BuiltinType::Label) => match value {
+                Value::Label(_) => Ok(value),
+                _ => Err(ResolveError::CannotCoerce { type_name: "label".to_string(), span }),
             },
 
             ResolvedType::TypeParameter { name } => {
@@ -1682,7 +1720,7 @@ impl<'a> AliasResolver<'a> {
     /// `id` is already known to be `SymbolKind::Label` by the caller.
     pub(super) fn resolve_label_value(&mut self, id: SymbolId, span: Span) -> Result<Value, ResolveError> {
         match self.label_positions.get(&id) {
-            Some(position) => Ok(Value::Int(position.clone())),
+            Some(position) => Ok(Value::Label(LabelValue::Local(position.clone()))),
 
             None => match self.label_mode {
                 // Position-discovery pass: this label's own `foo:` line
@@ -1695,7 +1733,7 @@ impl<'a> AliasResolver<'a> {
                 // the module doc on why that invariant holds today).
                 LabelMode::Tolerant => {
                     self.used_forward_label_placeholder = true;
-                    Ok(Value::Int(Int::from(0)))
+                    Ok(Value::Label(LabelValue::Local(Int::from(0))))
                 }
 
                 // The real pass: every top-level label's position was
@@ -1726,10 +1764,10 @@ impl<'a> AliasResolver<'a> {
         let extern_label = self.find_extern_label_declaration(id)?;
         // The declaration carries the loader's internal name; the linker
         // knows the label by the name its file declared.
-        Ok(Value::ExternLabel {
+        Ok(Value::Label(LabelValue::Extern {
             module: extern_label.module.clone(),
             name: crate::loader::demangle(&extern_label.name),
-        })
+        }))
     }
 
     /// Evaluates `expr` and requires the result to be an `Int` — shared by
@@ -1744,7 +1782,7 @@ impl<'a> AliasResolver<'a> {
         match self.eval_value(expr, scope)? {
             Value::Int(value) => Ok(value),
             Value::Struct { .. } | Value::Enum { .. } | Value::Macro(_)
-            | Value::ExternLabel { .. } => {
+            | Value::ExternLabel { .. } | Value::Label(_) => {
                 Err(ResolveError::ExpectedIntValue { span: expr.span() })
             }
         }
@@ -1809,13 +1847,11 @@ impl<'a> AliasResolver<'a> {
         Ok(match value {
             Value::Int(_) => ResolvedType::Builtin(BuiltinType::Int),
 
-            // Reports the same type an ordinary, locally-resolvable label
-            // reference already has (`Value::Int`, via `resolve_label_value`)
-            // — see `Value::ExternLabel`'s own doc for why: every existing
-            // ISA package's `target: int`-shaped macro parameters need to
-            // keep accepting a cross-unit label with no changes of their
-            // own.
+            // What `label as int` gives an imported label: a number the
+            // linker fills in, so it types as one.
             Value::ExternLabel { .. } => ResolvedType::Builtin(BuiltinType::Int),
+
+            Value::Label(_) => ResolvedType::Builtin(BuiltinType::Label),
 
             Value::Macro(symbol) => self.macro_value_type(*symbol)?,
 
@@ -1881,7 +1917,7 @@ fn tag_nominal(value: Value, alias: &ResolvedType) -> Value {
             Value::Struct { symbol, args, fields, nominal: Some(Box::new(alias.clone())) }
         }
 
-        Value::Int(_) | Value::Macro(_) | Value::Enum { .. } | Value::ExternLabel { .. } => value,
+        Value::Int(_) | Value::Macro(_) | Value::Enum { .. } | Value::ExternLabel { .. } | Value::Label(_) => value,
     }
 }
 

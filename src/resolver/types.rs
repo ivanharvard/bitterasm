@@ -118,6 +118,9 @@ fn generic_args_accept(expected: &[ResolvedGenericArg], actual: &[ResolvedGeneri
 #[derive(Debug, Clone, PartialEq)]
 pub enum BuiltinType {
     Int,
+    /// A label: a position in the emitted stream, not a number. Compile-time
+    /// only, like a macro type — see `Value::Label`.
+    Label,
 }
 
 #[derive(Debug, Clone, PartialEq)]

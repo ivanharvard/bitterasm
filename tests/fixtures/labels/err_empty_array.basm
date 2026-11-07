@@ -1,0 +1,7 @@
+from std.array import Array
+
+macro leak() {
+    @emit Array<label, 0>()
+}
+
+leak

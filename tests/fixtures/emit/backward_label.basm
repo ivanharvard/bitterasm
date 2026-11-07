@@ -1,5 +1,5 @@
 mylabel:
 
 macro reads_label() {
-    @emit mylabel
+    @emit mylabel as int
 }

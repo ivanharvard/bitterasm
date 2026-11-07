@@ -11,8 +11,8 @@ macro user() {
     @emit v
 }
 
-macro show(position: int) {
-    @emit position
+macro show(position: label) {
+    @emit position as int
 }
 
 user

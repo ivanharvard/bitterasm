@@ -1,0 +1,5 @@
+macro jump(at: label) {
+    @emit at as int
+}
+
+jump 3

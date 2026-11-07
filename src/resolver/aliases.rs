@@ -744,6 +744,7 @@ impl<'a> AliasResolver<'a> {
         // builtins
         match name.as_str() {
             "int" => return Ok(ResolvedType::Builtin(BuiltinType::Int)),
+            "label" => return Ok(ResolvedType::Builtin(BuiltinType::Label)),
             _ => {}
         }
 

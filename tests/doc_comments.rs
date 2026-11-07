@@ -133,7 +133,7 @@ fn pages_show_each_dialects_own_spelling() {
 
     let nasm = page("std/x86_64/nasm.basm");
     // An operand pattern, as its author wrote it.
-    assert!(nasm.contains("| `[rel target]` | `target: int` | returns `RipLabel` |"), "{nasm}");
+    assert!(nasm.contains("| `[rel target]` | `target: label` | returns `RipLabel` |"), "{nasm}");
     // Re-exported overloads keep their own module's name...
     assert!(nasm.contains("| `[base+disp]` | `base: Reg`, `disp: int` | returns `MemOperand` | `[base+disp]`. | [`std.x86_64.intel`](intel.md) |"));
     assert!(nasm.contains("| `mov rd, rs` | `<R>`, `rd: R`, `rs: R` | emits `Bytes<...>` | `rd = rs`. | [`std.x86_64.impl`](impl.md) |"));

@@ -1312,7 +1312,7 @@ pub macro test(
 # target's), corrected by this instruction's own fixed length to land on the
 # *next* instruction instead.
 macro rel32_offset(
-    target: int,
+    target: label,
     own_length: int
 ) -> Deferred {
     @return sub(span(here(), target), own_length)
@@ -1355,7 +1355,7 @@ pub struct Rel32Instr2 {
 # variable-length encoding in this instruction at all (unlike, say, the
 # memory operands).
 ## Jumps to the label `target`.
-pub macro jmp(target: int)
+pub macro jmp(target: label)
     | emits Rel32Instr
 {
     @emit Rel32Instr(
@@ -1370,7 +1370,7 @@ pub macro jmp(target: int)
 # `call rel32` — same shape as `jmp`, different opcode, still 5 bytes total.
 ## Pushes the address of the next instruction and jumps to the label
 ## `target`.
-pub macro call(target: int)
+pub macro call(target: label)
     | emits Rel32Instr
 {
     @emit Rel32Instr(
@@ -1389,7 +1389,7 @@ pub macro call(target: int)
 # longer than `jmp`/`call`'s `own_length`.
 macro jcc_instr(
     condition: int,
-    target: int
+    target: label
 ) -> Rel32Instr2 {
     @return Rel32Instr2(
         opcode1 = Byte(0x0F),
@@ -1407,97 +1407,97 @@ macro jcc_instr(
 # `ja`/`jbe`, `jl`/`jge`, `jle`/`jg`, `js`/`jns`, `jo`/`jno`, `jp`/`jnp` are
 # each other's exact bit-complement — `tttn` vs `tttn⊕1`).
 ## Jumps to the label `target` if equal (ZF = 1).
-pub macro je(target: int)
+pub macro je(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0x4, target) }
 ## Jumps to the label `target` if not equal (ZF = 0).
-pub macro jne(target: int)
+pub macro jne(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0x5, target) }
 ## Jumps to the label `target` if below, unsigned (CF = 1).
-pub macro jb(target: int)
+pub macro jb(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0x2, target) }
 ## Jumps to the label `target` if above or equal, unsigned (CF = 0).
-pub macro jae(target: int)
+pub macro jae(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0x3, target) }
 ## Jumps to the label `target` if above, unsigned.
-pub macro ja(target: int)
+pub macro ja(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0x7, target) }
 ## Jumps to the label `target` if below or equal, unsigned.
-pub macro jbe(target: int)
+pub macro jbe(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0x6, target) }
 ## Jumps to the label `target` if less, signed.
-pub macro jl(target: int)
+pub macro jl(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0xC, target) }
 ## Jumps to the label `target` if greater or equal, signed.
-pub macro jge(target: int)
+pub macro jge(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0xD, target) }
 ## Jumps to the label `target` if less or equal, signed.
-pub macro jle(target: int)
+pub macro jle(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0xE, target) }
 ## Jumps to the label `target` if greater, signed.
-pub macro jg(target: int)
+pub macro jg(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0xF, target) }
 ## Jumps to the label `target` if the result was negative (SF = 1).
-pub macro js(target: int)
+pub macro js(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0x8, target) }
 ## Jumps to the label `target` if the result wasn't negative (SF = 0).
-pub macro jns(target: int)
+pub macro jns(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0x9, target) }
 ## Jumps to the label `target` on signed overflow (OF = 1).
-pub macro jo(target: int)
+pub macro jo(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0x0, target) }
 ## Jumps to the label `target` without signed overflow (OF = 0).
-pub macro jno(target: int)
+pub macro jno(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0x1, target) }
 ## Jumps to the label `target` if the parity flag is set (PF = 1).
-pub macro jp(target: int)
+pub macro jp(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0xA, target) }
 ## Jumps to the label `target` if the parity flag is clear (PF = 0).
-pub macro jnp(target: int)
+pub macro jnp(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0xB, target) }
 
 # The SDM's synonyms for the same 16 condition codes — every alternate spelling
 # its `Jcc` table lists, so code written against any of them assembles as-is.
 ## `je`, under another name.
-pub macro jz(target: int)
+pub macro jz(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0x4, target) }
 ## `jne`, under another name.
-pub macro jnz(target: int)
+pub macro jnz(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0x5, target) }
 ## `jb`, under another name.
-pub macro jc(target: int)
+pub macro jc(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0x2, target) }
 ## `jb`, under another name.
-pub macro jnae(target: int)
+pub macro jnae(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0x2, target) }
 ## `jae`, under another name.
-pub macro jnc(target: int)
+pub macro jnc(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0x3, target) }
 ## `jae`, under another name.
-pub macro jnb(target: int)
+pub macro jnb(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0x3, target) }
 ## `ja`, under another name.
-pub macro jnbe(target: int)
+pub macro jnbe(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0x7, target) }
 ## `jbe`, under another name.
-pub macro jna(target: int)
+pub macro jna(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0x6, target) }
 ## `jl`, under another name.
-pub macro jnge(target: int)
+pub macro jnge(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0xC, target) }
 ## `jge`, under another name.
-pub macro jnl(target: int)
+pub macro jnl(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0xD, target) }
 ## `jle`, under another name.
-pub macro jng(target: int)
+pub macro jng(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0xE, target) }
 ## `jg`, under another name.
-pub macro jnle(target: int)
+pub macro jnle(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0xF, target) }
 ## `jp`, under another name.
-pub macro jpe(target: int)
+pub macro jpe(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0xA, target) }
 ## `jnp`, under another name.
-pub macro jpo(target: int)
+pub macro jpo(target: label)
     | emits Rel32Instr2 { @emit jcc_instr(0xB, target) }
 
 ## Returns: pops an address and jumps to it.
@@ -1589,7 +1589,7 @@ pub macro lea<R>(rd: R, src: MemOperand)
 ## instruction: NASM's `[rel label]`.
 pub struct RipLabel {
     ## The label.
-    pub target: int,
+    pub target: label,
 }
 
 ## An instruction with a `RipLabel` operand and no REX prefix.
@@ -3460,7 +3460,7 @@ pub struct Rel8Instr2 {
 
 macro rel8_instr(
     opcode: int,
-    target: int
+    target: label
 ) -> Rel8Instr {
     @return Rel8Instr(
         opcode = Byte(opcode),
@@ -3470,28 +3470,28 @@ macro rel8_instr(
 
 ## Decrements `rcx`, then jumps to the label `target` unless it's 0. `target`
 ## must be within 127 bytes.
-pub macro loop(target: int)
+pub macro loop(target: label)
     | emits Rel8Instr { @emit rel8_instr(0xe2, target) }
 ## Decrements `rcx`, then jumps to the label `target` if it isn't 0 and ZF = 1.
 ## `target` must be within 127 bytes.
-pub macro loope(target: int)
+pub macro loope(target: label)
     | emits Rel8Instr { @emit rel8_instr(0xe1, target) }
 ## `loope`, under another name. `target` must be within 127 bytes.
-pub macro loopz(target: int)
+pub macro loopz(target: label)
     | emits Rel8Instr { @emit rel8_instr(0xe1, target) }
 ## Decrements `rcx`, then jumps to the label `target` if it isn't 0 and ZF = 0.
 ## `target` must be within 127 bytes.
-pub macro loopne(target: int)
+pub macro loopne(target: label)
     | emits Rel8Instr { @emit rel8_instr(0xe0, target) }
 ## `loopne`, under another name. `target` must be within 127 bytes.
-pub macro loopnz(target: int)
+pub macro loopnz(target: label)
     | emits Rel8Instr { @emit rel8_instr(0xe0, target) }
 ## Jumps to the label `target` if `rcx` is 0. `target` must be within 127 bytes.
-pub macro jrcxz(target: int)
+pub macro jrcxz(target: label)
     | emits Rel8Instr { @emit rel8_instr(0xe3, target) }
 ## Jumps to the label `target` if `ecx` is 0. `target` must be within 127
 ## bytes.
-pub macro jecxz(target: int)
+pub macro jecxz(target: label)
     | emits Rel8Instr2
 {
     @emit Rel8Instr2(

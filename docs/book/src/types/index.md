@@ -1,6 +1,9 @@
 # Types
 
-BitterASM has exactly one built-in type, [`int`](../basics/integers.md).
+BitterASM has one built-in data type, [`int`](../basics/integers.md). Two
+more kinds of value exist only at compile time and can never be emitted: a
+[label](../programs/labels.md), of type `label`, and a
+[macro](../macros/macro-parameters.md), of a type like `macro(int) -> int`.
 Every other type is declared in BitterASM code, usually in a library:
 
 | Kind | Declared with | Example |

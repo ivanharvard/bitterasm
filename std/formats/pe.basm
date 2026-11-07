@@ -48,7 +48,7 @@ macro pe_late_field(value: Deferred, bytes: int) {
 ## image loads at `image_base`.
 pub macro pe64_executable(
     machine: int,
-    entry: int,
+    entry: label,
     image_base: int = 0x140000000
 ) {
     # Everything after the 0x200 bytes of headers is the one section.

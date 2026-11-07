@@ -632,6 +632,7 @@ impl TypeSymbolNames for AliasResolver<'_> {
 pub(super) fn describe_type(ty: &ResolvedType, symbols: &impl TypeSymbolNames) -> String {
     match ty {
         ResolvedType::Builtin(BuiltinType::Int) => "int".to_string(),
+        ResolvedType::Builtin(BuiltinType::Label) => "label".to_string(),
         ResolvedType::Struct { symbol, args } | ResolvedType::Enum { symbol, args } => {
             format!("{}{}", symbols.type_symbol_name(*symbol), describe_args(args, symbols))
         }

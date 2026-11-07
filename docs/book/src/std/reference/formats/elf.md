@@ -42,7 +42,7 @@ A 64-bit ELF header and its one program header, 120 bytes. `machine` is
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `elf64_executable machine, entry, load_address, segment_flags, flags` | `machine: int`, `entry: int`, `load_address: int = 0x400000`, `segment_flags: int = 5`, `flags: int = 0` |  |  |
+| `elf64_executable machine, entry, load_address, segment_flags, flags` | `machine: int`, `entry: label`, `load_address: int = 0x400000`, `segment_flags: int = 5`, `flags: int = 0` |  |  |
 
 ### `elf32_executable`
 
@@ -51,7 +51,7 @@ RV32. The parameters mean what they do for `elf64_executable`.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `elf32_executable machine, entry, load_address, segment_flags, flags` | `machine: int`, `entry: int`, `load_address: int = 0x10000`, `segment_flags: int = 5`, `flags: int = 0` |  |  |
+| `elf32_executable machine, entry, load_address, segment_flags, flags` | `machine: int`, `entry: label`, `load_address: int = 0x10000`, `segment_flags: int = 5`, `flags: int = 0` |  |  |
 
 ## Constants
 

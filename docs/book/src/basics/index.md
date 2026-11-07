@@ -111,7 +111,7 @@ order they appear.
 
 ## In this chapter
 
-- [Integers](integers.md): the one built-in type.
+- [Integers](integers.md): the one built-in data type.
 - [Operators](operators.md): arithmetic, bitwise, comparison and logic.
 - [Ranges and `in`](ranges.md): `0..n`, and testing membership.
 - [Characters and strings](strings.md).

@@ -16,21 +16,31 @@ be unique in its file.
 
 ## A label's value is a position
 
-A label's value is the index of the next value emitted after it: `0` for the
-first emitted value, `1` for the second, and so on. It's an ordinary `int`:
+A label has type `label`: a position in the output, not a number. Like a
+macro, it's compile-time only. A macro can take one as a parameter, store it
+and compare it, but it can't `@emit` it or do arithmetic with it, since a
+position isn't an address.
+
+When you do need the number, `as int` gives the index of the next value
+emitted after the label: `0` for the first emitted value, `1` for the
+second, and so on.
 
 ```basm
 macro show(value: int) {
     @emit value
 }
 
+macro position(at: label) {
+    @emit at as int
+}
+
 start:
     show 10
     show 20
 middle:
-    show start
-    show middle
-    show end
+    position start
+    position middle
+    position end
 end:
 ```
 
@@ -62,7 +72,7 @@ macro dw(value: int) {
     @emit value as bits<16>
 }
 
-macro length_byte(start: int, end: int) {
+macro length_byte(start: label, end: label) {
     @emit Positioned<8> { value: span(start, end) }
 }
 
@@ -94,11 +104,11 @@ pub double:
 ```basm
 from .util import double
 
-macro show(value: int) {
-    @emit value
+macro position(at: label) {
+    @emit at as int
 }
 
-show double
+position double
 ```
 
 ```emits

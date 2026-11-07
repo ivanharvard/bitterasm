@@ -303,7 +303,7 @@ Branches to the label `target` if `rs1 == rs2`.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `beq rs1, rs2, target` | `rs1: Reg`, `rs2: Reg`, `target: int` | emits `LittleEndian<BType, 32>` |  |
+| `beq rs1, rs2, target` | `rs1: Reg`, `rs2: Reg`, `target: label` | emits `LittleEndian<BType, 32>` |  |
 
 ### `bne`
 
@@ -311,7 +311,7 @@ Branches to the label `target` if `rs1 != rs2`.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `bne rs1, rs2, target` | `rs1: Reg`, `rs2: Reg`, `target: int` | emits `LittleEndian<BType, 32>` |  |
+| `bne rs1, rs2, target` | `rs1: Reg`, `rs2: Reg`, `target: label` | emits `LittleEndian<BType, 32>` |  |
 
 ### `blt`
 
@@ -319,7 +319,7 @@ Branches to the label `target` if `rs1 < rs2` as signed numbers.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `blt rs1, rs2, target` | `rs1: Reg`, `rs2: Reg`, `target: int` | emits `LittleEndian<BType, 32>` |  |
+| `blt rs1, rs2, target` | `rs1: Reg`, `rs2: Reg`, `target: label` | emits `LittleEndian<BType, 32>` |  |
 
 ### `bge`
 
@@ -327,7 +327,7 @@ Branches to the label `target` if `rs1 >= rs2` as signed numbers.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `bge rs1, rs2, target` | `rs1: Reg`, `rs2: Reg`, `target: int` | emits `LittleEndian<BType, 32>` |  |
+| `bge rs1, rs2, target` | `rs1: Reg`, `rs2: Reg`, `target: label` | emits `LittleEndian<BType, 32>` |  |
 
 ### `bltu`
 
@@ -335,7 +335,7 @@ Branches to the label `target` if `rs1 < rs2` as unsigned numbers.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `bltu rs1, rs2, target` | `rs1: Reg`, `rs2: Reg`, `target: int` | emits `LittleEndian<BType, 32>` |  |
+| `bltu rs1, rs2, target` | `rs1: Reg`, `rs2: Reg`, `target: label` | emits `LittleEndian<BType, 32>` |  |
 
 ### `bgeu`
 
@@ -343,7 +343,7 @@ Branches to the label `target` if `rs1 >= rs2` as unsigned numbers.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `bgeu rs1, rs2, target` | `rs1: Reg`, `rs2: Reg`, `target: int` | emits `LittleEndian<BType, 32>` |  |
+| `bgeu rs1, rs2, target` | `rs1: Reg`, `rs2: Reg`, `target: label` | emits `LittleEndian<BType, 32>` |  |
 
 ### `lui`
 
@@ -368,7 +368,7 @@ in `rd`. `jal ra, f` calls `f`; `jal zero, l` just jumps.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `jal rd, target` | `rd: Reg`, `target: int` | emits `LittleEndian<JType, 32>` |  |
+| `jal rd, target` | `rd: Reg`, `target: label` | emits `LittleEndian<JType, 32>` |  |
 
 ### `li`
 
@@ -387,7 +387,7 @@ Loads the address of the label `symbol` into `rd`: `auipc` for the upper
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `la rd, symbol` | `rd: Reg`, `symbol: int` |  |  |
+| `la rd, symbol` | `rd: Reg`, `symbol: label` |  |  |
 
 ### `ascii`
 

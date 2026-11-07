@@ -1,0 +1,6 @@
+macro next(at: label) {
+    @emit at + 1
+}
+
+start:
+    next start

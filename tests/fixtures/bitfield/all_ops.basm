@@ -8,7 +8,7 @@ struct Word {
     rel: Positioned<6>,
 }
 
-macro verify(target: int) {
+macro verify(target: label) {
     @assert mask(5) == 0b11111, "mask"
     @assert bit(0b100, 2) == 1, "bit set"
     @assert bit(0b100, 1) == 0, "bit clear"

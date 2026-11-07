@@ -10,7 +10,7 @@ from std.pdp10.impl import *
 from std.pdp10.tops10 import *
 
 start:
-    outstr JOBDA + msg
+    outstr JOBDA + msg as int
     exit
 msg:
     asciz "Hi\r\n"
@@ -23,8 +23,8 @@ msg:
 ```
 
 TOPS-10 loads a program at `JOBDA`. Every instruction and data word is
-one emitted value, so a label's position counts words, and `JOBDA` plus
-the label is its address.
+one emitted value, so a label's position (`msg as int`) counts words, and
+`JOBDA` plus it is the label's address.
 
 Opcodes are from the DECsystem-10 Monitor Calls manual (AA-0974G-TB).
 

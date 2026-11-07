@@ -36,7 +36,7 @@ image loads at `image_base`.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `pe64_executable machine, entry, image_base` | `machine: int`, `entry: int`, `image_base: int = 0x140000000` |  |  |
+| `pe64_executable machine, entry, image_base` | `machine: int`, `entry: label`, `image_base: int = 0x140000000` |  |  |
 
 ## Constants
 

@@ -59,7 +59,7 @@ macro macho_name<S>(text: S, bytes: int) {
 pub macro macho64_executable(
     cpu_type: int,
     cpu_subtype: int,
-    entry: int,
+    entry: label,
     vm_address: int = 0x100000000
 ) {
     const file_size = span(image_start, image_end)

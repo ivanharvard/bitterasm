@@ -1,0 +1,6 @@
+macro leak(at: label) {
+    @emit at
+}
+
+start:
+    leak start

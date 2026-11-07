@@ -11,7 +11,7 @@
 #!     @emit value as bits<8>
 #! }
 #!
-#! macro offset_to(target: int) {
+#! macro offset_to(target: label) {
 #!     @emit Positioned<8> { value: span(here(), target) }
 #! }
 #!
@@ -268,41 +268,40 @@ pub macro band(
 # store it and reuse it from elsewhere. Labels don't have this problem:
 # `name:` already resolves to a fixed, nameable position via bitterasm's
 # own two-pass resolver, independent of where its value later gets used —
-# exactly what `span`'s non-`here()` endpoints ordinarily are (a label
-# name, already a plain `int` by the time a macro body sees it, exactly
-# like `std/riscv`'s branch instructions take one as their `target: int`).
+# exactly what `span`'s non-`here()` endpoints ordinarily are (a `label`,
+# the type `std/riscv`'s branch instructions take as their `target`).
 ## The number of bytes from position `start` to position `end`, negative
 ## if `end` comes first. Either may be `here()`. Labels are positions, so
 ## `span(here(), target)` is a relative branch offset.
 pub macro span(
-    start: int,
-    end: int
+    start: label,
+    end: label
 ) -> Deferred {
     @return Deferred.Node(BinOp(
         op = Op.Span,
-        left = Deferred.Pos(start),
-        right = Deferred.Pos(end)
+        left = Deferred.Pos(start as int),
+        right = Deferred.Pos(end as int)
     ))
 }
 
 pub macro span(
     start: Deferred,
-    end: int
+    end: label
 ) -> Deferred {
     @return Deferred.Node(BinOp(
         op = Op.Span,
         left = start,
-        right = Deferred.Pos(end)
+        right = Deferred.Pos(end as int)
     ))
 }
 
 pub macro span(
-    start: int,
+    start: label,
     end: Deferred
 ) -> Deferred {
     @return Deferred.Node(BinOp(
         op = Op.Span,
-        left = Deferred.Pos(start),
+        left = Deferred.Pos(start as int),
         right = end
     ))
 }

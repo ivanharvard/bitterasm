@@ -2,5 +2,5 @@
 from .labels import marker
 
 pub macro read_marker() -> int {
-    @return marker
+    @return marker as int
 }

@@ -22,8 +22,7 @@ total:
 
 `[rip+disp]` from `std.x86_64.intel` takes a displacement you already
 know; `[rel label]` takes a label and computes the displacement once the
-code is laid out. The two can't share a spelling: a label is a plain `int`
-too, so `[rip+label]` would be exactly as well-typed as `[rip+disp]`.
+code is laid out.
 
 Not covered: NASM's `$`/`$$`, `equ`, `times`, `resb`, and
 `global`/`extern` (use `const`, `@for`, and `pub` labels instead).
@@ -302,7 +301,7 @@ instruction. To address a label, use a `RipLabel` instead.
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jmp target` | `target: int` | emits `Rel32Instr` | Jumps to the label `target`. | [`std.x86_64.impl`](impl.md) |
+| `jmp target` | `target: label` | emits `Rel32Instr` | Jumps to the label `target`. | [`std.x86_64.impl`](impl.md) |
 | `jmp r` | `r: Reg` | emits `Bytes<...>` | Jumps to the address in `r`. | [`std.x86_64.impl`](impl.md) |
 | `jmp src` | `src: MemOperand` | emits `Bytes<...>` | Jumps to the address stored at `src`. | [`std.x86_64.impl`](impl.md) |
 | `jmp src, size` | `src: MemOperand`, `size: OperandSize` | emits `Bytes<...>` | `jmp src`; `size` must be `qword`. | [`std.x86_64.impl`](impl.md) |
@@ -311,7 +310,7 @@ instruction. To address a label, use a `RipLabel` instead.
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `call target` | `target: int` | emits `Rel32Instr` | Pushes the address of the next instruction and jumps to the label `target`. | [`std.x86_64.impl`](impl.md) |
+| `call target` | `target: label` | emits `Rel32Instr` | Pushes the address of the next instruction and jumps to the label `target`. | [`std.x86_64.impl`](impl.md) |
 | `call r` | `r: Reg` | emits `Bytes<...>` | Calls the address in `r`. | [`std.x86_64.impl`](impl.md) |
 | `call src` | `src: MemOperand` | emits `Bytes<...>` | Calls the address stored at `src`. | [`std.x86_64.impl`](impl.md) |
 | `call src, size` | `src: MemOperand`, `size: OperandSize` | emits `Bytes<...>` | `call src`; `size` must be `qword`. | [`std.x86_64.impl`](impl.md) |
@@ -322,7 +321,7 @@ Jumps to the label `target` if equal (ZF = 1).
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `je target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `je target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jne`
 
@@ -330,7 +329,7 @@ Jumps to the label `target` if not equal (ZF = 0).
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jne target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jne target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jb`
 
@@ -338,7 +337,7 @@ Jumps to the label `target` if below, unsigned (CF = 1).
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jb target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jb target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jae`
 
@@ -346,7 +345,7 @@ Jumps to the label `target` if above or equal, unsigned (CF = 0).
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jae target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jae target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `ja`
 
@@ -354,7 +353,7 @@ Jumps to the label `target` if above, unsigned.
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `ja target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `ja target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jbe`
 
@@ -362,7 +361,7 @@ Jumps to the label `target` if below or equal, unsigned.
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jbe target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jbe target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jl`
 
@@ -370,7 +369,7 @@ Jumps to the label `target` if less, signed.
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jl target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jl target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jge`
 
@@ -378,7 +377,7 @@ Jumps to the label `target` if greater or equal, signed.
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jge target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jge target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jle`
 
@@ -386,7 +385,7 @@ Jumps to the label `target` if less or equal, signed.
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jle target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jle target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jg`
 
@@ -394,7 +393,7 @@ Jumps to the label `target` if greater, signed.
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jg target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jg target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `js`
 
@@ -402,7 +401,7 @@ Jumps to the label `target` if the result was negative (SF = 1).
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `js target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `js target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jns`
 
@@ -410,7 +409,7 @@ Jumps to the label `target` if the result wasn't negative (SF = 0).
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jns target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jns target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jo`
 
@@ -418,7 +417,7 @@ Jumps to the label `target` on signed overflow (OF = 1).
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jo target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jo target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jno`
 
@@ -426,7 +425,7 @@ Jumps to the label `target` without signed overflow (OF = 0).
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jno target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jno target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jp`
 
@@ -434,7 +433,7 @@ Jumps to the label `target` if the parity flag is set (PF = 1).
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jp target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jp target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jnp`
 
@@ -442,7 +441,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jnp target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jnp target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jz`
 
@@ -450,7 +449,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jz target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jz target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jnz`
 
@@ -458,7 +457,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jnz target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jnz target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jc`
 
@@ -466,7 +465,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jc target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jc target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jnae`
 
@@ -474,7 +473,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jnae target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jnae target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jnc`
 
@@ -482,7 +481,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jnc target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jnc target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jnb`
 
@@ -490,7 +489,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jnb target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jnb target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jnbe`
 
@@ -498,7 +497,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jnbe target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jnbe target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jna`
 
@@ -506,7 +505,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jna target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jna target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jnge`
 
@@ -514,7 +513,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jnge target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jnge target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jnl`
 
@@ -522,7 +521,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jnl target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jnl target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jng`
 
@@ -530,7 +529,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jng target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jng target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jnle`
 
@@ -538,7 +537,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jnle target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jnle target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jpe`
 
@@ -546,7 +545,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jpe target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jpe target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jpo`
 
@@ -554,7 +553,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jpo target` | `target: int` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jpo target` | `target: label` | emits `Rel32Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `ret`
 
@@ -1447,7 +1446,7 @@ must be within 127 bytes.
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `loop target` | `target: int` | emits `Rel8Instr` |  | [`std.x86_64.impl`](impl.md) |
+| `loop target` | `target: label` | emits `Rel8Instr` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `loope`
 
@@ -1456,7 +1455,7 @@ Decrements `rcx`, then jumps to the label `target` if it isn't 0 and ZF = 1.
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `loope target` | `target: int` | emits `Rel8Instr` |  | [`std.x86_64.impl`](impl.md) |
+| `loope target` | `target: label` | emits `Rel8Instr` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `loopz`
 
@@ -1464,7 +1463,7 @@ Decrements `rcx`, then jumps to the label `target` if it isn't 0 and ZF = 1.
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `loopz target` | `target: int` | emits `Rel8Instr` |  | [`std.x86_64.impl`](impl.md) |
+| `loopz target` | `target: label` | emits `Rel8Instr` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `loopne`
 
@@ -1473,7 +1472,7 @@ Decrements `rcx`, then jumps to the label `target` if it isn't 0 and ZF = 0.
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `loopne target` | `target: int` | emits `Rel8Instr` |  | [`std.x86_64.impl`](impl.md) |
+| `loopne target` | `target: label` | emits `Rel8Instr` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `loopnz`
 
@@ -1481,7 +1480,7 @@ Decrements `rcx`, then jumps to the label `target` if it isn't 0 and ZF = 0.
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `loopnz target` | `target: int` | emits `Rel8Instr` |  | [`std.x86_64.impl`](impl.md) |
+| `loopnz target` | `target: label` | emits `Rel8Instr` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jrcxz`
 
@@ -1489,7 +1488,7 @@ Jumps to the label `target` if `rcx` is 0. `target` must be within 127 bytes.
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jrcxz target` | `target: int` | emits `Rel8Instr` |  | [`std.x86_64.impl`](impl.md) |
+| `jrcxz target` | `target: label` | emits `Rel8Instr` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `jecxz`
 
@@ -1498,7 +1497,7 @@ bytes.
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `jecxz target` | `target: int` | emits `Rel8Instr2` |  | [`std.x86_64.impl`](impl.md) |
+| `jecxz target` | `target: label` | emits `Rel8Instr2` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `nop`
 
@@ -2679,7 +2678,7 @@ msg:
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `[rel target]` | `target: int` | returns `RipLabel` |  |
+| `[rel target]` | `target: label` | returns `RipLabel` |  |
 
 ### `data_int`
 

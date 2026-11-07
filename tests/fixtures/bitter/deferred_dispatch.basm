@@ -60,24 +60,24 @@ macro verify() {
     # concrete label positions still build a Deferred.Node. (Deferred, int)
     # and (int, Deferred) are what let `span(here(), target)` work at all —
     # exactly x86's `jmp`/`jcc`/`call rel32` use case (see
-    # std/bitter/deferred.basm's own doc comment on `span`). Its `int`
+    # std/bitter/deferred.basm's own doc comment on `span`). Its `label`
     # endpoints are positions, so they're wrapped as `Pos`, not `Leaf`.
     @assert span(
-        0,
-        2
-    ) == Deferred.Node(BinOp(op = Op.Span, left = Deferred.Pos(0), right = Deferred.Pos(2)))
+        first,
+        second
+    ) == Deferred.Node(BinOp(op = Op.Span, left = Deferred.Pos(0), right = Deferred.Pos(1)))
     @assert span(
         x,
-        2
-    ) == Deferred.Node(BinOp(op = Op.Span, left = x, right = Deferred.Pos(2)))
+        second
+    ) == Deferred.Node(BinOp(op = Op.Span, left = x, right = Deferred.Pos(1)))
     @assert span(
-        0,
+        first,
         x
     ) == Deferred.Node(BinOp(op = Op.Span, left = Deferred.Pos(0), right = x))
     @assert span(
         here(),
-        5
-    ) == Deferred.Node(BinOp(op = Op.Span, left = Deferred.Here, right = Deferred.Pos(5)))
+        second
+    ) == Deferred.Node(BinOp(op = Op.Span, left = Deferred.Here, right = Deferred.Pos(1)))
 
     # nesting: once any operand in a chain is Deferred, every later call in
     # the same expression keeps building the tree rather than collapsing
@@ -102,4 +102,13 @@ macro verify() {
     @emit p
 }
 
+macro filler() {
+    @emit 0
+}
+
+# Two labels for `span`'s endpoints: at positions 0 and 1, both before
+# `verify`, so its checks hold in the first label pass too.
+first:
+filler
+second:
 verify

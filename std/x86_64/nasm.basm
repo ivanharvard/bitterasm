@@ -18,8 +18,7 @@
 #!
 #! `[rip+disp]` from `std.x86_64.intel` takes a displacement you already
 #! know; `[rel label]` takes a label and computes the displacement once the
-#! code is laid out. The two can't share a spelling: a label is a plain `int`
-#! too, so `[rip+label]` would be exactly as well-typed as `[rip+disp]`.
+#! code is laid out.
 #!
 #! Not covered: NASM's `$`/`$$`, `equ`, `times`, `resb`, and
 #! `global`/`extern` (use `const`, `@for`, and `pub` labels instead).
@@ -54,7 +53,7 @@ from std.strings.utf8 import string_from_struct
 ## 8b 05 00 00 00 00
 ## 48 69 0a
 ## ```
-pub macro rel(target: int) -> RipLabel
+pub macro rel(target: label) -> RipLabel
     | syntax { [rel $target$] }
 {
     @return RipLabel(target = target)
