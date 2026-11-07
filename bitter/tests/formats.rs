@@ -9,8 +9,12 @@ fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
 }
 
+// A fresh directory per call: tests run in parallel, and two building the
+// same fixture into one path would overwrite an executable mid-run.
 fn scratch() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("bitter-formats-{}", std::process::id()));
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let call = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("bitter-formats-{}-{call}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
