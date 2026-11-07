@@ -1,4 +1,5 @@
-from std.string import AsciiString, Utf8String, string_from_struct, ascii_upper, ascii_lower, ascii_title, utf8_codepoint_count, utf8_is_ascii
+from std.strings.ascii import AsciiString, ascii_upper, ascii_lower, ascii_title
+from std.strings.utf8 import Utf8String, string_from_struct, utf8_codepoint_count, utf8_is_ascii
 from std.array import array_from_struct
 from std.binary import Endian
 

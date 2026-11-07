@@ -15,7 +15,7 @@
 | [`option`](option.md) | `Option<T>`: a value that may be missing. |
 | [`pdp10/`](pdp10/index.md) | `impl`, `tops10` |
 | [`riscv/`](riscv/index.md) | `c_like`, `impl`, `native` |
-| [`string`](string.md) | Strings packed into one integer. A string literal like `"hi"` is a struct of code points; `string_from_struct` encodes it as UTF-8 bytes in a single `int`, with its length in bytes. |
+| [`strings/`](strings/index.md) | `ascii`, `cstring`, `packed`, `utf16`, `utf8` |
 | [`unsigned`](unsigned.md) | `uint`, an `int` that can't be negative. |
 | [`wasm/`](wasm/index.md) | `impl`, `leb128`, `module` |
 | [`x86_64/`](x86_64/index.md) | `att`, `impl`, `intel`, `nasm` |

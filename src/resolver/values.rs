@@ -374,7 +374,7 @@ impl<'a> AliasResolver<'a> {
             // A string literal materializes to a generated struct of
             // Unicode scalar values, mirroring range literals' generated
             // structs while preserving architecture-independent character
-            // identity. `std.string.string_from_struct` can explicitly pack
+            // identity. `std.strings.utf8.string_from_struct` can explicitly pack
             // it into UTF-8 bytes when that representation is wanted.
             Expr::String { value, span } => self.eval_string_value(value, *span),
 

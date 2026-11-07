@@ -4,7 +4,8 @@
 
 from std.x86_64.nasm import *
 from std.formats.macho import *
-from std.string import string_from_struct, validate_ascii
+from std.strings.ascii import validate_ascii
+from std.strings.utf8 import string_from_struct
 from std.binary import Endian
 
 macho64_executable CPU_TYPE_X86_64, CPU_SUBTYPE_X86_64_ALL, _start

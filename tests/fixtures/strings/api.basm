@@ -1,7 +1,9 @@
-# Every public std.string macro on short strings. The expected values in
-# tests/string_lib.rs were produced by the recursive implementation this
-# replaced, and match Python's own UTF-8 encoding.
-from std.string import AsciiString, Utf8String, string_from_struct, utf8_struct_byte_len, validate_ascii, validate_utf8, ascii_upper, ascii_lower, ascii_title, utf8_codepoint_count, utf8_is_ascii
+# Every public std.strings.ascii and std.strings.utf8 macro on short
+# strings. The expected values in tests/string_lib.rs were produced by the
+# recursive implementation this replaced, and match Python's own UTF-8
+# encoding.
+from std.strings.ascii import AsciiString, validate_ascii, ascii_upper, ascii_lower, ascii_title
+from std.strings.utf8 import Utf8String, string_from_struct, utf8_struct_byte_len, validate_utf8, utf8_codepoint_count, utf8_is_ascii
 from std.binary import Endian
 
 macro show(s: int) {

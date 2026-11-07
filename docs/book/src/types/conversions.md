@@ -112,7 +112,7 @@ emit_fixed 3 as Fixed<4>
 Fixed<4> { raw: 48 }
 ```
 
-`std.string` uses `target` the same way, to convert to
+`std.strings.utf8` uses `target` the same way, to convert to
 `Utf8String<len, endian>` with the length and byte order the caller asked
 for.
 

@@ -1,0 +1,12 @@
+from std.strings.utf16 import Utf16String
+from std.binary import Endian
+
+macro make(_unused: int) {
+    @emit Utf16String<2, Endian.Big> {
+        value: 0xDC000041,
+        len: 2,
+        endian: Endian.Big
+    }
+}
+
+make 0

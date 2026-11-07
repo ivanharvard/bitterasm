@@ -1,0 +1,133 @@
+#! ASCII strings: one byte per character, each below `0x80`.
+#!
+#! ```
+#! from std.strings.ascii import *
+#! from std.strings.utf8 import string_from_struct
+#! from std.binary import Endian
+#!
+#! macro show(value: int) {
+#!     @emit value
+#! }
+#!
+#! macro demo() {
+#!     const s = string_from_struct("hi") as AsciiString<2, Endian.Big>
+#!     show ascii_upper(s).value
+#!     show ascii_byte_at(s, 1)
+#! }
+#!
+#! demo
+#! ```
+#!
+#! ```emits
+#! 18505 105
+#! ```
+#!
+#! `18505` is `0x4849`, the bytes of `HI`. Converting a `String` to
+#! `AsciiString` with `as` checks every byte is ASCII.
+
+from std.binary import BITS_PER_BYTE, Endian
+from .packed import String, byte_at, unit_shift, validate_units
+
+## `len` ASCII bytes (each below `0x80`) packed into `value`, with byte 0 at
+## the `endian` end.
+pub struct AsciiString<const len: int, const endian: Endian>
+    | invariant validate_ascii(value, len, endian)
+    | from string_to_ascii(source, target.len, target.endian)
+{
+    ## The bytes, packed.
+    pub value: int,
+    ## The number of bytes.
+    pub len: int,
+    ## Which end of `value` holds byte 0.
+    pub endian: Endian,
+}
+
+## 1 if `len` bytes packed into `value` are all ASCII. Otherwise it's a
+## compile error.
+pub macro validate_ascii(
+    value: int,
+    len: int,
+    endian: Endian
+) -> int {
+    @assert validate_units(value, len, BITS_PER_BYTE)
+    @for index in 0..len {
+        @assert byte_at(value, len, index, endian) < 0x80, "non-ASCII byte"
+    }
+    @return 1
+}
+
+macro string_to_ascii(
+    s: String,
+    len: int,
+    endian: Endian
+) -> AsciiString {
+    @assert s.len == len, "conversion target length must match the source"
+    @return AsciiString(value = s.value, len = len, endian = endian)
+}
+
+## Byte `index` of `s`.
+pub macro ascii_byte_at(
+    s: AsciiString,
+    index: int
+) -> int {
+    @return byte_at(s.value, s.len, index, s.endian)
+}
+
+macro ascii_case_byte(
+    byte: int,
+    upper: int
+) -> int {
+    @if upper && byte >= 'a' && byte <= 'z' {
+        @return byte - ('a' - 'A')
+    }
+    @if !upper && byte >= 'A' && byte <= 'Z' {
+        @return byte + ('a' - 'A')
+    }
+    @return byte
+}
+
+macro ascii_case_value(
+    value: int,
+    len: int,
+    endian: Endian,
+    upper: int
+) -> int {
+    @return @fold cased = 0 @for index in 0..len {
+        const byte = ascii_case_byte(byte_at(value, len, index, endian), upper)
+        @next cased | (byte << unit_shift(index, len, endian, BITS_PER_BYTE))
+    }
+}
+
+## `s` with `a`-`z` made uppercase.
+pub macro ascii_upper(s: AsciiString) -> AsciiString {
+    @return AsciiString<s.len, s.endian> {
+        value: ascii_case_value(s.value, s.len, s.endian, 1),
+        len: s.len,
+        endian: s.endian,
+    }
+}
+
+## `s` with `A`-`Z` made lowercase.
+pub macro ascii_lower(s: AsciiString) -> AsciiString {
+    @return AsciiString<s.len, s.endian> {
+        value: ascii_case_value(s.value, s.len, s.endian, 0),
+        len: s.len,
+        endian: s.endian,
+    }
+}
+
+## `s` with its first byte made uppercase.
+pub macro ascii_title(s: AsciiString) -> AsciiString {
+    @if s.len == 0 {
+        @return s
+    }
+    const first = byte_at(s.value, s.len, 0, s.endian)
+    const cased = ascii_case_byte(first, 1)
+    const shift = unit_shift(0, s.len, s.endian, BITS_PER_BYTE)
+    const mask = 0xFF << shift
+    @return AsciiString<s.len, s.endian> {
+        value: (s.value & ~mask) | (cased << shift),
+        len: s.len,
+        endian: s.endian,
+    }
+}

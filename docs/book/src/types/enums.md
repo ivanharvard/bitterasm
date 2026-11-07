@@ -108,7 +108,7 @@ emit_option Option.Some(42)
 ## Enums as settings
 
 An enum can be a [const generic parameter](../generics/const.md), which
-makes it a good fit for options that are fixed at compile time. `std.string`
+makes it a good fit for options that are fixed at compile time. `std.strings`
 uses `Endian` this way: `Utf8String<5, Endian.Little>`.
 
 ## Enums and output

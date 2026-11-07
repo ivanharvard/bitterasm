@@ -1,0 +1,84 @@
+#! NUL-terminated strings, the way C (and every API built on it) expects
+#! them: the characters, then one zero code unit. `nul_terminated` works on
+#! any encoding and returns the same string type, one unit longer. A zero
+#! unit is one byte for ASCII and UTF-8, and two bytes for UTF-16, as in
+#! Windows' wide strings.
+#!
+#! ```
+#! from std.strings.cstring import nul_terminated
+#! from std.strings.ascii import AsciiString
+#! from std.strings.utf8 import string_from_struct
+#! from std.strings.utf16 import utf16_from_struct
+#! from std.binary import Endian
+#!
+#! macro show(value: int) {
+#!     @emit value
+#! }
+#!
+#! macro demo() {
+#!     const s = nul_terminated(string_from_struct("hi") as AsciiString<2, Endian.Big>)
+#!     show s.value
+#!     show s.len
+#!     show nul_terminated(utf16_from_struct("hi")).len
+#! }
+#!
+#! demo
+#! ```
+#!
+#! ```emits
+#! 6842624 3 3
+#! ```
+#!
+#! `6842624` is `0x686900`: `h`, `i`, then the NUL. A string that already
+#! holds a NUL is a compile error, since C would stop reading at it.
+
+from std.binary import BITS_PER_BYTE, Endian
+from .packed import unit_at
+from .ascii import AsciiString
+from .utf8 import Utf8String
+from .utf16 import Utf16String, UTF16_UNIT_BITS
+
+# `value` with a zero unit after its last one. Unit `len` sits past the
+# top of a little-endian `value`, where it's already zero.
+macro nul_terminated_value(
+    value: int,
+    len: int,
+    endian: Endian,
+    width: int
+) -> int {
+    @for index in 0..len {
+        const unit = unit_at(value, len, index, endian, width)
+        @assert unit != 0, "a C string cannot contain NUL"
+    }
+    @if endian == Endian.Little {
+        @return value
+    }
+    @return value << width
+}
+
+## `s` followed by a NUL byte.
+pub macro nul_terminated(s: AsciiString) -> AsciiString {
+    @return AsciiString<s.len + 1, s.endian> {
+        value: nul_terminated_value(s.value, s.len, s.endian, BITS_PER_BYTE),
+        len: s.len + 1,
+        endian: s.endian,
+    }
+}
+
+## `s` followed by a NUL byte.
+pub macro nul_terminated(s: Utf8String) -> Utf8String {
+    @return Utf8String<s.len + 1, s.endian> {
+        value: nul_terminated_value(s.value, s.len, s.endian, BITS_PER_BYTE),
+        len: s.len + 1,
+        endian: s.endian,
+    }
+}
+
+## `s` followed by a NUL code unit (two zero bytes).
+pub macro nul_terminated(s: Utf16String) -> Utf16String {
+    @return Utf16String<s.len + 1, s.endian> {
+        value: nul_terminated_value(s.value, s.len, s.endian, UTF16_UNIT_BITS),
+        len: s.len + 1,
+        endian: s.endian,
+    }
+}

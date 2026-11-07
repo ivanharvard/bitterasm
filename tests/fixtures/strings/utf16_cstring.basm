@@ -1,0 +1,38 @@
+# std.strings.utf16 and std.strings.cstring. The expected values in
+# tests/string_lib.rs come from Python's own UTF-16 encoding.
+from std.strings.ascii import AsciiString
+from std.strings.utf8 import Utf8String, string_from_struct
+from std.strings.utf16 import Utf16String, utf16_from_struct, utf16_struct_unit_len, validate_utf16, utf16_unit_at, utf16_codepoint_count
+from std.strings.cstring import nul_terminated
+from std.binary import Endian
+
+macro show(s: int) {
+    @emit s
+}
+
+macro probe() {
+    const w = utf16_from_struct("Hi, wörld €𝄞!")
+    show w.value
+    show w.len
+    show utf16_struct_unit_len("Hi, wörld €𝄞!")
+    show validate_utf16(w.value, w.len, Endian.Big)
+    show utf16_codepoint_count(w)
+    show utf16_unit_at(w, 0)
+    show utf16_unit_at(w, 11)
+    show utf16_unit_at(w, 12)
+
+    const hi = string_from_struct("Hi") as AsciiString<2, Endian.Big>
+    show (hi as Utf16String<2, Endian.Big>).value
+    show (hi as Utf16String<2, Endian.Little>).value
+
+    show nul_terminated(hi).value
+    show nul_terminated(hi).len
+    const little = string_from_struct("Hi") as Utf8String<2, Endian.Little>
+    show nul_terminated(little).value
+    show nul_terminated(little).len
+    show nul_terminated(utf16_from_struct("Hi")).value
+    show nul_terminated(hi as Utf16String<2, Endian.Little>).value
+    show nul_terminated(string_from_struct("") as AsciiString<0, Endian.Big>).len
+}
+
+probe

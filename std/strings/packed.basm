@@ -1,0 +1,120 @@
+#! The shared base of `std.strings`: strings packed into one integer. A
+#! string literal like `"hi"` is a struct of code points. Each encoding
+#! packs it as a run of fixed-width code units in a single `int`:
+#!
+#! - [`std.strings.ascii`](ascii.md): `AsciiString`, one byte per character.
+#! - [`std.strings.utf8`](utf8.md): `Utf8String`, and `string_from_struct`,
+#!   which encodes a literal as UTF-8.
+#! - [`std.strings.utf16`](utf16.md): `Utf16String`, 16-bit code units.
+#! - [`std.strings.cstring`](cstring.md): `nul_terminated`, for C.
+#!
+#! Every string type has a `len`, counted in code units, and an `endian`:
+#! whether unit 0 is the most (`Big`) or least (`Little`) significant unit
+#! of `value`. The `endian` is only how the units are packed. It's not the
+#! byte order the units are written out in, which an architecture's data
+#! directives decide.
+#!
+#! ```
+#! from std.strings.packed import unit_at
+#! from std.binary import Endian
+#!
+#! macro show(value: int) {
+#!     @emit value
+#! }
+#!
+#! show unit_at(0x4869, 2, 0, Endian.Big, 8)
+#! show unit_at(0x4869, 2, 0, Endian.Little, 8)
+#! ```
+#!
+#! ```emits
+#! 72 105
+#! ```
+
+from std.binary import BITS_PER_BYTE, Endian
+
+## `len` bytes packed into `value`, first byte most significant, not yet
+## checked to be any encoding. `std.strings.utf8`'s `string_from_struct`
+## builds one. Convert it with `as` to `AsciiString` or `Utf8String` to
+## check its bytes and choose their order.
+pub struct String<const len: int>
+    | invariant validate_string(value, len)
+{
+    ## The bytes, packed.
+    pub value: int,
+    ## The number of bytes.
+    pub len: int,
+}
+
+macro validate_string(
+    value: int,
+    len: int
+) -> int {
+    @return validate_units(value, len, BITS_PER_BYTE)
+}
+
+## 1 if `value` fits in `len` code units of `width` bits each. Otherwise
+## it's a compile error.
+pub macro validate_units(
+    value: int,
+    len: int,
+    width: int
+) -> int {
+    @assert len >= 0, "string length cannot be negative"
+    @assert value >= 0, "packed strings cannot be negative"
+    @if len == 0 {
+        @assert value == 0, "an empty string must have value zero"
+        @return 1
+    }
+    @assert value < (1 << (width * len)), "string value exceeds its declared length"
+    @return 1
+}
+
+## How far `value` is shifted right to bring code unit `index` of `len` to
+## the bottom, for units of `width` bits.
+pub macro unit_shift(
+    index: int,
+    len: int,
+    endian: Endian,
+    width: int
+) -> int {
+    @if endian == Endian.Little {
+        @return index * width
+    }
+    @return (len - index - 1) * width
+}
+
+## Code unit `index` of `len` units of `width` bits packed into `value`,
+## counting from the `endian` end. `index` must be within the string.
+pub macro unit_at(
+    value: int,
+    len: int,
+    index: int,
+    endian: Endian,
+    width: int
+) -> int {
+    @assert index >= 0, "string indices cannot be negative"
+    @assert index < len, "string index is out of bounds"
+    const shift = unit_shift(index, len, endian, width)
+    @return (value >> shift) & ((1 << width) - 1)
+}
+
+## Byte `index` of `len` bytes packed into `value`, counting from the
+## `endian` end. `index` must be within the string.
+pub macro byte_at(
+    value: int,
+    len: int,
+    index: int,
+    endian: Endian
+) -> int {
+    @return unit_at(value, len, index, endian, BITS_PER_BYTE)
+}
+
+## 1 if `codepoint` is a Unicode scalar value: 0 to U+10FFFF, and not a
+## surrogate (U+D800 to U+DFFF). Otherwise it's a compile error. Every
+## Unicode encoding can store exactly these.
+pub macro validate_codepoint(codepoint: int) -> int {
+    @assert codepoint >= 0, "a code point cannot be negative"
+    @assert codepoint <= 0x10FFFF, "a code point cannot exceed U+10FFFF"
+    @assert codepoint < 0xD800 || codepoint > 0xDFFF, "a surrogate is not a character"
+    @return 1
+}

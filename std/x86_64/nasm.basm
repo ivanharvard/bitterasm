@@ -27,7 +27,7 @@
 # `impl.basm`'s `RipLabel` section has the encoding.
 
 pub from .intel import *
-from std.string import string_from_struct
+from std.strings.utf8 import string_from_struct
 
 # =================
 # [rel label]

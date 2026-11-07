@@ -10,7 +10,8 @@ pub from module import ...        # import, and re-export
 
 ```basm,ignore
 from std.binary import *
-from std.string import validate_ascii, string_from_struct
+from std.strings.ascii import validate_ascii
+from std.strings.utf8 import string_from_struct
 from .helpers import Pair
 ```
 

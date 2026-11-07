@@ -34,7 +34,7 @@ from std.bitter.deferred import *
 from std.bitfield import *
 from std.wasm.leb128 import *
 from std.wasm.impl import i32_const, end
-from std.string import string_from_struct
+from std.strings.utf8 import string_from_struct
 
 # =================
 # encoding a not-yet-known length

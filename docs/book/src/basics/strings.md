@@ -75,11 +75,11 @@ A string literal has no encoding until a library gives it one:
 
 - `std.array`'s `array_from_struct("abc")` turns it into an
   `Array<int, 3>`.
-- `std.string`'s `string_from_struct("abc")` encodes it as UTF-8, packed
+- `std.strings.utf8`'s `string_from_struct("abc")` encodes it as UTF-8, packed
   into one integer, with a `len` in bytes.
 
 ```basm
-from std.string import string_from_struct
+from std.strings.utf8 import string_from_struct
 
 macro packed() {
     const s = string_from_struct("hi")

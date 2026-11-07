@@ -1,0 +1,10 @@
+from std.strings.ascii import AsciiString
+from std.strings.utf8 import string_from_struct
+from std.strings.cstring import nul_terminated
+from std.binary import Endian
+
+macro make(_unused: int) {
+    @emit nul_terminated(string_from_struct("a\0b") as AsciiString<3, Endian.Big>)
+}
+
+make 0

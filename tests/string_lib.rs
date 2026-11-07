@@ -1,10 +1,10 @@
-// `std/string.basm` (Part C of `docs/1.0/PROGRESS.md`): its walkers are
-// loops now, so string length is limited only by `@for`'s bounds.
+// `std/strings/`: its walkers are loops, so string length is limited only
+// by `@for`'s bounds.
 
 mod common;
 
 use bitterasm::emit::EmittedValue;
-use common::compile_entries;
+use common::{compile_entries, compile_error};
 
 // Every `bits<N>` leaf in `value`, in order, as bytes.
 fn bytes_of(value: &EmittedValue, out: &mut Vec<u8>) {
@@ -63,4 +63,50 @@ fn every_public_macro_matches_the_previous_implementation() {
         .collect();
 
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn utf16_and_c_strings_match_python() {
+    let expected = [
+        "29619741131678333868357109381979919840581111034145555461158338593", // "Hi, wörld €𝄞!" as UTF-16
+        "14",           // its length in code units
+        "14",           // utf16_struct_unit_len
+        "1",            // validate_utf16
+        "13",           // utf16_codepoint_count
+        "72",           // unit 0, 'H'
+        "55348",        // unit 11, 0xD834: 𝄞's high surrogate
+        "56606",        // unit 12, 0xDD1E: its low surrogate
+        "4718697",      // "Hi" ASCII to UTF-16, big-endian
+        "6881352",      // and little-endian
+        "4745472",      // nul_terminated ASCII "Hi": 0x486900
+        "3",            // its length
+        "18537",        // nul_terminated little-endian UTF-8: the value is unchanged
+        "3",            // its length
+        "309244526592", // nul_terminated UTF-16 "Hi": 0x004800690000
+        "6881352",      // nul_terminated little-endian UTF-16: unchanged
+        "1",            // nul_terminated "" is just the NUL
+    ];
+
+    let actual: Vec<String> = compile_entries("tests/fixtures/strings/utf16_cstring.basm")
+        .into_iter()
+        .map(|entry| match entry.value {
+            EmittedValue::Int { value } => value,
+            other => panic!("expected a bare Int, found {other:?}"),
+        })
+        .collect();
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn invalid_utf16_and_c_strings_are_rejected() {
+    for (fixture, message) in [
+        ("err_utf16_lone_high", "UTF-16 string ends in a high surrogate"),
+        ("err_utf16_lone_low", "UTF-16 low surrogate without a high surrogate before it"),
+        ("err_utf16_unpaired_high", "UTF-16 high surrogate without a low surrogate after it"),
+        ("err_cstring_nul", "a C string cannot contain NUL"),
+    ] {
+        let stderr = compile_error(&format!("tests/fixtures/strings/{fixture}.basm"));
+        assert!(stderr.contains(message), "{fixture}: expected {message:?} in:\n{stderr}");
+    }
 }

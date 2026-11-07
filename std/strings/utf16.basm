@@ -1,0 +1,155 @@
+#! UTF-16 strings: code points as 16-bit code units, the encoding Windows
+#! APIs and Java use. A character past U+FFFF takes two units, a surrogate
+#! pair.
+#!
+#! ```
+#! from std.strings.utf16 import *
+#!
+#! macro show(value: int) {
+#!     @emit value
+#! }
+#!
+#! macro demo() {
+#!     const s = utf16_from_struct("h€𝄞")
+#!     show s.len
+#!     show utf16_codepoint_count(s)
+#!     show utf16_unit_at(s, 2)
+#! }
+#!
+#! demo
+#! ```
+#!
+#! ```emits
+#! 4 3 55348
+#! ```
+#!
+#! `𝄞` is U+1D11E, past U+FFFF, so it takes the surrogate pair `0xD834`
+#! (`55348`) and `0xDD1E`. `len` counts code units, not bytes, and `endian`
+#! is which end of `value` holds unit 0. The byte order each unit is
+#! written in is up to the directive that emits it.
+
+from std.binary import Endian
+from .packed import byte_at, unit_at, unit_shift, validate_codepoint, validate_units
+from .ascii import AsciiString
+
+## Bits in one UTF-16 code unit.
+pub const UTF16_UNIT_BITS = 16
+
+## `len` UTF-16 code units packed into `value`, with unit 0 at the `endian`
+## end. Every surrogate is part of a pair.
+pub struct Utf16String<const len: int, const endian: Endian>
+    | invariant validate_utf16(value, len, endian)
+    | from ascii_to_utf16(source, target.len, target.endian)
+{
+    ## The code units, packed.
+    pub value: int,
+    ## The number of code units.
+    pub len: int,
+    ## Which end of `value` holds unit 0.
+    pub endian: Endian,
+}
+
+macro is_high_surrogate(unit: int) -> int {
+    @return unit >= 0xD800 && unit <= 0xDBFF
+}
+
+macro is_low_surrogate(unit: int) -> int {
+    @return unit >= 0xDC00 && unit <= 0xDFFF
+}
+
+## 1 if `len` 16-bit code units packed into `value` are valid UTF-16: every
+## high surrogate is followed by a low one, and every low surrogate follows
+## a high one. Otherwise it's a compile error.
+pub macro validate_utf16(
+    value: int,
+    len: int,
+    endian: Endian
+) -> int {
+    @assert validate_units(value, len, UTF16_UNIT_BITS)
+    # `pending` is 1 while a high surrogate waits for its low surrogate.
+    const pending = @fold pending = 0 @for index in 0..len {
+        const unit = unit_at(value, len, index, endian, UTF16_UNIT_BITS)
+        @assert !pending || is_low_surrogate(unit), "UTF-16 high surrogate without a low surrogate after it"
+        @assert pending || !is_low_surrogate(unit), "UTF-16 low surrogate without a high surrogate before it"
+        @next is_high_surrogate(unit)
+    }
+    @assert !pending, "UTF-16 string ends in a high surrogate"
+    @return 1
+}
+
+macro utf16_codepoint_unit_len(codepoint: int) -> int {
+    @assert validate_codepoint(codepoint)
+    @if codepoint <= 0xFFFF {
+        @return 1
+    }
+    @return 2
+}
+
+macro utf16_codepoint_packed(codepoint: int) -> int {
+    @if utf16_codepoint_unit_len(codepoint) == 1 {
+        @return codepoint
+    }
+    const offset = codepoint - 0x10000
+    const high = 0xD800 | (offset >> 10)
+    const low = 0xDC00 | (offset & 0x3FF)
+    @return (high << UTF16_UNIT_BITS) | low
+}
+
+## How many code units a string literal (or any struct of code points)
+## takes as UTF-16.
+pub macro utf16_struct_unit_len<S>(source: S) -> int {
+    @return @fold len = 0 @for codepoint in source {
+        @next len + utf16_codepoint_unit_len(codepoint)
+    }
+}
+
+## A string literal (or any struct of code points) as a `Utf16String`,
+## first unit most significant.
+# Packs each code point's units after the ones before it.
+pub macro utf16_from_struct<S>(source: S)
+{
+    const packed = @fold value = 0, len = 0 @for codepoint in source {
+        const width = utf16_codepoint_unit_len(codepoint)
+        @next value = (value << (width * UTF16_UNIT_BITS)) | utf16_codepoint_packed(codepoint),
+            len = len + width
+    }
+    @return Utf16String<packed.len, Endian.Big> {
+        value: packed.value,
+        len: packed.len,
+        endian: Endian.Big,
+    }
+}
+
+# Each ASCII byte becomes one code unit, in the same order. Units are
+# placed one by one, so the target can use either `endian`.
+macro ascii_to_utf16(
+    s: AsciiString,
+    len: int,
+    endian: Endian
+) -> Utf16String {
+    @assert s.len == len, "conversion target length must match the source"
+    const value = @fold value = 0 @for index in 0..len {
+        const unit = byte_at(s.value, len, index, s.endian)
+        @next value | (unit << unit_shift(index, len, endian, UTF16_UNIT_BITS))
+    }
+    @return Utf16String(value = value, len = len, endian = endian)
+}
+
+## Code unit `index` of `s`. This is a unit, not a character: a character
+## past U+FFFF takes two.
+pub macro utf16_unit_at(
+    s: Utf16String,
+    index: int
+) -> int {
+    @return unit_at(s.value, s.len, index, s.endian, UTF16_UNIT_BITS)
+}
+
+## The number of characters (code points) in `s`.
+# Counts every unit but low surrogates, which only finish a character.
+pub macro utf16_codepoint_count(s: Utf16String) -> int {
+    @return @fold count = 0 @for index in 0..s.len {
+        @if !is_low_surrogate(utf16_unit_at(s, index)) {
+            @next count + 1
+        }
+    }
+}
