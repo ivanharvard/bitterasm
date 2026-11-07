@@ -86,7 +86,6 @@ pub fn parse_pattern(tokens: Vec<TokenKind>, params: &[String]) -> Result<Syntax
     let segments = split_into_segments(tokens)?;
 
     validate_captures(&segments, params)?;
-    validate_no_empty_gaps(&segments)?;
 
     Ok(SyntaxPattern {
         segments,
@@ -205,19 +204,6 @@ fn validate_captures(segments: &[PatternSegment], params: &[String]) -> Result<(
             }
             1 => {}
             _ => return Err(format!("parameter `{param}` is captured more than once")),
-        }
-    }
-
-    Ok(())
-}
-
-fn validate_no_empty_gaps(segments: &[PatternSegment]) -> Result<(), String> {
-    for window in segments.windows(2) {
-        if let [PatternSegment::Capture(a), PatternSegment::Capture(b)] = window {
-            return Err(format!(
-                "`${a}$` and `${b}$` need a literal between them to tell where one ends \
-                 and the other begins"
-            ));
         }
     }
 

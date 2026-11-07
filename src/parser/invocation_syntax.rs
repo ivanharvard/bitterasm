@@ -240,10 +240,12 @@ impl Parser {
                 }
 
                 PatternSegment::Capture(param_name) => {
-                    // No-empty-gap validation at registration time guarantees
-                    // the segment right after a capture, if any, is always a
-                    // Literal — never another Capture — so this is the only
-                    // stop boundary a capture ever needs.
+                    // A capture stops at the literal right after it, so
+                    // `$a$ + $b$`'s `a` doesn't swallow the `+`. With no
+                    // literal after it (another capture, or the pattern's
+                    // end), it takes the longest expression it can: in
+                    // `$size$ $mem$`, `qword [rbx]` gives `qword` and then
+                    // `[rbx]`, since an expression can't continue into `[`.
                     let stop = match pattern.segments.get(index + 1) {
                         Some(PatternSegment::Literal(tokens)) => tokens.first(),
                         _ => None,

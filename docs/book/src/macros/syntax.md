@@ -130,8 +130,44 @@ the importing file must pick one with a `syntax` statement of its own.
 ## Designing patterns
 
 A capture accepts any expression, and it stops only where the next literal
-token appears. Two patterns are ambiguous when some statement matches both,
-so start them differently:
+token appears. A capture with no literal after it, because another capture
+follows or the pattern ends there, takes the longest expression it can.
+Two captures in a row split where the first expression has to end:
+
+```basm
+struct Mem {
+    pub addr: int,
+}
+
+macro mem(addr: int) -> Mem
+    | syntax { [$addr$] }
+{
+    @return Mem(addr)
+}
+
+macro store(width: int, dst: Mem, value: int)
+    | syntax { store $width$ $dst$, $value$ }
+{
+    @emit width
+    @emit dst.addr
+    @emit value
+}
+
+const qword = 8
+
+store qword [0x40], 7
+```
+
+```emits
+8 64 7
+```
+
+An expression can't continue into `[`, so `$width$` ends after `qword`. In
+`pair $a$ $b$`, though, `pair x -1` doesn't match: `$a$` takes the whole
+subtraction `x - 1`, leaving nothing for `$b$`.
+
+Two patterns are ambiguous when some statement matches both, so start them
+differently:
 
 - `std.riscv.c_like` writes register forms as `$rd$ = $rs1$ + $rs2$` and
   immediate forms as `$rd$ <- $rs1$ + $imm$`. If both used `=`,

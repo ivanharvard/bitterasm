@@ -1300,12 +1300,29 @@ fn syntax_facet_rejects_duplicate_capture() {
 }
 
 #[test]
-fn syntax_facet_rejects_captures_with_no_literal_between_them() {
-    let adjacent = "macro mov(dst: int, value: int) | syntax { mov $dst$$value$ } {\n}\n";
-    assert!(parse(lex(adjacent).unwrap()).is_err());
+fn adjacent_captures_split_where_the_first_expression_ends() {
+    let source = "macro mem(addr: int) -> int | syntax { [$addr$] } {\n    @return addr\n}\n\n\
+                  macro store(size: int, dst: int, value: int) | syntax { store $size$ $dst$, $value$ } {\n}\n\n\
+                  store qword [8], 1\n";
 
-    let space_only = "macro mov(dst: int, value: int) | syntax { mov $dst$ $value$ } {\n}\n";
-    assert!(parse(lex(space_only).unwrap()).is_err());
+    let program = parse(lex(source).unwrap()).unwrap();
+    let Statement::Invocation(invocation) = &program.statements[2] else {
+        panic!("expected invocation");
+    };
+    assert_eq!(invocation.name, "store");
+    assert!(matches!(&invocation.operands[0], Expr::Identifier { name, .. } if name == "qword"));
+    assert!(matches!(&invocation.operands[1], Expr::Call { callee, .. }
+        if matches!(callee.as_ref(), Expr::Identifier { name, .. } if name == "mem")));
+    assert!(matches!(&invocation.operands[2], Expr::Integer { .. }));
+}
+
+#[test]
+fn adjacent_captures_give_the_first_one_the_longest_expression() {
+    // `x -1` is the subtraction `x - 1`, leaving nothing for `b`.
+    let source = "macro pair(a: int, b: int) | syntax { pair $a$ $b$ } {\n}\n\n\
+                  pair x -1\n";
+
+    assert!(parse(lex(source).unwrap()).is_err());
 }
 
 #[test]
