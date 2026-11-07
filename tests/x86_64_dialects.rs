@@ -68,3 +68,29 @@ fn x86_64_dialects_and_default_syntax_compile_to_identical_output() {
     std::fs::remove_file(&att_out).ok();
     std::fs::remove_file(&default_out).ok();
 }
+
+// The sized instructions: Intel syntax's brackets and size keywords against
+// impl.basm's `Mem(...)` constructors and `OperandSize` arguments.
+#[test]
+fn intel_sized_forms_match_impl_default_syntax() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let bitterasm = env!("CARGO_BIN_EXE_bitterasm");
+
+    let entries = |name: &str| {
+        let source = Path::new(manifest_dir).join(format!("tests/fixtures/x86_64/{name}.basm"));
+        let out = std::env::temp_dir().join(format!("bitterasm-x86_64-{name}-{}.em", std::process::id()));
+        let output = Command::new(bitterasm)
+            .current_dir(manifest_dir)
+            .args(["compile", &source.display().to_string(), "-o", &out.display().to_string()])
+            .output()
+            .expect("bitterasm compile should run");
+        assert!(output.status.success(), "bitterasm compile failed for {name}:\n{}", String::from_utf8_lossy(&output.stderr));
+        let text = std::fs::read_to_string(&out).expect(".em should exist");
+        std::fs::remove_file(&out).ok();
+        bitterasm::emit::EmFile::parse(&text, bitterasm::emit::features::ALL)
+            .expect("a valid .em file")
+            .entries
+    };
+
+    assert_eq!(entries("dialect_intel_sized"), entries("dialect_impl_sized"));
+}

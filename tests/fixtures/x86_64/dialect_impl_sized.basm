@@ -1,0 +1,32 @@
+# dialect_intel_sized.basm in impl.basm's own default syntax.
+
+from std.x86_64.impl import *
+
+add al, bl
+adc ax, 0x1234
+sbb r9d, Mem(rsp, 8)
+xor MemIndexed(rbx, rcx, 4, -16), r10
+cmp MemRipRelative(8), -1, qword
+mov Mem(rdi, 0), 0x7f, byte
+mov ah, MemIndexed(rbx, rcx, 1, 0)
+movzx eax, Mem(rsi, 0), byte
+movsx r8, MemIndexed(rbx, rcx, 2, 0), word
+movsxd rax, Mem(rbx, 0), dword
+movzx ecx, dl
+imul r11, Mem(rbp, -8), 100
+shl Mem(rax, 0), cl, dword
+rol r12w, 3
+not Mem(r13, 0), qword
+setne sil
+sete Mem(rbx, 0), byte
+cmovl rax, Mem(rbx, 0)
+bt Mem(rbx, 0), 5, dword
+push Mem(rsp, 16), qword
+pop Mem(rbx, 0), word
+jmp r11
+call Mem(rax, 0), qword
+jmp_far Mem(rbx, 0)
+interrupt 0x80
+mov fs, Mem(rbx, 0), word
+lea r14, MemIndexed(rbx, rcx, 8, 0)
+cmpxchg16b Mem(rdi, 0), oword

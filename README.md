@@ -54,6 +54,17 @@ The tradeoff is symmetric: the fewer assumptions the language makes, the more an
 
 BitterASM is an early-stage project: a Rust compiler (lexer, parser, resolver, formatter) for the language itself, a separate `bitter` binary evaluator that packs emitted values into machine code, and a growing `std` library written in BitterASM. Expect the language, the evaluator contract, and the standard library to change as the design settles.
 
+### Architecture coverage
+
+<!-- coverage:start -->
+| Architecture | Reference set | Operand forms covered |
+|---|---|---|
+| PDP-10 | KA10 | 11 of 366 (3%) |
+| RISC-V | RV32I | 40 of 40 (100%) |
+| WebAssembly | WebAssembly 1.0 | 23 of 172 (13%) |
+| x86-64 | baseline general-purpose, user mode | 299 of 301 (99%) |
+<!-- coverage:end -->
+
 ## Installation
 
 Requires a Rust toolchain (`cargo`). From a clone of this repository:

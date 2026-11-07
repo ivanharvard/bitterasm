@@ -26,7 +26,8 @@ describe 3
 
 This is how instruction sets handle operand forms: `std.x86_64` has one `mov`
 for register-to-register, another for an immediate, another for memory, and
-so on, each with its own encoding.
+so on, each with its own encoding. Most of them are generic over the
+register's type, so one `mov` covers `rax`, `eax`, `ax` and `al`.
 
 ## How a call picks an overload
 
@@ -74,6 +75,6 @@ multiple overloads of `g` accept (int)
 
 A file's overloads merge with same-named overloads it imports, from any
 number of modules. That's how a dialect adds new operand forms to an
-instruction it builds on: `std.x86_64.nasm` adds `mov rax, [rel label]`
-alongside every `mov` from `std.x86_64.intel`. See
+instruction it builds on: `std.riscv.native` adds a bare `fence` alongside
+`std.riscv.impl`'s `fence pred, succ`. See
 [Imports](../modules/imports.md).

@@ -5,6 +5,8 @@
 WebAssembly instructions: a representative subset of control, variable
 and `i32` instructions, each emitted as its binary encoding.
 
+Coverage: 23 of 172 operand forms (13%), through `std.wasm.impl`.
+
 ```basm
 from std.wasm.impl import *
 

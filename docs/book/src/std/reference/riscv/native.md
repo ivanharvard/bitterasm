@@ -204,6 +204,48 @@ Stops in a debugger.
 |---|---|---|---|---|
 | `ebreak` |  | emits `LittleEndian<IType, 32>` |  | [`std.riscv.impl`](impl.md) |
 
+### `fence`
+
+| Syntax | Parameters | Result | Description | From |
+|---|---|---|---|---|
+| `fence pred, succ` | `pred: FenceSet`, `succ: FenceSet` | emits `LittleEndian<IType, 32>` | Orders memory accesses: every access in `pred` before the fence finishes before any access in `succ` after it starts, as seen by other harts and devices. | [`std.riscv.impl`](impl.md) |
+| `fence` |  |  | A full fence, `fence iorw, iorw`: every access before it finishes before any access after it starts. |  |
+
+#### `fence pred, succ`
+
+Orders memory accesses: every access in `pred` before the fence
+finishes before any access in `succ` after it starts, as seen by other
+harts and devices.
+
+```basm
+from std.riscv.impl import *
+
+fence FenceSet(0b1111), FenceSet(0b1111)
+fence FenceSet(0b0011), FenceSet(0b0001)
+```
+
+```bytes
+0f 00 f0 0f
+0f 00 10 03
+```
+
+#### `fence`
+
+A full fence, `fence iorw, iorw`: every access before it finishes
+before any access after it starts.
+
+```basm
+from std.riscv.native import *
+
+fence
+fence rw, w
+```
+
+```bytes
+0f 00 f0 0f
+0f 00 10 03
+```
+
 ### `lb`
 
 Loads the byte at `rs1 + offset` into `rd`, sign-extended.
@@ -368,6 +410,49 @@ A string literal's UTF-8 bytes, with no terminator: GNU's `.ascii`.
 |---|---|---|---|---|
 | `ascii source` | `<S>`, `source: S` |  |  | [`std.riscv.impl`](impl.md) |
 
+### `fence_or_pred`
+
+`fence or, succ`.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `fence or, succ` | `succ: FenceSet` |  |  |
+
+### `fence_or_succ`
+
+`fence pred, or`.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `fence pred, or` | `pred: FenceSet` |  |  |
+
+### `fence_or_both`
+
+`fence or, or`.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `fence or, or` |  |  |  |
+
+## Constants
+
+| Constant | Type | Value | Description |
+|---|---|---|---|
+| `i` | `FenceSet` | `0b1000` | A `fence` set: device input. |
+| `o` | `FenceSet` | `0b0100` | A `fence` set: device output. |
+| `r` | `FenceSet` | `0b0010` | A `fence` set: memory reads. |
+| `w` | `FenceSet` | `0b0001` | A `fence` set: memory writes. |
+| `io` | `FenceSet` | `0b1100` | A `fence` set: device input and device output. |
+| `ir` | `FenceSet` | `0b1010` | A `fence` set: device input and memory reads. |
+| `iw` | `FenceSet` | `0b1001` | A `fence` set: device input and memory writes. |
+| `ow` | `FenceSet` | `0b0101` | A `fence` set: device output and memory writes. |
+| `rw` | `FenceSet` | `0b0011` | A `fence` set: memory reads and memory writes. |
+| `ior` | `FenceSet` | `0b1110` | A `fence` set: device input, device output and memory reads. |
+| `iow` | `FenceSet` | `0b1101` | A `fence` set: device input, device output and memory writes. |
+| `irw` | `FenceSet` | `0b1011` | A `fence` set: device input, memory reads and memory writes. |
+| `orw` | `FenceSet` | `0b0111` | A `fence` set: device output, memory reads and memory writes. |
+| `iorw` | `FenceSet` | `0b1111` | A `fence` set: device input, device output, memory reads and memory writes. |
+
 ## Re-exported
 
-From [`std.riscv.impl`](impl.md): `Reg`, `x0`, `x1`, `x2`, `x3`, `x4`, `x5`, `x6`, `x7`, `x8`, `x9`, `x10`, `x11`, `x12`, `x13`, `x14`, `x15`, `x16`, `x17`, `x18`, `x19`, `x20`, `x21`, `x22`, `x23`, `x24`, `x25`, `x26`, `x27`, `x28`, `x29`, `x30`, `x31`, `zero`, `ra`, `sp`, `gp`, `tp`, `t0`, `t1`, `t2`, `s0`, `fp`, `s1`, `a0`, `a1`, `a2`, `a3`, `a4`, `a5`, `a6`, `a7`, `s2`, `s3`, `s4`, `s5`, `s6`, `s7`, `s8`, `s9`, `s10`, `s11`, `t3`, `t4`, `t5`, `t6`, `Opcode`, `Funct3`, `Funct7`, `Bit1`, `Imm4`, `Imm5`, `Imm6`, `Imm7`, `Imm8`, `Imm10`, `Imm12`, `Imm20`, `RType`, `IType`, `SType`, `BType`, `UType`, `JType`, `Byte`, `Bytes`.
+From [`std.riscv.impl`](impl.md): `Reg`, `x0`, `x1`, `x2`, `x3`, `x4`, `x5`, `x6`, `x7`, `x8`, `x9`, `x10`, `x11`, `x12`, `x13`, `x14`, `x15`, `x16`, `x17`, `x18`, `x19`, `x20`, `x21`, `x22`, `x23`, `x24`, `x25`, `x26`, `x27`, `x28`, `x29`, `x30`, `x31`, `zero`, `ra`, `sp`, `gp`, `tp`, `t0`, `t1`, `t2`, `s0`, `fp`, `s1`, `a0`, `a1`, `a2`, `a3`, `a4`, `a5`, `a6`, `a7`, `s2`, `s3`, `s4`, `s5`, `s6`, `s7`, `s8`, `s9`, `s10`, `s11`, `t3`, `t4`, `t5`, `t6`, `Opcode`, `Funct3`, `Funct7`, `Bit1`, `Imm4`, `Imm5`, `Imm6`, `Imm7`, `Imm8`, `Imm10`, `Imm12`, `Imm20`, `RType`, `IType`, `SType`, `BType`, `UType`, `JType`, `FenceSet`, `Byte`, `Bytes`.

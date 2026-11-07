@@ -1,0 +1,51 @@
+# RISC-V coverage: the RV32I base integer instructions (The RISC-V
+# Instruction Set Manual, Volume I, chapter 2). Each has one operand form.
+name: RISC-V
+reference: RV32I
+dialect: std.riscv.native
+#
+# One line per operand form: `x` if it's covered, then the form, then a
+# sample of it in the dialect's syntax. A form is covered when its sample
+# compiles. `tests/coverage.rs` checks every marker; after changing what's
+# supported, run `make coverage` to update them and the coverage tables.
+
+x | lui rd, imm           | lui a0, 1
+x | auipc rd, imm         | auipc a0, 1
+x | jal rd, target        | jal ra, target
+x | jalr rd, rs1, offset  | jalr ra, a0, 0
+x | beq rs1, rs2, target  | beq a0, a1, target
+x | bne rs1, rs2, target  | bne a0, a1, target
+x | blt rs1, rs2, target  | blt a0, a1, target
+x | bge rs1, rs2, target  | bge a0, a1, target
+x | bltu rs1, rs2, target | bltu a0, a1, target
+x | bgeu rs1, rs2, target | bgeu a0, a1, target
+x | lb rd, offset(rs1)    | lb a0, 0(a1)
+x | lh rd, offset(rs1)    | lh a0, 0(a1)
+x | lw rd, offset(rs1)    | lw a0, 0(a1)
+x | lbu rd, offset(rs1)   | lbu a0, 0(a1)
+x | lhu rd, offset(rs1)   | lhu a0, 0(a1)
+x | sb rs2, offset(rs1)   | sb a0, 0(a1)
+x | sh rs2, offset(rs1)   | sh a0, 0(a1)
+x | sw rs2, offset(rs1)   | sw a0, 0(a1)
+x | addi rd, rs1, imm     | addi a0, a1, 1
+x | slti rd, rs1, imm     | slti a0, a1, 1
+x | sltiu rd, rs1, imm    | sltiu a0, a1, 1
+x | xori rd, rs1, imm     | xori a0, a1, 1
+x | ori rd, rs1, imm      | ori a0, a1, 1
+x | andi rd, rs1, imm     | andi a0, a1, 1
+x | slli rd, rs1, imm     | slli a0, a1, 1
+x | srli rd, rs1, imm     | srli a0, a1, 1
+x | srai rd, rs1, imm     | srai a0, a1, 1
+x | add rd, rs1, rs2      | add a0, a1, a2
+x | sub rd, rs1, rs2      | sub a0, a1, a2
+x | sll rd, rs1, rs2      | sll a0, a1, a2
+x | slt rd, rs1, rs2      | slt a0, a1, a2
+x | sltu rd, rs1, rs2     | sltu a0, a1, a2
+x | xor rd, rs1, rs2      | xor a0, a1, a2
+x | srl rd, rs1, rs2      | srl a0, a1, a2
+x | sra rd, rs1, rs2      | sra a0, a1, a2
+x | or rd, rs1, rs2       | or a0, a1, a2
+x | and rd, rs1, rs2      | and a0, a1, a2
+x | fence pred, succ      | fence iorw, iorw
+x | ecall                 | ecall
+x | ebreak                | ebreak

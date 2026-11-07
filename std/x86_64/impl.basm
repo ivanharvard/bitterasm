@@ -2,32 +2,43 @@
 #! operands, and the core integer instructions, each emitted as its machine
 #! code.
 #!
+#! Coverage: 299 of 301 operand forms (99%), through `std.x86_64.nasm`.
+#!
 #! Import a dialect rather than this module: `std.x86_64.intel`,
 #! `std.x86_64.nasm` or `std.x86_64.att`. Here every instruction takes its
-#! operands in order, destination first, plus a final `w`: 1 for 64-bit
-#! operands and 0 for 32-bit. The dialects pick `w` from the register's
-#! name instead (`rax` or `eax`).
+#! operands in order, destination first. The operand size comes from the
+#! register: `rax` is 64 bits, `eax` 32, `ax` 16 and `al` 8. A memory
+#! operand with no register to size it takes a final `OperandSize`: `byte`,
+#! `word`, `dword`, `qword`, or `oword` for `cmpxchg16b`.
 #!
 #! ```
 #! from std.x86_64.impl import *
 #!
-#! mov rax, rbx, 1
-#! mov rax, Mem(rsp, 8), 1
+#! mov rax, rbx
+#! mov eax, Mem(rsp, 8)
+#! add Mem(rbx, 0), 1, qword
 #!
-#! loop:
-#!     sub rcx, 1, 1
-#!     jne loop
+#! again:
+#!     sub rcx, 1
+#!     jne again
 #! ```
 #!
 #! ```bytes
 #! 48 89 d8
-#! 48 8b 44 24 08
+#! 8b 44 24 08
+#! 48 81 03 01 00 00 00
 #! 48 81 e9 01 00 00 00
 #! 0f 85 f3 ff ff ff
 #! ```
 #!
-#! Jumps and calls always use a 32-bit offset, worked out by `bitter` once
-#! the program is laid out; there's no automatic choice of the short form.
+#! The first instructions written here also have a form that takes the
+#! size as a final `w` instead, 1 for 64 bits and 0 for 32, with every
+#! register a `Reg`: `mov rax, rbx, 0` is `mov eax, ebx`. `std.x86_64.att`
+#! uses those.
+#!
+#! Jumps and calls use a 32-bit offset, worked out by `bitter` once the
+#! program is laid out; there's no automatic choice of the short form.
+#! `loop`, `jrcxz` and `jecxz` have only the 8-bit one.
 
 from std.binary import *
 from std.bitfield import *
@@ -117,6 +128,148 @@ pub const r13d = Reg32(reg = r13)
 pub const r14d = Reg32(reg = r14)
 ## The low 32 bits of `r15`.
 pub const r15d = Reg32(reg = r15)
+
+# The 16- and 8-bit views. Like `Reg32`, each is its own struct so the
+# instructions can overload on it, and pick the operand size from it.
+## The low 16 bits of a register. An instruction given one works on 16
+## bits, with a `0x66` prefix.
+pub struct Reg16 {
+    ## The register it's the low quarter of.
+    pub reg: Reg,
+}
+## The low 16 bits of `rax`.
+pub const ax = Reg16(reg = rax)
+## The low 16 bits of `rcx`.
+pub const cx = Reg16(reg = rcx)
+## The low 16 bits of `rdx`.
+pub const dx = Reg16(reg = rdx)
+## The low 16 bits of `rbx`.
+pub const bx = Reg16(reg = rbx)
+## The low 16 bits of `rsp`.
+pub const sp = Reg16(reg = rsp)
+## The low 16 bits of `rbp`.
+pub const bp = Reg16(reg = rbp)
+## The low 16 bits of `rsi`.
+pub const si = Reg16(reg = rsi)
+## The low 16 bits of `rdi`.
+pub const di = Reg16(reg = rdi)
+
+@for i in 8..16 {
+    ## The low 16 bits of `r8` to `r15`.
+    pub const r`i`w = Reg16(reg = r`i`)
+}
+
+# `spl`, `bpl`, `sil` and `dil` share their numbers (4 to 7) with `ah`,
+# `ch`, `dh` and `bh`: a REX prefix picks the first four, its absence the
+# second. So `spl` always needs one, and `ah` can never have one.
+## An 8-bit register: the low byte of a register, or for `ah`, `ch`, `dh`
+## and `bh`, the byte above it.
+pub struct Reg8 {
+    ## The register number it's encoded with: `ah` is 4, like `spl`.
+    pub reg: Reg,
+    ## 1 for `ah`, `ch`, `dh` and `bh`, which can't be used in an
+    ## instruction with a REX prefix; 0 otherwise.
+    pub high: int,
+}
+## The low 8 bits of `rax`.
+pub const al = Reg8(reg = rax, high = 0)
+## The low 8 bits of `rcx`.
+pub const cl = Reg8(reg = rcx, high = 0)
+## The low 8 bits of `rdx`.
+pub const dl = Reg8(reg = rdx, high = 0)
+## The low 8 bits of `rbx`.
+pub const bl = Reg8(reg = rbx, high = 0)
+## The low 8 bits of `rsp`.
+pub const spl = Reg8(reg = rsp, high = 0)
+## The low 8 bits of `rbp`.
+pub const bpl = Reg8(reg = rbp, high = 0)
+## The low 8 bits of `rsi`.
+pub const sil = Reg8(reg = rsi, high = 0)
+## The low 8 bits of `rdi`.
+pub const dil = Reg8(reg = rdi, high = 0)
+
+@for i in 8..16 {
+    ## The low 8 bits of `r8` to `r15`.
+    pub const r`i`b = Reg8(reg = r`i`, high = 0)
+}
+
+## Bits 8 to 15 of `rax`.
+pub const ah = Reg8(reg = rsp, high = 1)
+## Bits 8 to 15 of `rcx`.
+pub const ch = Reg8(reg = rbp, high = 1)
+## Bits 8 to 15 of `rdx`.
+pub const dh = Reg8(reg = rsi, high = 1)
+## Bits 8 to 15 of `rbx`.
+pub const bh = Reg8(reg = rdi, high = 1)
+
+## A segment register. In 64-bit mode only `fs` and `gs` still have a base
+## address of their own, usually for thread-local storage.
+pub struct SReg {
+    ## Its number: `es` 0, `cs` 1, `ss` 2, `ds` 3, `fs` 4, `gs` 5.
+    pub num: int,
+}
+
+## The extra segment register.
+pub const es = SReg(num = 0)
+## The code segment register.
+pub const cs = SReg(num = 1)
+## The stack segment register.
+pub const ss = SReg(num = 2)
+## The data segment register.
+pub const ds = SReg(num = 3)
+## A segment register with a base address, used for thread-local storage.
+pub const fs = SReg(num = 4)
+## A segment register with a base address, used for thread-local storage.
+pub const gs = SReg(num = 5)
+
+# Every register type, as the instruction builders below see it. The
+# instructions are generic over their register's type and call `gpr` to
+# get its number and size, so one macro covers `rax`, `eax`, `ax` and `al`.
+## A general-purpose register of any size, with what encoding it needs.
+pub struct Gpr {
+    ## The register number.
+    pub num: Reg,
+    ## The operand size in bits: 8, 16, 32 or 64.
+    pub size: int,
+    ## 1 if it needs a REX prefix (`spl`, `bpl`, `sil`, `dil`), -1 if it
+    ## can't have one (`ah`, `ch`, `dh`, `bh`), 0 otherwise.
+    pub rex: int,
+}
+
+## `r` as a 64-bit `Gpr`.
+pub macro gpr(r: Reg) -> Gpr {
+    @return Gpr(num = r, size = 64, rex = 0)
+}
+## `r` as a 32-bit `Gpr`.
+pub macro gpr(r: Reg32) -> Gpr {
+    @return Gpr(num = r.reg, size = 32, rex = 0)
+}
+## `r` as a 16-bit `Gpr`.
+pub macro gpr(r: Reg16) -> Gpr {
+    @return Gpr(num = r.reg, size = 16, rex = 0)
+}
+## `r` as an 8-bit `Gpr`.
+pub macro gpr(r: Reg8) -> Gpr {
+    @if r.high == 1 {
+        @return Gpr(num = r.reg, size = 8, rex = -1)
+    }
+    @if r.reg.value >= 4 && r.reg.value <= 7 {
+        @return Gpr(num = r.reg, size = 8, rex = 1)
+    }
+    @return Gpr(num = r.reg, size = 8, rex = 0)
+}
+## Fails: an `int` where an instruction expects a register.
+pub macro gpr(_x: int) -> Gpr {
+    @assert 0 == 1, "expected a register here"
+    @return Gpr(num = r0, size = 0, rex = 0)
+}
+# Reached when a memory operand lands where a register was expected, as in
+# `add [rbx], 1`, which has no register to give the operand size.
+## Fails: a memory operand here needs its size written out.
+pub macro gpr(_m: MemOperand) -> Gpr {
+    @assert 0 == 1, "this memory operand needs a size, like `qword [rbx]`"
+    @return Gpr(num = r0, size = 0, rex = 0)
+}
 
 # The 3 low bits of a register number — the field width every ModRM `reg`/`rm`,
 # SIB `index`/`base`, and register-in-opcode encoding actually carries.
@@ -208,88 +361,45 @@ pub macro byte_of(
 }
 
 # =================
-# instruction assembly (Phase 2: register-direct only, mod=11)
+# operand sizes
 # =================
-# Every register-direct instruction in this phase has the same shape: an
-# optional REX byte, exactly one opcode byte, an optional ModRM byte, and a
-# trailing little-endian immediate of 0, 4, or 8 bytes. `instr_byte` below
-# picks byte `index` out of that shape as a guard-chain of early `@return`s
-# (the same style `std/string.basm`'s UTF-8 decoding already uses for a
-# multi-way byte classification); `instr` sizes and builds the whole
-# `Bytes<N>` from it via `@for`, the "compute the needed byte count, then
-# build one fully concrete `Bytes<N>`" idiom this file's own header already
-# points at (`std/wasm/leb128.basm`'s `uleb128_padded`).
-macro instr_byte(
-    need_rex: int,
-    rex: Byte,
-    opcode: Byte,
-    has_modrm: int,
-    modrm: Byte,
-    imm: int,
-    index: int
-) -> Byte {
-    @if index < need_rex {
-        @return rex
-    }
-    const after_rex = index - need_rex
-    @if after_rex == 0 {
-        @return opcode
-    }
-    const after_opcode = after_rex - 1
-    @if has_modrm != 0 && after_opcode == 0 {
-        @return modrm
-    }
-    @return byte_of(imm, after_opcode - has_modrm)
+
+## An operand size, for an instruction whose memory operand has no
+## register to give it one, as in `add qword [rbx], 1`.
+pub struct OperandSize {
+    ## The size in bits.
+    pub bits: int,
 }
 
-macro instr(
-    need_rex: int,
-    rex: Byte,
-    opcode: Byte,
-    has_modrm: int,
-    modrm: Byte,
-    imm: int,
-    imm_len: int
-) -> Bytes<...> {
-    const n = need_rex + 1 + has_modrm + imm_len
-    @return Bytes<n> {
-        @for i in 0..n {
-            __el`i`: instr_byte(
-                need_rex,
-                rex,
-                opcode,
-                has_modrm,
-                modrm,
-                imm,
-                i
-            ),
-        }
-    }
+## 8 bits.
+pub const byte = OperandSize(bits = 8)
+## 16 bits.
+pub const word = OperandSize(bits = 16)
+## 32 bits.
+pub const dword = OperandSize(bits = 32)
+## 64 bits.
+pub const qword = OperandSize(bits = 64)
+## 128 bits, for `cmpxchg16b`.
+pub const oword = OperandSize(bits = 128)
+
+# The forms that take `w` (1 for 64-bit, 0 for 32-bit) instead of a sized
+# register: `w`'s operand size.
+macro w_size(w: int) -> int {
+    @return 32 + 32 * w
 }
 
-# Shared by every reg,reg instruction below (`mov`, the six ALU ops, and
-# `test`): opcode + ModRM `mod=11`, ModRM.rm = `rd`, ModRM.reg = `rs` (the
-# "r/m, r" direction — see the direction-convention note above `mov`).
-# `w` selects operand size (0 = 32-bit, 1 = 64-bit, forcing REX.W); a REX
-# byte is only actually emitted when it's needed for `w` or an extended
-# (r8-r15) register, never unconditionally.
+# Register-direct forms with `w`: opcode + ModRM `mod=11`, ModRM.rm = `rd`,
+# ModRM.reg = `rs` (the "r/m, r" direction, as `0x89`-style opcodes read).
 macro reg_reg_instr(
     opcode: int,
     rd: Reg,
     rs: Reg,
     w: int
 ) -> Bytes<...> {
-    const need_rex = w == 1 || reg_ext(rd) == 1 || reg_ext(rs) == 1
-    const rex = rex_byte(w, reg_ext(rs), 0, reg_ext(rd))
-    const modrm = modrm_byte(0b11, reg_field(rs), reg_field(rd))
-    @return instr(need_rex, rex, Byte(opcode), 1, modrm, 0, 0)
+    @return reg_rm_instr(w_size(w), opcode, gpr(rs), gpr(rd), 0, 0)
 }
 
-# Shared by every reg,imm instruction below (the six ALU ops and `test` via
-# imm32; Phase 5's `shl`/`shr`/`sar` via imm8, and their reg,CL forms with no
-# immediate at all — `imm_len` varies per caller, not hardcoded, for exactly
-# that reason): ModRM.reg carries a per-mnemonic opcode-extension `digit`
-# instead of a real register (ModRM.rm = `rd`).
+# reg,imm and shift forms with `w`: ModRM.reg holds the opcode's `digit`.
 macro reg_imm_instr(
     opcode: int,
     digit: int,
@@ -298,24 +408,16 @@ macro reg_imm_instr(
     imm_len: int,
     w: int
 ) -> Bytes<...> {
-    const need_rex = w == 1 || reg_ext(rd) == 1
-    const rex = rex_byte(w, 0, 0, reg_ext(rd))
-    const modrm = modrm_byte(0b11, digit, reg_field(rd))
-    @return instr(need_rex, rex, Byte(opcode), 1, modrm, imm, imm_len)
+    @return digit_rm_instr(w_size(w), opcode, digit, gpr(rd), imm, imm_len)
 }
 
 # =================
 # mov
 # =================
-# Direction convention: every reg,reg opcode in this
-# file is the "r/m, r" form (`0x89`-style — ModRM.rm is the destination,
-# ModRM.reg is the source). With `mod=11` register-direct addressing this
-# is purely a byte-encoding choice, not a semantic one (`0x8B`, "r, r/m",
-# would decode identically) — `0x89` was picked so `mov`'s own opcode byte
-# matches its mnemonic's conventional Intel-manual encoding table entry.
-# Every macro below keeps `(rd, rs, ...)` argument order, destination
-# first, so Phase 6's Intel-syntax dialect can read `mov rd, rs` directly
-# off the positional order with no reshuffling.
+# The forms with `w`. Their reg,reg opcodes are the "r/m, r" direction
+# (`0x89`: ModRM.rm is the destination, ModRM.reg the source). With
+# `mod=11` the "r, r/m" opcode would decode the same; this one matches the
+# Intel manual's usual listing.
 ## `rd = rs`.
 pub macro mov(
     rd: Reg,
@@ -341,29 +443,23 @@ pub macro mov(
 )
     | emits Bytes<...>
 {
-    const need_rex = w == 1 || reg_ext(rd) == 1
-    const rex = rex_byte(w, 0, 0, reg_ext(rd))
-    const opcode = Byte(0xB8 + reg_field(rd))
-    const imm_len = 4 + 4 * w
-    @emit instr(need_rex, rex, opcode, 0, Byte(0), imm, imm_len)
+    @emit reg_in_opcode_instr(w_size(w), 0xB8, gpr(rd), imm, 4 + 4 * w)
 }
 
 # =================
 # ALU ops: add, or, and, sub, xor, cmp
 # =================
-# reg,reg (opcode+ModRM `mod=11`) and reg,imm32 (`0x81 /digit`) forms of
-# each, as thin wrappers around `reg_reg_instr`/`reg_imm_instr` above —
-# x86's ALU family shares one encoding shape per form, differing only by a
-# fixed opcode byte (reg,reg) or a 3-bit ModRM.reg digit (reg,imm), so the
-# six mnemonics below are never more than that one differing constant.
+# reg,reg (opcode + ModRM `mod=11`) and reg,imm32 (`0x81 /digit`) forms,
+# with `w`. Each mnemonic differs only in its opcode byte or digit.
 
 ## `rd = rd + rs`.
 pub macro add(
     rd: Reg,
     rs: Reg,
     w: int
-)
-    | emits Bytes<...> { @emit reg_reg_instr(0x01, rd, rs, w) }
+) | emits Bytes<...> { 
+    @emit reg_reg_instr(0x01, rd, rs, w) 
+}
 ## `rd = rd | rs`.
 pub macro or(
     rd: Reg,
@@ -464,7 +560,7 @@ pub macro test(
     | emits Bytes<...> { @emit reg_imm_instr(0xF7, 0, rd, imm, 4, w) }
 
 # =================
-# memory operands (Phase 3)
+# memory operands
 # =================
 # Three named constructors, not one giant optional-everything struct — `Mem`
 # (`[base]`/`[base+disp]`), `MemIndexed` (`[base+index*scale+disp]`), and
@@ -557,7 +653,7 @@ pub macro MemIndexed(
             index = index,
             scale = scale,
             disp = disp
-        ))
+    ))
 }
 
 ## The memory at `[rip + disp]`: `disp` bytes past the end of the
@@ -776,112 +872,281 @@ macro addr_mode(mem: MemOperand) -> AddrMode {
     }
 }
 
-# Generalizes Phase 2's `instr`/`instr_byte` with two more optional sections
-# (SIB, displacement) inserted between ModRM and the immediate — the full
-# `[rex?][opcode][modrm][sib?][disp?][imm?]` shape a memory operand needs.
-# Register- direct instructions never call this (they still go through Phase 2's
-# `instr` directly); it's only reached via `mem_reg_instr`/`mem_imm_instr`
-# below.
-macro mem_instr_byte(
-    need_rex: int,
-    rex: Byte,
-    opcode: Byte,
-    modrm: Byte,
-    has_sib: int,
-    sib: Byte,
-    disp: int,
-    disp_len: int,
-    imm: int,
-    index: int
-) -> Byte {
-    @if index < need_rex {
-        @return rex
-    }
-    const after_rex = index - need_rex
-    @if after_rex == 0 {
-        @return opcode
-    }
-    const after_opcode = after_rex - 1
-    @if after_opcode == 0 {
-        @return modrm
-    }
-    const after_modrm = after_opcode - 1
-    @if has_sib != 0 && after_modrm == 0 {
-        @return sib
-    }
-    const after_sib = after_modrm - has_sib
-    @if after_sib < disp_len {
-        @return byte_of(disp, after_sib)
-    }
-    @return byte_of(imm, after_sib - disp_len)
+# =================
+# instruction builder
+# =================
+# Every instruction here is some subset of
+#
+# [66] [REX] [0F] opcode [ModRM [SIB] [disp]] [imm]
+#
+# `Encoding` says which parts are there, `encoding_byte` picks byte `index`
+# out of that shape, and `encoding_bytes` builds the whole `Bytes<N>`.
+
+struct Encoding {
+    # 1 for the `0x66` operand-size prefix, which makes an instruction 16-bit.
+    pub prefix: int,
+    pub need_rex: int,
+    pub rex: Byte,
+    # 1 for a two-byte opcode, `0x0F` then `opcode`.
+    pub escape: int,
+    pub opcode: Byte,
+    pub has_modrm: int,
+    pub modrm: Byte,
+    pub has_sib: int,
+    pub sib: Byte,
+    pub disp: int,
+    pub disp_len: int,
+    pub imm: int,
+    pub imm_len: int,
 }
 
-macro mem_instr(
-    need_rex: int,
-    rex: Byte,
-    opcode: Byte,
-    modrm: Byte,
-    has_sib: int,
-    sib: Byte,
-    disp: int,
-    disp_len: int,
-    imm: int,
-    imm_len: int
-) -> Bytes<...> {
-    const n = need_rex + 1 + 1 + has_sib + disp_len + imm_len
+macro encoding_byte(
+    e: Encoding,
+    index: int
+) -> Byte {
+    @if index < e.prefix {
+        @return Byte(0x66)
+    }
+    const after_prefix = index - e.prefix
+    @if after_prefix < e.need_rex {
+        @return e.rex
+    }
+    const after_rex = after_prefix - e.need_rex
+    @if after_rex < e.escape {
+        @return Byte(0x0F)
+    }
+    const after_escape = after_rex - e.escape
+    @if after_escape == 0 {
+        @return e.opcode
+    }
+    const after_opcode = after_escape - 1
+    @if after_opcode < e.has_modrm {
+        @return e.modrm
+    }
+    const after_modrm = after_opcode - e.has_modrm
+    @if after_modrm < e.has_sib {
+        @return e.sib
+    }
+    const after_sib = after_modrm - e.has_sib
+    @if after_sib < e.disp_len {
+        @return byte_of(e.disp, after_sib)
+    }
+    @return byte_of(e.imm, after_sib - e.disp_len)
+}
+
+macro encoding_bytes(e: Encoding) -> Bytes<...> {
+    const n = e.prefix + e.need_rex + e.escape + 1 + e.has_modrm + e.has_sib + e.disp_len + e.imm_len
     @return Bytes<n> {
         @for i in 0..n {
-            __el`i`: mem_instr_byte(
-                need_rex,
-                rex,
-                opcode,
-                modrm,
-                has_sib,
-                sib,
-                disp,
-                disp_len,
-                imm,
-                i
-            ),
+            __el`i`: encoding_byte(e, i),
         }
     }
 }
 
-# Shared by every reg,mem instruction below (the memory-destination overloads of
-# `mov` and the six ALU ops, plus `test`): ModRM.reg = `rs`, ModRM.rm (+ SIB +
-# disp) = `dst`, mirroring `reg_reg_instr`'s same "r/m, r" direction convention
-# — `dst` is the r/m operand here exactly as `rd` was there.
+# An instruction with a ModRM byte.
+# - `size`: the operand size in bits. 16 adds the `0x66` prefix and 64 sets
+# REX.W; 8 and 32 need neither, since 8-bit forms have opcodes of their
+# own.
+# - `opcode`: one byte, or `0x0Fxx` for the two-byte opcode `0F xx`.
+# - `reg`: the ModRM.reg value, a register number (0 to 15) or the opcode's
+# digit (0 to 7).
+# - `need` / `forbid`: 1 if a register operand needs a REX prefix (`spl`)
+# or can't have one (`ah`).
+macro modrm_instr(
+    size: int,
+    opcode: int,
+    reg: int,
+    need: int,
+    forbid: int,
+    addr: AddrMode,
+    imm: int,
+    imm_len: int
+) -> Bytes<...> {
+    const w = size == 64
+    const r = bit(reg, 3)
+    const need_rex = w || r == 1 || addr.rex_x == 1 || addr.rex_b == 1 || need == 1
+    @assert !(need_rex && forbid == 1), "ah, ch, dh and bh can't be used in an instruction that needs a REX prefix"
+    @return encoding_bytes(Encoding(
+            prefix = size == 16,
+            need_rex = need_rex,
+            rex = rex_byte(w, r, addr.rex_x, addr.rex_b),
+            escape = opcode > 0xFF,
+            opcode = Byte(opcode & 0xFF),
+            has_modrm = 1,
+            modrm = modrm_byte(addr.mode, reg & 0b111, addr.rm),
+            has_sib = addr.has_sib,
+            sib = addr.sib,
+            disp = addr.disp,
+            disp_len = addr.disp_len,
+            imm = imm,
+            imm_len = imm_len
+    ))
+}
+
+# Register-direct addressing for `r`: ModRM `mod=11`.
+macro direct(r: Gpr) -> AddrMode {
+    @return AddrMode(
+        mode = 0b11,
+        rm = reg_field(r.num),
+        has_sib = 0,
+        sib = Byte(0),
+        disp = 0,
+        disp_len = 0,
+        rex_x = 0,
+        rex_b = reg_ext(r.num)
+    )
+}
+
+# The four ModRM shapes: ModRM.reg is a register `r` or a `digit`, and
+# ModRM.rm is a register `rm` or a memory operand `mem`.
+macro reg_rm_instr(
+    size: int,
+    opcode: int,
+    r: Gpr,
+    rm: Gpr,
+    imm: int,
+    imm_len: int
+) -> Bytes<...> {
+    @return modrm_instr(
+        size,
+        opcode,
+        r.num.value,
+        r.rex == 1 || rm.rex == 1,
+        r.rex == -1 || rm.rex == -1,
+        direct(rm),
+        imm,
+        imm_len
+    )
+}
+
+macro reg_mem_instr(
+    size: int,
+    opcode: int,
+    r: Gpr,
+    mem: MemOperand,
+    imm: int,
+    imm_len: int
+) -> Bytes<...> {
+    @return modrm_instr(
+        size,
+        opcode,
+        r.num.value,
+        r.rex == 1,
+        r.rex == -1,
+        addr_mode(mem),
+        imm,
+        imm_len
+    )
+}
+
+macro digit_rm_instr(
+    size: int,
+    opcode: int,
+    digit: int,
+    rm: Gpr,
+    imm: int,
+    imm_len: int
+) -> Bytes<...> {
+    @return modrm_instr(
+        size,
+        opcode,
+        digit,
+        rm.rex == 1,
+        rm.rex == -1,
+        direct(rm),
+        imm,
+        imm_len
+    )
+}
+
+macro digit_mem_instr(
+    size: int,
+    opcode: int,
+    digit: int,
+    mem: MemOperand,
+    imm: int,
+    imm_len: int
+) -> Bytes<...> {
+    @return modrm_instr(size, opcode, digit, 0, 0, addr_mode(mem), imm, imm_len)
+}
+
+# An instruction with its register in the opcode's low 3 bits and no
+# ModRM byte: `push`, `pop`, `mov reg, imm`, `bswap`.
+macro reg_in_opcode_instr(
+    size: int,
+    opcode: int,
+    r: Gpr,
+    imm: int,
+    imm_len: int
+) -> Bytes<...> {
+    const w = size == 64
+    const need_rex = w || reg_ext(r.num) == 1 || r.rex == 1
+    @assert !(need_rex && r.rex == -1), "ah, ch, dh and bh can't be used in an instruction that needs a REX prefix"
+    @return encoding_bytes(Encoding(
+            prefix = size == 16,
+            need_rex = need_rex,
+            rex = rex_byte(w, 0, 0, reg_ext(r.num)),
+            escape = opcode > 0xFF,
+            opcode = Byte((opcode & 0xFF) + reg_field(r.num)),
+            has_modrm = 0,
+            modrm = Byte(0),
+            has_sib = 0,
+            sib = Byte(0),
+            disp = 0,
+            disp_len = 0,
+            imm = imm,
+            imm_len = imm_len
+    ))
+}
+
+# `len` fixed bytes, written as one number, most significant byte first:
+# `fixed(0x4899, 2)` is `48 99`.
+macro fixed(
+    value: int,
+    len: int
+) -> Bytes<...> {
+    @return Bytes<len> {
+        @for i in 0..len {
+            __el`i`: byte_of(value, len - 1 - i),
+        }
+    }
+}
+
+# The opcode for `size`: most instructions have a separate 8-bit one.
+macro sized(
+    size: int,
+    op8: int,
+    op: int
+) -> int {
+    @if size == 8 {
+        @return op8
+    }
+    @return op
+}
+
+# An immediate's length in bytes for `size`. A 64-bit operation takes a
+# 32-bit immediate, sign-extended.
+macro imm_len_of(size: int) -> int {
+    @if size == 8 {
+        @return 1
+    }
+    @if size == 16 {
+        @return 2
+    }
+    @return 4
+}
+
+# Memory forms with `w`: ModRM.reg = `rs`, ModRM.rm (+ SIB + disp) = `dst`.
 macro mem_reg_instr(
     opcode: int,
     dst: MemOperand,
     rs: Reg,
     w: int
 ) -> Bytes<...> {
-    const addr = addr_mode(dst)
-    const need_rex = w == 1 || reg_ext(rs) == 1 || addr.rex_x == 1 || addr.rex_b == 1
-    const rex = rex_byte(w, reg_ext(rs), addr.rex_x, addr.rex_b)
-    const modrm = modrm_byte(addr.mode, reg_field(rs), addr.rm)
-    @return mem_instr(
-        need_rex,
-        rex,
-        Byte(opcode),
-        modrm,
-        addr.has_sib,
-        addr.sib,
-        addr.disp,
-        addr.disp_len,
-        0,
-        0
-    )
+    @return reg_mem_instr(w_size(w), opcode, gpr(rs), dst, 0, 0)
 }
 
-# Shared by every reg,imm instruction's memory-destination overload below (the
-# six ALU ops via `0x81`, `test` via `0xF7`, and `mov` via `0xC7` — `mov`'s
-# memory form can't reuse `0xB8+reg` the way its register form does, since
-# there's no register to fold into the opcode's low bits when the destination is
-# memory; `0xC7 /0` is a completely different opcode that happens to share this
-# file's reg,imm shape instead). ModRM.reg carries the per-mnemonic `digit`,
-# same as `reg_imm_instr`.
+# Memory forms with `w` and a 32-bit immediate: ModRM.reg = `digit`.
 macro mem_imm_instr(
     opcode: int,
     digit: int,
@@ -889,35 +1154,14 @@ macro mem_imm_instr(
     imm: int,
     w: int
 ) -> Bytes<...> {
-    const addr = addr_mode(dst)
-    const need_rex = w == 1 || addr.rex_x == 1 || addr.rex_b == 1
-    const rex = rex_byte(w, 0, addr.rex_x, addr.rex_b)
-    const modrm = modrm_byte(addr.mode, digit, addr.rm)
-    @return mem_instr(
-        need_rex,
-        rex,
-        Byte(opcode),
-        modrm,
-        addr.has_sib,
-        addr.sib,
-        addr.disp,
-        addr.disp_len,
-        imm,
-        4
-    )
+    @return digit_mem_instr(w_size(w), opcode, digit, dst, imm, 4)
 }
 
 # =================
 # mov/ALU ops/test: memory-operand overloads
 # =================
-# Real macro overloading (dispatch on resolved argument type — see
-# `src/resolver/macro_body.rs`'s `resolve_macro_overload`). `MemOperand` is a
-# genuinely distinct type from both `Reg` and `int`, so the resolver
-# can tell a `mov(rd: Reg, rs: Reg, w)` call apart from a `mov(dst: MemOperand,
-# rs:
-# Reg, w)` one with no ambiguity. Every ALU/`test`/`mov` overload here keeps the
-# destination-first
-# argument order Phase 2 already established.
+# Memory forms with `w`, overloaded on `MemOperand`, a type distinct from
+# both `Reg` and `int`.
 ## Stores `rs` at `dst`.
 pub macro mov(
     dst: MemOperand,
@@ -926,15 +1170,7 @@ pub macro mov(
 )
     | emits Bytes<...> { @emit mem_reg_instr(0x89, dst, rs, w) }
 
-# `mov`'s load direction (`0x8B`, "r, r/m" — reg field is the destination this
-# time, `mem_reg_instr`'s `rs` parameter slot filled by `rd` instead of the
-# memory operand's "other" register): added later than the rest of this section,
-# once Phase 6's native (Intel-syntax) dialect needed a real `mov rd, [mem]` to
-# exist at all — Phase 3 deliberately covered only the store direction (see this
-# section's own comment above). Distinguishable from the store overload by its
-# first parameter's type (`Reg` vs. `MemOperand`), the same real-overloading
-# reasoning as every other overload here — no naming trick needed, unlike Phase
-# 5's `_cl` shift forms.
+# The load direction, `0x8B` ("r, r/m"): ModRM.reg is the destination.
 ## Loads the value at `src` into `rd`.
 pub macro mov(
     rd: Reg,
@@ -1052,7 +1288,7 @@ pub macro test(
     | emits Bytes<...> { @emit mem_imm_instr(0xF7, 0, dst, imm, w) }
 
 # =================
-# control flow: jmp/jcc/call/ret (Phase 4)
+# control flow: jmp/jcc/call/ret
 # =================
 # Near-only (`rel32`), no automatic short/near relaxation — a real assembler's
 # `rel8` vs `rel32` choice is deliberately not this language's job to make
@@ -1082,7 +1318,8 @@ macro rel32_offset(
 
 # opcode + rel32 (`jmp`/`call`: one opcode byte; `jcc`: two). The `rel32` field
 # is wrapped in `LittleEndian<Positioned<32>, 32>` rather than folded into a
-# `Bytes<N>` alongside the opcode byte(s) the way Phase 2/3's immediates were:
+# `Bytes<N>` alongside the opcode byte(s) the way the other instructions'
+# immediates are:
 # those were always already-known plain `int`s at macro-expansion time, so
 # `byte_of` could split them into individual little-endian `Byte`s directly, but
 # `rel32_offset` stays a `Deferred` until `bitter` resolves it — there's no
@@ -1113,7 +1350,7 @@ pub struct Rel32Instr2 {
 
 # `jmp rel32` is always 5 bytes (1 opcode + 4 disp) — `own_length` below is that
 # fixed size, known here at macro-expansion time since there's no
-# variable-length encoding in this instruction at all (unlike, say, Phase 3's
+# variable-length encoding in this instruction at all (unlike, say, the
 # memory operands).
 ## Jumps to the label `target`.
 pub macro jmp(target: int)
@@ -1124,7 +1361,7 @@ pub macro jmp(target: int)
         rel32 = LittleEndian<Positioned<32>, 32> { value: Positioned<32> { value: rel32_offset(
                     target,
                     5
-                ) } }
+        ) } }
     )
 }
 
@@ -1139,7 +1376,7 @@ pub macro call(target: int)
         rel32 = LittleEndian<Positioned<32>, 32> { value: Positioned<32> { value: rel32_offset(
                     target,
                     5
-                ) } }
+        ) } }
     )
 }
 
@@ -1158,7 +1395,7 @@ macro jcc_instr(
         rel32 = LittleEndian<Positioned<32>, 32> { value: Positioned<32> { value: rel32_offset(
                     target,
                     6
-                ) } }
+        ) } }
     )
 }
 
@@ -1269,29 +1506,12 @@ pub macro ret()
 }
 
 # =================
-# shl/shr/sar (Phase 5)
+# shl/shr/sar
 # =================
-# `0xC1 /digit` (reg, imm8) and `0xD3 /digit` (reg, CL — the shift count comes
-# from the CL register at runtime; there's no encoding for any other register in
-# that role, so its own macro signature has no count parameter at all, just
-# `(rd, w)`, not `(rd, cl_placeholder, w)`). Both reuse `reg_imm_instr` — the
-# reg,CL form simply passes `imm_len = 0`, so `instr`'s own `@for` loop never
-# touches the unused `imm` value.
-#
-# The reg,CL form gets its own `_cl`-suffixed name rather than an arity overload
-# of the plain mnemonic (`shl(rd, w)` alongside `shl(rd, imm, w)`, the way Phase
-# 2's `mov`/ALU reg,reg vs reg,imm forms considered and rejected overloading for
-# a similar reason): `shr(rd: Reg, w: int)` would resolve to `(int, int)` —
-# identical to `std.bitter.deferred`'s own `shr(a: int, b: int)`, already `pub`
-# and always in scope (every module's imports are recursively spliced into one
-# flat program by `src/loader.rs`'s `collect_declarations`, regardless of
-# whether an import list names specific symbols or uses `*` — naming imports
-# doesn't limit what's spliced, only what a typo check validates, confirmed
-# empirically after an early draft tried exactly that and still hit
-# `AmbiguousMacroOverload`) — an ambiguous overload the resolver would reject.
-# `shl_cl`/`sar_cl` don't actually collide with anything (`std.bitter.deferred`
-# has no `shl`/`sar` at all), but use the same `_cl` suffix anyway so all three
-# mnemonics stay parallel instead of two arity-overloading and one not.
+# The forms with `w`: `0xC1 /digit` takes an 8-bit count, `0xD3 /digit`
+# takes it from `cl`. The `cl` forms are `shl_cl` and so on, since
+# `shr(rd: Reg, w: int)` would collide with `std.bitter.deferred`'s
+# `shr(a: int, b: int)`. The sized forms below take `cl` as an operand.
 ## `rd = rd << imm`.
 pub macro shl(
     rd: Reg,
@@ -1335,18 +1555,10 @@ pub macro sar_cl(
     | emits Bytes<...> { @emit reg_imm_instr(0xD3, 7, rd, 0, 0, w) }
 
 # =================
-# lea (Phase 5)
+# lea
 # =================
-# `0x8D /r` — reuses `mem_reg_instr` (Phase 3), but with the two roles swapped
-# from every one of that helper's other callers: there, its `MemOperand`
-# parameter is always the actual destination (`mov [mem], rs` stores into it)
-# and its `Reg` parameter is the "other" operand placed in ModRM.reg. `lea`'s
-# destination is always a register — `rd` — placed in ModRM.reg exactly the same
-# way, while the `MemOperand` argument is the address *expression* to compute
-# (never dereferenced; nothing about the encoding itself expresses that, only
-# the opcode `0x8D` chosen instead of `0x8B`'s "load" — this file has no `0x8B`
-# form at all, see Phase 3's own note on why the mov/ALU `MemOperand` overloads
-# only ever cover the store direction).
+# `0x8D /r`: ModRM.reg is the destination and the memory operand is the
+# address to compute. Memory isn't read.
 ## Loads the address `src` stands for into `rd`, without reading memory.
 pub macro lea(
     rd: Reg,
@@ -1354,6 +1566,10 @@ pub macro lea(
     w: int
 )
     | emits Bytes<...> { @emit mem_reg_instr(0x8D, src, rd, w) }
+
+## Loads the address `src` stands for into `rd`, without reading memory.
+pub macro lea<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x8D, rd, src, 0, 0) }
 
 # =================
 # RIP-relative label operands
@@ -1399,8 +1615,7 @@ pub struct RipRelInstrRex {
 # ModRM.reg = `r`, r/m = the label. Same "reg field is the other register"
 # shape as `mem_reg_instr`, for whichever direction `opcode` encodes. `pub`
 # only because a private macro invoked as a statement doesn't resolve once
-# this file is imported (the same quirk `intel.basm`'s `assert_valid_reg`
-# notes).
+# this file is imported.
 ## An instruction with opcode `opcode` whose memory operand is the label
 ## `addr`, and whose other operand is `r`. The dialects' `[rel label]`
 ## forms are built on it.
@@ -1419,7 +1634,7 @@ pub macro rip_label_instr(
             disp32 = LittleEndian<Positioned<32>, 32> { value: Positioned<32> { value: rel32_offset(
                         addr.target,
                         7
-                    ) } }
+            ) } }
         )
     } @else {
         @emit RipRelInstr(
@@ -1428,63 +1643,129 @@ pub macro rip_label_instr(
             disp32 = LittleEndian<Positioned<32>, 32> { value: Positioned<32> { value: rel32_offset(
                         addr.target,
                         6
-                    ) } }
+            ) } }
         )
     }
 }
 
 ## Loads the address of the label `src` into `rd`.
-pub macro lea(rd: Reg, src: RipLabel, w: int) { rip_label_instr 0x8D, src, rd, w }
+pub macro lea(
+    rd: Reg,
+    src: RipLabel,
+    w: int
+) { rip_label_instr 0x8D, src, rd, w }
 ## Loads the value at the label `src` into `rd`.
-pub macro mov(rd: Reg, src: RipLabel, w: int) { rip_label_instr 0x8B, src, rd, w }
+pub macro mov(
+    rd: Reg,
+    src: RipLabel,
+    w: int
+) { rip_label_instr 0x8B, src, rd, w }
 ## Stores `rs` at the label `dst`.
-pub macro mov(dst: RipLabel, rs: Reg, w: int) { rip_label_instr 0x89, dst, rs, w }
+pub macro mov(
+    dst: RipLabel,
+    rs: Reg,
+    w: int
+) { rip_label_instr 0x89, dst, rs, w }
 ## `[dst] = [dst] + rs`, where `dst` is a label.
-pub macro add(dst: RipLabel, rs: Reg, w: int) { rip_label_instr 0x01, dst, rs, w }
+pub macro add(
+    dst: RipLabel,
+    rs: Reg,
+    w: int
+) { rip_label_instr 0x01, dst, rs, w }
 ## `[dst] = [dst] | rs`, where `dst` is a label.
-pub macro or(dst: RipLabel, rs: Reg, w: int) { rip_label_instr 0x09, dst, rs, w }
+pub macro or(
+    dst: RipLabel,
+    rs: Reg,
+    w: int
+) { rip_label_instr 0x09, dst, rs, w }
 ## `[dst] = [dst] & rs`, where `dst` is a label.
-pub macro and(dst: RipLabel, rs: Reg, w: int) { rip_label_instr 0x21, dst, rs, w }
+pub macro and(
+    dst: RipLabel,
+    rs: Reg,
+    w: int
+) { rip_label_instr 0x21, dst, rs, w }
 ## `[dst] = [dst] - rs`, where `dst` is a label.
-pub macro sub(dst: RipLabel, rs: Reg, w: int) { rip_label_instr 0x29, dst, rs, w }
+pub macro sub(
+    dst: RipLabel,
+    rs: Reg,
+    w: int
+) { rip_label_instr 0x29, dst, rs, w }
 ## `[dst] = [dst] ^ rs`, where `dst` is a label.
-pub macro xor(dst: RipLabel, rs: Reg, w: int) { rip_label_instr 0x31, dst, rs, w }
+pub macro xor(
+    dst: RipLabel,
+    rs: Reg,
+    w: int
+) { rip_label_instr 0x31, dst, rs, w }
 ## Sets the flags from `[dst] - rs`, where `dst` is a label, without storing
 ## it.
-pub macro cmp(dst: RipLabel, rs: Reg, w: int) { rip_label_instr 0x39, dst, rs, w }
+pub macro cmp(
+    dst: RipLabel,
+    rs: Reg,
+    w: int
+) { rip_label_instr 0x39, dst, rs, w }
 ## Sets the flags from `[dst] & rs`, where `dst` is a label, without storing
 ## it.
-pub macro test(dst: RipLabel, rs: Reg, w: int) { rip_label_instr 0x85, dst, rs, w }
+pub macro test(
+    dst: RipLabel,
+    rs: Reg,
+    w: int
+) { rip_label_instr 0x85, dst, rs, w }
+
+# The same with the operand size from the register: `Reg` for 64 bits,
+# `Reg32` for 32.
+## Loads the address of the label `src` into `rd`.
+pub macro lea(rd: Reg, src: RipLabel) { rip_label_instr 0x8D, src, rd, 1 }
+pub macro lea(rd: Reg32, src: RipLabel) { rip_label_instr 0x8D, src, rd.reg, 0 }
+## Loads the value at the label `src` into `rd`.
+pub macro mov(rd: Reg, src: RipLabel) { rip_label_instr 0x8B, src, rd, 1 }
+pub macro mov(rd: Reg32, src: RipLabel) { rip_label_instr 0x8B, src, rd.reg, 0 }
+## Stores `rs` at the label `dst`.
+pub macro mov(dst: RipLabel, rs: Reg) { rip_label_instr 0x89, dst, rs, 1 }
+pub macro mov(dst: RipLabel, rs: Reg32) { rip_label_instr 0x89, dst, rs.reg, 0 }
+## `[dst] = [dst] + rs`, where `dst` is a label.
+pub macro add(dst: RipLabel, rs: Reg) { rip_label_instr 0x01, dst, rs, 1 }
+pub macro add(dst: RipLabel, rs: Reg32) { rip_label_instr 0x01, dst, rs.reg, 0 }
+## `[dst] = [dst] | rs`, where `dst` is a label.
+pub macro or(dst: RipLabel, rs: Reg) { rip_label_instr 0x09, dst, rs, 1 }
+pub macro or(dst: RipLabel, rs: Reg32) { rip_label_instr 0x09, dst, rs.reg, 0 }
+## `[dst] = [dst] & rs`, where `dst` is a label.
+pub macro and(dst: RipLabel, rs: Reg) { rip_label_instr 0x21, dst, rs, 1 }
+pub macro and(dst: RipLabel, rs: Reg32) { rip_label_instr 0x21, dst, rs.reg, 0 }
+## `[dst] = [dst] - rs`, where `dst` is a label.
+pub macro sub(dst: RipLabel, rs: Reg) { rip_label_instr 0x29, dst, rs, 1 }
+pub macro sub(dst: RipLabel, rs: Reg32) { rip_label_instr 0x29, dst, rs.reg, 0 }
+## `[dst] = [dst] ^ rs`, where `dst` is a label.
+pub macro xor(dst: RipLabel, rs: Reg) { rip_label_instr 0x31, dst, rs, 1 }
+pub macro xor(dst: RipLabel, rs: Reg32) { rip_label_instr 0x31, dst, rs.reg, 0 }
+## Sets the flags from `[dst] - rs`, where `dst` is a label, without storing it.
+pub macro cmp(dst: RipLabel, rs: Reg) { rip_label_instr 0x39, dst, rs, 1 }
+pub macro cmp(dst: RipLabel, rs: Reg32) { rip_label_instr 0x39, dst, rs.reg, 0 }
+## Sets the flags from `[dst] & rs`, where `dst` is a label, without storing it.
+pub macro test(dst: RipLabel, rs: Reg) { rip_label_instr 0x85, dst, rs, 1 }
+pub macro test(
+    dst: RipLabel,
+    rs: Reg32
+) { rip_label_instr 0x85, dst, rs.reg, 0 }
 
 # =================
-# push/pop (Phase 5)
+# push/pop
 # =================
-# `0x50+reg`/`0x58+reg` — the same "register number folded into the opcode's own
-# low 3 bits, extension bit in REX.B" pattern `mov`'s immediate form (Phase 2)
-# established, reusing `instr` directly (`has_modrm=0`, `imm_len=0`: just an
-# optional REX byte followed by the one opcode byte). No `w` parameter: unlike
-# every other instruction in this file, `push`/`pop` have no 32-bit register
-# form to select in 64-bit mode at all (the default, and only, operand size for
-# a GPR push/pop here is 64 bits — REX.W would be redundant, so this file never
-# emits it).
+# `0x50+reg`/`0x58+reg`: the register in the opcode's low 3 bits, its
+# extension bit in REX.B. In 64-bit mode a register push or pop is 64 bits
+# by default, so these take no `w`; the 16-bit forms are with the sized
+# instructions below.
 ## Pushes the 64-bit `rd` onto the stack.
 pub macro push(rd: Reg)
     | emits Bytes<...>
 {
-    const need_rex = reg_ext(rd) == 1
-    const rex = rex_byte(0, 0, 0, reg_ext(rd))
-    const opcode = Byte(0x50 + reg_field(rd))
-    @emit instr(need_rex, rex, opcode, 0, Byte(0), 0, 0)
+    @emit reg_in_opcode_instr(32, 0x50, gpr(rd), 0, 0)
 }
 
 ## Pops 64 bits off the stack into `rd`.
 pub macro pop(rd: Reg)
     | emits Bytes<...>
 {
-    const need_rex = reg_ext(rd) == 1
-    const rex = rex_byte(0, 0, 0, reg_ext(rd))
-    const opcode = Byte(0x58 + reg_field(rd))
-    @emit instr(need_rex, rex, opcode, 0, Byte(0), 0, 0)
+    @emit reg_in_opcode_instr(32, 0x58, gpr(rd), 0, 0)
 }
 
 # =================
@@ -1503,3 +1784,1958 @@ pub macro syscall()
 {
     @emit Bytes<2> { __el0: Byte(0x0F), __el1: Byte(0x05) }
 }
+
+# =================
+# sized instructions: shared shapes
+# =================
+# The instructions below are generic over their register operands' type,
+# so `add rax, rbx`, `add eax, ebx`, `add ax, bx` and `add al, bl` are one
+# macro, and mixing sizes (`add rax, ebx`) matches no overload. A memory
+# operand with no register to size it takes an `OperandSize`:
+# `add Mem(rbx, 0), 1, qword`. `op8` is the 8-bit opcode, or -1 for an
+# instruction that has no 8-bit form. An `imm_len` of -1 means the usual
+# immediate for the operand size: 1, 2 or 4 bytes.
+
+macro sized_opcode(
+    size: int,
+    op8: int,
+    op: int
+) -> int {
+    @if size == 8 {
+        @assert op8 >= 0, "this instruction has no 8-bit form"
+        @return op8
+    }
+    @return op
+}
+
+macro imm_bytes(
+    size: int,
+    imm_len: int
+) -> int {
+    @if imm_len < 0 {
+        @return imm_len_of(size)
+    }
+    @return imm_len
+}
+
+# ModRM.rm = `rd`, ModRM.reg = `rs`.
+macro rr<R>(
+    op8: int,
+    op: int,
+    rd: R,
+    rs: R,
+    imm: int,
+    imm_len: int
+) -> Bytes<...> {
+    const d = gpr(rd)
+    @return reg_rm_instr(
+        d.size,
+        sized_opcode(d.size, op8, op),
+        gpr(rs),
+        d,
+        imm,
+        imm_bytes(d.size, imm_len)
+    )
+}
+
+# ModRM.reg = `rd`, ModRM.rm = `rs`: the "r, r/m" direction.
+macro rr_load<R>(
+    op8: int,
+    op: int,
+    rd: R,
+    rs: R,
+    imm: int,
+    imm_len: int
+) -> Bytes<...> {
+    const d = gpr(rd)
+    @return reg_rm_instr(
+        d.size,
+        sized_opcode(d.size, op8, op),
+        d,
+        gpr(rs),
+        imm,
+        imm_bytes(d.size, imm_len)
+    )
+}
+
+# ModRM.reg = `r`, ModRM.rm = `mem`, either direction.
+macro rmem<R>(
+    op8: int,
+    op: int,
+    r: R,
+    mem: MemOperand,
+    imm: int,
+    imm_len: int
+) -> Bytes<...> {
+    const g = gpr(r)
+    @return reg_mem_instr(
+        g.size,
+        sized_opcode(g.size, op8, op),
+        g,
+        mem,
+        imm,
+        imm_bytes(g.size, imm_len)
+    )
+}
+
+# ModRM.reg = `digit`, ModRM.rm = `rd`.
+macro ri<R>(
+    op8: int,
+    op: int,
+    digit: int,
+    rd: R,
+    imm: int,
+    imm_len: int
+) -> Bytes<...> {
+    const d = gpr(rd)
+    @return digit_rm_instr(
+        d.size,
+        sized_opcode(d.size, op8, op),
+        digit,
+        d,
+        imm,
+        imm_bytes(d.size, imm_len)
+    )
+}
+
+# ModRM.reg = `digit`, ModRM.rm = `dst`, `size` wide.
+macro mi(
+    op8: int,
+    op: int,
+    digit: int,
+    dst: MemOperand,
+    imm: int,
+    imm_len: int,
+    size: OperandSize
+) -> Bytes<...> {
+    @return digit_mem_instr(
+        size.bits,
+        sized_opcode(size.bits, op8, op),
+        digit,
+        dst,
+        imm,
+        imm_bytes(size.bits, imm_len)
+    )
+}
+
+# An opcode and an immediate, with no ModRM byte.
+macro imm_instr(
+    prefix: int,
+    opcode: int,
+    imm: int,
+    imm_len: int
+) -> Bytes<...> {
+    @return encoding_bytes(Encoding(
+            prefix = prefix,
+            need_rex = 0,
+            rex = Byte(0),
+            escape = opcode > 0xFF,
+            opcode = Byte(opcode & 0xFF),
+            has_modrm = 0,
+            modrm = Byte(0),
+            has_sib = 0,
+            sib = Byte(0),
+            disp = 0,
+            disp_len = 0,
+            imm = imm,
+            imm_len = imm_len
+    ))
+}
+
+## Fails to compile unless `count` is `cl`, the only register a shift can
+## take its count from.
+pub macro assert_cl(count: Reg8) {
+    @assert count.reg.value == 1 && count.high == 0, "a shift count register must be `cl`"
+}
+
+## Fails to compile unless `size` is `bits` bits.
+pub macro assert_size(size: OperandSize, bits: int) {
+    @assert size.bits == bits, "wrong operand size for this instruction"
+}
+
+# =================
+# add, or, adc, sbb, and, sub, xor, cmp
+# =================
+
+## `rd = rd + rs`.
+pub macro add<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr(0x00, 0x01, rd, rs, 0, 0) }
+## `rd = rd + imm`; a 64-bit `rd` takes a 32-bit `imm`, sign-extended.
+pub macro add<R>(rd: R, imm: int)
+    | emits Bytes<...> { @emit ri(0x80, 0x81, 0, rd, imm, -1) }
+## `rd = rd + [src]`.
+pub macro add<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(0x02, 0x03, rd, src, 0, 0) }
+## `[dst] = [dst] + rs`.
+pub macro add<R>(dst: MemOperand, rs: R)
+    | emits Bytes<...> { @emit rmem(0x00, 0x01, rs, dst, 0, 0) }
+## `[dst] = [dst] + imm`, `size` wide.
+pub macro add(dst: MemOperand, imm: int, size: OperandSize)
+    | emits Bytes<...> { @emit mi(0x80, 0x81, 0, dst, imm, -1, size) }
+## Fails: `add [dst], imm` needs a size, like `add qword [rbx], 1`.
+pub macro add(_dst: MemOperand, _imm: int) {
+    @assert 0 == 1, "this memory operand needs a size, like `qword [rbx]`"
+}
+
+## `rd = rd | rs`.
+pub macro or<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr(0x08, 0x09, rd, rs, 0, 0) }
+## `rd = rd | imm`; a 64-bit `rd` takes a 32-bit `imm`, sign-extended.
+pub macro or<R>(rd: R, imm: int)
+    | emits Bytes<...> { @emit ri(0x80, 0x81, 1, rd, imm, -1) }
+## `rd = rd | [src]`.
+pub macro or<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(0x0a, 0x0b, rd, src, 0, 0) }
+## `[dst] = [dst] | rs`.
+pub macro or<R>(dst: MemOperand, rs: R)
+    | emits Bytes<...> { @emit rmem(0x08, 0x09, rs, dst, 0, 0) }
+## `[dst] = [dst] | imm`, `size` wide.
+pub macro or(dst: MemOperand, imm: int, size: OperandSize)
+    | emits Bytes<...> { @emit mi(0x80, 0x81, 1, dst, imm, -1, size) }
+## Fails: `or [dst], imm` needs a size, like `or qword [rbx], 1`.
+pub macro or(_dst: MemOperand, _imm: int) {
+    @assert 0 == 1, "this memory operand needs a size, like `qword [rbx]`"
+}
+
+## `rd = rd + rs + CF`: add with carry.
+pub macro adc<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr(0x10, 0x11, rd, rs, 0, 0) }
+## `rd = rd + imm + CF`: add with carry; a 64-bit `rd` takes a 32-bit `imm`,
+## sign-extended.
+pub macro adc<R>(rd: R, imm: int)
+    | emits Bytes<...> { @emit ri(0x80, 0x81, 2, rd, imm, -1) }
+## `rd = rd + [src] + CF`: add with carry.
+pub macro adc<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(0x12, 0x13, rd, src, 0, 0) }
+## `[dst] = [dst] + rs + CF`: add with carry.
+pub macro adc<R>(dst: MemOperand, rs: R)
+    | emits Bytes<...> { @emit rmem(0x10, 0x11, rs, dst, 0, 0) }
+## `[dst] = [dst] + imm + CF`: add with carry, `size` wide.
+pub macro adc(dst: MemOperand, imm: int, size: OperandSize)
+    | emits Bytes<...> { @emit mi(0x80, 0x81, 2, dst, imm, -1, size) }
+## Fails: `adc [dst], imm` needs a size, like `adc qword [rbx], 1`.
+pub macro adc(_dst: MemOperand, _imm: int) {
+    @assert 0 == 1, "this memory operand needs a size, like `qword [rbx]`"
+}
+
+## `rd = rd - rs - CF`: subtract with borrow.
+pub macro sbb<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr(0x18, 0x19, rd, rs, 0, 0) }
+## `rd = rd - imm - CF`: subtract with borrow; a 64-bit `rd` takes a 32-bit
+## `imm`, sign-extended.
+pub macro sbb<R>(rd: R, imm: int)
+    | emits Bytes<...> { @emit ri(0x80, 0x81, 3, rd, imm, -1) }
+## `rd = rd - [src] - CF`: subtract with borrow.
+pub macro sbb<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(0x1a, 0x1b, rd, src, 0, 0) }
+## `[dst] = [dst] - rs - CF`: subtract with borrow.
+pub macro sbb<R>(dst: MemOperand, rs: R)
+    | emits Bytes<...> { @emit rmem(0x18, 0x19, rs, dst, 0, 0) }
+## `[dst] = [dst] - imm - CF`: subtract with borrow, `size` wide.
+pub macro sbb(dst: MemOperand, imm: int, size: OperandSize)
+    | emits Bytes<...> { @emit mi(0x80, 0x81, 3, dst, imm, -1, size) }
+## Fails: `sbb [dst], imm` needs a size, like `sbb qword [rbx], 1`.
+pub macro sbb(_dst: MemOperand, _imm: int) {
+    @assert 0 == 1, "this memory operand needs a size, like `qword [rbx]`"
+}
+
+## `rd = rd & rs`.
+pub macro and<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr(0x20, 0x21, rd, rs, 0, 0) }
+## `rd = rd & imm`; a 64-bit `rd` takes a 32-bit `imm`, sign-extended.
+pub macro and<R>(rd: R, imm: int)
+    | emits Bytes<...> { @emit ri(0x80, 0x81, 4, rd, imm, -1) }
+## `rd = rd & [src]`.
+pub macro and<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(0x22, 0x23, rd, src, 0, 0) }
+## `[dst] = [dst] & rs`.
+pub macro and<R>(dst: MemOperand, rs: R)
+    | emits Bytes<...> { @emit rmem(0x20, 0x21, rs, dst, 0, 0) }
+## `[dst] = [dst] & imm`, `size` wide.
+pub macro and(dst: MemOperand, imm: int, size: OperandSize)
+    | emits Bytes<...> { @emit mi(0x80, 0x81, 4, dst, imm, -1, size) }
+## Fails: `and [dst], imm` needs a size, like `and qword [rbx], 1`.
+pub macro and(_dst: MemOperand, _imm: int) {
+    @assert 0 == 1, "this memory operand needs a size, like `qword [rbx]`"
+}
+
+## `rd = rd - rs`.
+pub macro sub<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr(0x28, 0x29, rd, rs, 0, 0) }
+## `rd = rd - imm`; a 64-bit `rd` takes a 32-bit `imm`, sign-extended.
+pub macro sub<R>(rd: R, imm: int)
+    | emits Bytes<...> { @emit ri(0x80, 0x81, 5, rd, imm, -1) }
+## `rd = rd - [src]`.
+pub macro sub<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(0x2a, 0x2b, rd, src, 0, 0) }
+## `[dst] = [dst] - rs`.
+pub macro sub<R>(dst: MemOperand, rs: R)
+    | emits Bytes<...> { @emit rmem(0x28, 0x29, rs, dst, 0, 0) }
+## `[dst] = [dst] - imm`, `size` wide.
+pub macro sub(dst: MemOperand, imm: int, size: OperandSize)
+    | emits Bytes<...> { @emit mi(0x80, 0x81, 5, dst, imm, -1, size) }
+## Fails: `sub [dst], imm` needs a size, like `sub qword [rbx], 1`.
+pub macro sub(_dst: MemOperand, _imm: int) {
+    @assert 0 == 1, "this memory operand needs a size, like `qword [rbx]`"
+}
+
+## `rd = rd ^ rs`.
+pub macro xor<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr(0x30, 0x31, rd, rs, 0, 0) }
+## `rd = rd ^ imm`; a 64-bit `rd` takes a 32-bit `imm`, sign-extended.
+pub macro xor<R>(rd: R, imm: int)
+    | emits Bytes<...> { @emit ri(0x80, 0x81, 6, rd, imm, -1) }
+## `rd = rd ^ [src]`.
+pub macro xor<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(0x32, 0x33, rd, src, 0, 0) }
+## `[dst] = [dst] ^ rs`.
+pub macro xor<R>(dst: MemOperand, rs: R)
+    | emits Bytes<...> { @emit rmem(0x30, 0x31, rs, dst, 0, 0) }
+## `[dst] = [dst] ^ imm`, `size` wide.
+pub macro xor(dst: MemOperand, imm: int, size: OperandSize)
+    | emits Bytes<...> { @emit mi(0x80, 0x81, 6, dst, imm, -1, size) }
+## Fails: `xor [dst], imm` needs a size, like `xor qword [rbx], 1`.
+pub macro xor(_dst: MemOperand, _imm: int) {
+    @assert 0 == 1, "this memory operand needs a size, like `qword [rbx]`"
+}
+
+## Sets the flags from `rd - rs`, without storing it.
+pub macro cmp<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr(0x38, 0x39, rd, rs, 0, 0) }
+## Sets the flags from `rd - imm`, without storing it; a 64-bit `rd` takes a
+## 32-bit `imm`, sign-extended.
+pub macro cmp<R>(rd: R, imm: int)
+    | emits Bytes<...> { @emit ri(0x80, 0x81, 7, rd, imm, -1) }
+## Sets the flags from `rd - [src]`, without storing it.
+pub macro cmp<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(0x3a, 0x3b, rd, src, 0, 0) }
+## Sets the flags from `[dst] - rs`, without storing it.
+pub macro cmp<R>(dst: MemOperand, rs: R)
+    | emits Bytes<...> { @emit rmem(0x38, 0x39, rs, dst, 0, 0) }
+## Sets the flags from `[dst] - imm`, without storing it, `size` wide.
+pub macro cmp(dst: MemOperand, imm: int, size: OperandSize)
+    | emits Bytes<...> { @emit mi(0x80, 0x81, 7, dst, imm, -1, size) }
+## Fails: `cmp [dst], imm` needs a size, like `cmp qword [rbx], 1`.
+pub macro cmp(_dst: MemOperand, _imm: int) {
+    @assert 0 == 1, "this memory operand needs a size, like `qword [rbx]`"
+}
+
+# =================
+# mov, test, xchg, xadd, cmpxchg
+# =================
+
+## `rd = rs`.
+pub macro mov<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr(0x88, 0x89, rd, rs, 0, 0) }
+## `rd = imm`. A 64-bit `rd` takes a full 64-bit `imm`.
+pub macro mov<R>(rd: R, imm: int)
+    | emits Bytes<...>
+{
+    const d = gpr(rd)
+    const imm_len = imm_len_of(d.size) + 4 * (d.size == 64)
+    @emit reg_in_opcode_instr(
+        d.size,
+        sized_opcode(d.size, 0xB0, 0xB8),
+        d,
+        imm,
+        imm_len
+    )
+}
+## Loads the value at `src` into `rd`.
+pub macro mov<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(0x8A, 0x8B, rd, src, 0, 0) }
+## Loads the value at `src` into `rd`; `size` must match `rd`'s.
+pub macro mov<R>(rd: R, src: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, gpr(rd).size
+    @emit rmem(0x8A, 0x8B, rd, src, 0, 0)
+}
+## Stores `rs` at `dst`.
+pub macro mov<R>(dst: MemOperand, rs: R)
+    | emits Bytes<...> { @emit rmem(0x88, 0x89, rs, dst, 0, 0) }
+## Stores `imm` at `dst`, `size` wide. A 64-bit store takes a 32-bit
+## `imm`, sign-extended.
+pub macro mov(dst: MemOperand, imm: int, size: OperandSize)
+    | emits Bytes<...> { @emit mi(0xC6, 0xC7, 0, dst, imm, -1, size) }
+## Fails: `mov [dst], imm` needs a size, like `mov qword [rbx], 1`.
+pub macro mov(_dst: MemOperand, _imm: int) {
+    @assert 0 == 1, "this memory operand needs a size, like `qword [rbx]`"
+}
+# `mov` to or from a segment register. Like NASM, a 64-bit general
+# register gets the 32-bit encoding, which zero-extends the same way.
+## `rd = sr`.
+pub macro mov<R>(rd: R, sr: SReg)
+    | emits Bytes<...>
+{
+    const d = gpr(rd)
+    const size = d.size - 32 * (d.size == 64)
+    @emit modrm_instr(
+        size,
+        0x8C,
+        sr.num,
+        d.rex == 1,
+        d.rex == -1,
+        direct(d),
+        0,
+        0
+    )
+}
+## Loads `sr` from the low 16 bits of `rs`.
+pub macro mov<R>(sr: SReg, rs: R)
+    | emits Bytes<...>
+{
+    const s = gpr(rs)
+    @emit modrm_instr(
+        32,
+        0x8E,
+        sr.num,
+        s.rex == 1,
+        s.rex == -1,
+        direct(s),
+        0,
+        0
+    )
+}
+## Stores `sr` at `dst`, 16 bits wide.
+pub macro mov(dst: MemOperand, sr: SReg)
+    | emits Bytes<...> { @emit modrm_instr(
+            32,
+            0x8C,
+            sr.num,
+            0,
+            0,
+            addr_mode(dst),
+            0,
+            0
+    ) }
+## Stores `sr` at `dst`; `size` must be `word`.
+pub macro mov(dst: MemOperand, sr: SReg, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 16
+    @emit modrm_instr(32, 0x8C, sr.num, 0, 0, addr_mode(dst), 0, 0)
+}
+## Loads `sr` from the 16 bits at `src`.
+pub macro mov(sr: SReg, src: MemOperand)
+    | emits Bytes<...> { @emit modrm_instr(
+            32,
+            0x8E,
+            sr.num,
+            0,
+            0,
+            addr_mode(src),
+            0,
+            0
+    ) }
+## Loads `sr` from `src`; `size` must be `word`.
+pub macro mov(sr: SReg, src: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 16
+    @emit modrm_instr(32, 0x8E, sr.num, 0, 0, addr_mode(src), 0, 0)
+}
+
+## Sets the flags from `rd & rs`, without storing it.
+pub macro test<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr(0x84, 0x85, rd, rs, 0, 0) }
+## Sets the flags from `rd & imm`, without storing it.
+pub macro test<R>(rd: R, imm: int)
+    | emits Bytes<...> { @emit ri(0xF6, 0xF7, 0, rd, imm, -1) }
+## Sets the flags from `rd & [src]`, without storing it.
+pub macro test<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(0x84, 0x85, rd, src, 0, 0) }
+## Sets the flags from `[dst] & rs`, without storing it.
+pub macro test<R>(dst: MemOperand, rs: R)
+    | emits Bytes<...> { @emit rmem(0x84, 0x85, rs, dst, 0, 0) }
+## Sets the flags from `[dst] & imm`, `size` wide, without storing it.
+pub macro test(dst: MemOperand, imm: int, size: OperandSize)
+    | emits Bytes<...> { @emit mi(0xF6, 0xF7, 0, dst, imm, -1, size) }
+## Fails: `test [dst], imm` needs a size, like `test qword [rbx], 1`.
+pub macro test(_dst: MemOperand, _imm: int) {
+    @assert 0 == 1, "this memory operand needs a size, like `qword [rbx]`"
+}
+
+## Swaps `rd` and `rs`.
+pub macro xchg<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr(0x86, 0x87, rd, rs, 0, 0) }
+## Swaps `rd` and the value at `src`, atomically.
+pub macro xchg<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(0x86, 0x87, rd, src, 0, 0) }
+## Swaps the value at `dst` and `rs`, atomically.
+pub macro xchg<R>(dst: MemOperand, rs: R)
+    | emits Bytes<...> { @emit rmem(0x86, 0x87, rs, dst, 0, 0) }
+## Exchanges and adds: `rs` gets `rd`, and `rd` gets their sum.
+pub macro xadd<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr(0x0FC0, 0x0FC1, rd, rs, 0, 0) }
+## Exchanges and adds: `rs` gets `[dst]`, and `[dst]` gets their sum.
+pub macro xadd<R>(dst: MemOperand, rs: R)
+    | emits Bytes<...> { @emit rmem(0x0FC0, 0x0FC1, rs, dst, 0, 0) }
+## Compares the accumulator (`al`, `ax`, `eax` or `rax`) with `rd`: if
+## equal, `rd = rs`, else the accumulator gets `rd`.
+pub macro cmpxchg<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr(0x0FB0, 0x0FB1, rd, rs, 0, 0) }
+## Compares the accumulator with `[dst]`: if equal, `[dst] = rs`, else
+## the accumulator gets `[dst]`.
+pub macro cmpxchg<R>(dst: MemOperand, rs: R)
+    | emits Bytes<...> { @emit rmem(0x0FB0, 0x0FB1, rs, dst, 0, 0) }
+## Compares `edx:eax` with the 64 bits at `dst`: if equal, stores
+## `ecx:ebx` there, else loads them into `edx:eax`.
+pub macro cmpxchg8b(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(32, 0x0FC7, 1, dst, 0, 0) }
+## `cmpxchg8b`; `size` must be `qword`.
+pub macro cmpxchg8b(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 64
+    @emit digit_mem_instr(32, 0x0FC7, 1, dst, 0, 0)
+}
+## Compares `rdx:rax` with the 128 bits at `dst`: if equal, stores
+## `rcx:rbx` there, else loads them into `rdx:rax`.
+pub macro cmpxchg16b(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(64, 0x0FC7, 1, dst, 0, 0) }
+## `cmpxchg16b`; `size` must be `oword`.
+pub macro cmpxchg16b(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 128
+    @emit digit_mem_instr(64, 0x0FC7, 1, dst, 0, 0)
+}
+
+# =================
+# not, neg, mul, imul, div, idiv, inc, dec
+# =================
+
+## `rd = ~rd`.
+pub macro not<R>(rd: R)
+    | emits Bytes<...> { @emit ri(0xf6, 0xf7, 2, rd, 0, 0) }
+## `[dst] = ~[dst]`, `size` wide.
+pub macro not(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...> { @emit mi(0xf6, 0xf7, 2, dst, 0, 0, size) }
+## `rd = -rd`.
+pub macro neg<R>(rd: R)
+    | emits Bytes<...> { @emit ri(0xf6, 0xf7, 3, rd, 0, 0) }
+## `[dst] = -[dst]`, `size` wide.
+pub macro neg(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...> { @emit mi(0xf6, 0xf7, 3, dst, 0, 0, size) }
+## Unsigned multiply: `rdx:rax = rax * rd` (or the smaller registers for a
+## smaller operand).
+pub macro mul<R>(rd: R)
+    | emits Bytes<...> { @emit ri(0xf6, 0xf7, 4, rd, 0, 0) }
+## Unsigned multiply: `rdx:rax = rax * [dst]` (or the smaller registers for a
+## smaller operand), `size` wide.
+pub macro mul(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...> { @emit mi(0xf6, 0xf7, 4, dst, 0, 0, size) }
+## Signed multiply: `rdx:rax = rax * rd` (or the smaller registers for a
+## smaller operand).
+pub macro imul<R>(rd: R)
+    | emits Bytes<...> { @emit ri(0xf6, 0xf7, 5, rd, 0, 0) }
+## Signed multiply: `rdx:rax = rax * [dst]` (or the smaller registers for a
+## smaller operand), `size` wide.
+pub macro imul(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...> { @emit mi(0xf6, 0xf7, 5, dst, 0, 0, size) }
+## Unsigned divide: `rax = rdx:rax / rd`, `rdx` = the remainder (or the
+## smaller registers for a smaller operand).
+pub macro div<R>(rd: R)
+    | emits Bytes<...> { @emit ri(0xf6, 0xf7, 6, rd, 0, 0) }
+## Unsigned divide: `rax = rdx:rax / [dst]`, `rdx` = the remainder (or the
+## smaller registers for a smaller operand), `size` wide.
+pub macro div(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...> { @emit mi(0xf6, 0xf7, 6, dst, 0, 0, size) }
+## Signed divide: `rax = rdx:rax / rd`, `rdx` = the remainder (or the
+## smaller registers for a smaller operand).
+pub macro idiv<R>(rd: R)
+    | emits Bytes<...> { @emit ri(0xf6, 0xf7, 7, rd, 0, 0) }
+## Signed divide: `rax = rdx:rax / [dst]`, `rdx` = the remainder (or the
+## smaller registers for a smaller operand), `size` wide.
+pub macro idiv(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...> { @emit mi(0xf6, 0xf7, 7, dst, 0, 0, size) }
+## `rd = rd + 1`, leaving CF alone.
+pub macro inc<R>(rd: R)
+    | emits Bytes<...> { @emit ri(0xfe, 0xff, 0, rd, 0, 0) }
+## `[dst] = [dst] + 1`, leaving CF alone, `size` wide.
+pub macro inc(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...> { @emit mi(0xfe, 0xff, 0, dst, 0, 0, size) }
+## `rd = rd - 1`, leaving CF alone.
+pub macro dec<R>(rd: R)
+    | emits Bytes<...> { @emit ri(0xfe, 0xff, 1, rd, 0, 0) }
+## `[dst] = [dst] - 1`, leaving CF alone, `size` wide.
+pub macro dec(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...> { @emit mi(0xfe, 0xff, 1, dst, 0, 0, size) }
+## `rd = rd * rs`, signed, keeping the low half.
+pub macro imul<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0FAF, rd, rs, 0, 0) }
+## `rd = rd * [src]`, signed, keeping the low half.
+pub macro imul<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0FAF, rd, src, 0, 0) }
+## `rd = rs * imm`, signed, keeping the low half.
+pub macro imul<R>(rd: R, rs: R, imm: int)
+    | emits Bytes<...> { @emit rr_load(-1, 0x69, rd, rs, imm, -1) }
+## `rd = [src] * imm`, signed, keeping the low half.
+pub macro imul<R>(rd: R, src: MemOperand, imm: int)
+    | emits Bytes<...> { @emit rmem(-1, 0x69, rd, src, imm, -1) }
+
+# =================
+# shifts and rotates
+# =================
+# `0xC1 /digit` takes an 8-bit count and `0xD3 /digit` takes it from `cl`,
+# which the count operand, a `Reg8`, must be.
+
+## Rotates `rd` left by `imm`.
+pub macro rol<R>(rd: R, imm: int)
+    | emits Bytes<...> { @emit ri(0xC0, 0xC1, 0, rd, imm, 1) }
+## Rotates `rd` left by `cl`.
+pub macro rol<R>(rd: R, count: Reg8)
+    | emits Bytes<...>
+{
+    assert_cl count
+    @emit ri(0xD2, 0xD3, 0, rd, 0, 0)
+}
+## Rotates `[dst]` left by `imm`, `size` wide.
+pub macro rol(dst: MemOperand, imm: int, size: OperandSize)
+    | emits Bytes<...> { @emit mi(0xC0, 0xC1, 0, dst, imm, 1, size) }
+## Rotates `[dst]` left by `cl`, `size` wide.
+pub macro rol(dst: MemOperand, count: Reg8, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_cl count
+    @emit mi(0xD2, 0xD3, 0, dst, 0, 0, size)
+}
+## Rotates `rd` right by `imm`.
+pub macro ror<R>(rd: R, imm: int)
+    | emits Bytes<...> { @emit ri(0xC0, 0xC1, 1, rd, imm, 1) }
+## Rotates `rd` right by `cl`.
+pub macro ror<R>(rd: R, count: Reg8)
+    | emits Bytes<...>
+{
+    assert_cl count
+    @emit ri(0xD2, 0xD3, 1, rd, 0, 0)
+}
+## Rotates `[dst]` right by `imm`, `size` wide.
+pub macro ror(dst: MemOperand, imm: int, size: OperandSize)
+    | emits Bytes<...> { @emit mi(0xC0, 0xC1, 1, dst, imm, 1, size) }
+## Rotates `[dst]` right by `cl`, `size` wide.
+pub macro ror(dst: MemOperand, count: Reg8, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_cl count
+    @emit mi(0xD2, 0xD3, 1, dst, 0, 0, size)
+}
+## Rotates `rd` and CF left by `imm`.
+pub macro rcl<R>(rd: R, imm: int)
+    | emits Bytes<...> { @emit ri(0xC0, 0xC1, 2, rd, imm, 1) }
+## Rotates `rd` and CF left by `cl`.
+pub macro rcl<R>(rd: R, count: Reg8)
+    | emits Bytes<...>
+{
+    assert_cl count
+    @emit ri(0xD2, 0xD3, 2, rd, 0, 0)
+}
+## Rotates `[dst]` and CF left by `imm`, `size` wide.
+pub macro rcl(dst: MemOperand, imm: int, size: OperandSize)
+    | emits Bytes<...> { @emit mi(0xC0, 0xC1, 2, dst, imm, 1, size) }
+## Rotates `[dst]` and CF left by `cl`, `size` wide.
+pub macro rcl(dst: MemOperand, count: Reg8, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_cl count
+    @emit mi(0xD2, 0xD3, 2, dst, 0, 0, size)
+}
+## Rotates `rd` and CF right by `imm`.
+pub macro rcr<R>(rd: R, imm: int)
+    | emits Bytes<...> { @emit ri(0xC0, 0xC1, 3, rd, imm, 1) }
+## Rotates `rd` and CF right by `cl`.
+pub macro rcr<R>(rd: R, count: Reg8)
+    | emits Bytes<...>
+{
+    assert_cl count
+    @emit ri(0xD2, 0xD3, 3, rd, 0, 0)
+}
+## Rotates `[dst]` and CF right by `imm`, `size` wide.
+pub macro rcr(dst: MemOperand, imm: int, size: OperandSize)
+    | emits Bytes<...> { @emit mi(0xC0, 0xC1, 3, dst, imm, 1, size) }
+## Rotates `[dst]` and CF right by `cl`, `size` wide.
+pub macro rcr(dst: MemOperand, count: Reg8, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_cl count
+    @emit mi(0xD2, 0xD3, 3, dst, 0, 0, size)
+}
+## `rd = rd << imm`.
+pub macro shl<R>(rd: R, imm: int)
+    | emits Bytes<...> { @emit ri(0xC0, 0xC1, 4, rd, imm, 1) }
+## `rd = rd << cl`.
+pub macro shl<R>(rd: R, count: Reg8)
+    | emits Bytes<...>
+{
+    assert_cl count
+    @emit ri(0xD2, 0xD3, 4, rd, 0, 0)
+}
+## `[dst] = [dst] << imm`, `size` wide.
+pub macro shl(dst: MemOperand, imm: int, size: OperandSize)
+    | emits Bytes<...> { @emit mi(0xC0, 0xC1, 4, dst, imm, 1, size) }
+## `[dst] = [dst] << cl`, `size` wide.
+pub macro shl(dst: MemOperand, count: Reg8, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_cl count
+    @emit mi(0xD2, 0xD3, 4, dst, 0, 0, size)
+}
+## `rd = rd >> imm`, shifting in zeros.
+pub macro shr<R>(rd: R, imm: int)
+    | emits Bytes<...> { @emit ri(0xC0, 0xC1, 5, rd, imm, 1) }
+## `rd = rd >> cl`, shifting in zeros.
+pub macro shr<R>(rd: R, count: Reg8)
+    | emits Bytes<...>
+{
+    assert_cl count
+    @emit ri(0xD2, 0xD3, 5, rd, 0, 0)
+}
+## `[dst] = [dst] >> imm`, shifting in zeros, `size` wide.
+pub macro shr(dst: MemOperand, imm: int, size: OperandSize)
+    | emits Bytes<...> { @emit mi(0xC0, 0xC1, 5, dst, imm, 1, size) }
+## `[dst] = [dst] >> cl`, shifting in zeros, `size` wide.
+pub macro shr(dst: MemOperand, count: Reg8, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_cl count
+    @emit mi(0xD2, 0xD3, 5, dst, 0, 0, size)
+}
+## `rd = rd >> imm`, shifting in copies of the sign bit.
+pub macro sar<R>(rd: R, imm: int)
+    | emits Bytes<...> { @emit ri(0xC0, 0xC1, 7, rd, imm, 1) }
+## `rd = rd >> cl`, shifting in copies of the sign bit.
+pub macro sar<R>(rd: R, count: Reg8)
+    | emits Bytes<...>
+{
+    assert_cl count
+    @emit ri(0xD2, 0xD3, 7, rd, 0, 0)
+}
+## `[dst] = [dst] >> imm`, shifting in copies of the sign bit, `size` wide.
+pub macro sar(dst: MemOperand, imm: int, size: OperandSize)
+    | emits Bytes<...> { @emit mi(0xC0, 0xC1, 7, dst, imm, 1, size) }
+## `[dst] = [dst] >> cl`, shifting in copies of the sign bit, `size` wide.
+pub macro sar(dst: MemOperand, count: Reg8, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_cl count
+    @emit mi(0xD2, 0xD3, 7, dst, 0, 0, size)
+}
+## Shifts `rd` left by `imm`, filling from the top of `rs`.
+pub macro shld<R>(rd: R, rs: R, imm: int)
+    | emits Bytes<...> { @emit rr(-1, 0x0fa4, rd, rs, imm, 1) }
+## Shifts `rd` left by `cl`, filling from the top of `rs`.
+pub macro shld<R>(rd: R, rs: R, count: Reg8)
+    | emits Bytes<...>
+{
+    assert_cl count
+    @emit rr(-1, 0x0fa5, rd, rs, 0, 0)
+}
+## Shifts `[dst]` left by `imm`, filling from the top of `rs`.
+pub macro shld<R>(dst: MemOperand, rs: R, imm: int)
+    | emits Bytes<...> { @emit rmem(-1, 0x0fa4, rs, dst, imm, 1) }
+## Shifts `[dst]` left by `cl`, filling from the top of `rs`.
+pub macro shld<R>(dst: MemOperand, rs: R, count: Reg8)
+    | emits Bytes<...>
+{
+    assert_cl count
+    @emit rmem(-1, 0x0fa5, rs, dst, 0, 0)
+}
+## Shifts `rd` right by `imm`, filling from the bottom of `rs`.
+pub macro shrd<R>(rd: R, rs: R, imm: int)
+    | emits Bytes<...> { @emit rr(-1, 0x0fac, rd, rs, imm, 1) }
+## Shifts `rd` right by `cl`, filling from the bottom of `rs`.
+pub macro shrd<R>(rd: R, rs: R, count: Reg8)
+    | emits Bytes<...>
+{
+    assert_cl count
+    @emit rr(-1, 0x0fad, rd, rs, 0, 0)
+}
+## Shifts `[dst]` right by `imm`, filling from the bottom of `rs`.
+pub macro shrd<R>(dst: MemOperand, rs: R, imm: int)
+    | emits Bytes<...> { @emit rmem(-1, 0x0fac, rs, dst, imm, 1) }
+## Shifts `[dst]` right by `cl`, filling from the bottom of `rs`.
+pub macro shrd<R>(dst: MemOperand, rs: R, count: Reg8)
+    | emits Bytes<...>
+{
+    assert_cl count
+    @emit rmem(-1, 0x0fad, rs, dst, 0, 0)
+}
+
+# =================
+# bit tests and scans, bswap, movzx, movsx
+# =================
+
+## Copies bit `rs` of `rd` into CF.
+pub macro bt<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr(-1, 0x0fa3, rd, rs, 0, 0) }
+## Copies bit `imm` of `rd` into CF.
+pub macro bt<R>(rd: R, imm: int)
+    | emits Bytes<...> { @emit ri(-1, 0x0FBA, 4, rd, imm, 1) }
+## Copies bit `rs` of `[dst]` into CF. The bit string can extend past `dst`.
+pub macro bt<R>(dst: MemOperand, rs: R)
+    | emits Bytes<...> { @emit rmem(-1, 0x0fa3, rs, dst, 0, 0) }
+## Copies bit `imm` of `[dst]` into CF, `size` wide.
+pub macro bt(dst: MemOperand, imm: int, size: OperandSize)
+    | emits Bytes<...> { @emit mi(-1, 0x0FBA, 4, dst, imm, 1, size) }
+## Fails: `bt [dst], imm` needs a size, like `bt qword [rbx], 1`.
+pub macro bt(_dst: MemOperand, _imm: int) {
+    @assert 0 == 1, "this memory operand needs a size, like `qword [rbx]`"
+}
+## Copies bit `rs` of `rd` into CF, then sets it.
+pub macro bts<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr(-1, 0x0fab, rd, rs, 0, 0) }
+## Copies bit `imm` of `rd` into CF, then sets it.
+pub macro bts<R>(rd: R, imm: int)
+    | emits Bytes<...> { @emit ri(-1, 0x0FBA, 5, rd, imm, 1) }
+## Copies bit `rs` of `[dst]` into CF, then sets it. The bit string can extend
+## past `dst`.
+pub macro bts<R>(dst: MemOperand, rs: R)
+    | emits Bytes<...> { @emit rmem(-1, 0x0fab, rs, dst, 0, 0) }
+## Copies bit `imm` of `[dst]` into CF, then sets it, `size` wide.
+pub macro bts(dst: MemOperand, imm: int, size: OperandSize)
+    | emits Bytes<...> { @emit mi(-1, 0x0FBA, 5, dst, imm, 1, size) }
+## Fails: `bts [dst], imm` needs a size, like `bts qword [rbx], 1`.
+pub macro bts(_dst: MemOperand, _imm: int) {
+    @assert 0 == 1, "this memory operand needs a size, like `qword [rbx]`"
+}
+## Copies bit `rs` of `rd` into CF, then clears it.
+pub macro btr<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr(-1, 0x0fb3, rd, rs, 0, 0) }
+## Copies bit `imm` of `rd` into CF, then clears it.
+pub macro btr<R>(rd: R, imm: int)
+    | emits Bytes<...> { @emit ri(-1, 0x0FBA, 6, rd, imm, 1) }
+## Copies bit `rs` of `[dst]` into CF, then clears it. The bit string can extend
+## past `dst`.
+pub macro btr<R>(dst: MemOperand, rs: R)
+    | emits Bytes<...> { @emit rmem(-1, 0x0fb3, rs, dst, 0, 0) }
+## Copies bit `imm` of `[dst]` into CF, then clears it, `size` wide.
+pub macro btr(dst: MemOperand, imm: int, size: OperandSize)
+    | emits Bytes<...> { @emit mi(-1, 0x0FBA, 6, dst, imm, 1, size) }
+## Fails: `btr [dst], imm` needs a size, like `btr qword [rbx], 1`.
+pub macro btr(_dst: MemOperand, _imm: int) {
+    @assert 0 == 1, "this memory operand needs a size, like `qword [rbx]`"
+}
+## Copies bit `rs` of `rd` into CF, then flips it.
+pub macro btc<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr(-1, 0x0fbb, rd, rs, 0, 0) }
+## Copies bit `imm` of `rd` into CF, then flips it.
+pub macro btc<R>(rd: R, imm: int)
+    | emits Bytes<...> { @emit ri(-1, 0x0FBA, 7, rd, imm, 1) }
+## Copies bit `rs` of `[dst]` into CF, then flips it. The bit string can extend
+## past `dst`.
+pub macro btc<R>(dst: MemOperand, rs: R)
+    | emits Bytes<...> { @emit rmem(-1, 0x0fbb, rs, dst, 0, 0) }
+## Copies bit `imm` of `[dst]` into CF, then flips it, `size` wide.
+pub macro btc(dst: MemOperand, imm: int, size: OperandSize)
+    | emits Bytes<...> { @emit mi(-1, 0x0FBA, 7, dst, imm, 1, size) }
+## Fails: `btc [dst], imm` needs a size, like `btc qword [rbx], 1`.
+pub macro btc(_dst: MemOperand, _imm: int) {
+    @assert 0 == 1, "this memory operand needs a size, like `qword [rbx]`"
+}
+## Sets `rd` to the index of the lowest set bit of `rs`; ZF = 1 if
+## `rs` is 0.
+pub macro bsf<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0fbc, rd, rs, 0, 0) }
+## Sets `rd` to the index of the lowest set bit of `[src]`; ZF = 1 if
+## it's 0.
+pub macro bsf<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0fbc, rd, src, 0, 0) }
+## Sets `rd` to the index of the highest set bit of `rs`; ZF = 1 if
+## `rs` is 0.
+pub macro bsr<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0fbd, rd, rs, 0, 0) }
+## Sets `rd` to the index of the highest set bit of `[src]`; ZF = 1 if
+## it's 0.
+pub macro bsr<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0fbd, rd, src, 0, 0) }
+## Reverses the byte order of the 32- or 64-bit `rd`.
+pub macro bswap<R>(rd: R)
+    | emits Bytes<...>
+{
+    const d = gpr(rd)
+    @assert d.size >= 32, "bswap takes a 32- or 64-bit register"
+    @emit reg_in_opcode_instr(d.size, 0x0FC8, d, 0, 0)
+}
+
+# `movzx`/`movsx`: the destination's size gives the prefix and REX.W, and
+# the source's size the opcode: `0F B6`/`0F BE` for 8 bits, `0F B7`/`0F BF`
+# for 16.
+macro extend_opcode(
+    source_size: int,
+    op8: int
+) -> int {
+    @assert source_size == 8 || source_size == 16, "the source must be 8 or 16 bits"
+    @return op8 + (source_size == 16)
+}
+
+macro extend<D, S>(
+    op8: int,
+    rd: D,
+    rs: S
+) -> Bytes<...> {
+    const d = gpr(rd)
+    const s = gpr(rs)
+    @assert d.size > s.size, "the destination must be wider than the source"
+    @return reg_rm_instr(d.size, extend_opcode(s.size, op8), d, s, 0, 0)
+}
+
+macro extend_mem<D>(
+    op8: int,
+    rd: D,
+    src: MemOperand,
+    size: OperandSize
+) -> Bytes<...> {
+    const d = gpr(rd)
+    @assert d.size > size.bits, "the destination must be wider than the source"
+    @return reg_mem_instr(d.size, extend_opcode(size.bits, op8), d, src, 0, 0)
+}
+
+## `rd = rs`, zero-extended.
+pub macro movzx<D, S>(rd: D, rs: S)
+    | emits Bytes<...> { @emit extend(0x0FB6, rd, rs) }
+## Loads the `size`-wide value at `src` into `rd`, zero-extended.
+pub macro movzx<D>(rd: D, src: MemOperand, size: OperandSize)
+    | emits Bytes<...> { @emit extend_mem(0x0FB6, rd, src, size) }
+## `rd = rs`, sign-extended.
+pub macro movsx<D, S>(rd: D, rs: S)
+    | emits Bytes<...> { @emit extend(0x0FBE, rd, rs) }
+## Loads the `size`-wide value at `src` into `rd`, sign-extended.
+pub macro movsx<D>(rd: D, src: MemOperand, size: OperandSize)
+    | emits Bytes<...> { @emit extend_mem(0x0FBE, rd, src, size) }
+
+## `rd = rs`, a 32-bit register sign-extended into the 64-bit `rd`.
+pub macro movsxd<D>(rd: D, rs: Reg32)
+    | emits Bytes<...>
+{
+    const d = gpr(rd)
+    @assert d.size == 64, "movsxd's destination is a 64-bit register"
+    @emit reg_rm_instr(64, 0x63, d, gpr(rs), 0, 0)
+}
+## Loads the 32 bits at `src` into the 64-bit `rd`, sign-extended.
+pub macro movsxd<D>(rd: D, src: MemOperand)
+    | emits Bytes<...>
+{
+    const d = gpr(rd)
+    @assert d.size == 64, "movsxd's destination is a 64-bit register"
+    @emit reg_mem_instr(64, 0x63, d, src, 0, 0)
+}
+## `movsxd`; `size` must be `dword`.
+pub macro movsxd<D>(rd: D, src: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 32
+    const d = gpr(rd)
+    @assert d.size == 64, "movsxd's destination is a 64-bit register"
+    @emit reg_mem_instr(64, 0x63, d, src, 0, 0)
+}
+
+# =================
+# cmovcc and setcc
+# =================
+# The same 16 condition codes as `jcc`, and the same synonyms: `0F 40+cc`
+# moves, `0F 90+cc` stores a byte, 1 or 0.
+
+## `rd = rs` on signed overflow (OF = 1).
+pub macro cmovo<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f40, rd, rs, 0, 0) }
+## Loads the value at `src` into `rd` on signed overflow (OF = 1).
+pub macro cmovo<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f40, rd, src, 0, 0) }
+## `rd = rs` without signed overflow (OF = 0).
+pub macro cmovno<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f41, rd, rs, 0, 0) }
+## Loads the value at `src` into `rd` without signed overflow (OF = 0).
+pub macro cmovno<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f41, rd, src, 0, 0) }
+## `rd = rs` if below, unsigned (CF = 1).
+pub macro cmovb<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f42, rd, rs, 0, 0) }
+## Loads the value at `src` into `rd` if below, unsigned (CF = 1).
+pub macro cmovb<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f42, rd, src, 0, 0) }
+## `rd = rs` if above or equal, unsigned (CF = 0).
+pub macro cmovae<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f43, rd, rs, 0, 0) }
+## Loads the value at `src` into `rd` if above or equal, unsigned (CF = 0).
+pub macro cmovae<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f43, rd, src, 0, 0) }
+## `rd = rs` if equal (ZF = 1).
+pub macro cmove<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f44, rd, rs, 0, 0) }
+## Loads the value at `src` into `rd` if equal (ZF = 1).
+pub macro cmove<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f44, rd, src, 0, 0) }
+## `rd = rs` if not equal (ZF = 0).
+pub macro cmovne<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f45, rd, rs, 0, 0) }
+## Loads the value at `src` into `rd` if not equal (ZF = 0).
+pub macro cmovne<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f45, rd, src, 0, 0) }
+## `rd = rs` if below or equal, unsigned.
+pub macro cmovbe<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f46, rd, rs, 0, 0) }
+## Loads the value at `src` into `rd` if below or equal, unsigned.
+pub macro cmovbe<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f46, rd, src, 0, 0) }
+## `rd = rs` if above, unsigned.
+pub macro cmova<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f47, rd, rs, 0, 0) }
+## Loads the value at `src` into `rd` if above, unsigned.
+pub macro cmova<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f47, rd, src, 0, 0) }
+## `rd = rs` if the result was negative (SF = 1).
+pub macro cmovs<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f48, rd, rs, 0, 0) }
+## Loads the value at `src` into `rd` if the result was negative (SF = 1).
+pub macro cmovs<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f48, rd, src, 0, 0) }
+## `rd = rs` if the result wasn't negative (SF = 0).
+pub macro cmovns<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f49, rd, rs, 0, 0) }
+## Loads the value at `src` into `rd` if the result wasn't negative (SF = 0).
+pub macro cmovns<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f49, rd, src, 0, 0) }
+## `rd = rs` if the parity flag is set (PF = 1).
+pub macro cmovp<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f4a, rd, rs, 0, 0) }
+## Loads the value at `src` into `rd` if the parity flag is set (PF = 1).
+pub macro cmovp<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f4a, rd, src, 0, 0) }
+## `rd = rs` if the parity flag is clear (PF = 0).
+pub macro cmovnp<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f4b, rd, rs, 0, 0) }
+## Loads the value at `src` into `rd` if the parity flag is clear (PF = 0).
+pub macro cmovnp<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f4b, rd, src, 0, 0) }
+## `rd = rs` if less, signed.
+pub macro cmovl<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f4c, rd, rs, 0, 0) }
+## Loads the value at `src` into `rd` if less, signed.
+pub macro cmovl<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f4c, rd, src, 0, 0) }
+## `rd = rs` if greater or equal, signed.
+pub macro cmovge<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f4d, rd, rs, 0, 0) }
+## Loads the value at `src` into `rd` if greater or equal, signed.
+pub macro cmovge<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f4d, rd, src, 0, 0) }
+## `rd = rs` if less or equal, signed.
+pub macro cmovle<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f4e, rd, rs, 0, 0) }
+## Loads the value at `src` into `rd` if less or equal, signed.
+pub macro cmovle<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f4e, rd, src, 0, 0) }
+## `rd = rs` if greater, signed.
+pub macro cmovg<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f4f, rd, rs, 0, 0) }
+## Loads the value at `src` into `rd` if greater, signed.
+pub macro cmovg<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f4f, rd, src, 0, 0) }
+## `cmove`, under another name.
+pub macro cmovz<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f44, rd, rs, 0, 0) }
+## `cmove`, under another name.
+pub macro cmovz<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f44, rd, src, 0, 0) }
+## `cmovne`, under another name.
+pub macro cmovnz<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f45, rd, rs, 0, 0) }
+## `cmovne`, under another name.
+pub macro cmovnz<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f45, rd, src, 0, 0) }
+## `cmovb`, under another name.
+pub macro cmovc<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f42, rd, rs, 0, 0) }
+## `cmovb`, under another name.
+pub macro cmovc<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f42, rd, src, 0, 0) }
+## `cmovb`, under another name.
+pub macro cmovnae<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f42, rd, rs, 0, 0) }
+## `cmovb`, under another name.
+pub macro cmovnae<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f42, rd, src, 0, 0) }
+## `cmovae`, under another name.
+pub macro cmovnc<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f43, rd, rs, 0, 0) }
+## `cmovae`, under another name.
+pub macro cmovnc<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f43, rd, src, 0, 0) }
+## `cmovae`, under another name.
+pub macro cmovnb<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f43, rd, rs, 0, 0) }
+## `cmovae`, under another name.
+pub macro cmovnb<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f43, rd, src, 0, 0) }
+## `cmova`, under another name.
+pub macro cmovnbe<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f47, rd, rs, 0, 0) }
+## `cmova`, under another name.
+pub macro cmovnbe<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f47, rd, src, 0, 0) }
+## `cmovbe`, under another name.
+pub macro cmovna<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f46, rd, rs, 0, 0) }
+## `cmovbe`, under another name.
+pub macro cmovna<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f46, rd, src, 0, 0) }
+## `cmovl`, under another name.
+pub macro cmovnge<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f4c, rd, rs, 0, 0) }
+## `cmovl`, under another name.
+pub macro cmovnge<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f4c, rd, src, 0, 0) }
+## `cmovge`, under another name.
+pub macro cmovnl<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f4d, rd, rs, 0, 0) }
+## `cmovge`, under another name.
+pub macro cmovnl<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f4d, rd, src, 0, 0) }
+## `cmovle`, under another name.
+pub macro cmovng<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f4e, rd, rs, 0, 0) }
+## `cmovle`, under another name.
+pub macro cmovng<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f4e, rd, src, 0, 0) }
+## `cmovg`, under another name.
+pub macro cmovnle<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f4f, rd, rs, 0, 0) }
+## `cmovg`, under another name.
+pub macro cmovnle<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f4f, rd, src, 0, 0) }
+## `cmovp`, under another name.
+pub macro cmovpe<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f4a, rd, rs, 0, 0) }
+## `cmovp`, under another name.
+pub macro cmovpe<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f4a, rd, src, 0, 0) }
+## `cmovnp`, under another name.
+pub macro cmovpo<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0f4b, rd, rs, 0, 0) }
+## `cmovnp`, under another name.
+pub macro cmovpo<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0f4b, rd, src, 0, 0) }
+
+## Sets `rd` to 1 on signed overflow (OF = 1), else 0.
+pub macro seto(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f90, 0, gpr(rd), 0, 0) }
+## Sets the byte at `dst` to 1 on signed overflow (OF = 1), else 0.
+pub macro seto(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f90, 0, dst, 0, 0) }
+## `seto dst`; `size` must be `byte`.
+pub macro seto(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f90, 0, dst, 0, 0)
+}
+## Sets `rd` to 1 without signed overflow (OF = 0), else 0.
+pub macro setno(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f91, 0, gpr(rd), 0, 0) }
+## Sets the byte at `dst` to 1 without signed overflow (OF = 0), else 0.
+pub macro setno(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f91, 0, dst, 0, 0) }
+## `setno dst`; `size` must be `byte`.
+pub macro setno(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f91, 0, dst, 0, 0)
+}
+## Sets `rd` to 1 if below, unsigned (CF = 1), else 0.
+pub macro setb(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f92, 0, gpr(rd), 0, 0) }
+## Sets the byte at `dst` to 1 if below, unsigned (CF = 1), else 0.
+pub macro setb(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f92, 0, dst, 0, 0) }
+## `setb dst`; `size` must be `byte`.
+pub macro setb(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f92, 0, dst, 0, 0)
+}
+## Sets `rd` to 1 if above or equal, unsigned (CF = 0), else 0.
+pub macro setae(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f93, 0, gpr(rd), 0, 0) }
+## Sets the byte at `dst` to 1 if above or equal, unsigned (CF = 0), else 0.
+pub macro setae(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f93, 0, dst, 0, 0) }
+## `setae dst`; `size` must be `byte`.
+pub macro setae(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f93, 0, dst, 0, 0)
+}
+## Sets `rd` to 1 if equal (ZF = 1), else 0.
+pub macro sete(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f94, 0, gpr(rd), 0, 0) }
+## Sets the byte at `dst` to 1 if equal (ZF = 1), else 0.
+pub macro sete(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f94, 0, dst, 0, 0) }
+## `sete dst`; `size` must be `byte`.
+pub macro sete(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f94, 0, dst, 0, 0)
+}
+## Sets `rd` to 1 if not equal (ZF = 0), else 0.
+pub macro setne(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f95, 0, gpr(rd), 0, 0) }
+## Sets the byte at `dst` to 1 if not equal (ZF = 0), else 0.
+pub macro setne(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f95, 0, dst, 0, 0) }
+## `setne dst`; `size` must be `byte`.
+pub macro setne(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f95, 0, dst, 0, 0)
+}
+## Sets `rd` to 1 if below or equal, unsigned, else 0.
+pub macro setbe(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f96, 0, gpr(rd), 0, 0) }
+## Sets the byte at `dst` to 1 if below or equal, unsigned, else 0.
+pub macro setbe(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f96, 0, dst, 0, 0) }
+## `setbe dst`; `size` must be `byte`.
+pub macro setbe(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f96, 0, dst, 0, 0)
+}
+## Sets `rd` to 1 if above, unsigned, else 0.
+pub macro seta(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f97, 0, gpr(rd), 0, 0) }
+## Sets the byte at `dst` to 1 if above, unsigned, else 0.
+pub macro seta(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f97, 0, dst, 0, 0) }
+## `seta dst`; `size` must be `byte`.
+pub macro seta(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f97, 0, dst, 0, 0)
+}
+## Sets `rd` to 1 if the result was negative (SF = 1), else 0.
+pub macro sets(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f98, 0, gpr(rd), 0, 0) }
+## Sets the byte at `dst` to 1 if the result was negative (SF = 1), else 0.
+pub macro sets(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f98, 0, dst, 0, 0) }
+## `sets dst`; `size` must be `byte`.
+pub macro sets(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f98, 0, dst, 0, 0)
+}
+## Sets `rd` to 1 if the result wasn't negative (SF = 0), else 0.
+pub macro setns(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f99, 0, gpr(rd), 0, 0) }
+## Sets the byte at `dst` to 1 if the result wasn't negative (SF = 0), else 0.
+pub macro setns(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f99, 0, dst, 0, 0) }
+## `setns dst`; `size` must be `byte`.
+pub macro setns(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f99, 0, dst, 0, 0)
+}
+## Sets `rd` to 1 if the parity flag is set (PF = 1), else 0.
+pub macro setp(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f9a, 0, gpr(rd), 0, 0) }
+## Sets the byte at `dst` to 1 if the parity flag is set (PF = 1), else 0.
+pub macro setp(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f9a, 0, dst, 0, 0) }
+## `setp dst`; `size` must be `byte`.
+pub macro setp(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f9a, 0, dst, 0, 0)
+}
+## Sets `rd` to 1 if the parity flag is clear (PF = 0), else 0.
+pub macro setnp(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f9b, 0, gpr(rd), 0, 0) }
+## Sets the byte at `dst` to 1 if the parity flag is clear (PF = 0), else 0.
+pub macro setnp(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f9b, 0, dst, 0, 0) }
+## `setnp dst`; `size` must be `byte`.
+pub macro setnp(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f9b, 0, dst, 0, 0)
+}
+## Sets `rd` to 1 if less, signed, else 0.
+pub macro setl(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f9c, 0, gpr(rd), 0, 0) }
+## Sets the byte at `dst` to 1 if less, signed, else 0.
+pub macro setl(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f9c, 0, dst, 0, 0) }
+## `setl dst`; `size` must be `byte`.
+pub macro setl(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f9c, 0, dst, 0, 0)
+}
+## Sets `rd` to 1 if greater or equal, signed, else 0.
+pub macro setge(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f9d, 0, gpr(rd), 0, 0) }
+## Sets the byte at `dst` to 1 if greater or equal, signed, else 0.
+pub macro setge(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f9d, 0, dst, 0, 0) }
+## `setge dst`; `size` must be `byte`.
+pub macro setge(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f9d, 0, dst, 0, 0)
+}
+## Sets `rd` to 1 if less or equal, signed, else 0.
+pub macro setle(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f9e, 0, gpr(rd), 0, 0) }
+## Sets the byte at `dst` to 1 if less or equal, signed, else 0.
+pub macro setle(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f9e, 0, dst, 0, 0) }
+## `setle dst`; `size` must be `byte`.
+pub macro setle(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f9e, 0, dst, 0, 0)
+}
+## Sets `rd` to 1 if greater, signed, else 0.
+pub macro setg(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f9f, 0, gpr(rd), 0, 0) }
+## Sets the byte at `dst` to 1 if greater, signed, else 0.
+pub macro setg(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f9f, 0, dst, 0, 0) }
+## `setg dst`; `size` must be `byte`.
+pub macro setg(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f9f, 0, dst, 0, 0)
+}
+## `sete`, under another name.
+pub macro setz(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f94, 0, gpr(rd), 0, 0) }
+## `sete`, under another name.
+pub macro setz(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f94, 0, dst, 0, 0) }
+## `setz dst`; `size` must be `byte`.
+pub macro setz(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f94, 0, dst, 0, 0)
+}
+## `setne`, under another name.
+pub macro setnz(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f95, 0, gpr(rd), 0, 0) }
+## `setne`, under another name.
+pub macro setnz(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f95, 0, dst, 0, 0) }
+## `setnz dst`; `size` must be `byte`.
+pub macro setnz(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f95, 0, dst, 0, 0)
+}
+## `setb`, under another name.
+pub macro setc(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f92, 0, gpr(rd), 0, 0) }
+## `setb`, under another name.
+pub macro setc(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f92, 0, dst, 0, 0) }
+## `setc dst`; `size` must be `byte`.
+pub macro setc(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f92, 0, dst, 0, 0)
+}
+## `setb`, under another name.
+pub macro setnae(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f92, 0, gpr(rd), 0, 0) }
+## `setb`, under another name.
+pub macro setnae(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f92, 0, dst, 0, 0) }
+## `setnae dst`; `size` must be `byte`.
+pub macro setnae(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f92, 0, dst, 0, 0)
+}
+## `setae`, under another name.
+pub macro setnc(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f93, 0, gpr(rd), 0, 0) }
+## `setae`, under another name.
+pub macro setnc(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f93, 0, dst, 0, 0) }
+## `setnc dst`; `size` must be `byte`.
+pub macro setnc(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f93, 0, dst, 0, 0)
+}
+## `setae`, under another name.
+pub macro setnb(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f93, 0, gpr(rd), 0, 0) }
+## `setae`, under another name.
+pub macro setnb(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f93, 0, dst, 0, 0) }
+## `setnb dst`; `size` must be `byte`.
+pub macro setnb(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f93, 0, dst, 0, 0)
+}
+## `seta`, under another name.
+pub macro setnbe(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f97, 0, gpr(rd), 0, 0) }
+## `seta`, under another name.
+pub macro setnbe(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f97, 0, dst, 0, 0) }
+## `setnbe dst`; `size` must be `byte`.
+pub macro setnbe(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f97, 0, dst, 0, 0)
+}
+## `setbe`, under another name.
+pub macro setna(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f96, 0, gpr(rd), 0, 0) }
+## `setbe`, under another name.
+pub macro setna(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f96, 0, dst, 0, 0) }
+## `setna dst`; `size` must be `byte`.
+pub macro setna(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f96, 0, dst, 0, 0)
+}
+## `setl`, under another name.
+pub macro setnge(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f9c, 0, gpr(rd), 0, 0) }
+## `setl`, under another name.
+pub macro setnge(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f9c, 0, dst, 0, 0) }
+## `setnge dst`; `size` must be `byte`.
+pub macro setnge(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f9c, 0, dst, 0, 0)
+}
+## `setge`, under another name.
+pub macro setnl(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f9d, 0, gpr(rd), 0, 0) }
+## `setge`, under another name.
+pub macro setnl(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f9d, 0, dst, 0, 0) }
+## `setnl dst`; `size` must be `byte`.
+pub macro setnl(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f9d, 0, dst, 0, 0)
+}
+## `setle`, under another name.
+pub macro setng(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f9e, 0, gpr(rd), 0, 0) }
+## `setle`, under another name.
+pub macro setng(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f9e, 0, dst, 0, 0) }
+## `setng dst`; `size` must be `byte`.
+pub macro setng(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f9e, 0, dst, 0, 0)
+}
+## `setg`, under another name.
+pub macro setnle(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f9f, 0, gpr(rd), 0, 0) }
+## `setg`, under another name.
+pub macro setnle(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f9f, 0, dst, 0, 0) }
+## `setnle dst`; `size` must be `byte`.
+pub macro setnle(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f9f, 0, dst, 0, 0)
+}
+## `setp`, under another name.
+pub macro setpe(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f9a, 0, gpr(rd), 0, 0) }
+## `setp`, under another name.
+pub macro setpe(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f9a, 0, dst, 0, 0) }
+## `setpe dst`; `size` must be `byte`.
+pub macro setpe(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f9a, 0, dst, 0, 0)
+}
+## `setnp`, under another name.
+pub macro setpo(rd: Reg8)
+    | emits Bytes<...> { @emit digit_rm_instr(8, 0x0f9b, 0, gpr(rd), 0, 0) }
+## `setnp`, under another name.
+pub macro setpo(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(8, 0x0f9b, 0, dst, 0, 0) }
+## `setpo dst`; `size` must be `byte`.
+pub macro setpo(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 8
+    @emit digit_mem_instr(8, 0x0f9b, 0, dst, 0, 0)
+}
+
+# =================
+# stack and control flow
+# =================
+# Indirect jumps and calls, `push`/`pop` beyond a 64-bit register, `ret`
+# with a count, and the 8-bit-offset jumps (`loop`, `jrcxz`). In 64-bit
+# mode the stack and jump targets are 64 bits wide by default, so none of
+# these needs REX.W.
+
+## Pushes the 16-bit `rd`.
+pub macro push(rd: Reg16)
+    | emits Bytes<...> { @emit reg_in_opcode_instr(16, 0x50, gpr(rd), 0, 0) }
+## Pops 16 bits into `rd`.
+pub macro pop(rd: Reg16)
+    | emits Bytes<...> { @emit reg_in_opcode_instr(16, 0x58, gpr(rd), 0, 0) }
+## Pushes `imm`, a 32-bit immediate sign-extended to 64 bits.
+pub macro push(imm: int)
+    | emits Bytes<...> { @emit imm_instr(0, 0x68, imm, 4) }
+## Pushes the 64 bits at `src`.
+pub macro push(src: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(32, 0xFF, 6, src, 0, 0) }
+## Pushes the `size`-wide value at `src`: `qword` or `word`.
+pub macro push(src: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    @assert size.bits == 64 || size.bits == 16, "push takes a qword or word"
+    @emit digit_mem_instr(
+        size.bits - 32 * (size.bits == 64),
+        0xFF,
+        6,
+        src,
+        0,
+        0
+    )
+}
+## Pops 64 bits into the memory at `dst`.
+pub macro pop(dst: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(32, 0x8F, 0, dst, 0, 0) }
+## Pops a `size`-wide value into the memory at `dst`: `qword` or `word`.
+pub macro pop(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    @assert size.bits == 64 || size.bits == 16, "pop takes a qword or word"
+    @emit digit_mem_instr(
+        size.bits - 32 * (size.bits == 64),
+        0x8F,
+        0,
+        dst,
+        0,
+        0
+    )
+}
+## Pushes `fs` or `gs`, the only segment registers 64-bit mode can push.
+pub macro push(sr: SReg)
+    | emits Bytes<...>
+{
+    @assert sr.num == 4 || sr.num == 5, "64-bit mode can only push fs and gs"
+    @emit fixed(0x0FA0 + 8 * (sr.num == 5), 2)
+}
+## Pops `fs` or `gs`, the only segment registers 64-bit mode can pop.
+pub macro pop(sr: SReg)
+    | emits Bytes<...>
+{
+    @assert sr.num == 4 || sr.num == 5, "64-bit mode can only pop fs and gs"
+    @emit fixed(0x0FA1 + 8 * (sr.num == 5), 2)
+}
+
+## Jumps to the address in `r`.
+pub macro jmp(r: Reg)
+    | emits Bytes<...> { @emit digit_rm_instr(32, 0xFF, 4, gpr(r), 0, 0) }
+## Jumps to the address stored at `src`.
+pub macro jmp(src: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(32, 0xFF, 4, src, 0, 0) }
+## `jmp src`; `size` must be `qword`.
+pub macro jmp(src: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 64
+    @emit digit_mem_instr(32, 0xFF, 4, src, 0, 0)
+}
+## Calls the address in `r`.
+pub macro call(r: Reg)
+    | emits Bytes<...> { @emit digit_rm_instr(32, 0xFF, 2, gpr(r), 0, 0) }
+## Calls the address stored at `src`.
+pub macro call(src: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(32, 0xFF, 2, src, 0, 0) }
+## `call src`; `size` must be `qword`.
+pub macro call(src: MemOperand, size: OperandSize)
+    | emits Bytes<...>
+{
+    assert_size size, 64
+    @emit digit_mem_instr(32, 0xFF, 2, src, 0, 0)
+}
+## Jumps to the far pointer at `src`: a 64-bit offset, then a 16-bit
+## segment selector.
+pub macro jmp_far(src: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(64, 0xFF, 5, src, 0, 0) }
+## Calls the far pointer at `src`: a 64-bit offset, then a 16-bit segment
+## selector.
+pub macro call_far(src: MemOperand)
+    | emits Bytes<...> { @emit digit_mem_instr(64, 0xFF, 3, src, 0, 0) }
+
+## Returns, then pops `n` more bytes.
+pub macro ret(n: int)
+    | emits Bytes<...> { @emit imm_instr(0, 0xC2, n, 2) }
+## Returns from a far call.
+pub macro retf()
+    | emits Bytes<...> { @emit fixed(0xCB, 1) }
+## Returns from a far call, then pops `n` more bytes.
+pub macro retf(n: int)
+    | emits Bytes<...> { @emit imm_instr(0, 0xCA, n, 2) }
+## Makes a stack frame of `size` bytes, nested `level` deep.
+pub macro enter(size: int, level: int)
+    | emits Bytes<...> { @emit imm_instr(0, 0xC8, size | (level << 16), 3) }
+## Undoes `enter`: `mov rsp, rbp`, then `pop rbp`.
+pub macro leave()
+    | emits Bytes<...> { @emit fixed(0xC9, 1) }
+## Calls interrupt handler `n`. The dialects spell it `int n`; `int` itself
+## names the integer type.
+pub macro interrupt(n: int)
+    | emits Bytes<...> { @emit imm_instr(0, 0xCD, n, 1) }
+
+# 8-bit offsets. `bitter` packs the offset into 8 bits without checking
+# that it fits, the way RISC-V's branch offsets are packed, so the target
+# must be within -128 to 127 bytes of the next instruction.
+## A short jump: an opcode and an 8-bit offset `bitter` works out.
+pub struct Rel8Instr {
+    ## The opcode.
+    pub opcode: Byte,
+    ## The offset from the next instruction to the target.
+    pub rel8: Positioned<8>,
+}
+
+## A short jump with a prefix byte: `jecxz`.
+pub struct Rel8Instr2 {
+    ## The prefix.
+    pub prefix: Byte,
+    ## The opcode.
+    pub opcode: Byte,
+    ## The offset from the next instruction to the target.
+    pub rel8: Positioned<8>,
+}
+
+macro rel8_instr(
+    opcode: int,
+    target: int
+) -> Rel8Instr {
+    @return Rel8Instr(
+        opcode = Byte(opcode),
+        rel8 = Positioned<8> { value: rel32_offset(target, 2) }
+    )
+}
+
+## Decrements `rcx`, then jumps to the label `target` unless it's 0. `target`
+## must be within 127 bytes.
+pub macro loop(target: int)
+    | emits Rel8Instr { @emit rel8_instr(0xe2, target) }
+## Decrements `rcx`, then jumps to the label `target` if it isn't 0 and ZF = 1.
+## `target` must be within 127 bytes.
+pub macro loope(target: int)
+    | emits Rel8Instr { @emit rel8_instr(0xe1, target) }
+## `loope`, under another name. `target` must be within 127 bytes.
+pub macro loopz(target: int)
+    | emits Rel8Instr { @emit rel8_instr(0xe1, target) }
+## Decrements `rcx`, then jumps to the label `target` if it isn't 0 and ZF = 0.
+## `target` must be within 127 bytes.
+pub macro loopne(target: int)
+    | emits Rel8Instr { @emit rel8_instr(0xe0, target) }
+## `loopne`, under another name. `target` must be within 127 bytes.
+pub macro loopnz(target: int)
+    | emits Rel8Instr { @emit rel8_instr(0xe0, target) }
+## Jumps to the label `target` if `rcx` is 0. `target` must be within 127 bytes.
+pub macro jrcxz(target: int)
+    | emits Rel8Instr { @emit rel8_instr(0xe3, target) }
+## Jumps to the label `target` if `ecx` is 0. `target` must be within 127
+## bytes.
+pub macro jecxz(target: int)
+    | emits Rel8Instr2
+{
+    @emit Rel8Instr2(
+        prefix = Byte(0x67),
+        opcode = Byte(0xE3),
+        rel8 = Positioned<8> { value: rel32_offset(target, 3) }
+    )
+}
+
+# =================
+# nop, ud0, ud1, out, lfs, lgs, lss
+# =================
+
+## Does nothing.
+pub macro nop()
+    | emits Bytes<...> { @emit fixed(0x90, 1) }
+## Does nothing, in a longer encoding that names `rd`: for padding.
+pub macro nop<R>(rd: R)
+    | emits Bytes<...> { @emit ri(-1, 0x0F1F, 0, rd, 0, 0) }
+## Does nothing, in a longer encoding that names `dst`: for padding.
+pub macro nop(dst: MemOperand, size: OperandSize)
+    | emits Bytes<...> { @emit mi(-1, 0x0F1F, 0, dst, 0, 0, size) }
+## Raises an invalid-opcode exception.
+pub macro ud0<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0fff, rd, rs, 0, 0) }
+## Raises an invalid-opcode exception.
+pub macro ud0<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0fff, rd, src, 0, 0) }
+## Raises an invalid-opcode exception.
+pub macro ud1<R>(rd: R, rs: R)
+    | emits Bytes<...> { @emit rr_load(-1, 0x0fb9, rd, rs, 0, 0) }
+## Raises an invalid-opcode exception.
+pub macro ud1<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0fb9, rd, src, 0, 0) }
+
+# The accumulator, `al`, `ax` or `eax`, as an I/O port operand.
+macro port_operand<R>(rs: R) -> Gpr {
+    const s = gpr(rs)
+    @assert s.num.value == 0 && s.rex != -1 && s.size <= 32, "the data register must be al, ax or eax"
+    @return s
+}
+
+## Writes `rs` (`al`, `ax` or `eax`) to the I/O port in `port`, which must be
+## `dx`.
+pub macro out<R>(port: Reg16, rs: R)
+    | emits Bytes<...>
+{
+    @assert port.reg.value == 2, "the port register must be dx"
+    const s = port_operand(rs)
+    @emit imm_instr(s.size == 16, sized_opcode(s.size, 0xEE, 0xEF), 0, 0)
+}
+## Writes `rs` (`al`, `ax` or `eax`) to I/O port `port`, 0 to 255.
+pub macro out<R>(port: int, rs: R)
+    | emits Bytes<...>
+{
+    const s = port_operand(rs)
+    @emit imm_instr(s.size == 16, sized_opcode(s.size, 0xE6, 0xE7), port, 1)
+}
+
+## Loads the far pointer at `src` into `fs` and `rd`.
+pub macro lfs<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0fb4, rd, src, 0, 0) }
+## Loads the far pointer at `src` into `gs` and `rd`.
+pub macro lgs<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0fb5, rd, src, 0, 0) }
+## Loads the far pointer at `src` into `ss` and `rd`.
+pub macro lss<R>(rd: R, src: MemOperand)
+    | emits Bytes<...> { @emit rmem(-1, 0x0fb2, rd, src, 0, 0) }
+
+# =================
+# instructions with no operands
+# =================
+# Each is a fixed byte sequence. The string instructions name their size in
+# a suffix (`movsb` to `movsq`) and work on `rsi`/`rdi`; the prefixes
+# (`rep`, `lock`, ...) go on a line of their own, before the instruction
+# they apply to.
+
+## Clears the carry flag.
+pub macro clc()
+    | emits Bytes<...> { @emit fixed(0xf8, 1) }
+## Sets the carry flag.
+pub macro stc()
+    | emits Bytes<...> { @emit fixed(0xf9, 1) }
+## Flips the carry flag.
+pub macro cmc()
+    | emits Bytes<...> { @emit fixed(0xf5, 1) }
+## Clears the direction flag, so string instructions count up.
+pub macro cld()
+    | emits Bytes<...> { @emit fixed(0xfc, 1) }
+## Sets the direction flag, so string instructions count down.
+pub macro std()
+    | emits Bytes<...> { @emit fixed(0xfd, 1) }
+## Clears the interrupt flag. Needs I/O privilege.
+pub macro cli()
+    | emits Bytes<...> { @emit fixed(0xfa, 1) }
+## Sets the interrupt flag. Needs I/O privilege.
+pub macro sti()
+    | emits Bytes<...> { @emit fixed(0xfb, 1) }
+## Sign-extends `al` into `ax`.
+pub macro cbw()
+    | emits Bytes<...> { @emit fixed(0x6698, 2) }
+## Sign-extends `ax` into `eax`.
+pub macro cwde()
+    | emits Bytes<...> { @emit fixed(0x98, 1) }
+## Sign-extends `eax` into `rax`.
+pub macro cdqe()
+    | emits Bytes<...> { @emit fixed(0x4898, 2) }
+## Sign-extends `ax` into `dx:ax`.
+pub macro cwd()
+    | emits Bytes<...> { @emit fixed(0x6699, 2) }
+## Sign-extends `eax` into `edx:eax`.
+pub macro cdq()
+    | emits Bytes<...> { @emit fixed(0x99, 1) }
+## Sign-extends `rax` into `rdx:rax`.
+pub macro cqo()
+    | emits Bytes<...> { @emit fixed(0x4899, 2) }
+## Loads the low byte of the flags into `ah`.
+pub macro lahf()
+    | emits Bytes<...> { @emit fixed(0x9f, 1) }
+## Stores `ah` into the low byte of the flags.
+pub macro sahf()
+    | emits Bytes<...> { @emit fixed(0x9e, 1) }
+## Pushes the flags.
+pub macro pushf()
+    | emits Bytes<...> { @emit fixed(0x9c, 1) }
+## Pushes the flags.
+pub macro pushfq()
+    | emits Bytes<...> { @emit fixed(0x9c, 1) }
+## Pops the flags.
+pub macro popf()
+    | emits Bytes<...> { @emit fixed(0x9d, 1) }
+## Pops the flags.
+pub macro popfq()
+    | emits Bytes<...> { @emit fixed(0x9d, 1) }
+## Hints that this is a spin-wait loop.
+pub macro pause()
+    | emits Bytes<...> { @emit fixed(0xf390, 2) }
+## Raises an invalid-opcode exception.
+pub macro ud2()
+    | emits Bytes<...> { @emit fixed(0x0f0b, 2) }
+## Reads processor identification and features, picked by `eax`.
+pub macro cpuid()
+    | emits Bytes<...> { @emit fixed(0x0fa2, 2) }
+## Stops in a debugger.
+pub macro int3()
+    | emits Bytes<...> { @emit fixed(0xcc, 1) }
+## Returns from an interrupt.
+pub macro iret()
+    | emits Bytes<...> { @emit fixed(0xcf, 1) }
+## Returns from an interrupt.
+pub macro iretd()
+    | emits Bytes<...> { @emit fixed(0xcf, 1) }
+## Returns from an interrupt, with 64-bit stack values.
+pub macro iretq()
+    | emits Bytes<...> { @emit fixed(0x48cf, 2) }
+## `al = [rbx + al]`: looks `al` up in a table.
+pub macro xlatb()
+    | emits Bytes<...> { @emit fixed(0xd7, 1) }
+## Repeats the next string instruction `rcx` times.
+pub macro rep()
+    | emits Bytes<...> { @emit fixed(0xf3, 1) }
+## Repeats the next `cmps` or `scas` while equal, up to `rcx` times.
+pub macro repe()
+    | emits Bytes<...> { @emit fixed(0xf3, 1) }
+## `repe`, under another name.
+pub macro repz()
+    | emits Bytes<...> { @emit fixed(0xf3, 1) }
+## Repeats the next `cmps` or `scas` while not equal, up to `rcx` times.
+pub macro repne()
+    | emits Bytes<...> { @emit fixed(0xf2, 1) }
+## `repne`, under another name.
+pub macro repnz()
+    | emits Bytes<...> { @emit fixed(0xf2, 1) }
+## Makes the next instruction's memory access atomic.
+pub macro lock()
+    | emits Bytes<...> { @emit fixed(0xf0, 1) }
+
+## Copies a byte from `[rsi]` to `[rdi]`, then steps both.
+pub macro movsb()
+    | emits Bytes<...> { @emit fixed(0xa4, 1) }
+## Copies a word from `[rsi]` to `[rdi]`, then steps both.
+pub macro movsw()
+    | emits Bytes<...> { @emit fixed(0x66a5, 2) }
+## Copies a doubleword from `[rsi]` to `[rdi]`, then steps both.
+pub macro movsd()
+    | emits Bytes<...> { @emit fixed(0xa5, 1) }
+## Copies a quadword from `[rsi]` to `[rdi]`, then steps both.
+pub macro movsq()
+    | emits Bytes<...> { @emit fixed(0x48a5, 2) }
+## Compares a byte at `[rsi]` and `[rdi]`, then steps both.
+pub macro cmpsb()
+    | emits Bytes<...> { @emit fixed(0xa6, 1) }
+## Compares a word at `[rsi]` and `[rdi]`, then steps both.
+pub macro cmpsw()
+    | emits Bytes<...> { @emit fixed(0x66a7, 2) }
+## Compares a doubleword at `[rsi]` and `[rdi]`, then steps both.
+pub macro cmpsd()
+    | emits Bytes<...> { @emit fixed(0xa7, 1) }
+## Compares a quadword at `[rsi]` and `[rdi]`, then steps both.
+pub macro cmpsq()
+    | emits Bytes<...> { @emit fixed(0x48a7, 2) }
+## Compares the accumulator with a byte at `[rdi]`, then steps it.
+pub macro scasb()
+    | emits Bytes<...> { @emit fixed(0xae, 1) }
+## Compares the accumulator with a word at `[rdi]`, then steps it.
+pub macro scasw()
+    | emits Bytes<...> { @emit fixed(0x66af, 2) }
+## Compares the accumulator with a doubleword at `[rdi]`, then steps it.
+pub macro scasd()
+    | emits Bytes<...> { @emit fixed(0xaf, 1) }
+## Compares the accumulator with a quadword at `[rdi]`, then steps it.
+pub macro scasq()
+    | emits Bytes<...> { @emit fixed(0x48af, 2) }
+## Loads a byte from `[rsi]` into the accumulator, then steps it.
+pub macro lodsb()
+    | emits Bytes<...> { @emit fixed(0xac, 1) }
+## Loads a word from `[rsi]` into the accumulator, then steps it.
+pub macro lodsw()
+    | emits Bytes<...> { @emit fixed(0x66ad, 2) }
+## Loads a doubleword from `[rsi]` into the accumulator, then steps it.
+pub macro lodsd()
+    | emits Bytes<...> { @emit fixed(0xad, 1) }
+## Loads a quadword from `[rsi]` into the accumulator, then steps it.
+pub macro lodsq()
+    | emits Bytes<...> { @emit fixed(0x48ad, 2) }
+## Stores the accumulator's low byte at `[rdi]`, then steps it.
+pub macro stosb()
+    | emits Bytes<...> { @emit fixed(0xaa, 1) }
+## Stores the accumulator's low word at `[rdi]`, then steps it.
+pub macro stosw()
+    | emits Bytes<...> { @emit fixed(0x66ab, 2) }
+## Stores the accumulator's low doubleword at `[rdi]`, then steps it.
+pub macro stosd()
+    | emits Bytes<...> { @emit fixed(0xab, 1) }
+## Stores the accumulator's low quadword at `[rdi]`, then steps it.
+pub macro stosq()
+    | emits Bytes<...> { @emit fixed(0x48ab, 2) }
+## Reads a byte from I/O port `dx` into `[rdi]`, then steps it.
+pub macro insb()
+    | emits Bytes<...> { @emit fixed(0x6c, 1) }
+## Reads a word from I/O port `dx` into `[rdi]`, then steps it.
+pub macro insw()
+    | emits Bytes<...> { @emit fixed(0x666d, 2) }
+## Reads a doubleword from I/O port `dx` into `[rdi]`, then steps it.
+pub macro insd()
+    | emits Bytes<...> { @emit fixed(0x6d, 1) }
+## Writes a byte from `[rsi]` to I/O port `dx`, then steps it.
+pub macro outsb()
+    | emits Bytes<...> { @emit fixed(0x6e, 1) }
+## Writes a word from `[rsi]` to I/O port `dx`, then steps it.
+pub macro outsw()
+    | emits Bytes<...> { @emit fixed(0x666f, 2) }
+## Writes a doubleword from `[rsi]` to I/O port `dx`, then steps it.
+pub macro outsd()
+    | emits Bytes<...> { @emit fixed(0x6f, 1) }

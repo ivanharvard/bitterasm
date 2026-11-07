@@ -91,7 +91,8 @@ load 1, [0x40]
 ```
 
 `[0x40]` becomes `mem(0x40)`, a `Mem`, and [overloading](overloading.md)
-picks the `load` that takes a `Mem`. This is how `std.x86_64.nasm` gives
+picks the `load` that takes a `Mem`. This is how `std.x86_64.intel` turns
+`[rbx+8]` into a memory operand, and how `std.x86_64.nasm` gives
 `[rel label]` its own type.
 
 ## Changing another macro's syntax

@@ -1,0 +1,35 @@
+# The sized instructions in std/x86_64/intel.basm's syntax: bracketed memory
+# operands, size keywords, and 8- to 64-bit registers. dialect_impl_sized.basm
+# is the same program in impl.basm's own default syntax;
+# tests/x86_64_dialects.rs asserts the two compile to identical output.
+
+from std.x86_64.intel import *
+
+add al, bl
+adc ax, 0x1234
+sbb r9d, [rsp+8]
+xor [rbx+rcx*4-16], r10
+cmp qword [rip+8], -1
+mov byte [rdi], 0x7f
+mov ah, [rbx+rcx]
+movzx eax, byte [rsi]
+movsx r8, word [rbx+rcx*2]
+movsxd rax, dword [rbx]
+movzx ecx, dl
+imul r11, [rbp-8], 100
+shl dword [rax], cl
+rol r12w, 3
+not qword [r13]
+setne sil
+sete byte [rbx]
+cmovl rax, [rbx]
+bt dword [rbx], 5
+push qword [rsp+16]
+pop word [rbx]
+jmp r11
+call qword [rax]
+jmp far [rbx]
+int 0x80
+mov fs, word [rbx]
+lea r14, [rbx+rcx*8]
+cmpxchg16b oword [rdi]

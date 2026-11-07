@@ -59,6 +59,78 @@ syntax ecall() = { ecall }
 syntax ebreak() = { ebreak }
 
 # =================
+# fence
+# =================
+# GNU writes a fence's sets as letters in `iorw` order. Each non-empty set
+# is its own name here, so they're in scope only for programs that import
+# this dialect; a program's own names shadow them. The one exception is
+# `or` (device output and memory reads): a const can't share its name with
+# the `or` instruction, so that set is spelled by the literal patterns
+# below the syntax.
+
+## A `fence` set: device input.
+pub const i: FenceSet = 0b1000
+## A `fence` set: device output.
+pub const o: FenceSet = 0b0100
+## A `fence` set: memory reads.
+pub const r: FenceSet = 0b0010
+## A `fence` set: memory writes.
+pub const w: FenceSet = 0b0001
+## A `fence` set: device input and device output.
+pub const io: FenceSet = 0b1100
+## A `fence` set: device input and memory reads.
+pub const ir: FenceSet = 0b1010
+## A `fence` set: device input and memory writes.
+pub const iw: FenceSet = 0b1001
+## A `fence` set: device output and memory writes.
+pub const ow: FenceSet = 0b0101
+## A `fence` set: memory reads and memory writes.
+pub const rw: FenceSet = 0b0011
+## A `fence` set: device input, device output and memory reads.
+pub const ior: FenceSet = 0b1110
+## A `fence` set: device input, device output and memory writes.
+pub const iow: FenceSet = 0b1101
+## A `fence` set: device input, memory reads and memory writes.
+pub const irw: FenceSet = 0b1011
+## A `fence` set: device output, memory reads and memory writes.
+pub const orw: FenceSet = 0b0111
+## A `fence` set: device input, device output, memory reads and memory writes.
+pub const iorw: FenceSet = 0b1111
+
+syntax fence(pred, succ) = { fence $pred$, $succ$ }
+
+# `or` as a set. A pattern with more literal tokens wins over the generic
+# one above, so `fence or, rw` lands here and never looks `or` up.
+const OR_SET = FenceSet(0b0110)
+
+## `fence or, succ`.
+pub macro fence_or_pred(succ: FenceSet)
+    | syntax { fence or, $succ$ } { fence OR_SET, succ }
+## `fence pred, or`.
+pub macro fence_or_succ(pred: FenceSet)
+    | syntax { fence $pred$, or } { fence pred, OR_SET }
+## `fence or, or`.
+pub macro fence_or_both()
+    | syntax { fence or, or } { fence OR_SET, OR_SET }
+
+## A full fence, `fence iorw, iorw`: every access before it finishes
+## before any access after it starts.
+##
+## ```
+## from std.riscv.native import *
+##
+## fence
+## fence rw, w
+## ```
+##
+## ```bytes
+## 0f 00 f0 0f
+## 0f 00 10 03
+## ```
+pub macro fence()
+    | syntax { fence } { fence iorw, iorw }
+
+# =================
 # I-type: loads
 # =================
 # `offset(rs1)` addressing genuinely isn't expressible as default

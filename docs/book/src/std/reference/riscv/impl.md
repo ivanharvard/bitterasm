@@ -5,6 +5,8 @@
 RISC-V RV32I: its registers, instruction formats, and every base
 instruction, each emitted as a little-endian 32-bit word.
 
+Coverage: 40 of 40 operand forms (100%), through `std.riscv.native`.
+
 Import a dialect rather than this module: `std.riscv.native` for the
 standard assembly syntax, or `std.riscv.c_like`. Here every instruction
 takes its operands in order, `lw rd, offset, rs1` rather than
@@ -208,6 +210,28 @@ Stops in a debugger.
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
 | `ebreak` |  | emits `LittleEndian<IType, 32>` |  |
+
+### `fence`
+
+Orders memory accesses: every access in `pred` before the fence
+finishes before any access in `succ` after it starts, as seen by other
+harts and devices.
+
+```basm
+from std.riscv.impl import *
+
+fence FenceSet(0b1111), FenceSet(0b1111)
+fence FenceSet(0b0011), FenceSet(0b0001)
+```
+
+```bytes
+0f 00 f0 0f
+0f 00 10 03
+```
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `fence pred, succ` | `pred: FenceSet`, `succ: FenceSet` | emits `LittleEndian<IType, 32>` |  |
 
 ### `lb`
 
@@ -493,6 +517,14 @@ The U-type format: a 20-bit upper immediate.
 
 The J-type format: `jal`. Like B-type, its offset's bits are spread across
 the word, and resolved by `bitter`.
+
+### `FenceSet`
+
+`type FenceSet = bits<4>`
+
+A set of memory accesses that `fence` orders, one bit for each kind:
+device input (8), device output (4), memory reads (2) and memory writes
+(1).
 
 ### `Byte`
 

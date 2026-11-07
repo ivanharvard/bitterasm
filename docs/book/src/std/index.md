@@ -70,6 +70,27 @@ a0 = a1 + a2
 The same `add` instruction as in [Your first program](../getting-started/first-program.md),
 through the C-like dialect.
 
+### Coverage
+
+How much of each architecture `std` supports, counted in **operand forms**:
+an instruction with one kind of operand in each position. `add reg, reg`
+and `add reg, mem` are two forms. Operand sizes don't count separately, so
+`add reg, reg` stands for 8- to 64-bit registers alike. A form is covered
+when it compiles through the architecture's main dialect.
+
+<!-- coverage:start -->
+| Architecture | Reference set | Operand forms covered |
+|---|---|---|
+| PDP-10 | KA10 | 11 of 366 (3%) |
+| RISC-V | RV32I | 40 of 40 (100%) |
+| WebAssembly | WebAssembly 1.0 | 23 of 172 (13%) |
+| x86-64 | baseline general-purpose, user mode | 299 of 301 (99%) |
+<!-- coverage:end -->
+
+Each architecture's list of forms, with what's covered marked, is in
+[`tests/coverage/`](https://github.com/ivanharvard/bitterasm/tree/main/tests/coverage)
+in the repository.
+
 ## Reference
 
 The [std reference](reference/index.md) lists every public declaration of

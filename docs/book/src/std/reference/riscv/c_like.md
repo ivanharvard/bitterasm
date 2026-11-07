@@ -216,6 +216,28 @@ Stops in a debugger.
 |---|---|---|---|---|
 | `ebreak` |  | emits `LittleEndian<IType, 32>` |  | [`std.riscv.impl`](impl.md) |
 
+### `fence`
+
+Orders memory accesses: every access in `pred` before the fence
+finishes before any access in `succ` after it starts, as seen by other
+harts and devices.
+
+```basm
+from std.riscv.impl import *
+
+fence FenceSet(0b1111), FenceSet(0b1111)
+fence FenceSet(0b0011), FenceSet(0b0001)
+```
+
+```bytes
+0f 00 f0 0f
+0f 00 10 03
+```
+
+| Syntax | Parameters | Result | Description | From |
+|---|---|---|---|---|
+| `fence pred, succ` | `pred: FenceSet`, `succ: FenceSet` | emits `LittleEndian<IType, 32>` |  | [`std.riscv.impl`](impl.md) |
+
 ### `lb`
 
 Loads the byte at `rs1 + offset` into `rd`, sign-extended.
@@ -382,4 +404,4 @@ A string literal's UTF-8 bytes, with no terminator: GNU's `.ascii`.
 
 ## Re-exported
 
-From [`std.riscv.impl`](impl.md): `Reg`, `x0`, `x1`, `x2`, `x3`, `x4`, `x5`, `x6`, `x7`, `x8`, `x9`, `x10`, `x11`, `x12`, `x13`, `x14`, `x15`, `x16`, `x17`, `x18`, `x19`, `x20`, `x21`, `x22`, `x23`, `x24`, `x25`, `x26`, `x27`, `x28`, `x29`, `x30`, `x31`, `zero`, `ra`, `sp`, `gp`, `tp`, `t0`, `t1`, `t2`, `s0`, `fp`, `s1`, `a0`, `a1`, `a2`, `a3`, `a4`, `a5`, `a6`, `a7`, `s2`, `s3`, `s4`, `s5`, `s6`, `s7`, `s8`, `s9`, `s10`, `s11`, `t3`, `t4`, `t5`, `t6`, `Opcode`, `Funct3`, `Funct7`, `Bit1`, `Imm4`, `Imm5`, `Imm6`, `Imm7`, `Imm8`, `Imm10`, `Imm12`, `Imm20`, `RType`, `IType`, `SType`, `BType`, `UType`, `JType`, `Byte`, `Bytes`.
+From [`std.riscv.impl`](impl.md): `Reg`, `x0`, `x1`, `x2`, `x3`, `x4`, `x5`, `x6`, `x7`, `x8`, `x9`, `x10`, `x11`, `x12`, `x13`, `x14`, `x15`, `x16`, `x17`, `x18`, `x19`, `x20`, `x21`, `x22`, `x23`, `x24`, `x25`, `x26`, `x27`, `x28`, `x29`, `x30`, `x31`, `zero`, `ra`, `sp`, `gp`, `tp`, `t0`, `t1`, `t2`, `s0`, `fp`, `s1`, `a0`, `a1`, `a2`, `a3`, `a4`, `a5`, `a6`, `a7`, `s2`, `s3`, `s4`, `s5`, `s6`, `s7`, `s8`, `s9`, `s10`, `s11`, `t3`, `t4`, `t5`, `t6`, `Opcode`, `Funct3`, `Funct7`, `Bit1`, `Imm4`, `Imm5`, `Imm6`, `Imm7`, `Imm8`, `Imm10`, `Imm12`, `Imm20`, `RType`, `IType`, `SType`, `BType`, `UType`, `JType`, `FenceSet`, `Byte`, `Bytes`.

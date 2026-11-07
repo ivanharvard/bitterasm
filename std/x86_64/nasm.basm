@@ -32,12 +32,9 @@ from std.string import string_from_struct
 # =================
 # [rel label]
 # =================
-# An *operand* syntax (its pattern starts with `[`, which no statement can, so
-# the parser tries it wherever an operand starts — see
-# `facets::syntax::is_operand_pattern`): `[rel msg]` parses as the call
-# `rel(msg)`, a `RipLabel` value, which then picks the `RipLabel` overloads
-# below by ordinary type-based overload resolution, reusing each mnemonic's
-# existing `mov $a$, $b$`-shaped pattern.
+# An operand pattern, like `std.x86_64.intel`'s memory operands: `[rel msg]`
+# is the call `rel(msg)`, a `RipLabel`, which picks `impl.basm`'s `RipLabel`
+# overloads of `lea`, `mov` and the ALU instructions by type.
 
 ## `[rel label]`: the memory at `label`, addressed relative to the next
 ## instruction, so the code works wherever it's loaded.
@@ -61,66 +58,6 @@ pub macro rel(target: int) -> RipLabel
     | syntax { [rel $target$] } {
         @return RipLabel(target = target)
     }
-
-# `lea` had no two-operand pattern of its own in `intel.basm` (only its four
-# bracketed shapes, registered unanchored under `lea_base`/... names), so
-# claiming it here needs the same full-arity restatement every mnemonic there
-# gets — see `intel.basm`'s header on why.
-syntax lea(a, b, c) = { lea $a$, $b$, $c$ }
-
-## Loads the address of `src` into `rd`.
-pub macro lea(rd: Reg, src: RipLabel)
-    | syntax { lea $rd$, $src$ } { lea rd, src, 1 }
-pub macro lea(rd: Reg32, src: RipLabel)
-    | syntax { lea $rd$, $src$ } { lea rd.reg, src, 0 }
-
-## Loads the value at `src` into `rd`.
-pub macro mov(rd: Reg, src: RipLabel)
-    | syntax { mov $rd$, $src$ } { mov rd, src, 1 }
-pub macro mov(rd: Reg32, src: RipLabel)
-    | syntax { mov $rd$, $src$ } { mov rd.reg, src, 0 }
-## Stores `rs` at `dst`.
-pub macro mov(dst: RipLabel, rs: Reg)
-    | syntax { mov $dst$, $rs$ } { mov dst, rs, 1 }
-pub macro mov(dst: RipLabel, rs: Reg32)
-    | syntax { mov $dst$, $rs$ } { mov dst, rs.reg, 0 }
-
-## Adds `rs` to the value at `dst`.
-pub macro add(dst: RipLabel, rs: Reg)
-    | syntax { add $dst$, $rs$ } { add dst, rs, 1 }
-pub macro add(dst: RipLabel, rs: Reg32)
-    | syntax { add $dst$, $rs$ } { add dst, rs.reg, 0 }
-## ORs `rs` into the value at `dst`.
-pub macro or(dst: RipLabel, rs: Reg)
-    | syntax { or $dst$, $rs$ } { or dst, rs, 1 }
-pub macro or(dst: RipLabel, rs: Reg32)
-    | syntax { or $dst$, $rs$ } { or dst, rs.reg, 0 }
-## ANDs `rs` into the value at `dst`.
-pub macro and(dst: RipLabel, rs: Reg)
-    | syntax { and $dst$, $rs$ } { and dst, rs, 1 }
-pub macro and(dst: RipLabel, rs: Reg32)
-    | syntax { and $dst$, $rs$ } { and dst, rs.reg, 0 }
-## Subtracts `rs` from the value at `dst`.
-pub macro sub(dst: RipLabel, rs: Reg)
-    | syntax { sub $dst$, $rs$ } { sub dst, rs, 1 }
-pub macro sub(dst: RipLabel, rs: Reg32)
-    | syntax { sub $dst$, $rs$ } { sub dst, rs.reg, 0 }
-## XORs `rs` into the value at `dst`.
-pub macro xor(dst: RipLabel, rs: Reg)
-    | syntax { xor $dst$, $rs$ } { xor dst, rs, 1 }
-pub macro xor(dst: RipLabel, rs: Reg32)
-    | syntax { xor $dst$, $rs$ } { xor dst, rs.reg, 0 }
-## Compares the value at `dst` with `rs`, setting flags like `sub` without
-## storing.
-pub macro cmp(dst: RipLabel, rs: Reg)
-    | syntax { cmp $dst$, $rs$ } { cmp dst, rs, 1 }
-pub macro cmp(dst: RipLabel, rs: Reg32)
-    | syntax { cmp $dst$, $rs$ } { cmp dst, rs.reg, 0 }
-## ANDs the value at `dst` with `rs`, setting flags without storing.
-pub macro test(dst: RipLabel, rs: Reg)
-    | syntax { test $dst$, $rs$ } { test dst, rs, 1 }
-pub macro test(dst: RipLabel, rs: Reg32)
-    | syntax { test $dst$, $rs$ } { test dst, rs.reg, 0 }
 
 # =================
 # data: db/dw/dd/dq
@@ -157,20 +94,24 @@ pub macro db<S>(a: S, b: int) {
     @emit data_string(a)
     @emit data_int(b, 1)
 }
+
 pub macro db<S>(a: S, b: int, c: int) {
     @emit data_string(a)
     @emit data_int(b, 1)
     @emit data_int(c, 1)
 }
+
 pub macro db(a: int, b: int) {
     @emit data_int(a, 1)
     @emit data_int(b, 1)
 }
+
 pub macro db(a: int, b: int, c: int) {
     @emit data_int(a, 1)
     @emit data_int(b, 1)
     @emit data_int(c, 1)
 }
+
 pub macro db(a: int, b: int, c: int, d: int) {
     @emit data_int(a, 1)
     @emit data_int(b, 1)
