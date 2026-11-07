@@ -56,7 +56,7 @@ instructions a syntax. Import a dialect. See
 
 | Architecture | Dialects |
 |---|---|
-| x86-64 | `std.x86_64.intel`, `std.x86_64.nasm` (Intel plus NASM's `[rel label]`, `db` and friends), `std.x86_64.att` |
+| x86-64 | `std.x86_64.intel`, `std.x86_64.nasm` (Intel plus NASM's `[rel label]`), `std.x86_64.att` (GNU's AT&T syntax), and `std.x86_64.data` (`db` and friends, which both re-export) |
 | RISC-V (RV32I) | `std.riscv.native`, `std.riscv.c_like` (`a0 = a1 + a2`) |
 | WebAssembly | `std.wasm.module` (modules and sections), over `std.wasm.impl` |
 | PDP-10 | `std.pdp10.impl` (36-bit words, no byte order) |

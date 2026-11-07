@@ -65,6 +65,24 @@ impl Parser {
                 continue;
             }
 
+            // postfix operand syntax, such as AT&T's `16(%rsp)`: tried before
+            // a call, since the same `(` follows. It binds more loosely than
+            // any operator, so its leading capture is the whole expression
+            // before it (`-4(%rbp)`, `8+8(%rsp)`): a tighter-binding level
+            // that finds a match leaves it for the loosest level to take.
+            if self.check(&TokenKind::LParen) || self.check(&TokenKind::LBracket) {
+                const POSTFIX_OPERAND_BP: u8 = 1;
+                let start = self.pos;
+                if let Some(operand) = self.parse_postfix_operand_via_syntax(&left)? {
+                    if POSTFIX_OPERAND_BP < min_bp {
+                        self.pos = start;
+                        break;
+                    }
+                    left = operand;
+                    continue;
+                }
+            }
+
             // postfix: function call
             //
             //  foo()

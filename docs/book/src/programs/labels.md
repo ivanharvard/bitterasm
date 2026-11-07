@@ -50,6 +50,11 @@ end:
 
 A label can be used before it appears in the file, like `end` above.
 
+Because `label` and `int` are different types, an instruction can take
+either and mean different things. That's how `std.x86_64.att` reads
+`buffer(%rip)` as the address of a label but `8(%rip)` as a plain
+displacement, the way GNU `as` does.
+
 ## From positions to addresses
 
 A position counts emitted values, not bytes. How many bytes each value takes

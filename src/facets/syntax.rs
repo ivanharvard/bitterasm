@@ -121,10 +121,26 @@ pub fn is_anchored(pattern: &SyntaxPattern, name: &str) -> bool {
 /// patterns share the unanchored pool (threaded across imports the same
 /// way), but statement matching skips them.
 pub fn is_operand_pattern(pattern: &SyntaxPattern) -> bool {
+    is_postfix_operand_pattern(pattern)
+        || matches!(
+            pattern.segments.first(),
+            Some(PatternSegment::Literal(tokens))
+                if tokens.first().is_some_and(|first| first.word_text().is_none())
+        )
+}
+
+/// Whether `pattern` is a *postfix* operand pattern: a capture, then a
+/// literal opening with `(` or `[`, like AT&T's `$disp$(%$base$)`. The
+/// parser tries it after an operand expression, wherever a call's `(`
+/// could go, with that expression as the first capture; if it doesn't
+/// match, the `(` is an ordinary call. No statement pattern has this
+/// shape: a capture-first statement pattern goes on with an operator
+/// (`$rd$ = $rs1$ + $rs2$`).
+pub fn is_postfix_operand_pattern(pattern: &SyntaxPattern) -> bool {
     matches!(
-        pattern.segments.first(),
-        Some(PatternSegment::Literal(tokens))
-            if tokens.first().is_some_and(|first| first.word_text().is_none())
+        pattern.segments.as_slice(),
+        [PatternSegment::Capture(_), PatternSegment::Literal(tokens), ..]
+            if matches!(tokens.first(), Some(TokenKind::LParen | TokenKind::LBracket))
     )
 }
 

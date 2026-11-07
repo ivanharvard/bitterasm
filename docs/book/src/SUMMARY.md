@@ -123,6 +123,7 @@
         - [`module`](std/reference/wasm/module.md)
     - [`x86_64`](std/reference/x86_64/index.md)
         - [`att`](std/reference/x86_64/att.md)
+        - [`data`](std/reference/x86_64/data.md)
         - [`impl`](std/reference/x86_64/impl.md)
         - [`intel`](std/reference/x86_64/intel.md)
         - [`nasm`](std/reference/x86_64/nasm.md)

@@ -18,4 +18,4 @@
 | [`strings/`](strings/index.md) | `ascii`, `cstring`, `packed`, `utf16`, `utf8` |
 | [`unsigned`](unsigned.md) | `uint`, an `int` that can't be negative. |
 | [`wasm/`](wasm/index.md) | `impl`, `leb128`, `module` |
-| [`x86_64/`](x86_64/index.md) | `att`, `impl`, `intel`, `nasm` |
+| [`x86_64/`](x86_64/index.md) | `att`, `data`, `impl`, `intel`, `nasm` |

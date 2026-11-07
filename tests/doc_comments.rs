@@ -21,7 +21,7 @@ fn nasm_dialect_docs_attach_to_its_declarations() {
     // Maintainer notes stay out of it.
     assert!(!module.contains("impl.basm"), "{module}");
 
-    let macro_doc = |name: &str| {
+    let macro_doc = |program: &bitterasm::ast::Program, name: &str| {
         program.statements.iter().find_map(|statement| match statement {
             Statement::Macro(declaration)
                 if bitterasm::ast::literal_name(&declaration.name).as_deref() == Some(name) =>
@@ -31,11 +31,12 @@ fn nasm_dialect_docs_attach_to_its_declarations() {
             _ => None,
         })
     };
-    let rel = macro_doc("rel").flatten().expect("`rel` is documented");
+    let rel = macro_doc(&program, "rel").flatten().expect("`rel` is documented");
     assert!(rel.starts_with("`[rel label]`"), "{rel}");
     // `data_string`'s `##` line sits above a `#` note; only the `##` is doc.
+    let data = load_entry_program(Path::new("std/x86_64/data.basm")).unwrap();
     assert_eq!(
-        macro_doc("data_string").flatten().as_deref(),
+        macro_doc(&data, "data_string").flatten().as_deref(),
         Some("A string literal's UTF-8 bytes, with no terminator."),
     );
 }

@@ -27,7 +27,7 @@ code is laid out.
 Not covered: NASM's `$`/`$$`, `equ`, `times`, `resb`, and
 `global`/`extern` (use `const`, `@for`, and `pub` labels instead).
 
-Re-exports [`std.x86_64.intel`](intel.md).
+Re-exports [`std.x86_64.intel`](intel.md) and [`std.x86_64.data`](data.md).
 
 ## Macros
 
@@ -2655,6 +2655,55 @@ Fails to compile unless `r` is a register number, 0 to 15.
 |---|---|---|---|---|
 | `mov rd, size src` | `<T>`, `rd: T`, `size: OperandSize`, `src: MemOperand` |  |  | [`std.x86_64.intel`](intel.md) |
 
+### `data_int`
+
+`value` as `width` little-endian bytes, truncated the way NASM does.
+
+| Syntax | Parameters | Result | Description | From |
+|---|---|---|---|---|
+| `data_int(value, width)` | `value: int`, `width: int` | returns `Bytes<...>` |  | [`std.x86_64.data`](data.md) |
+
+### `data_string`
+
+A string literal's UTF-8 bytes, with no terminator.
+
+| Syntax | Parameters | Result | Description | From |
+|---|---|---|---|---|
+| `data_string(source)` | `<S>`, `source: S` | returns `Bytes<...>` |  | [`std.x86_64.data`](data.md) |
+
+### `db`
+
+| Syntax | Parameters | Result | Description | From |
+|---|---|---|---|---|
+| `db a` | `a: int` |  | Bytes. Each operand is an integer, stored in one byte, or a string literal, stored as its UTF-8 bytes with no terminator (add `, 0` yourself). Up to four operands; `db "Hello", 10` is the common case. | [`std.x86_64.data`](data.md) |
+| `db a` | `<S>`, `a: S` |  |  | [`std.x86_64.data`](data.md) |
+| `db a, b` | `<S>`, `a: S`, `b: int` |  |  | [`std.x86_64.data`](data.md) |
+| `db a, b, c` | `<S>`, `a: S`, `b: int`, `c: int` |  |  | [`std.x86_64.data`](data.md) |
+| `db a, b` | `a: int`, `b: int` |  |  | [`std.x86_64.data`](data.md) |
+| `db a, b, c` | `a: int`, `b: int`, `c: int` |  |  | [`std.x86_64.data`](data.md) |
+| `db a, b, c, d` | `a: int`, `b: int`, `c: int`, `d: int` |  |  | [`std.x86_64.data`](data.md) |
+
+### `dw`
+
+| Syntax | Parameters | Result | Description | From |
+|---|---|---|---|---|
+| `dw a` | `a: int` |  | 16-bit little-endian words, one or two per line. | [`std.x86_64.data`](data.md) |
+| `dw a, b` | `a: int`, `b: int` |  |  | [`std.x86_64.data`](data.md) |
+
+### `dd`
+
+| Syntax | Parameters | Result | Description | From |
+|---|---|---|---|---|
+| `dd a` | `a: int` |  | 32-bit little-endian doublewords, one or two per line. | [`std.x86_64.data`](data.md) |
+| `dd a, b` | `a: int`, `b: int` |  |  | [`std.x86_64.data`](data.md) |
+
+### `dq`
+
+| Syntax | Parameters | Result | Description | From |
+|---|---|---|---|---|
+| `dq a` | `a: int` |  | 64-bit little-endian quadwords, one or two per line. | [`std.x86_64.data`](data.md) |
+| `dq a, b` | `a: int`, `b: int` |  |  | [`std.x86_64.data`](data.md) |
+
 ### `rel`
 
 `[rel label]`: the memory at `label`, addressed relative to the next
@@ -2679,55 +2728,6 @@ msg:
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
 | `[rel target]` | `target: label` | returns `RipLabel` |  |
-
-### `data_int`
-
-`value` as `width` little-endian bytes, truncated the way NASM does.
-
-| Syntax | Parameters | Result | Description |
-|---|---|---|---|
-| `data_int(value, width)` | `value: int`, `width: int` | returns `Bytes<...>` |  |
-
-### `data_string`
-
-A string literal's UTF-8 bytes, with no terminator.
-
-| Syntax | Parameters | Result | Description |
-|---|---|---|---|
-| `data_string(source)` | `<S>`, `source: S` | returns `Bytes<...>` |  |
-
-### `db`
-
-| Syntax | Parameters | Result | Description |
-|---|---|---|---|
-| `db a` | `a: int` |  | Bytes. Each operand is an integer, stored in one byte, or a string literal, stored as its UTF-8 bytes with no terminator (add `, 0` yourself). Up to four operands; `db "Hello", 10` is the common case. |
-| `db a` | `<S>`, `a: S` |  |  |
-| `db a, b` | `<S>`, `a: S`, `b: int` |  |  |
-| `db a, b, c` | `<S>`, `a: S`, `b: int`, `c: int` |  |  |
-| `db a, b` | `a: int`, `b: int` |  |  |
-| `db a, b, c` | `a: int`, `b: int`, `c: int` |  |  |
-| `db a, b, c, d` | `a: int`, `b: int`, `c: int`, `d: int` |  |  |
-
-### `dw`
-
-| Syntax | Parameters | Result | Description |
-|---|---|---|---|
-| `dw a` | `a: int` |  | 16-bit little-endian words, one or two per line. |
-| `dw a, b` | `a: int`, `b: int` |  |  |
-
-### `dd`
-
-| Syntax | Parameters | Result | Description |
-|---|---|---|---|
-| `dd a` | `a: int` |  | 32-bit little-endian doublewords, one or two per line. |
-| `dd a, b` | `a: int`, `b: int` |  |  |
-
-### `dq`
-
-| Syntax | Parameters | Result | Description |
-|---|---|---|---|
-| `dq a` | `a: int` |  | 64-bit little-endian quadwords, one or two per line. |
-| `dq a, b` | `a: int`, `b: int` |  |  |
 
 ## Re-exported
 

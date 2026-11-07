@@ -1,0 +1,166 @@
+# A hexdump for Linux x86-64, in AT&T syntax, with no libc: prints FILE
+# 16 bytes a row, as a 16-digit offset, the bytes in hex, and the printable
+# ones as ASCII.
+#
+# Build and run (from the repository root):
+# bitter build examples/x86_64/hexdump.basm -o /tmp/hexdump
+# /tmp/hexdump FILE
+
+from std.x86_64.att import *
+from std.formats.elf import *
+
+# One segment holds the code, the strings and the buffers the program
+# writes to, so it's writable as well as readable and executable.
+elf64_executable EM_X86_64, _start, 0x400000, PF_R | PF_W | PF_X
+
+const digits_text = "0123456789abcdef"
+const usage_text = "Usage: hexdump FILE\n"
+const failure_text = "hexdump: open, read, or write failed\n"
+
+section .rodata
+digits:
+    db digits_text
+usage:
+    db usage_text
+failure:
+    db failure_text
+
+# The buffers are zeros in the file, rather than space the loader reserves.
+section .bss
+buffer:
+    @for _ in 0..16 {
+        db 0
+    }
+line:
+    @for _ in 0..86 {
+        db 0
+    }
+
+section .text
+pub _start:
+    cmpq $2, (%rsp)
+    jne .usage
+    mov $2, %eax                 # open(argv[1], O_RDONLY, 0)
+    mov 16(%rsp), %rdi
+    xor %esi, %esi
+    xor %edx, %edx
+    syscall
+    test %rax, %rax
+    js .error
+    mov %rax, %r12               # input file descriptor
+    xor %r13d, %r13d             # byte offset
+
+.new_row:
+    xor %r14d, %r14d             # bytes collected for this row
+.read:
+    xor %eax, %eax               # read(fd, buffer + count, 16 - count)
+    mov %r12, %rdi
+    lea buffer(%rip), %rsi
+    add %r14, %rsi
+    mov $16, %edx
+    sub %r14, %rdx
+    syscall
+    cmp $-4, %rax                # retry EINTR
+    je .read
+    test %rax, %rax
+    js .error
+    jz .eof
+    add %rax, %r14
+    cmp $16, %r14
+    jb .read
+    jmp .format
+.eof:
+    test %r14, %r14
+    jz .done
+
+.format:
+    # Layout: 16-digit offset, two spaces, 16 hex bytes, space, |ASCII|.
+    cld
+    lea line(%rip), %rdi
+    mov $86, %ecx
+    mov $32, %al
+    rep stosb                   # initialize padding to spaces
+    lea digits(%rip), %r8
+    lea line(%rip), %r9
+    lea buffer(%rip), %r10
+    movb $124, 67(%r9)          # '|'
+    movb $124, 84(%r9)
+    movb $10, 85(%r9)           # newline
+
+    # Convert offset into 16 hexadecimal digits, right to left.
+    mov %r13, %rax
+    lea 15(%r9), %rdi
+    mov $16, %ecx
+.offset:
+    mov %eax, %edx
+    and $15, %edx
+    movzbl (%r8,%rdx), %edx
+    mov %dl, (%rdi)
+    shr $4, %rax
+    dec %rdi
+    dec %ecx
+    jnz .offset
+
+    xor %ebx, %ebx              # byte index
+    lea 18(%r9), %rdi           # hex output cursor
+.bytes:
+    movzbl (%r10,%rbx), %eax
+    mov %eax, %edx
+    shr $4, %edx                # high nibble
+    movzbl (%r8,%rdx), %edx
+    mov %dl, (%rdi)
+    mov %eax, %edx
+    and $15, %edx               # low nibble
+    movzbl (%r8,%rdx), %edx
+    mov %dl, 1(%rdi)
+
+    cmp $32, %eax               # printable ASCII: 0x20 through 0x7e
+    jb .dot
+    cmp $126, %eax
+    jbe .ascii
+.dot:
+    mov $46, %eax               # '.' for non-printable bytes
+.ascii:
+    mov %al, 68(%r9,%rbx)
+    add $3, %rdi
+    inc %rbx
+    cmp %r14, %rbx
+    jb .bytes
+
+    lea line(%rip), %rsi
+    mov $86, %edx
+.write:
+    mov $1, %eax                # write(stdout, cursor, remaining)
+    mov $1, %edi
+    syscall
+    cmp $-4, %rax
+    je .write
+    test %rax, %rax
+    jle .error
+    add %rax, %rsi
+    sub %rax, %rdx
+    jnz .write                  # handle partial writes
+    add %r14, %r13
+    jmp .new_row
+
+.done:
+    mov $3, %eax                # close(fd)
+    mov %r12, %rdi
+    syscall
+    xor %edi, %edi              # success
+    jmp .exit
+.usage:
+    lea usage(%rip), %rsi
+    mov $usage_text.len, %edx
+    jmp .report
+.error:
+    lea failure(%rip), %rsi
+    mov $failure_text.len, %edx
+.report:
+    mov $1, %eax
+    mov $2, %edi                # stderr
+    syscall
+    mov $1, %edi                # failure
+.exit:
+    mov $60, %eax
+    syscall

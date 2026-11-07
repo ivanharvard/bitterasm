@@ -33,7 +33,7 @@ A pattern is a sequence of tokens between `{` and `}`:
 Every capture must name one of the macro's parameters. To match a literal
 `` ` `` or `$`, escape it: `` \` `` or `\$`.
 
-## Three kinds of pattern
+## Four kinds of pattern
 
 **Anchored** patterns start with the macro's own name, like the `swap`
 pattern above. They're tried only for statements that start with that name,
@@ -94,6 +94,40 @@ load 1, [0x40]
 picks the `load` that takes a `Mem`. This is how `std.x86_64.intel` turns
 `[rbx+8]` into a memory operand, and how `std.x86_64.nasm` gives
 `[rel label]` its own type.
+
+**Postfix operand** patterns start with a capture followed by `(` or `[`.
+They're tried after an operand expression, wherever a call's `(` could go,
+and the whole expression before them becomes the first capture. If none
+matches, the `(` is an ordinary call:
+
+```basm
+struct Mem {
+    pub disp: int,
+    pub base: int,
+}
+
+macro mem(disp: int, base: int) -> Mem
+    | syntax { $disp$(%$base$) }
+{
+    @return Mem(disp, base)
+}
+
+macro load(src: Mem) {
+    @emit src.disp
+    @emit src.base
+}
+
+load 8(%3)
+load -4 + 2(%5)
+```
+
+```emits
+8 3 -2 5
+```
+
+`-4 + 2(%5)` is `mem(-4 + 2, 5)`: the pattern binds more loosely than any
+operator. This is how `std.x86_64.att` reads AT&T memory operands like
+`16(%rsp)` and `buffer(%rip)`.
 
 ## Changing another macro's syntax
 

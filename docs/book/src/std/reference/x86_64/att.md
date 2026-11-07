@@ -11,21 +11,46 @@ from std.x86_64.att import *
 mov %rbx, %rax
 mov 8(%rsp), %rax
 add $1, %rax
+movl $2, %eax
+movb %dl, 1(%rdi)
+movb $124, 67(%r9)
+movzbl (%r8,%rdx), %edx
 ```
 
 ```bytes
 48 89 d8
 48 8b 44 24 08
 48 81 c0 01 00 00 00
+b8 02 00 00 00
+88 57 01
+41 c6 41 43 7c
+41 0f b6 14 10
 ```
 
-Memory operands are `(%base)`, `disp(%base)`,
-`disp(%base,%index,scale)` and `disp(%rip)`. Only 64-bit operands have
-AT&T spellings, and mnemonics take no size suffix (`mov`, not `movq`).
+Every operand is a value: `%rax` is a `Register`, `$1` an `Imm`, and each
+memory form a `Memory`: `(%rbx)`, `8(%rbx)`, `(%rbx,%rcx)`,
+`8(%rbx,%rcx)`, `(%rbx,%rcx,4)`, `8(%rbx,%rcx,4)` and `8(%rip)`. A
+displacement can be any expression, like `-4(%rbp)`.
+
+`label(%rip)` is the address of `label`, relative to the next
+instruction, the way GNU `as` reads it; a number before `(%rip)` is a
+plain displacement. A label is a `label`, not a number, which is how the
+two are told apart.
+
+A size suffix (`b`, `w`, `l` or `q`, as in `movl` or `cmpq`) is optional
+when a register gives the size, and must match it. With only an
+immediate and memory, nothing else says the size, so the suffix is
+required: `movb $1, (%rdi)`. `movzbl`-style mnemonics extend a byte or
+word into a larger register.
+
+A string instruction can take its prefix on the same line: `rep stosb`.
+`*%rax` and `*8(%rsp)` are indirect `jmp` and `call` targets. Data is
+`db`, `dw`, `dd` and `dq`, from `std.x86_64.data`; labels, sections and
+`pub` work as everywhere in BitterASM rather than as GNU directives.
 Every instruction of `std.x86_64.impl` stays available in its explicit
 form too: `mov rax, rbx, 0` for a 32-bit move.
 
-Re-exports [`std.x86_64.impl`](impl.md).
+Re-exports [`std.x86_64.impl`](impl.md) and [`std.x86_64.data`](data.md).
 
 ## Macros
 
@@ -104,25 +129,32 @@ Byte `index` of `value`, counting from the least significant, byte 0.
 | `mov dst, imm, w` | `dst: MemOperand`, `imm: int`, `w: int` | emits `Bytes<...>` | Stores `imm` at `dst`: 32 bits, sign-extended to 64 when `w` is 1. | [`std.x86_64.impl`](impl.md) |
 | `mov rd, src, w` | `rd: Reg`, `src: RipLabel`, `w: int` |  | Loads the value at the label `src` into `rd`. | [`std.x86_64.impl`](impl.md) |
 | `mov dst, rs, w` | `dst: RipLabel`, `rs: Reg`, `w: int` |  | Stores `rs` at the label `dst`. | [`std.x86_64.impl`](impl.md) |
-| `mov %rd, %src` | `rd: Reg`, `src: RipLabel` |  | Loads the value at the label `src` into `rd`. | [`std.x86_64.impl`](impl.md) |
-| `mov %rd, %src` | `rd: Reg32`, `src: RipLabel` |  |  | [`std.x86_64.impl`](impl.md) |
-| `mov %dst, %rs` | `dst: RipLabel`, `rs: Reg` |  | Stores `rs` at the label `dst`. | [`std.x86_64.impl`](impl.md) |
-| `mov %dst, %rs` | `dst: RipLabel`, `rs: Reg32` |  |  | [`std.x86_64.impl`](impl.md) |
-| `mov %rd, %rs` | `<R>`, `rd: R`, `rs: R` | emits `Bytes<...>` | `rd = rs`. | [`std.x86_64.impl`](impl.md) |
-| `mov %rd, %imm` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | `rd = imm`. A 64-bit `rd` takes a full 64-bit `imm`. | [`std.x86_64.impl`](impl.md) |
-| `mov %rd, %src` | `<R>`, `rd: R`, `src: MemOperand` | emits `Bytes<...>` | Loads the value at `src` into `rd`. | [`std.x86_64.impl`](impl.md) |
+| `mov rd, src` | `rd: Reg`, `src: RipLabel` |  | Loads the value at the label `src` into `rd`. | [`std.x86_64.impl`](impl.md) |
+| `mov rd, src` | `rd: Reg32`, `src: RipLabel` |  |  | [`std.x86_64.impl`](impl.md) |
+| `mov dst, rs` | `dst: RipLabel`, `rs: Reg` |  | Stores `rs` at the label `dst`. | [`std.x86_64.impl`](impl.md) |
+| `mov dst, rs` | `dst: RipLabel`, `rs: Reg32` |  |  | [`std.x86_64.impl`](impl.md) |
+| `mov rd, rs` | `<R>`, `rd: R`, `rs: R` | emits `Bytes<...>` | `rd = rs`. | [`std.x86_64.impl`](impl.md) |
+| `mov rd, imm` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | `rd = imm`. A 64-bit `rd` takes a full 64-bit `imm`. | [`std.x86_64.impl`](impl.md) |
+| `mov rd, src` | `<R>`, `rd: R`, `src: MemOperand` | emits `Bytes<...>` | Loads the value at `src` into `rd`. | [`std.x86_64.impl`](impl.md) |
 | `mov rd, src, size` | `<R>`, `rd: R`, `src: MemOperand`, `size: OperandSize` | emits `Bytes<...>` | Loads the value at `src` into `rd`; `size` must match `rd`'s. | [`std.x86_64.impl`](impl.md) |
-| `mov %dst, %rs` | `<R>`, `dst: MemOperand`, `rs: R` | emits `Bytes<...>` | Stores `rs` at `dst`. | [`std.x86_64.impl`](impl.md) |
+| `mov dst, rs` | `<R>`, `dst: MemOperand`, `rs: R` | emits `Bytes<...>` | Stores `rs` at `dst`. | [`std.x86_64.impl`](impl.md) |
 | `mov dst, imm, size` | `dst: MemOperand`, `imm: int`, `size: OperandSize` | emits `Bytes<...>` | Stores `imm` at `dst`, `size` wide. A 64-bit store takes a 32-bit `imm`, sign-extended. | [`std.x86_64.impl`](impl.md) |
-| `mov %_dst, %_imm` | `_dst: MemOperand`, `_imm: int` |  | Fails: `mov [dst], imm` needs a size, like `mov qword [rbx], 1`. | [`std.x86_64.impl`](impl.md) |
-| `mov %rd, %sr` | `<R>`, `rd: R`, `sr: SReg` | emits `Bytes<...>` | `rd = sr`. | [`std.x86_64.impl`](impl.md) |
-| `mov %sr, %rs` | `<R>`, `sr: SReg`, `rs: R` | emits `Bytes<...>` | Loads `sr` from the low 16 bits of `rs`. | [`std.x86_64.impl`](impl.md) |
-| `mov %dst, %sr` | `dst: MemOperand`, `sr: SReg` | emits `Bytes<...>` | Stores `sr` at `dst`, 16 bits wide. | [`std.x86_64.impl`](impl.md) |
+| `mov _dst, _imm` | `_dst: MemOperand`, `_imm: int` |  | Fails: `mov [dst], imm` needs a size, like `mov qword [rbx], 1`. | [`std.x86_64.impl`](impl.md) |
+| `mov rd, sr` | `<R>`, `rd: R`, `sr: SReg` | emits `Bytes<...>` | `rd = sr`. | [`std.x86_64.impl`](impl.md) |
+| `mov sr, rs` | `<R>`, `sr: SReg`, `rs: R` | emits `Bytes<...>` | Loads `sr` from the low 16 bits of `rs`. | [`std.x86_64.impl`](impl.md) |
+| `mov dst, sr` | `dst: MemOperand`, `sr: SReg` | emits `Bytes<...>` | Stores `sr` at `dst`, 16 bits wide. | [`std.x86_64.impl`](impl.md) |
 | `mov dst, sr, size` | `dst: MemOperand`, `sr: SReg`, `size: OperandSize` | emits `Bytes<...>` | Stores `sr` at `dst`; `size` must be `word`. | [`std.x86_64.impl`](impl.md) |
-| `mov %sr, %src` | `sr: SReg`, `src: MemOperand` | emits `Bytes<...>` | Loads `sr` from the 16 bits at `src`. | [`std.x86_64.impl`](impl.md) |
+| `mov sr, src` | `sr: SReg`, `src: MemOperand` | emits `Bytes<...>` | Loads `sr` from the 16 bits at `src`. | [`std.x86_64.impl`](impl.md) |
 | `mov sr, src, size` | `sr: SReg`, `src: MemOperand`, `size: OperandSize` | emits `Bytes<...>` | Loads `sr` from `src`; `size` must be `word`. | [`std.x86_64.impl`](impl.md) |
-| `mov %rs, %rd` | `rs: Reg`, `rd: Reg` |  | `rd = rs`. |  |
-| `mov $imm, %rd` | `imm: int`, `rd: Reg` |  | `rd = imm`. |  |
+| `mov src, dst` | `src: Register<Reg>`, `dst: Register<Reg>` |  | `dst = src`. |  |
+| `mov src, dst` | `src: Register<Reg32>`, `dst: Register<Reg32>` |  |  |  |
+| `mov src, dst` | `src: Register<Reg16>`, `dst: Register<Reg16>` |  |  |  |
+| `mov src, dst` | `src: Register<Reg8>`, `dst: Register<Reg8>` |  |  |  |
+| `mov src, dst` | `<R>`, `src: Imm`, `dst: Register<R>` |  | `dst = src`. |  |
+| `mov src, dst` | `<M, R>`, `src: Memory<M>`, `dst: Register<R>` |  | `dst = src`. |  |
+| `mov src, dst` | `<R, M>`, `src: Register<R>`, `dst: Memory<M>` |  | `dst = src`. |  |
+| `mov _src, _dst` | `_src: Imm`, `_dst: Memory<MemOperand>` |  | Fails: an immediate and a memory operand need a size suffix, like `movq $1, (%rdi)`. |  |
+| `mov _src, _dst` | `_src: Imm`, `_dst: Memory<RipLabel>` |  | Fails: an immediate can't be stored at a `label(%rip)` operand. |  |
 
 ### `add`
 
@@ -133,16 +165,23 @@ Byte `index` of `value`, counting from the least significant, byte 0.
 | `add dst, rs, w` | `dst: MemOperand`, `rs: Reg`, `w: int` | emits `Bytes<...>` | `[dst] = [dst] + rs`. | [`std.x86_64.impl`](impl.md) |
 | `add dst, imm, w` | `dst: MemOperand`, `imm: int`, `w: int` | emits `Bytes<...>` | `[dst] = [dst] + imm`, with a 32-bit `imm`. | [`std.x86_64.impl`](impl.md) |
 | `add dst, rs, w` | `dst: RipLabel`, `rs: Reg`, `w: int` |  | `[dst] = [dst] + rs`, where `dst` is a label. | [`std.x86_64.impl`](impl.md) |
-| `add %dst, %rs` | `dst: RipLabel`, `rs: Reg` |  | `[dst] = [dst] + rs`, where `dst` is a label. | [`std.x86_64.impl`](impl.md) |
-| `add %dst, %rs` | `dst: RipLabel`, `rs: Reg32` |  |  | [`std.x86_64.impl`](impl.md) |
-| `add %rd, %rs` | `<R>`, `rd: R`, `rs: R` | emits `Bytes<...>` | `rd = rd + rs`. | [`std.x86_64.impl`](impl.md) |
-| `add %rd, %imm` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | `rd = rd + imm`; a 64-bit `rd` takes a 32-bit `imm`, sign-extended. | [`std.x86_64.impl`](impl.md) |
-| `add %rd, %src` | `<R>`, `rd: R`, `src: MemOperand` | emits `Bytes<...>` | `rd = rd + [src]`. | [`std.x86_64.impl`](impl.md) |
-| `add %dst, %rs` | `<R>`, `dst: MemOperand`, `rs: R` | emits `Bytes<...>` | `[dst] = [dst] + rs`. | [`std.x86_64.impl`](impl.md) |
+| `add dst, rs` | `dst: RipLabel`, `rs: Reg` |  | `[dst] = [dst] + rs`, where `dst` is a label. | [`std.x86_64.impl`](impl.md) |
+| `add dst, rs` | `dst: RipLabel`, `rs: Reg32` |  |  | [`std.x86_64.impl`](impl.md) |
+| `add rd, rs` | `<R>`, `rd: R`, `rs: R` | emits `Bytes<...>` | `rd = rd + rs`. | [`std.x86_64.impl`](impl.md) |
+| `add rd, imm` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | `rd = rd + imm`; a 64-bit `rd` takes a 32-bit `imm`, sign-extended. | [`std.x86_64.impl`](impl.md) |
+| `add rd, src` | `<R>`, `rd: R`, `src: MemOperand` | emits `Bytes<...>` | `rd = rd + [src]`. | [`std.x86_64.impl`](impl.md) |
+| `add dst, rs` | `<R>`, `dst: MemOperand`, `rs: R` | emits `Bytes<...>` | `[dst] = [dst] + rs`. | [`std.x86_64.impl`](impl.md) |
 | `add dst, imm, size` | `dst: MemOperand`, `imm: int`, `size: OperandSize` | emits `Bytes<...>` | `[dst] = [dst] + imm`, `size` wide. | [`std.x86_64.impl`](impl.md) |
-| `add %_dst, %_imm` | `_dst: MemOperand`, `_imm: int` |  | Fails: `add [dst], imm` needs a size, like `add qword [rbx], 1`. | [`std.x86_64.impl`](impl.md) |
-| `add %rs, %rd` | `rs: Reg`, `rd: Reg` |  | `rd = rd + rs`. |  |
-| `add $imm, %rd` | `imm: int`, `rd: Reg` |  | `rd = rd + imm`. |  |
+| `add _dst, _imm` | `_dst: MemOperand`, `_imm: int` |  | Fails: `add [dst], imm` needs a size, like `add qword [rbx], 1`. | [`std.x86_64.impl`](impl.md) |
+| `add src, dst` | `src: Register<Reg>`, `dst: Register<Reg>` |  | `dst = dst + src`. |  |
+| `add src, dst` | `src: Register<Reg32>`, `dst: Register<Reg32>` |  |  |  |
+| `add src, dst` | `src: Register<Reg16>`, `dst: Register<Reg16>` |  |  |  |
+| `add src, dst` | `src: Register<Reg8>`, `dst: Register<Reg8>` |  |  |  |
+| `add src, dst` | `<R>`, `src: Imm`, `dst: Register<R>` |  | `dst = dst + src`. |  |
+| `add src, dst` | `<M, R>`, `src: Memory<M>`, `dst: Register<R>` |  | `dst = dst + src`. |  |
+| `add src, dst` | `<R, M>`, `src: Register<R>`, `dst: Memory<M>` |  | `dst = dst + src`. |  |
+| `add _src, _dst` | `_src: Imm`, `_dst: Memory<MemOperand>` |  | Fails: an immediate and a memory operand need a size suffix, like `movq $1, (%rdi)`. |  |
+| `add _src, _dst` | `_src: Imm`, `_dst: Memory<RipLabel>` |  | Fails: an immediate can't be stored at a `label(%rip)` operand. |  |
 
 ### `or`
 
@@ -153,16 +192,23 @@ Byte `index` of `value`, counting from the least significant, byte 0.
 | `or dst, rs, w` | `dst: MemOperand`, `rs: Reg`, `w: int` | emits `Bytes<...>` | `[dst] = [dst] \| rs`. | [`std.x86_64.impl`](impl.md) |
 | `or dst, imm, w` | `dst: MemOperand`, `imm: int`, `w: int` | emits `Bytes<...>` | `[dst] = [dst] \| imm`, with a 32-bit `imm`. | [`std.x86_64.impl`](impl.md) |
 | `or dst, rs, w` | `dst: RipLabel`, `rs: Reg`, `w: int` |  | `[dst] = [dst] \| rs`, where `dst` is a label. | [`std.x86_64.impl`](impl.md) |
-| `or %dst, %rs` | `dst: RipLabel`, `rs: Reg` |  | `[dst] = [dst] \| rs`, where `dst` is a label. | [`std.x86_64.impl`](impl.md) |
-| `or %dst, %rs` | `dst: RipLabel`, `rs: Reg32` |  |  | [`std.x86_64.impl`](impl.md) |
-| `or %rd, %rs` | `<R>`, `rd: R`, `rs: R` | emits `Bytes<...>` | `rd = rd \| rs`. | [`std.x86_64.impl`](impl.md) |
-| `or %rd, %imm` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | `rd = rd \| imm`; a 64-bit `rd` takes a 32-bit `imm`, sign-extended. | [`std.x86_64.impl`](impl.md) |
-| `or %rd, %src` | `<R>`, `rd: R`, `src: MemOperand` | emits `Bytes<...>` | `rd = rd \| [src]`. | [`std.x86_64.impl`](impl.md) |
-| `or %dst, %rs` | `<R>`, `dst: MemOperand`, `rs: R` | emits `Bytes<...>` | `[dst] = [dst] \| rs`. | [`std.x86_64.impl`](impl.md) |
+| `or dst, rs` | `dst: RipLabel`, `rs: Reg` |  | `[dst] = [dst] \| rs`, where `dst` is a label. | [`std.x86_64.impl`](impl.md) |
+| `or dst, rs` | `dst: RipLabel`, `rs: Reg32` |  |  | [`std.x86_64.impl`](impl.md) |
+| `or rd, rs` | `<R>`, `rd: R`, `rs: R` | emits `Bytes<...>` | `rd = rd \| rs`. | [`std.x86_64.impl`](impl.md) |
+| `or rd, imm` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | `rd = rd \| imm`; a 64-bit `rd` takes a 32-bit `imm`, sign-extended. | [`std.x86_64.impl`](impl.md) |
+| `or rd, src` | `<R>`, `rd: R`, `src: MemOperand` | emits `Bytes<...>` | `rd = rd \| [src]`. | [`std.x86_64.impl`](impl.md) |
+| `or dst, rs` | `<R>`, `dst: MemOperand`, `rs: R` | emits `Bytes<...>` | `[dst] = [dst] \| rs`. | [`std.x86_64.impl`](impl.md) |
 | `or dst, imm, size` | `dst: MemOperand`, `imm: int`, `size: OperandSize` | emits `Bytes<...>` | `[dst] = [dst] \| imm`, `size` wide. | [`std.x86_64.impl`](impl.md) |
-| `or %_dst, %_imm` | `_dst: MemOperand`, `_imm: int` |  | Fails: `or [dst], imm` needs a size, like `or qword [rbx], 1`. | [`std.x86_64.impl`](impl.md) |
-| `or %rs, %rd` | `rs: Reg`, `rd: Reg` |  | `rd = rd \| rs`. |  |
-| `or $imm, %rd` | `imm: int`, `rd: Reg` |  | `rd = rd \| imm`. |  |
+| `or _dst, _imm` | `_dst: MemOperand`, `_imm: int` |  | Fails: `or [dst], imm` needs a size, like `or qword [rbx], 1`. | [`std.x86_64.impl`](impl.md) |
+| `or src, dst` | `src: Register<Reg>`, `dst: Register<Reg>` |  | `dst = dst \| src`. |  |
+| `or src, dst` | `src: Register<Reg32>`, `dst: Register<Reg32>` |  |  |  |
+| `or src, dst` | `src: Register<Reg16>`, `dst: Register<Reg16>` |  |  |  |
+| `or src, dst` | `src: Register<Reg8>`, `dst: Register<Reg8>` |  |  |  |
+| `or src, dst` | `<R>`, `src: Imm`, `dst: Register<R>` |  | `dst = dst \| src`. |  |
+| `or src, dst` | `<M, R>`, `src: Memory<M>`, `dst: Register<R>` |  | `dst = dst \| src`. |  |
+| `or src, dst` | `<R, M>`, `src: Register<R>`, `dst: Memory<M>` |  | `dst = dst \| src`. |  |
+| `or _src, _dst` | `_src: Imm`, `_dst: Memory<MemOperand>` |  | Fails: an immediate and a memory operand need a size suffix, like `movq $1, (%rdi)`. |  |
+| `or _src, _dst` | `_src: Imm`, `_dst: Memory<RipLabel>` |  | Fails: an immediate can't be stored at a `label(%rip)` operand. |  |
 
 ### `and`
 
@@ -173,16 +219,23 @@ Byte `index` of `value`, counting from the least significant, byte 0.
 | `and dst, rs, w` | `dst: MemOperand`, `rs: Reg`, `w: int` | emits `Bytes<...>` | `[dst] = [dst] & rs`. | [`std.x86_64.impl`](impl.md) |
 | `and dst, imm, w` | `dst: MemOperand`, `imm: int`, `w: int` | emits `Bytes<...>` | `[dst] = [dst] & imm`, with a 32-bit `imm`. | [`std.x86_64.impl`](impl.md) |
 | `and dst, rs, w` | `dst: RipLabel`, `rs: Reg`, `w: int` |  | `[dst] = [dst] & rs`, where `dst` is a label. | [`std.x86_64.impl`](impl.md) |
-| `and %dst, %rs` | `dst: RipLabel`, `rs: Reg` |  | `[dst] = [dst] & rs`, where `dst` is a label. | [`std.x86_64.impl`](impl.md) |
-| `and %dst, %rs` | `dst: RipLabel`, `rs: Reg32` |  |  | [`std.x86_64.impl`](impl.md) |
-| `and %rd, %rs` | `<R>`, `rd: R`, `rs: R` | emits `Bytes<...>` | `rd = rd & rs`. | [`std.x86_64.impl`](impl.md) |
-| `and %rd, %imm` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | `rd = rd & imm`; a 64-bit `rd` takes a 32-bit `imm`, sign-extended. | [`std.x86_64.impl`](impl.md) |
-| `and %rd, %src` | `<R>`, `rd: R`, `src: MemOperand` | emits `Bytes<...>` | `rd = rd & [src]`. | [`std.x86_64.impl`](impl.md) |
-| `and %dst, %rs` | `<R>`, `dst: MemOperand`, `rs: R` | emits `Bytes<...>` | `[dst] = [dst] & rs`. | [`std.x86_64.impl`](impl.md) |
+| `and dst, rs` | `dst: RipLabel`, `rs: Reg` |  | `[dst] = [dst] & rs`, where `dst` is a label. | [`std.x86_64.impl`](impl.md) |
+| `and dst, rs` | `dst: RipLabel`, `rs: Reg32` |  |  | [`std.x86_64.impl`](impl.md) |
+| `and rd, rs` | `<R>`, `rd: R`, `rs: R` | emits `Bytes<...>` | `rd = rd & rs`. | [`std.x86_64.impl`](impl.md) |
+| `and rd, imm` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | `rd = rd & imm`; a 64-bit `rd` takes a 32-bit `imm`, sign-extended. | [`std.x86_64.impl`](impl.md) |
+| `and rd, src` | `<R>`, `rd: R`, `src: MemOperand` | emits `Bytes<...>` | `rd = rd & [src]`. | [`std.x86_64.impl`](impl.md) |
+| `and dst, rs` | `<R>`, `dst: MemOperand`, `rs: R` | emits `Bytes<...>` | `[dst] = [dst] & rs`. | [`std.x86_64.impl`](impl.md) |
 | `and dst, imm, size` | `dst: MemOperand`, `imm: int`, `size: OperandSize` | emits `Bytes<...>` | `[dst] = [dst] & imm`, `size` wide. | [`std.x86_64.impl`](impl.md) |
-| `and %_dst, %_imm` | `_dst: MemOperand`, `_imm: int` |  | Fails: `and [dst], imm` needs a size, like `and qword [rbx], 1`. | [`std.x86_64.impl`](impl.md) |
-| `and %rs, %rd` | `rs: Reg`, `rd: Reg` |  | `rd = rd & rs`. |  |
-| `and $imm, %rd` | `imm: int`, `rd: Reg` |  | `rd = rd & imm`. |  |
+| `and _dst, _imm` | `_dst: MemOperand`, `_imm: int` |  | Fails: `and [dst], imm` needs a size, like `and qword [rbx], 1`. | [`std.x86_64.impl`](impl.md) |
+| `and src, dst` | `src: Register<Reg>`, `dst: Register<Reg>` |  | `dst = dst & src`. |  |
+| `and src, dst` | `src: Register<Reg32>`, `dst: Register<Reg32>` |  |  |  |
+| `and src, dst` | `src: Register<Reg16>`, `dst: Register<Reg16>` |  |  |  |
+| `and src, dst` | `src: Register<Reg8>`, `dst: Register<Reg8>` |  |  |  |
+| `and src, dst` | `<R>`, `src: Imm`, `dst: Register<R>` |  | `dst = dst & src`. |  |
+| `and src, dst` | `<M, R>`, `src: Memory<M>`, `dst: Register<R>` |  | `dst = dst & src`. |  |
+| `and src, dst` | `<R, M>`, `src: Register<R>`, `dst: Memory<M>` |  | `dst = dst & src`. |  |
+| `and _src, _dst` | `_src: Imm`, `_dst: Memory<MemOperand>` |  | Fails: an immediate and a memory operand need a size suffix, like `movq $1, (%rdi)`. |  |
+| `and _src, _dst` | `_src: Imm`, `_dst: Memory<RipLabel>` |  | Fails: an immediate can't be stored at a `label(%rip)` operand. |  |
 
 ### `sub`
 
@@ -193,16 +246,23 @@ Byte `index` of `value`, counting from the least significant, byte 0.
 | `sub dst, rs, w` | `dst: MemOperand`, `rs: Reg`, `w: int` | emits `Bytes<...>` | `[dst] = [dst] - rs`. | [`std.x86_64.impl`](impl.md) |
 | `sub dst, imm, w` | `dst: MemOperand`, `imm: int`, `w: int` | emits `Bytes<...>` | `[dst] = [dst] - imm`, with a 32-bit `imm`. | [`std.x86_64.impl`](impl.md) |
 | `sub dst, rs, w` | `dst: RipLabel`, `rs: Reg`, `w: int` |  | `[dst] = [dst] - rs`, where `dst` is a label. | [`std.x86_64.impl`](impl.md) |
-| `sub %dst, %rs` | `dst: RipLabel`, `rs: Reg` |  | `[dst] = [dst] - rs`, where `dst` is a label. | [`std.x86_64.impl`](impl.md) |
-| `sub %dst, %rs` | `dst: RipLabel`, `rs: Reg32` |  |  | [`std.x86_64.impl`](impl.md) |
-| `sub %rd, %rs` | `<R>`, `rd: R`, `rs: R` | emits `Bytes<...>` | `rd = rd - rs`. | [`std.x86_64.impl`](impl.md) |
-| `sub %rd, %imm` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | `rd = rd - imm`; a 64-bit `rd` takes a 32-bit `imm`, sign-extended. | [`std.x86_64.impl`](impl.md) |
-| `sub %rd, %src` | `<R>`, `rd: R`, `src: MemOperand` | emits `Bytes<...>` | `rd = rd - [src]`. | [`std.x86_64.impl`](impl.md) |
-| `sub %dst, %rs` | `<R>`, `dst: MemOperand`, `rs: R` | emits `Bytes<...>` | `[dst] = [dst] - rs`. | [`std.x86_64.impl`](impl.md) |
+| `sub dst, rs` | `dst: RipLabel`, `rs: Reg` |  | `[dst] = [dst] - rs`, where `dst` is a label. | [`std.x86_64.impl`](impl.md) |
+| `sub dst, rs` | `dst: RipLabel`, `rs: Reg32` |  |  | [`std.x86_64.impl`](impl.md) |
+| `sub rd, rs` | `<R>`, `rd: R`, `rs: R` | emits `Bytes<...>` | `rd = rd - rs`. | [`std.x86_64.impl`](impl.md) |
+| `sub rd, imm` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | `rd = rd - imm`; a 64-bit `rd` takes a 32-bit `imm`, sign-extended. | [`std.x86_64.impl`](impl.md) |
+| `sub rd, src` | `<R>`, `rd: R`, `src: MemOperand` | emits `Bytes<...>` | `rd = rd - [src]`. | [`std.x86_64.impl`](impl.md) |
+| `sub dst, rs` | `<R>`, `dst: MemOperand`, `rs: R` | emits `Bytes<...>` | `[dst] = [dst] - rs`. | [`std.x86_64.impl`](impl.md) |
 | `sub dst, imm, size` | `dst: MemOperand`, `imm: int`, `size: OperandSize` | emits `Bytes<...>` | `[dst] = [dst] - imm`, `size` wide. | [`std.x86_64.impl`](impl.md) |
-| `sub %_dst, %_imm` | `_dst: MemOperand`, `_imm: int` |  | Fails: `sub [dst], imm` needs a size, like `sub qword [rbx], 1`. | [`std.x86_64.impl`](impl.md) |
-| `sub %rs, %rd` | `rs: Reg`, `rd: Reg` |  | `rd = rd - rs`. |  |
-| `sub $imm, %rd` | `imm: int`, `rd: Reg` |  | `rd = rd - imm`. |  |
+| `sub _dst, _imm` | `_dst: MemOperand`, `_imm: int` |  | Fails: `sub [dst], imm` needs a size, like `sub qword [rbx], 1`. | [`std.x86_64.impl`](impl.md) |
+| `sub src, dst` | `src: Register<Reg>`, `dst: Register<Reg>` |  | `dst = dst - src`. |  |
+| `sub src, dst` | `src: Register<Reg32>`, `dst: Register<Reg32>` |  |  |  |
+| `sub src, dst` | `src: Register<Reg16>`, `dst: Register<Reg16>` |  |  |  |
+| `sub src, dst` | `src: Register<Reg8>`, `dst: Register<Reg8>` |  |  |  |
+| `sub src, dst` | `<R>`, `src: Imm`, `dst: Register<R>` |  | `dst = dst - src`. |  |
+| `sub src, dst` | `<M, R>`, `src: Memory<M>`, `dst: Register<R>` |  | `dst = dst - src`. |  |
+| `sub src, dst` | `<R, M>`, `src: Register<R>`, `dst: Memory<M>` |  | `dst = dst - src`. |  |
+| `sub _src, _dst` | `_src: Imm`, `_dst: Memory<MemOperand>` |  | Fails: an immediate and a memory operand need a size suffix, like `movq $1, (%rdi)`. |  |
+| `sub _src, _dst` | `_src: Imm`, `_dst: Memory<RipLabel>` |  | Fails: an immediate can't be stored at a `label(%rip)` operand. |  |
 
 ### `xor`
 
@@ -213,16 +273,23 @@ Byte `index` of `value`, counting from the least significant, byte 0.
 | `xor dst, rs, w` | `dst: MemOperand`, `rs: Reg`, `w: int` | emits `Bytes<...>` | `[dst] = [dst] ^ rs`. | [`std.x86_64.impl`](impl.md) |
 | `xor dst, imm, w` | `dst: MemOperand`, `imm: int`, `w: int` | emits `Bytes<...>` | `[dst] = [dst] ^ imm`, with a 32-bit `imm`. | [`std.x86_64.impl`](impl.md) |
 | `xor dst, rs, w` | `dst: RipLabel`, `rs: Reg`, `w: int` |  | `[dst] = [dst] ^ rs`, where `dst` is a label. | [`std.x86_64.impl`](impl.md) |
-| `xor %dst, %rs` | `dst: RipLabel`, `rs: Reg` |  | `[dst] = [dst] ^ rs`, where `dst` is a label. | [`std.x86_64.impl`](impl.md) |
-| `xor %dst, %rs` | `dst: RipLabel`, `rs: Reg32` |  |  | [`std.x86_64.impl`](impl.md) |
-| `xor %rd, %rs` | `<R>`, `rd: R`, `rs: R` | emits `Bytes<...>` | `rd = rd ^ rs`. | [`std.x86_64.impl`](impl.md) |
-| `xor %rd, %imm` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | `rd = rd ^ imm`; a 64-bit `rd` takes a 32-bit `imm`, sign-extended. | [`std.x86_64.impl`](impl.md) |
-| `xor %rd, %src` | `<R>`, `rd: R`, `src: MemOperand` | emits `Bytes<...>` | `rd = rd ^ [src]`. | [`std.x86_64.impl`](impl.md) |
-| `xor %dst, %rs` | `<R>`, `dst: MemOperand`, `rs: R` | emits `Bytes<...>` | `[dst] = [dst] ^ rs`. | [`std.x86_64.impl`](impl.md) |
+| `xor dst, rs` | `dst: RipLabel`, `rs: Reg` |  | `[dst] = [dst] ^ rs`, where `dst` is a label. | [`std.x86_64.impl`](impl.md) |
+| `xor dst, rs` | `dst: RipLabel`, `rs: Reg32` |  |  | [`std.x86_64.impl`](impl.md) |
+| `xor rd, rs` | `<R>`, `rd: R`, `rs: R` | emits `Bytes<...>` | `rd = rd ^ rs`. | [`std.x86_64.impl`](impl.md) |
+| `xor rd, imm` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | `rd = rd ^ imm`; a 64-bit `rd` takes a 32-bit `imm`, sign-extended. | [`std.x86_64.impl`](impl.md) |
+| `xor rd, src` | `<R>`, `rd: R`, `src: MemOperand` | emits `Bytes<...>` | `rd = rd ^ [src]`. | [`std.x86_64.impl`](impl.md) |
+| `xor dst, rs` | `<R>`, `dst: MemOperand`, `rs: R` | emits `Bytes<...>` | `[dst] = [dst] ^ rs`. | [`std.x86_64.impl`](impl.md) |
 | `xor dst, imm, size` | `dst: MemOperand`, `imm: int`, `size: OperandSize` | emits `Bytes<...>` | `[dst] = [dst] ^ imm`, `size` wide. | [`std.x86_64.impl`](impl.md) |
-| `xor %_dst, %_imm` | `_dst: MemOperand`, `_imm: int` |  | Fails: `xor [dst], imm` needs a size, like `xor qword [rbx], 1`. | [`std.x86_64.impl`](impl.md) |
-| `xor %rs, %rd` | `rs: Reg`, `rd: Reg` |  | `rd = rd ^ rs`. |  |
-| `xor $imm, %rd` | `imm: int`, `rd: Reg` |  | `rd = rd ^ imm`. |  |
+| `xor _dst, _imm` | `_dst: MemOperand`, `_imm: int` |  | Fails: `xor [dst], imm` needs a size, like `xor qword [rbx], 1`. | [`std.x86_64.impl`](impl.md) |
+| `xor src, dst` | `src: Register<Reg>`, `dst: Register<Reg>` |  | `dst = dst ^ src`. |  |
+| `xor src, dst` | `src: Register<Reg32>`, `dst: Register<Reg32>` |  |  |  |
+| `xor src, dst` | `src: Register<Reg16>`, `dst: Register<Reg16>` |  |  |  |
+| `xor src, dst` | `src: Register<Reg8>`, `dst: Register<Reg8>` |  |  |  |
+| `xor src, dst` | `<R>`, `src: Imm`, `dst: Register<R>` |  | `dst = dst ^ src`. |  |
+| `xor src, dst` | `<M, R>`, `src: Memory<M>`, `dst: Register<R>` |  | `dst = dst ^ src`. |  |
+| `xor src, dst` | `<R, M>`, `src: Register<R>`, `dst: Memory<M>` |  | `dst = dst ^ src`. |  |
+| `xor _src, _dst` | `_src: Imm`, `_dst: Memory<MemOperand>` |  | Fails: an immediate and a memory operand need a size suffix, like `movq $1, (%rdi)`. |  |
+| `xor _src, _dst` | `_src: Imm`, `_dst: Memory<RipLabel>` |  | Fails: an immediate can't be stored at a `label(%rip)` operand. |  |
 
 ### `cmp`
 
@@ -233,16 +300,23 @@ Byte `index` of `value`, counting from the least significant, byte 0.
 | `cmp dst, rs, w` | `dst: MemOperand`, `rs: Reg`, `w: int` | emits `Bytes<...>` | Sets the flags from `[dst] - rs`, without storing it. | [`std.x86_64.impl`](impl.md) |
 | `cmp dst, imm, w` | `dst: MemOperand`, `imm: int`, `w: int` | emits `Bytes<...>` | Sets the flags from `[dst] - imm`, without storing it. | [`std.x86_64.impl`](impl.md) |
 | `cmp dst, rs, w` | `dst: RipLabel`, `rs: Reg`, `w: int` |  | Sets the flags from `[dst] - rs`, where `dst` is a label, without storing it. | [`std.x86_64.impl`](impl.md) |
-| `cmp %dst, %rs` | `dst: RipLabel`, `rs: Reg` |  | Sets the flags from `[dst] - rs`, where `dst` is a label, without storing it. | [`std.x86_64.impl`](impl.md) |
-| `cmp %dst, %rs` | `dst: RipLabel`, `rs: Reg32` |  |  | [`std.x86_64.impl`](impl.md) |
-| `cmp %rd, %rs` | `<R>`, `rd: R`, `rs: R` | emits `Bytes<...>` | Sets the flags from `rd - rs`, without storing it. | [`std.x86_64.impl`](impl.md) |
-| `cmp %rd, %imm` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | Sets the flags from `rd - imm`, without storing it; a 64-bit `rd` takes a 32-bit `imm`, sign-extended. | [`std.x86_64.impl`](impl.md) |
-| `cmp %rd, %src` | `<R>`, `rd: R`, `src: MemOperand` | emits `Bytes<...>` | Sets the flags from `rd - [src]`, without storing it. | [`std.x86_64.impl`](impl.md) |
-| `cmp %dst, %rs` | `<R>`, `dst: MemOperand`, `rs: R` | emits `Bytes<...>` | Sets the flags from `[dst] - rs`, without storing it. | [`std.x86_64.impl`](impl.md) |
+| `cmp dst, rs` | `dst: RipLabel`, `rs: Reg` |  | Sets the flags from `[dst] - rs`, where `dst` is a label, without storing it. | [`std.x86_64.impl`](impl.md) |
+| `cmp dst, rs` | `dst: RipLabel`, `rs: Reg32` |  |  | [`std.x86_64.impl`](impl.md) |
+| `cmp rd, rs` | `<R>`, `rd: R`, `rs: R` | emits `Bytes<...>` | Sets the flags from `rd - rs`, without storing it. | [`std.x86_64.impl`](impl.md) |
+| `cmp rd, imm` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | Sets the flags from `rd - imm`, without storing it; a 64-bit `rd` takes a 32-bit `imm`, sign-extended. | [`std.x86_64.impl`](impl.md) |
+| `cmp rd, src` | `<R>`, `rd: R`, `src: MemOperand` | emits `Bytes<...>` | Sets the flags from `rd - [src]`, without storing it. | [`std.x86_64.impl`](impl.md) |
+| `cmp dst, rs` | `<R>`, `dst: MemOperand`, `rs: R` | emits `Bytes<...>` | Sets the flags from `[dst] - rs`, without storing it. | [`std.x86_64.impl`](impl.md) |
 | `cmp dst, imm, size` | `dst: MemOperand`, `imm: int`, `size: OperandSize` | emits `Bytes<...>` | Sets the flags from `[dst] - imm`, without storing it, `size` wide. | [`std.x86_64.impl`](impl.md) |
-| `cmp %_dst, %_imm` | `_dst: MemOperand`, `_imm: int` |  | Fails: `cmp [dst], imm` needs a size, like `cmp qword [rbx], 1`. | [`std.x86_64.impl`](impl.md) |
-| `cmp %rs, %rd` | `rs: Reg`, `rd: Reg` |  | Sets the flags from `rd - rs`, without storing it. |  |
-| `cmp $imm, %rd` | `imm: int`, `rd: Reg` |  | Sets the flags from `rd - imm`, without storing it. |  |
+| `cmp _dst, _imm` | `_dst: MemOperand`, `_imm: int` |  | Fails: `cmp [dst], imm` needs a size, like `cmp qword [rbx], 1`. | [`std.x86_64.impl`](impl.md) |
+| `cmp src, dst` | `src: Register<Reg>`, `dst: Register<Reg>` |  | Sets the flags from `dst - src`, without storing it. |  |
+| `cmp src, dst` | `src: Register<Reg32>`, `dst: Register<Reg32>` |  |  |  |
+| `cmp src, dst` | `src: Register<Reg16>`, `dst: Register<Reg16>` |  |  |  |
+| `cmp src, dst` | `src: Register<Reg8>`, `dst: Register<Reg8>` |  |  |  |
+| `cmp src, dst` | `<R>`, `src: Imm`, `dst: Register<R>` |  | Sets the flags from `dst - src`, without storing it. |  |
+| `cmp src, dst` | `<M, R>`, `src: Memory<M>`, `dst: Register<R>` |  | Sets the flags from `dst - src`, without storing it. |  |
+| `cmp src, dst` | `<R, M>`, `src: Register<R>`, `dst: Memory<M>` |  | Sets the flags from `dst - src`, without storing it. |  |
+| `cmp _src, _dst` | `_src: Imm`, `_dst: Memory<MemOperand>` |  | Fails: an immediate and a memory operand need a size suffix, like `movq $1, (%rdi)`. |  |
+| `cmp _src, _dst` | `_src: Imm`, `_dst: Memory<RipLabel>` |  | Fails: an immediate can't be stored at a `label(%rip)` operand. |  |
 
 ### `test`
 
@@ -253,16 +327,23 @@ Byte `index` of `value`, counting from the least significant, byte 0.
 | `test dst, rs, w` | `dst: MemOperand`, `rs: Reg`, `w: int` | emits `Bytes<...>` | Sets the flags from `[dst] & rs`, without storing it. | [`std.x86_64.impl`](impl.md) |
 | `test dst, imm, w` | `dst: MemOperand`, `imm: int`, `w: int` | emits `Bytes<...>` | Sets the flags from `[dst] & imm`, without storing it. | [`std.x86_64.impl`](impl.md) |
 | `test dst, rs, w` | `dst: RipLabel`, `rs: Reg`, `w: int` |  | Sets the flags from `[dst] & rs`, where `dst` is a label, without storing it. | [`std.x86_64.impl`](impl.md) |
-| `test %dst, %rs` | `dst: RipLabel`, `rs: Reg` |  | Sets the flags from `[dst] & rs`, where `dst` is a label, without storing it. | [`std.x86_64.impl`](impl.md) |
-| `test %dst, %rs` | `dst: RipLabel`, `rs: Reg32` |  |  | [`std.x86_64.impl`](impl.md) |
-| `test %rd, %rs` | `<R>`, `rd: R`, `rs: R` | emits `Bytes<...>` | Sets the flags from `rd & rs`, without storing it. | [`std.x86_64.impl`](impl.md) |
-| `test %rd, %imm` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | Sets the flags from `rd & imm`, without storing it. | [`std.x86_64.impl`](impl.md) |
-| `test %rd, %src` | `<R>`, `rd: R`, `src: MemOperand` | emits `Bytes<...>` | Sets the flags from `rd & [src]`, without storing it. | [`std.x86_64.impl`](impl.md) |
-| `test %dst, %rs` | `<R>`, `dst: MemOperand`, `rs: R` | emits `Bytes<...>` | Sets the flags from `[dst] & rs`, without storing it. | [`std.x86_64.impl`](impl.md) |
+| `test dst, rs` | `dst: RipLabel`, `rs: Reg` |  | Sets the flags from `[dst] & rs`, where `dst` is a label, without storing it. | [`std.x86_64.impl`](impl.md) |
+| `test dst, rs` | `dst: RipLabel`, `rs: Reg32` |  |  | [`std.x86_64.impl`](impl.md) |
+| `test rd, rs` | `<R>`, `rd: R`, `rs: R` | emits `Bytes<...>` | Sets the flags from `rd & rs`, without storing it. | [`std.x86_64.impl`](impl.md) |
+| `test rd, imm` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | Sets the flags from `rd & imm`, without storing it. | [`std.x86_64.impl`](impl.md) |
+| `test rd, src` | `<R>`, `rd: R`, `src: MemOperand` | emits `Bytes<...>` | Sets the flags from `rd & [src]`, without storing it. | [`std.x86_64.impl`](impl.md) |
+| `test dst, rs` | `<R>`, `dst: MemOperand`, `rs: R` | emits `Bytes<...>` | Sets the flags from `[dst] & rs`, without storing it. | [`std.x86_64.impl`](impl.md) |
 | `test dst, imm, size` | `dst: MemOperand`, `imm: int`, `size: OperandSize` | emits `Bytes<...>` | Sets the flags from `[dst] & imm`, `size` wide, without storing it. | [`std.x86_64.impl`](impl.md) |
-| `test %_dst, %_imm` | `_dst: MemOperand`, `_imm: int` |  | Fails: `test [dst], imm` needs a size, like `test qword [rbx], 1`. | [`std.x86_64.impl`](impl.md) |
-| `test %rs, %rd` | `rs: Reg`, `rd: Reg` |  | Sets the flags from `rd & rs`, without storing it. |  |
-| `test $imm, %rd` | `imm: int`, `rd: Reg` |  | Sets the flags from `rd & imm`, without storing it. |  |
+| `test _dst, _imm` | `_dst: MemOperand`, `_imm: int` |  | Fails: `test [dst], imm` needs a size, like `test qword [rbx], 1`. | [`std.x86_64.impl`](impl.md) |
+| `test src, dst` | `src: Register<Reg>`, `dst: Register<Reg>` |  | Sets the flags from `dst & src`, without storing it. |  |
+| `test src, dst` | `src: Register<Reg32>`, `dst: Register<Reg32>` |  |  |  |
+| `test src, dst` | `src: Register<Reg16>`, `dst: Register<Reg16>` |  |  |  |
+| `test src, dst` | `src: Register<Reg8>`, `dst: Register<Reg8>` |  |  |  |
+| `test src, dst` | `<R>`, `src: Imm`, `dst: Register<R>` |  | Sets the flags from `dst & src`, without storing it. |  |
+| `test src, dst` | `<M, R>`, `src: Memory<M>`, `dst: Register<R>` |  | Sets the flags from `dst & src`, without storing it. |  |
+| `test src, dst` | `<R, M>`, `src: Register<R>`, `dst: Memory<M>` |  | Sets the flags from `dst & src`, without storing it. |  |
+| `test _src, _dst` | `_src: Imm`, `_dst: Memory<MemOperand>` |  | Fails: an immediate and a memory operand need a size suffix, like `movq $1, (%rdi)`. |  |
+| `test _src, _dst` | `_src: Imm`, `_dst: Memory<RipLabel>` |  | Fails: an immediate can't be stored at a `label(%rip)` operand. |  |
 
 ### `Mem`
 
@@ -318,7 +399,9 @@ instruction. To address a label, use a `RipLabel` instead.
 | `jmp target` | `target: label` | emits `Rel32Instr` | Jumps to the label `target`. | [`std.x86_64.impl`](impl.md) |
 | `jmp r` | `r: Reg` | emits `Bytes<...>` | Jumps to the address in `r`. | [`std.x86_64.impl`](impl.md) |
 | `jmp src` | `src: MemOperand` | emits `Bytes<...>` | Jumps to the address stored at `src`. | [`std.x86_64.impl`](impl.md) |
-| `jmp(src, size)` | `src: MemOperand`, `size: OperandSize` | emits `Bytes<...>` | `jmp src`; `size` must be `qword`. | [`std.x86_64.impl`](impl.md) |
+| `jmp src, size` | `src: MemOperand`, `size: OperandSize` | emits `Bytes<...>` | `jmp src`; `size` must be `qword`. | [`std.x86_64.impl`](impl.md) |
+| `jmp target` | `target: Indirect<Register<Reg>>` |  | Jumps to the address in a register: `jmp *%rax`. |  |
+| `jmp target` | `target: Indirect<Memory<MemOperand>>` |  | Jumps to the address stored in memory: `jmp *8(%rsp)`. |  |
 
 ### `call`
 
@@ -327,7 +410,9 @@ instruction. To address a label, use a `RipLabel` instead.
 | `call target` | `target: label` | emits `Rel32Instr` | Pushes the address of the next instruction and jumps to the label `target`. | [`std.x86_64.impl`](impl.md) |
 | `call r` | `r: Reg` | emits `Bytes<...>` | Calls the address in `r`. | [`std.x86_64.impl`](impl.md) |
 | `call src` | `src: MemOperand` | emits `Bytes<...>` | Calls the address stored at `src`. | [`std.x86_64.impl`](impl.md) |
-| `call(src, size)` | `src: MemOperand`, `size: OperandSize` | emits `Bytes<...>` | `call src`; `size` must be `qword`. | [`std.x86_64.impl`](impl.md) |
+| `call src, size` | `src: MemOperand`, `size: OperandSize` | emits `Bytes<...>` | `call src`; `size` must be `qword`. | [`std.x86_64.impl`](impl.md) |
+| `call target` | `target: Indirect<Register<Reg>>` |  | Calls the address in a register: `call *%rax`. |  |
+| `call target` | `target: Indirect<Memory<MemOperand>>` |  | Calls the address stored in memory: `call *8(%rsp)`. |  |
 
 ### `je`
 
@@ -574,60 +659,73 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
 | `ret` |  | emits `Byte` | Returns: pops an address and jumps to it. | [`std.x86_64.impl`](impl.md) |
-| `ret(n)` | `n: int` | emits `Bytes<...>` | Returns, then pops `n` more bytes. | [`std.x86_64.impl`](impl.md) |
+| `ret n` | `n: int` | emits `Bytes<...>` | Returns, then pops `n` more bytes. | [`std.x86_64.impl`](impl.md) |
 
 ### `shl`
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
 | `shl rd, imm, w` | `rd: Reg`, `imm: int`, `w: int` | emits `Bytes<...>` | `rd = rd << imm`. | [`std.x86_64.impl`](impl.md) |
-| `shl $rd, %imm` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | `rd = rd << imm`. | [`std.x86_64.impl`](impl.md) |
-| `shl $rd, %count` | `<R>`, `rd: R`, `count: Reg8` | emits `Bytes<...>` | `rd = rd << cl`. | [`std.x86_64.impl`](impl.md) |
+| `shl rd, imm` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | `rd = rd << imm`. | [`std.x86_64.impl`](impl.md) |
+| `shl rd, count` | `<R>`, `rd: R`, `count: Reg8` | emits `Bytes<...>` | `rd = rd << cl`. | [`std.x86_64.impl`](impl.md) |
 | `shl dst, imm, size` | `dst: MemOperand`, `imm: int`, `size: OperandSize` | emits `Bytes<...>` | `[dst] = [dst] << imm`, `size` wide. | [`std.x86_64.impl`](impl.md) |
 | `shl dst, count, size` | `dst: MemOperand`, `count: Reg8`, `size: OperandSize` | emits `Bytes<...>` | `[dst] = [dst] << cl`, `size` wide. | [`std.x86_64.impl`](impl.md) |
-| `shl $imm, %rd` | `imm: int`, `rd: Reg` |  | `rd = rd << imm`. |  |
+| `shl count, dst` | `<R>`, `count: Imm`, `dst: Register<R>` |  | `dst = dst << count`. |  |
+| `shl count, dst` | `<R>`, `count: Register<Reg8>`, `dst: Register<R>` |  | `dst = dst << count`. `count` must be `%cl`. |  |
+| `shl _count, _dst` | `_count: Imm`, `_dst: Memory<MemOperand>` |  | Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`. |  |
+| `shl _count, _dst` | `_count: Register<Reg8>`, `_dst: Memory<MemOperand>` |  | Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`. |  |
 
 ### `shl_cl`
 
+`rd = rd << cl`.
+
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `shl_cl(rd, w)` | `rd: Reg`, `w: int` | emits `Bytes<...>` | `rd = rd << cl`. | [`std.x86_64.impl`](impl.md) |
-| `shl %cl, %rd` | `rd: Reg` |  | `rd = rd << cl`. |  |
+| `shl_cl rd, w` | `rd: Reg`, `w: int` | emits `Bytes<...>` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `shr`
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
 | `shr rd, imm, w` | `rd: Reg`, `imm: int`, `w: int` | emits `Bytes<...>` | `rd = rd >> imm`, shifting in zeros. | [`std.x86_64.impl`](impl.md) |
-| `shr(rd, imm)` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | `rd = rd >> imm`, shifting in zeros. | [`std.x86_64.impl`](impl.md) |
-| `shr(rd, count)` | `<R>`, `rd: R`, `count: Reg8` | emits `Bytes<...>` | `rd = rd >> cl`, shifting in zeros. | [`std.x86_64.impl`](impl.md) |
+| `shr rd, imm` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | `rd = rd >> imm`, shifting in zeros. | [`std.x86_64.impl`](impl.md) |
+| `shr rd, count` | `<R>`, `rd: R`, `count: Reg8` | emits `Bytes<...>` | `rd = rd >> cl`, shifting in zeros. | [`std.x86_64.impl`](impl.md) |
 | `shr dst, imm, size` | `dst: MemOperand`, `imm: int`, `size: OperandSize` | emits `Bytes<...>` | `[dst] = [dst] >> imm`, shifting in zeros, `size` wide. | [`std.x86_64.impl`](impl.md) |
 | `shr dst, count, size` | `dst: MemOperand`, `count: Reg8`, `size: OperandSize` | emits `Bytes<...>` | `[dst] = [dst] >> cl`, shifting in zeros, `size` wide. | [`std.x86_64.impl`](impl.md) |
+| `shr count, dst` | `<R>`, `count: Imm`, `dst: Register<R>` |  | `dst = dst >> count`, shifting in zeros. |  |
+| `shr count, dst` | `<R>`, `count: Register<Reg8>`, `dst: Register<R>` |  | `dst = dst >> count`, shifting in zeros. `count` must be `%cl`. |  |
+| `shr _count, _dst` | `_count: Imm`, `_dst: Memory<MemOperand>` |  | Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`. |  |
+| `shr _count, _dst` | `_count: Register<Reg8>`, `_dst: Memory<MemOperand>` |  | Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`. |  |
 
 ### `shr_cl`
 
+`rd = rd >> cl`, shifting in zeros.
+
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `shr_cl(rd, w)` | `rd: Reg`, `w: int` | emits `Bytes<...>` | `rd = rd >> cl`, shifting in zeros. | [`std.x86_64.impl`](impl.md) |
-| `shr %cl, %rd` | `rd: Reg` |  | `rd = rd >> cl`, shifting in zeros. |  |
+| `shr_cl rd, w` | `rd: Reg`, `w: int` | emits `Bytes<...>` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `sar`
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
 | `sar rd, imm, w` | `rd: Reg`, `imm: int`, `w: int` | emits `Bytes<...>` | `rd = rd >> imm`, shifting in copies of the sign bit. | [`std.x86_64.impl`](impl.md) |
-| `sar $rd, %imm` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | `rd = rd >> imm`, shifting in copies of the sign bit. | [`std.x86_64.impl`](impl.md) |
-| `sar $rd, %count` | `<R>`, `rd: R`, `count: Reg8` | emits `Bytes<...>` | `rd = rd >> cl`, shifting in copies of the sign bit. | [`std.x86_64.impl`](impl.md) |
+| `sar rd, imm` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | `rd = rd >> imm`, shifting in copies of the sign bit. | [`std.x86_64.impl`](impl.md) |
+| `sar rd, count` | `<R>`, `rd: R`, `count: Reg8` | emits `Bytes<...>` | `rd = rd >> cl`, shifting in copies of the sign bit. | [`std.x86_64.impl`](impl.md) |
 | `sar dst, imm, size` | `dst: MemOperand`, `imm: int`, `size: OperandSize` | emits `Bytes<...>` | `[dst] = [dst] >> imm`, shifting in copies of the sign bit, `size` wide. | [`std.x86_64.impl`](impl.md) |
 | `sar dst, count, size` | `dst: MemOperand`, `count: Reg8`, `size: OperandSize` | emits `Bytes<...>` | `[dst] = [dst] >> cl`, shifting in copies of the sign bit, `size` wide. | [`std.x86_64.impl`](impl.md) |
-| `sar $imm, %rd` | `imm: int`, `rd: Reg` |  | `rd = rd >> imm`, shifting in copies of the sign bit. |  |
+| `sar count, dst` | `<R>`, `count: Imm`, `dst: Register<R>` |  | `dst = dst >> count`, shifting in copies of the sign bit. |  |
+| `sar count, dst` | `<R>`, `count: Register<Reg8>`, `dst: Register<R>` |  | `dst = dst >> count`, shifting in copies of the sign bit. `count` must be `%cl`. |  |
+| `sar _count, _dst` | `_count: Imm`, `_dst: Memory<MemOperand>` |  | Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`. |  |
+| `sar _count, _dst` | `_count: Register<Reg8>`, `_dst: Memory<MemOperand>` |  | Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`. |  |
 
 ### `sar_cl`
 
+`rd = rd >> cl`, shifting in copies of the sign bit.
+
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `sar_cl(rd, w)` | `rd: Reg`, `w: int` | emits `Bytes<...>` | `rd = rd >> cl`, shifting in copies of the sign bit. | [`std.x86_64.impl`](impl.md) |
-| `sar %cl, %rd` | `rd: Reg` |  | `rd = rd >> cl`, shifting in copies of the sign bit. |  |
+| `sar_cl rd, w` | `rd: Reg`, `w: int` | emits `Bytes<...>` |  | [`std.x86_64.impl`](impl.md) |
 
 ### `lea`
 
@@ -638,6 +736,7 @@ Jumps to the label `target` if the parity flag is clear (PF = 0).
 | `lea rd, src, w` | `rd: Reg`, `src: RipLabel`, `w: int` |  | Loads the address of the label `src` into `rd`. | [`std.x86_64.impl`](impl.md) |
 | `lea rd, src` | `rd: Reg`, `src: RipLabel` |  | Loads the address of the label `src` into `rd`. | [`std.x86_64.impl`](impl.md) |
 | `lea rd, src` | `rd: Reg32`, `src: RipLabel` |  |  | [`std.x86_64.impl`](impl.md) |
+| `lea src, dst` | `<M, R>`, `src: Memory<M>`, `dst: Register<R>` |  | `dst = the address of src`, without reading memory. |  |
 
 ### `rip_label_instr`
 
@@ -653,22 +752,29 @@ forms are built on it.
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `push %rd` | `rd: Reg` | emits `Bytes<...>` | Pushes the 64-bit `rd` onto the stack. | [`std.x86_64.impl`](impl.md) |
-| `push %rd` | `rd: Reg16` | emits `Bytes<...>` | Pushes the 16-bit `rd`. | [`std.x86_64.impl`](impl.md) |
-| `push %imm` | `imm: int` | emits `Bytes<...>` | Pushes `imm`, a 32-bit immediate sign-extended to 64 bits. | [`std.x86_64.impl`](impl.md) |
-| `push %src` | `src: MemOperand` | emits `Bytes<...>` | Pushes the 64 bits at `src`. | [`std.x86_64.impl`](impl.md) |
-| `push(src, size)` | `src: MemOperand`, `size: OperandSize` | emits `Bytes<...>` | Pushes the `size`-wide value at `src`: `qword` or `word`. | [`std.x86_64.impl`](impl.md) |
-| `push %sr` | `sr: SReg` | emits `Bytes<...>` | Pushes `fs` or `gs`, the only segment registers 64-bit mode can push. | [`std.x86_64.impl`](impl.md) |
+| `push rd` | `rd: Reg` | emits `Bytes<...>` | Pushes the 64-bit `rd` onto the stack. | [`std.x86_64.impl`](impl.md) |
+| `push rd` | `rd: Reg16` | emits `Bytes<...>` | Pushes the 16-bit `rd`. | [`std.x86_64.impl`](impl.md) |
+| `push imm` | `imm: int` | emits `Bytes<...>` | Pushes `imm`, a 32-bit immediate sign-extended to 64 bits. | [`std.x86_64.impl`](impl.md) |
+| `push src` | `src: MemOperand` | emits `Bytes<...>` | Pushes the 64 bits at `src`. | [`std.x86_64.impl`](impl.md) |
+| `push src, size` | `src: MemOperand`, `size: OperandSize` | emits `Bytes<...>` | Pushes the `size`-wide value at `src`: `qword` or `word`. | [`std.x86_64.impl`](impl.md) |
+| `push sr` | `sr: SReg` | emits `Bytes<...>` | Pushes `fs` or `gs`, the only segment registers 64-bit mode can push. | [`std.x86_64.impl`](impl.md) |
+| `push src` | `src: Register<Reg>` |  | Pushes `src`. |  |
+| `push src` | `src: Register<Reg16>` |  | Pushes `src`. |  |
+| `push src` | `src: Imm` |  | Pushes `src`, sign-extended to 64 bits. |  |
+| `push src` | `src: Memory<MemOperand>` |  | Pushes the quadword at `src`. |  |
 
 ### `pop`
 
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `pop %rd` | `rd: Reg` | emits `Bytes<...>` | Pops 64 bits off the stack into `rd`. | [`std.x86_64.impl`](impl.md) |
-| `pop %rd` | `rd: Reg16` | emits `Bytes<...>` | Pops 16 bits into `rd`. | [`std.x86_64.impl`](impl.md) |
-| `pop %dst` | `dst: MemOperand` | emits `Bytes<...>` | Pops 64 bits into the memory at `dst`. | [`std.x86_64.impl`](impl.md) |
-| `pop(dst, size)` | `dst: MemOperand`, `size: OperandSize` | emits `Bytes<...>` | Pops a `size`-wide value into the memory at `dst`: `qword` or `word`. | [`std.x86_64.impl`](impl.md) |
-| `pop %sr` | `sr: SReg` | emits `Bytes<...>` | Pops `fs` or `gs`, the only segment registers 64-bit mode can pop. | [`std.x86_64.impl`](impl.md) |
+| `pop rd` | `rd: Reg` | emits `Bytes<...>` | Pops 64 bits off the stack into `rd`. | [`std.x86_64.impl`](impl.md) |
+| `pop rd` | `rd: Reg16` | emits `Bytes<...>` | Pops 16 bits into `rd`. | [`std.x86_64.impl`](impl.md) |
+| `pop dst` | `dst: MemOperand` | emits `Bytes<...>` | Pops 64 bits into the memory at `dst`. | [`std.x86_64.impl`](impl.md) |
+| `pop dst, size` | `dst: MemOperand`, `size: OperandSize` | emits `Bytes<...>` | Pops a `size`-wide value into the memory at `dst`: `qword` or `word`. | [`std.x86_64.impl`](impl.md) |
+| `pop sr` | `sr: SReg` | emits `Bytes<...>` | Pops `fs` or `gs`, the only segment registers 64-bit mode can pop. | [`std.x86_64.impl`](impl.md) |
+| `pop dst` | `dst: Register<Reg>` |  | Pops into `dst`. |  |
+| `pop dst` | `dst: Register<Reg16>` |  | Pops into `dst`. |  |
+| `pop dst` | `dst: Memory<MemOperand>` |  | Pops a quadword into `dst`. |  |
 
 ### `syscall`
 
@@ -706,6 +812,15 @@ Fails to compile unless `size` is `bits` bits.
 | `adc dst, rs` | `<R>`, `dst: MemOperand`, `rs: R` | emits `Bytes<...>` | `[dst] = [dst] + rs + CF`: add with carry. | [`std.x86_64.impl`](impl.md) |
 | `adc dst, imm, size` | `dst: MemOperand`, `imm: int`, `size: OperandSize` | emits `Bytes<...>` | `[dst] = [dst] + imm + CF`: add with carry, `size` wide. | [`std.x86_64.impl`](impl.md) |
 | `adc _dst, _imm` | `_dst: MemOperand`, `_imm: int` |  | Fails: `adc [dst], imm` needs a size, like `adc qword [rbx], 1`. | [`std.x86_64.impl`](impl.md) |
+| `adc src, dst` | `src: Register<Reg>`, `dst: Register<Reg>` |  | `dst = dst + src + CF`. |  |
+| `adc src, dst` | `src: Register<Reg32>`, `dst: Register<Reg32>` |  |  |  |
+| `adc src, dst` | `src: Register<Reg16>`, `dst: Register<Reg16>` |  |  |  |
+| `adc src, dst` | `src: Register<Reg8>`, `dst: Register<Reg8>` |  |  |  |
+| `adc src, dst` | `<R>`, `src: Imm`, `dst: Register<R>` |  | `dst = dst + src + CF`. |  |
+| `adc src, dst` | `<M, R>`, `src: Memory<M>`, `dst: Register<R>` |  | `dst = dst + src + CF`. |  |
+| `adc src, dst` | `<R, M>`, `src: Register<R>`, `dst: Memory<M>` |  | `dst = dst + src + CF`. |  |
+| `adc _src, _dst` | `_src: Imm`, `_dst: Memory<MemOperand>` |  | Fails: an immediate and a memory operand need a size suffix, like `movq $1, (%rdi)`. |  |
+| `adc _src, _dst` | `_src: Imm`, `_dst: Memory<RipLabel>` |  | Fails: an immediate can't be stored at a `label(%rip)` operand. |  |
 
 ### `sbb`
 
@@ -717,6 +832,15 @@ Fails to compile unless `size` is `bits` bits.
 | `sbb dst, rs` | `<R>`, `dst: MemOperand`, `rs: R` | emits `Bytes<...>` | `[dst] = [dst] - rs - CF`: subtract with borrow. | [`std.x86_64.impl`](impl.md) |
 | `sbb dst, imm, size` | `dst: MemOperand`, `imm: int`, `size: OperandSize` | emits `Bytes<...>` | `[dst] = [dst] - imm - CF`: subtract with borrow, `size` wide. | [`std.x86_64.impl`](impl.md) |
 | `sbb _dst, _imm` | `_dst: MemOperand`, `_imm: int` |  | Fails: `sbb [dst], imm` needs a size, like `sbb qword [rbx], 1`. | [`std.x86_64.impl`](impl.md) |
+| `sbb src, dst` | `src: Register<Reg>`, `dst: Register<Reg>` |  | `dst = dst - src - CF`. |  |
+| `sbb src, dst` | `src: Register<Reg32>`, `dst: Register<Reg32>` |  |  |  |
+| `sbb src, dst` | `src: Register<Reg16>`, `dst: Register<Reg16>` |  |  |  |
+| `sbb src, dst` | `src: Register<Reg8>`, `dst: Register<Reg8>` |  |  |  |
+| `sbb src, dst` | `<R>`, `src: Imm`, `dst: Register<R>` |  | `dst = dst - src - CF`. |  |
+| `sbb src, dst` | `<M, R>`, `src: Memory<M>`, `dst: Register<R>` |  | `dst = dst - src - CF`. |  |
+| `sbb src, dst` | `<R, M>`, `src: Register<R>`, `dst: Memory<M>` |  | `dst = dst - src - CF`. |  |
+| `sbb _src, _dst` | `_src: Imm`, `_dst: Memory<MemOperand>` |  | Fails: an immediate and a memory operand need a size suffix, like `movq $1, (%rdi)`. |  |
+| `sbb _src, _dst` | `_src: Imm`, `_dst: Memory<RipLabel>` |  | Fails: an immediate can't be stored at a `label(%rip)` operand. |  |
 
 ### `xchg`
 
@@ -760,6 +884,11 @@ Fails to compile unless `size` is `bits` bits.
 |---|---|---|---|---|
 | `not rd` | `<R>`, `rd: R` | emits `Bytes<...>` | `rd = ~rd`. | [`std.x86_64.impl`](impl.md) |
 | `not dst, size` | `dst: MemOperand`, `size: OperandSize` | emits `Bytes<...>` | `[dst] = ~[dst]`, `size` wide. | [`std.x86_64.impl`](impl.md) |
+| `not dst` | `dst: Register<Reg>` |  | `dst = ~dst`. |  |
+| `not dst` | `dst: Register<Reg32>` |  |  |  |
+| `not dst` | `dst: Register<Reg16>` |  |  |  |
+| `not dst` | `dst: Register<Reg8>` |  |  |  |
+| `not _dst` | `_dst: Memory<MemOperand>` |  | Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`. |  |
 
 ### `neg`
 
@@ -767,6 +896,11 @@ Fails to compile unless `size` is `bits` bits.
 |---|---|---|---|---|
 | `neg rd` | `<R>`, `rd: R` | emits `Bytes<...>` | `rd = -rd`. | [`std.x86_64.impl`](impl.md) |
 | `neg dst, size` | `dst: MemOperand`, `size: OperandSize` | emits `Bytes<...>` | `[dst] = -[dst]`, `size` wide. | [`std.x86_64.impl`](impl.md) |
+| `neg dst` | `dst: Register<Reg>` |  | `dst = -dst`. |  |
+| `neg dst` | `dst: Register<Reg32>` |  |  |  |
+| `neg dst` | `dst: Register<Reg16>` |  |  |  |
+| `neg dst` | `dst: Register<Reg8>` |  |  |  |
+| `neg _dst` | `_dst: Memory<MemOperand>` |  | Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`. |  |
 
 ### `mul`
 
@@ -774,6 +908,11 @@ Fails to compile unless `size` is `bits` bits.
 |---|---|---|---|---|
 | `mul rd` | `<R>`, `rd: R` | emits `Bytes<...>` | Unsigned multiply: `rdx:rax = rax * rd` (or the smaller registers for a smaller operand). | [`std.x86_64.impl`](impl.md) |
 | `mul dst, size` | `dst: MemOperand`, `size: OperandSize` | emits `Bytes<...>` | Unsigned multiply: `rdx:rax = rax * [dst]` (or the smaller registers for a smaller operand), `size` wide. | [`std.x86_64.impl`](impl.md) |
+| `mul dst` | `dst: Register<Reg>` |  | Unsigned multiply: `rdx:rax = rax * src` (or the smaller registers for a smaller operand). |  |
+| `mul dst` | `dst: Register<Reg32>` |  |  |  |
+| `mul dst` | `dst: Register<Reg16>` |  |  |  |
+| `mul dst` | `dst: Register<Reg8>` |  |  |  |
+| `mul _dst` | `_dst: Memory<MemOperand>` |  | Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`. |  |
 
 ### `imul`
 
@@ -785,6 +924,16 @@ Fails to compile unless `size` is `bits` bits.
 | `imul rd, src` | `<R>`, `rd: R`, `src: MemOperand` | emits `Bytes<...>` | `rd = rd * [src]`, signed, keeping the low half. | [`std.x86_64.impl`](impl.md) |
 | `imul rd, rs, imm` | `<R>`, `rd: R`, `rs: R`, `imm: int` | emits `Bytes<...>` | `rd = rs * imm`, signed, keeping the low half. | [`std.x86_64.impl`](impl.md) |
 | `imul rd, src, imm` | `<R>`, `rd: R`, `src: MemOperand`, `imm: int` | emits `Bytes<...>` | `rd = [src] * imm`, signed, keeping the low half. | [`std.x86_64.impl`](impl.md) |
+| `imul src` | `src: Register<Reg>` |  | Signed multiply: `rdx:rax = rax * src` (or the smaller registers). |  |
+| `imul src` | `src: Register<Reg32>` |  |  |  |
+| `imul src` | `src: Register<Reg16>` |  |  |  |
+| `imul src` | `src: Register<Reg8>` |  |  |  |
+| `imul src, dst` | `src: Register<Reg>`, `dst: Register<Reg>` |  | `dst = dst * src`, signed. |  |
+| `imul src, dst` | `src: Register<Reg32>`, `dst: Register<Reg32>` |  |  |  |
+| `imul src, dst` | `src: Register<Reg16>`, `dst: Register<Reg16>` |  |  |  |
+| `imul src, dst` | `<R>`, `src: Memory<MemOperand>`, `dst: Register<R>` |  | `dst = dst * src`, signed. |  |
+| `imul imm, src, dst` | `<R>`, `imm: Imm`, `src: Register<R>`, `dst: Register<R>` |  | `dst = src * imm`, signed. |  |
+| `imul imm, src, dst` | `<R>`, `imm: Imm`, `src: Memory<MemOperand>`, `dst: Register<R>` |  | `dst = [src] * imm`, signed. |  |
 
 ### `div`
 
@@ -792,6 +941,11 @@ Fails to compile unless `size` is `bits` bits.
 |---|---|---|---|---|
 | `div rd` | `<R>`, `rd: R` | emits `Bytes<...>` | Unsigned divide: `rax = rdx:rax / rd`, `rdx` = the remainder (or the smaller registers for a smaller operand). | [`std.x86_64.impl`](impl.md) |
 | `div dst, size` | `dst: MemOperand`, `size: OperandSize` | emits `Bytes<...>` | Unsigned divide: `rax = rdx:rax / [dst]`, `rdx` = the remainder (or the smaller registers for a smaller operand), `size` wide. | [`std.x86_64.impl`](impl.md) |
+| `div dst` | `dst: Register<Reg>` |  | Unsigned divide: `rax = rdx:rax / src`, `rdx` = the remainder. |  |
+| `div dst` | `dst: Register<Reg32>` |  |  |  |
+| `div dst` | `dst: Register<Reg16>` |  |  |  |
+| `div dst` | `dst: Register<Reg8>` |  |  |  |
+| `div _dst` | `_dst: Memory<MemOperand>` |  | Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`. |  |
 
 ### `idiv`
 
@@ -799,6 +953,11 @@ Fails to compile unless `size` is `bits` bits.
 |---|---|---|---|---|
 | `idiv rd` | `<R>`, `rd: R` | emits `Bytes<...>` | Signed divide: `rax = rdx:rax / rd`, `rdx` = the remainder (or the smaller registers for a smaller operand). | [`std.x86_64.impl`](impl.md) |
 | `idiv dst, size` | `dst: MemOperand`, `size: OperandSize` | emits `Bytes<...>` | Signed divide: `rax = rdx:rax / [dst]`, `rdx` = the remainder (or the smaller registers for a smaller operand), `size` wide. | [`std.x86_64.impl`](impl.md) |
+| `idiv dst` | `dst: Register<Reg>` |  | Signed divide: `rax = rdx:rax / src`, `rdx` = the remainder. |  |
+| `idiv dst` | `dst: Register<Reg32>` |  |  |  |
+| `idiv dst` | `dst: Register<Reg16>` |  |  |  |
+| `idiv dst` | `dst: Register<Reg8>` |  |  |  |
+| `idiv _dst` | `_dst: Memory<MemOperand>` |  | Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`. |  |
 
 ### `inc`
 
@@ -806,6 +965,11 @@ Fails to compile unless `size` is `bits` bits.
 |---|---|---|---|---|
 | `inc rd` | `<R>`, `rd: R` | emits `Bytes<...>` | `rd = rd + 1`, leaving CF alone. | [`std.x86_64.impl`](impl.md) |
 | `inc dst, size` | `dst: MemOperand`, `size: OperandSize` | emits `Bytes<...>` | `[dst] = [dst] + 1`, leaving CF alone, `size` wide. | [`std.x86_64.impl`](impl.md) |
+| `inc dst` | `dst: Register<Reg>` |  | `dst = dst + 1`, leaving CF alone. |  |
+| `inc dst` | `dst: Register<Reg32>` |  |  |  |
+| `inc dst` | `dst: Register<Reg16>` |  |  |  |
+| `inc dst` | `dst: Register<Reg8>` |  |  |  |
+| `inc _dst` | `_dst: Memory<MemOperand>` |  | Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`. |  |
 
 ### `dec`
 
@@ -813,6 +977,11 @@ Fails to compile unless `size` is `bits` bits.
 |---|---|---|---|---|
 | `dec rd` | `<R>`, `rd: R` | emits `Bytes<...>` | `rd = rd - 1`, leaving CF alone. | [`std.x86_64.impl`](impl.md) |
 | `dec dst, size` | `dst: MemOperand`, `size: OperandSize` | emits `Bytes<...>` | `[dst] = [dst] - 1`, leaving CF alone, `size` wide. | [`std.x86_64.impl`](impl.md) |
+| `dec dst` | `dst: Register<Reg>` |  | `dst = dst - 1`, leaving CF alone. |  |
+| `dec dst` | `dst: Register<Reg32>` |  |  |  |
+| `dec dst` | `dst: Register<Reg16>` |  |  |  |
+| `dec dst` | `dst: Register<Reg8>` |  |  |  |
+| `dec _dst` | `_dst: Memory<MemOperand>` |  | Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`. |  |
 
 ### `rol`
 
@@ -822,6 +991,10 @@ Fails to compile unless `size` is `bits` bits.
 | `rol rd, count` | `<R>`, `rd: R`, `count: Reg8` | emits `Bytes<...>` | Rotates `rd` left by `cl`. | [`std.x86_64.impl`](impl.md) |
 | `rol dst, imm, size` | `dst: MemOperand`, `imm: int`, `size: OperandSize` | emits `Bytes<...>` | Rotates `[dst]` left by `imm`, `size` wide. | [`std.x86_64.impl`](impl.md) |
 | `rol dst, count, size` | `dst: MemOperand`, `count: Reg8`, `size: OperandSize` | emits `Bytes<...>` | Rotates `[dst]` left by `cl`, `size` wide. | [`std.x86_64.impl`](impl.md) |
+| `rol count, dst` | `<R>`, `count: Imm`, `dst: Register<R>` |  | Rotates `dst` left by `count` bits. |  |
+| `rol count, dst` | `<R>`, `count: Register<Reg8>`, `dst: Register<R>` |  | Rotates `dst` left by `count` bits. `count` must be `%cl`. |  |
+| `rol _count, _dst` | `_count: Imm`, `_dst: Memory<MemOperand>` |  | Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`. |  |
+| `rol _count, _dst` | `_count: Register<Reg8>`, `_dst: Memory<MemOperand>` |  | Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`. |  |
 
 ### `ror`
 
@@ -831,6 +1004,10 @@ Fails to compile unless `size` is `bits` bits.
 | `ror rd, count` | `<R>`, `rd: R`, `count: Reg8` | emits `Bytes<...>` | Rotates `rd` right by `cl`. | [`std.x86_64.impl`](impl.md) |
 | `ror dst, imm, size` | `dst: MemOperand`, `imm: int`, `size: OperandSize` | emits `Bytes<...>` | Rotates `[dst]` right by `imm`, `size` wide. | [`std.x86_64.impl`](impl.md) |
 | `ror dst, count, size` | `dst: MemOperand`, `count: Reg8`, `size: OperandSize` | emits `Bytes<...>` | Rotates `[dst]` right by `cl`, `size` wide. | [`std.x86_64.impl`](impl.md) |
+| `ror count, dst` | `<R>`, `count: Imm`, `dst: Register<R>` |  | Rotates `dst` right by `count` bits. |  |
+| `ror count, dst` | `<R>`, `count: Register<Reg8>`, `dst: Register<R>` |  | Rotates `dst` right by `count` bits. `count` must be `%cl`. |  |
+| `ror _count, _dst` | `_count: Imm`, `_dst: Memory<MemOperand>` |  | Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`. |  |
+| `ror _count, _dst` | `_count: Register<Reg8>`, `_dst: Memory<MemOperand>` |  | Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`. |  |
 
 ### `rcl`
 
@@ -840,6 +1017,10 @@ Fails to compile unless `size` is `bits` bits.
 | `rcl rd, count` | `<R>`, `rd: R`, `count: Reg8` | emits `Bytes<...>` | Rotates `rd` and CF left by `cl`. | [`std.x86_64.impl`](impl.md) |
 | `rcl dst, imm, size` | `dst: MemOperand`, `imm: int`, `size: OperandSize` | emits `Bytes<...>` | Rotates `[dst]` and CF left by `imm`, `size` wide. | [`std.x86_64.impl`](impl.md) |
 | `rcl dst, count, size` | `dst: MemOperand`, `count: Reg8`, `size: OperandSize` | emits `Bytes<...>` | Rotates `[dst]` and CF left by `cl`, `size` wide. | [`std.x86_64.impl`](impl.md) |
+| `rcl count, dst` | `<R>`, `count: Imm`, `dst: Register<R>` |  | Rotates `dst` and CF left by `count` bits. |  |
+| `rcl count, dst` | `<R>`, `count: Register<Reg8>`, `dst: Register<R>` |  | Rotates `dst` and CF left by `count` bits. `count` must be `%cl`. |  |
+| `rcl _count, _dst` | `_count: Imm`, `_dst: Memory<MemOperand>` |  | Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`. |  |
+| `rcl _count, _dst` | `_count: Register<Reg8>`, `_dst: Memory<MemOperand>` |  | Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`. |  |
 
 ### `rcr`
 
@@ -849,6 +1030,10 @@ Fails to compile unless `size` is `bits` bits.
 | `rcr rd, count` | `<R>`, `rd: R`, `count: Reg8` | emits `Bytes<...>` | Rotates `rd` and CF right by `cl`. | [`std.x86_64.impl`](impl.md) |
 | `rcr dst, imm, size` | `dst: MemOperand`, `imm: int`, `size: OperandSize` | emits `Bytes<...>` | Rotates `[dst]` and CF right by `imm`, `size` wide. | [`std.x86_64.impl`](impl.md) |
 | `rcr dst, count, size` | `dst: MemOperand`, `count: Reg8`, `size: OperandSize` | emits `Bytes<...>` | Rotates `[dst]` and CF right by `cl`, `size` wide. | [`std.x86_64.impl`](impl.md) |
+| `rcr count, dst` | `<R>`, `count: Imm`, `dst: Register<R>` |  | Rotates `dst` and CF right by `count` bits. |  |
+| `rcr count, dst` | `<R>`, `count: Register<Reg8>`, `dst: Register<R>` |  | Rotates `dst` and CF right by `count` bits. `count` must be `%cl`. |  |
+| `rcr _count, _dst` | `_count: Imm`, `_dst: Memory<MemOperand>` |  | Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`. |  |
+| `rcr _count, _dst` | `_count: Register<Reg8>`, `_dst: Memory<MemOperand>` |  | Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`. |  |
 
 ### `shld`
 
@@ -1783,43 +1968,38 @@ Returns from an interrupt, with 64-bit stack values.
 
 ### `rep`
 
-Repeats the next string instruction `rcx` times.
-
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `rep` |  | emits `Bytes<...>` |  | [`std.x86_64.impl`](impl.md) |
+| `rep` |  | emits `Bytes<...>` | Repeats the next string instruction `rcx` times. | [`std.x86_64.impl`](impl.md) |
+| `rep instruction` | `instruction: macro()` |  | Repeats `instruction` `rcx` times: `rep stosb`. |  |
 
 ### `repe`
 
-Repeats the next `cmps` or `scas` while equal, up to `rcx` times.
-
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `repe` |  | emits `Bytes<...>` |  | [`std.x86_64.impl`](impl.md) |
+| `repe` |  | emits `Bytes<...>` | Repeats the next `cmps` or `scas` while equal, up to `rcx` times. | [`std.x86_64.impl`](impl.md) |
+| `repe instruction` | `instruction: macro()` |  | Repeats `instruction` while equal, up to `rcx` times: `repe cmpsb`. |  |
 
 ### `repz`
 
-`repe`, under another name.
-
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `repz` |  | emits `Bytes<...>` |  | [`std.x86_64.impl`](impl.md) |
+| `repz` |  | emits `Bytes<...>` | `repe`, under another name. | [`std.x86_64.impl`](impl.md) |
+| `repz instruction` | `instruction: macro()` |  | `repe`, under another name. |  |
 
 ### `repne`
 
-Repeats the next `cmps` or `scas` while not equal, up to `rcx` times.
-
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `repne` |  | emits `Bytes<...>` |  | [`std.x86_64.impl`](impl.md) |
+| `repne` |  | emits `Bytes<...>` | Repeats the next `cmps` or `scas` while not equal, up to `rcx` times. | [`std.x86_64.impl`](impl.md) |
+| `repne instruction` | `instruction: macro()` |  | Repeats `instruction` while not equal, up to `rcx` times: `repne scasb`. |  |
 
 ### `repnz`
 
-`repne`, under another name.
-
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
-| `repnz` |  | emits `Bytes<...>` |  | [`std.x86_64.impl`](impl.md) |
+| `repnz` |  | emits `Bytes<...>` | `repne`, under another name. | [`std.x86_64.impl`](impl.md) |
+| `repnz instruction` | `instruction: macro()` |  | `repne`, under another name. |  |
 
 ### `lock`
 
@@ -2037,122 +2217,1051 @@ Writes a doubleword from `[rsi]` to I/O port `dx`, then steps it.
 |---|---|---|---|---|
 | `outsd` |  | emits `Bytes<...>` |  | [`std.x86_64.impl`](impl.md) |
 
-### `assert_valid_reg`
+### `data_int`
 
-Fails to compile unless `r` is a register number, 0 to 15. The
-instructions here use it to check their operands.
+`value` as `width` little-endian bytes, truncated the way NASM does.
 
-| Syntax | Parameters | Result | Description |
-|---|---|---|---|
-| `assert_valid_reg r` | `r: Reg` |  |  |
+| Syntax | Parameters | Result | Description | From |
+|---|---|---|---|---|
+| `data_int(value, width)` | `value: int`, `width: int` | returns `Bytes<...>` |  | [`std.x86_64.data`](data.md) |
 
-### `mov_load_base`
+### `data_string`
 
-Loads the value at `[base]` into `rd`.
+A string literal's UTF-8 bytes, with no terminator.
 
-| Syntax | Parameters | Result | Description |
-|---|---|---|---|
-| `mov (%base), %rd` | `rd: Reg`, `base: Reg` |  |  |
+| Syntax | Parameters | Result | Description | From |
+|---|---|---|---|---|
+| `data_string(source)` | `<S>`, `source: S` | returns `Bytes<...>` |  | [`std.x86_64.data`](data.md) |
 
-### `mov_load_base_disp`
+### `db`
 
-Loads the value at `[base + disp]` into `rd`.
+| Syntax | Parameters | Result | Description | From |
+|---|---|---|---|---|
+| `db a` | `a: int` |  | Bytes. Each operand is an integer, stored in one byte, or a string literal, stored as its UTF-8 bytes with no terminator (add `, 0` yourself). Up to four operands; `db "Hello", 10` is the common case. | [`std.x86_64.data`](data.md) |
+| `db a` | `<S>`, `a: S` |  |  | [`std.x86_64.data`](data.md) |
+| `db a, b` | `<S>`, `a: S`, `b: int` |  |  | [`std.x86_64.data`](data.md) |
+| `db a, b, c` | `<S>`, `a: S`, `b: int`, `c: int` |  |  | [`std.x86_64.data`](data.md) |
+| `db a, b` | `a: int`, `b: int` |  |  | [`std.x86_64.data`](data.md) |
+| `db a, b, c` | `a: int`, `b: int`, `c: int` |  |  | [`std.x86_64.data`](data.md) |
+| `db a, b, c, d` | `a: int`, `b: int`, `c: int`, `d: int` |  |  | [`std.x86_64.data`](data.md) |
 
-| Syntax | Parameters | Result | Description |
-|---|---|---|---|
-| `mov disp(%base), %rd` | `rd: Reg`, `disp: int`, `base: Reg` |  |  |
+### `dw`
 
-### `mov_load_indexed`
+| Syntax | Parameters | Result | Description | From |
+|---|---|---|---|---|
+| `dw a` | `a: int` |  | 16-bit little-endian words, one or two per line. | [`std.x86_64.data`](data.md) |
+| `dw a, b` | `a: int`, `b: int` |  |  | [`std.x86_64.data`](data.md) |
 
-Loads the value at `[base + index * scale + disp]` into `rd`.
+### `dd`
 
-| Syntax | Parameters | Result | Description |
-|---|---|---|---|
-| `mov disp(%base,%index,scale), %rd` | `rd: Reg`, `disp: int`, `base: Reg`, `index: Reg`, `scale: int` |  |  |
+| Syntax | Parameters | Result | Description | From |
+|---|---|---|---|---|
+| `dd a` | `a: int` |  | 32-bit little-endian doublewords, one or two per line. | [`std.x86_64.data`](data.md) |
+| `dd a, b` | `a: int`, `b: int` |  |  | [`std.x86_64.data`](data.md) |
 
-### `mov_load_rip`
+### `dq`
 
-Loads the value at `[rip + disp]`, `disp` bytes past the end of the
-instruction, into `rd`.
+| Syntax | Parameters | Result | Description | From |
+|---|---|---|---|---|
+| `dq a` | `a: int` |  | 64-bit little-endian quadwords, one or two per line. | [`std.x86_64.data`](data.md) |
+| `dq a, b` | `a: int`, `b: int` |  |  | [`std.x86_64.data`](data.md) |
 
-| Syntax | Parameters | Result | Description |
-|---|---|---|---|
-| `mov disp(%rip), %rd` | `rd: Reg`, `disp: int` |  |  |
+### `register`
 
-### `mov_store_base`
-
-Stores `rs` at `[base]`.
-
-| Syntax | Parameters | Result | Description |
-|---|---|---|---|
-| `mov %rs, (%base)` | `rs: Reg`, `base: Reg` |  |  |
-
-### `mov_store_base_disp`
-
-Stores `rs` at `[base + disp]`.
-
-| Syntax | Parameters | Result | Description |
-|---|---|---|---|
-| `mov %rs, disp(%base)` | `rs: Reg`, `disp: int`, `base: Reg` |  |  |
-
-### `mov_store_indexed`
-
-Stores `rs` at `[base + index * scale + disp]`.
+`%r`: a register.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `mov %rs, disp(%base,%index,scale)` | `rs: Reg`, `disp: int`, `base: Reg`, `index: Reg`, `scale: int` |  |  |
+| `%r` | `<R>`, `r: R` | returns `Register<R>` |  |
 
-### `mov_store_rip`
-
-Stores `rs` at `[rip + disp]`, `disp` bytes past the end of the
-instruction.
+### `immediate`
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `mov %rs, disp(%rip)` | `rs: Reg`, `disp: int` |  |  |
+| `$value` | `value: int` | returns `Imm` | `$value`: an immediate. |
+| `$_value` | `_value: label` | returns `Imm` | `$label` would be the label's absolute address, which isn't known until the program is loaded. Fails; use `lea label(%rip), %reg` instead. |
 
-### `lea_base`
+### `memory_base`
 
-Loads the address `[base]` into `rd`, without reading memory.
-
-| Syntax | Parameters | Result | Description |
-|---|---|---|---|
-| `lea (%base), %rd` | `rd: Reg`, `base: Reg` |  |  |
-
-### `lea_base_disp`
-
-Loads the address `[base + disp]` into `rd`, without reading memory.
+`(%base)`.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `lea disp(%base), %rd` | `rd: Reg`, `disp: int`, `base: Reg` |  |  |
+| `(%base)` | `base: Reg` | returns `Memory<MemOperand>` |  |
 
-### `lea_indexed`
+### `memory_disp`
 
-Loads the address `[base + index * scale + disp]` into `rd`, without reading
-memory.
-
-| Syntax | Parameters | Result | Description |
-|---|---|---|---|
-| `lea disp(%base,%index,scale), %rd` | `rd: Reg`, `disp: int`, `base: Reg`, `index: Reg`, `scale: int` |  |  |
-
-### `lea_rip`
-
-Loads the address `[rip + disp]`, `disp` bytes past the end of the
-instruction, into `rd`.
+`disp(%base)`.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `lea disp(%rip), %rd` | `rd: Reg`, `disp: int` |  |  |
+| `disp(%base)` | `disp: int`, `base: Reg` | returns `Memory<MemOperand>` |  |
 
-### `shr_imm`
+### `memory_indexed`
 
-`rd = rd >> imm`, shifting in zeros.
+`(%base,%index)`.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `shr $imm, %rd` | `imm: int`, `rd: Reg` |  |  |
+| `(%base,%index)` | `base: Reg`, `index: Reg` | returns `Memory<MemOperand>` |  |
+
+### `memory_disp_indexed`
+
+`disp(%base,%index)`.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `disp(%base,%index)` | `disp: int`, `base: Reg`, `index: Reg` | returns `Memory<MemOperand>` |  |
+
+### `memory_scaled`
+
+`(%base,%index,scale)`.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `(%base,%index,scale)` | `base: Reg`, `index: Reg`, `scale: int` | returns `Memory<MemOperand>` |  |
+
+### `memory_disp_scaled`
+
+`disp(%base,%index,scale)`.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `disp(%base,%index,scale)` | `disp: int`, `base: Reg`, `index: Reg`, `scale: int` | returns `Memory<MemOperand>` |  |
+
+### `memory_rip`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `disp(%rip)` | `disp: int` | returns `Memory<MemOperand>` | `disp(%rip)`: `disp` bytes past the end of the instruction. |
+| `disp(%rip)` | `disp: label` | returns `Memory<RipLabel>` | `label(%rip)`: `label`, addressed relative to the next instruction, so the code works wherever it's loaded. |
+
+### `indirect`
+
+`*target`: an indirect `jmp` or `call` through a register or memory.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `*through` | `<T>`, `through: T` | returns `Indirect<T>` |  |
+
+### `movb`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `movb src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `mov` on byte operands. |
+| `movb src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `mov` on byte operands. |
+
+### `movw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `movw src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `mov` on word operands. |
+| `movw src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `mov` on word operands. |
+
+### `movl`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `movl src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `mov` on long operands. |
+| `movl src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `mov` on long operands. |
+
+### `movq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `movq src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `mov` on quadword operands. |
+| `movq src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `mov` on quadword operands. |
+
+### `addb`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `addb src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `add` on byte operands. |
+| `addb src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `add` on byte operands. |
+
+### `addw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `addw src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `add` on word operands. |
+| `addw src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `add` on word operands. |
+
+### `addl`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `addl src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `add` on long operands. |
+| `addl src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `add` on long operands. |
+
+### `addq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `addq src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `add` on quadword operands. |
+| `addq src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `add` on quadword operands. |
+
+### `adcb`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `adcb src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `adc` on byte operands. |
+| `adcb src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `adc` on byte operands. |
+
+### `adcw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `adcw src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `adc` on word operands. |
+| `adcw src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `adc` on word operands. |
+
+### `adcl`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `adcl src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `adc` on long operands. |
+| `adcl src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `adc` on long operands. |
+
+### `adcq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `adcq src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `adc` on quadword operands. |
+| `adcq src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `adc` on quadword operands. |
+
+### `subb`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `subb src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `sub` on byte operands. |
+| `subb src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `sub` on byte operands. |
+
+### `subw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `subw src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `sub` on word operands. |
+| `subw src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `sub` on word operands. |
+
+### `subl`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `subl src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `sub` on long operands. |
+| `subl src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `sub` on long operands. |
+
+### `subq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `subq src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `sub` on quadword operands. |
+| `subq src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `sub` on quadword operands. |
+
+### `sbbb`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `sbbb src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `sbb` on byte operands. |
+| `sbbb src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `sbb` on byte operands. |
+
+### `sbbw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `sbbw src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `sbb` on word operands. |
+| `sbbw src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `sbb` on word operands. |
+
+### `sbbl`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `sbbl src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `sbb` on long operands. |
+| `sbbl src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `sbb` on long operands. |
+
+### `sbbq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `sbbq src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `sbb` on quadword operands. |
+| `sbbq src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `sbb` on quadword operands. |
+
+### `andb`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `andb src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `and` on byte operands. |
+| `andb src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `and` on byte operands. |
+
+### `andw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `andw src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `and` on word operands. |
+| `andw src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `and` on word operands. |
+
+### `andl`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `andl src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `and` on long operands. |
+| `andl src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `and` on long operands. |
+
+### `andq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `andq src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `and` on quadword operands. |
+| `andq src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `and` on quadword operands. |
+
+### `orb`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `orb src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `or` on byte operands. |
+| `orb src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `or` on byte operands. |
+
+### `orw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `orw src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `or` on word operands. |
+| `orw src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `or` on word operands. |
+
+### `orl`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `orl src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `or` on long operands. |
+| `orl src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `or` on long operands. |
+
+### `orq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `orq src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `or` on quadword operands. |
+| `orq src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `or` on quadword operands. |
+
+### `xorb`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `xorb src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `xor` on byte operands. |
+| `xorb src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `xor` on byte operands. |
+
+### `xorw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `xorw src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `xor` on word operands. |
+| `xorw src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `xor` on word operands. |
+
+### `xorl`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `xorl src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `xor` on long operands. |
+| `xorl src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `xor` on long operands. |
+
+### `xorq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `xorq src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `xor` on quadword operands. |
+| `xorq src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `xor` on quadword operands. |
+
+### `cmpb`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `cmpb src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `cmp` on byte operands. |
+| `cmpb src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `cmp` on byte operands. |
+
+### `cmpw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `cmpw src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `cmp` on word operands. |
+| `cmpw src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `cmp` on word operands. |
+
+### `cmpl`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `cmpl src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `cmp` on long operands. |
+| `cmpl src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `cmp` on long operands. |
+
+### `cmpq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `cmpq src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `cmp` on quadword operands. |
+| `cmpq src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `cmp` on quadword operands. |
+
+### `testb`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `testb src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `test` on byte operands. |
+| `testb src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `test` on byte operands. |
+
+### `testw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `testw src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `test` on word operands. |
+| `testw src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `test` on word operands. |
+
+### `testl`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `testl src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `test` on long operands. |
+| `testl src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `test` on long operands. |
+
+### `testq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `testq src, dst` | `<S, D>`, `src: S`, `dst: D` |  | `test` on quadword operands. |
+| `testq src, dst` | `src: Imm`, `dst: Memory<MemOperand>` |  | `test` on quadword operands. |
+
+### `incb`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `incb dst` | `dst: Register<Reg8>` |  | `inc` on a byte. |
+| `incb dst` | `<M>`, `dst: Memory<M>` |  | `inc` on a byte. |
+
+### `incw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `incw dst` | `dst: Register<Reg16>` |  | `inc` on a word. |
+| `incw dst` | `<M>`, `dst: Memory<M>` |  | `inc` on a word. |
+
+### `incl`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `incl dst` | `dst: Register<Reg32>` |  | `inc` on a long. |
+| `incl dst` | `<M>`, `dst: Memory<M>` |  | `inc` on a long. |
+
+### `incq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `incq dst` | `dst: Register<Reg>` |  | `inc` on a quadword. |
+| `incq dst` | `<M>`, `dst: Memory<M>` |  | `inc` on a quadword. |
+
+### `decb`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `decb dst` | `dst: Register<Reg8>` |  | `dec` on a byte. |
+| `decb dst` | `<M>`, `dst: Memory<M>` |  | `dec` on a byte. |
+
+### `decw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `decw dst` | `dst: Register<Reg16>` |  | `dec` on a word. |
+| `decw dst` | `<M>`, `dst: Memory<M>` |  | `dec` on a word. |
+
+### `decl`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `decl dst` | `dst: Register<Reg32>` |  | `dec` on a long. |
+| `decl dst` | `<M>`, `dst: Memory<M>` |  | `dec` on a long. |
+
+### `decq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `decq dst` | `dst: Register<Reg>` |  | `dec` on a quadword. |
+| `decq dst` | `<M>`, `dst: Memory<M>` |  | `dec` on a quadword. |
+
+### `negb`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `negb dst` | `dst: Register<Reg8>` |  | `neg` on a byte. |
+| `negb dst` | `<M>`, `dst: Memory<M>` |  | `neg` on a byte. |
+
+### `negw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `negw dst` | `dst: Register<Reg16>` |  | `neg` on a word. |
+| `negw dst` | `<M>`, `dst: Memory<M>` |  | `neg` on a word. |
+
+### `negl`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `negl dst` | `dst: Register<Reg32>` |  | `neg` on a long. |
+| `negl dst` | `<M>`, `dst: Memory<M>` |  | `neg` on a long. |
+
+### `negq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `negq dst` | `dst: Register<Reg>` |  | `neg` on a quadword. |
+| `negq dst` | `<M>`, `dst: Memory<M>` |  | `neg` on a quadword. |
+
+### `notb`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `notb dst` | `dst: Register<Reg8>` |  | `not` on a byte. |
+| `notb dst` | `<M>`, `dst: Memory<M>` |  | `not` on a byte. |
+
+### `notw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `notw dst` | `dst: Register<Reg16>` |  | `not` on a word. |
+| `notw dst` | `<M>`, `dst: Memory<M>` |  | `not` on a word. |
+
+### `notl`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `notl dst` | `dst: Register<Reg32>` |  | `not` on a long. |
+| `notl dst` | `<M>`, `dst: Memory<M>` |  | `not` on a long. |
+
+### `notq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `notq dst` | `dst: Register<Reg>` |  | `not` on a quadword. |
+| `notq dst` | `<M>`, `dst: Memory<M>` |  | `not` on a quadword. |
+
+### `mulb`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `mulb dst` | `dst: Register<Reg8>` |  | `mul` on a byte. |
+| `mulb dst` | `<M>`, `dst: Memory<M>` |  | `mul` on a byte. |
+
+### `mulw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `mulw dst` | `dst: Register<Reg16>` |  | `mul` on a word. |
+| `mulw dst` | `<M>`, `dst: Memory<M>` |  | `mul` on a word. |
+
+### `mull`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `mull dst` | `dst: Register<Reg32>` |  | `mul` on a long. |
+| `mull dst` | `<M>`, `dst: Memory<M>` |  | `mul` on a long. |
+
+### `mulq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `mulq dst` | `dst: Register<Reg>` |  | `mul` on a quadword. |
+| `mulq dst` | `<M>`, `dst: Memory<M>` |  | `mul` on a quadword. |
+
+### `divb`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `divb dst` | `dst: Register<Reg8>` |  | `div` on a byte. |
+| `divb dst` | `<M>`, `dst: Memory<M>` |  | `div` on a byte. |
+
+### `divw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `divw dst` | `dst: Register<Reg16>` |  | `div` on a word. |
+| `divw dst` | `<M>`, `dst: Memory<M>` |  | `div` on a word. |
+
+### `divl`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `divl dst` | `dst: Register<Reg32>` |  | `div` on a long. |
+| `divl dst` | `<M>`, `dst: Memory<M>` |  | `div` on a long. |
+
+### `divq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `divq dst` | `dst: Register<Reg>` |  | `div` on a quadword. |
+| `divq dst` | `<M>`, `dst: Memory<M>` |  | `div` on a quadword. |
+
+### `idivb`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `idivb dst` | `dst: Register<Reg8>` |  | `idiv` on a byte. |
+| `idivb dst` | `<M>`, `dst: Memory<M>` |  | `idiv` on a byte. |
+
+### `idivw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `idivw dst` | `dst: Register<Reg16>` |  | `idiv` on a word. |
+| `idivw dst` | `<M>`, `dst: Memory<M>` |  | `idiv` on a word. |
+
+### `idivl`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `idivl dst` | `dst: Register<Reg32>` |  | `idiv` on a long. |
+| `idivl dst` | `<M>`, `dst: Memory<M>` |  | `idiv` on a long. |
+
+### `idivq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `idivq dst` | `dst: Register<Reg>` |  | `idiv` on a quadword. |
+| `idivq dst` | `<M>`, `dst: Memory<M>` |  | `idiv` on a quadword. |
+
+### `shlb`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `shlb count, dst` | `count: Imm`, `dst: Register<Reg8>` |  | `shl` on a byte. |
+| `shlb count, dst` | `count: Register<Reg8>`, `dst: Register<Reg8>` |  | `shl` on a byte. `count` must be `%cl`. |
+| `shlb count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `shl` on a byte. |
+| `shlb count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `shl` on a byte. `count` must be `%cl`. |
+
+### `shlw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `shlw count, dst` | `count: Imm`, `dst: Register<Reg16>` |  | `shl` on a word. |
+| `shlw count, dst` | `count: Register<Reg8>`, `dst: Register<Reg16>` |  | `shl` on a word. `count` must be `%cl`. |
+| `shlw count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `shl` on a word. |
+| `shlw count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `shl` on a word. `count` must be `%cl`. |
+
+### `shll`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `shll count, dst` | `count: Imm`, `dst: Register<Reg32>` |  | `shl` on a long. |
+| `shll count, dst` | `count: Register<Reg8>`, `dst: Register<Reg32>` |  | `shl` on a long. `count` must be `%cl`. |
+| `shll count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `shl` on a long. |
+| `shll count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `shl` on a long. `count` must be `%cl`. |
+
+### `shlq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `shlq count, dst` | `count: Imm`, `dst: Register<Reg>` |  | `shl` on a quadword. |
+| `shlq count, dst` | `count: Register<Reg8>`, `dst: Register<Reg>` |  | `shl` on a quadword. `count` must be `%cl`. |
+| `shlq count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `shl` on a quadword. |
+| `shlq count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `shl` on a quadword. `count` must be `%cl`. |
+
+### `shrb`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `shrb count, dst` | `count: Imm`, `dst: Register<Reg8>` |  | `shr` on a byte. |
+| `shrb count, dst` | `count: Register<Reg8>`, `dst: Register<Reg8>` |  | `shr` on a byte. `count` must be `%cl`. |
+| `shrb count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `shr` on a byte. |
+| `shrb count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `shr` on a byte. `count` must be `%cl`. |
+
+### `shrw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `shrw count, dst` | `count: Imm`, `dst: Register<Reg16>` |  | `shr` on a word. |
+| `shrw count, dst` | `count: Register<Reg8>`, `dst: Register<Reg16>` |  | `shr` on a word. `count` must be `%cl`. |
+| `shrw count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `shr` on a word. |
+| `shrw count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `shr` on a word. `count` must be `%cl`. |
+
+### `shrl`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `shrl count, dst` | `count: Imm`, `dst: Register<Reg32>` |  | `shr` on a long. |
+| `shrl count, dst` | `count: Register<Reg8>`, `dst: Register<Reg32>` |  | `shr` on a long. `count` must be `%cl`. |
+| `shrl count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `shr` on a long. |
+| `shrl count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `shr` on a long. `count` must be `%cl`. |
+
+### `shrq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `shrq count, dst` | `count: Imm`, `dst: Register<Reg>` |  | `shr` on a quadword. |
+| `shrq count, dst` | `count: Register<Reg8>`, `dst: Register<Reg>` |  | `shr` on a quadword. `count` must be `%cl`. |
+| `shrq count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `shr` on a quadword. |
+| `shrq count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `shr` on a quadword. `count` must be `%cl`. |
+
+### `sarb`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `sarb count, dst` | `count: Imm`, `dst: Register<Reg8>` |  | `sar` on a byte. |
+| `sarb count, dst` | `count: Register<Reg8>`, `dst: Register<Reg8>` |  | `sar` on a byte. `count` must be `%cl`. |
+| `sarb count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `sar` on a byte. |
+| `sarb count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `sar` on a byte. `count` must be `%cl`. |
+
+### `sarw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `sarw count, dst` | `count: Imm`, `dst: Register<Reg16>` |  | `sar` on a word. |
+| `sarw count, dst` | `count: Register<Reg8>`, `dst: Register<Reg16>` |  | `sar` on a word. `count` must be `%cl`. |
+| `sarw count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `sar` on a word. |
+| `sarw count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `sar` on a word. `count` must be `%cl`. |
+
+### `sarl`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `sarl count, dst` | `count: Imm`, `dst: Register<Reg32>` |  | `sar` on a long. |
+| `sarl count, dst` | `count: Register<Reg8>`, `dst: Register<Reg32>` |  | `sar` on a long. `count` must be `%cl`. |
+| `sarl count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `sar` on a long. |
+| `sarl count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `sar` on a long. `count` must be `%cl`. |
+
+### `sarq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `sarq count, dst` | `count: Imm`, `dst: Register<Reg>` |  | `sar` on a quadword. |
+| `sarq count, dst` | `count: Register<Reg8>`, `dst: Register<Reg>` |  | `sar` on a quadword. `count` must be `%cl`. |
+| `sarq count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `sar` on a quadword. |
+| `sarq count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `sar` on a quadword. `count` must be `%cl`. |
+
+### `rolb`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `rolb count, dst` | `count: Imm`, `dst: Register<Reg8>` |  | `rol` on a byte. |
+| `rolb count, dst` | `count: Register<Reg8>`, `dst: Register<Reg8>` |  | `rol` on a byte. `count` must be `%cl`. |
+| `rolb count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `rol` on a byte. |
+| `rolb count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `rol` on a byte. `count` must be `%cl`. |
+
+### `rolw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `rolw count, dst` | `count: Imm`, `dst: Register<Reg16>` |  | `rol` on a word. |
+| `rolw count, dst` | `count: Register<Reg8>`, `dst: Register<Reg16>` |  | `rol` on a word. `count` must be `%cl`. |
+| `rolw count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `rol` on a word. |
+| `rolw count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `rol` on a word. `count` must be `%cl`. |
+
+### `roll`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `roll count, dst` | `count: Imm`, `dst: Register<Reg32>` |  | `rol` on a long. |
+| `roll count, dst` | `count: Register<Reg8>`, `dst: Register<Reg32>` |  | `rol` on a long. `count` must be `%cl`. |
+| `roll count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `rol` on a long. |
+| `roll count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `rol` on a long. `count` must be `%cl`. |
+
+### `rolq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `rolq count, dst` | `count: Imm`, `dst: Register<Reg>` |  | `rol` on a quadword. |
+| `rolq count, dst` | `count: Register<Reg8>`, `dst: Register<Reg>` |  | `rol` on a quadword. `count` must be `%cl`. |
+| `rolq count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `rol` on a quadword. |
+| `rolq count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `rol` on a quadword. `count` must be `%cl`. |
+
+### `rorb`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `rorb count, dst` | `count: Imm`, `dst: Register<Reg8>` |  | `ror` on a byte. |
+| `rorb count, dst` | `count: Register<Reg8>`, `dst: Register<Reg8>` |  | `ror` on a byte. `count` must be `%cl`. |
+| `rorb count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `ror` on a byte. |
+| `rorb count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `ror` on a byte. `count` must be `%cl`. |
+
+### `rorw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `rorw count, dst` | `count: Imm`, `dst: Register<Reg16>` |  | `ror` on a word. |
+| `rorw count, dst` | `count: Register<Reg8>`, `dst: Register<Reg16>` |  | `ror` on a word. `count` must be `%cl`. |
+| `rorw count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `ror` on a word. |
+| `rorw count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `ror` on a word. `count` must be `%cl`. |
+
+### `rorl`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `rorl count, dst` | `count: Imm`, `dst: Register<Reg32>` |  | `ror` on a long. |
+| `rorl count, dst` | `count: Register<Reg8>`, `dst: Register<Reg32>` |  | `ror` on a long. `count` must be `%cl`. |
+| `rorl count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `ror` on a long. |
+| `rorl count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `ror` on a long. `count` must be `%cl`. |
+
+### `rorq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `rorq count, dst` | `count: Imm`, `dst: Register<Reg>` |  | `ror` on a quadword. |
+| `rorq count, dst` | `count: Register<Reg8>`, `dst: Register<Reg>` |  | `ror` on a quadword. `count` must be `%cl`. |
+| `rorq count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `ror` on a quadword. |
+| `rorq count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `ror` on a quadword. `count` must be `%cl`. |
+
+### `rclb`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `rclb count, dst` | `count: Imm`, `dst: Register<Reg8>` |  | `rcl` on a byte. |
+| `rclb count, dst` | `count: Register<Reg8>`, `dst: Register<Reg8>` |  | `rcl` on a byte. `count` must be `%cl`. |
+| `rclb count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `rcl` on a byte. |
+| `rclb count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `rcl` on a byte. `count` must be `%cl`. |
+
+### `rclw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `rclw count, dst` | `count: Imm`, `dst: Register<Reg16>` |  | `rcl` on a word. |
+| `rclw count, dst` | `count: Register<Reg8>`, `dst: Register<Reg16>` |  | `rcl` on a word. `count` must be `%cl`. |
+| `rclw count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `rcl` on a word. |
+| `rclw count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `rcl` on a word. `count` must be `%cl`. |
+
+### `rcll`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `rcll count, dst` | `count: Imm`, `dst: Register<Reg32>` |  | `rcl` on a long. |
+| `rcll count, dst` | `count: Register<Reg8>`, `dst: Register<Reg32>` |  | `rcl` on a long. `count` must be `%cl`. |
+| `rcll count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `rcl` on a long. |
+| `rcll count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `rcl` on a long. `count` must be `%cl`. |
+
+### `rclq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `rclq count, dst` | `count: Imm`, `dst: Register<Reg>` |  | `rcl` on a quadword. |
+| `rclq count, dst` | `count: Register<Reg8>`, `dst: Register<Reg>` |  | `rcl` on a quadword. `count` must be `%cl`. |
+| `rclq count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `rcl` on a quadword. |
+| `rclq count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `rcl` on a quadword. `count` must be `%cl`. |
+
+### `rcrb`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `rcrb count, dst` | `count: Imm`, `dst: Register<Reg8>` |  | `rcr` on a byte. |
+| `rcrb count, dst` | `count: Register<Reg8>`, `dst: Register<Reg8>` |  | `rcr` on a byte. `count` must be `%cl`. |
+| `rcrb count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `rcr` on a byte. |
+| `rcrb count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `rcr` on a byte. `count` must be `%cl`. |
+
+### `rcrw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `rcrw count, dst` | `count: Imm`, `dst: Register<Reg16>` |  | `rcr` on a word. |
+| `rcrw count, dst` | `count: Register<Reg8>`, `dst: Register<Reg16>` |  | `rcr` on a word. `count` must be `%cl`. |
+| `rcrw count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `rcr` on a word. |
+| `rcrw count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `rcr` on a word. `count` must be `%cl`. |
+
+### `rcrl`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `rcrl count, dst` | `count: Imm`, `dst: Register<Reg32>` |  | `rcr` on a long. |
+| `rcrl count, dst` | `count: Register<Reg8>`, `dst: Register<Reg32>` |  | `rcr` on a long. `count` must be `%cl`. |
+| `rcrl count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `rcr` on a long. |
+| `rcrl count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `rcr` on a long. `count` must be `%cl`. |
+
+### `rcrq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `rcrq count, dst` | `count: Imm`, `dst: Register<Reg>` |  | `rcr` on a quadword. |
+| `rcrq count, dst` | `count: Register<Reg8>`, `dst: Register<Reg>` |  | `rcr` on a quadword. `count` must be `%cl`. |
+| `rcrq count, dst` | `<M>`, `count: Imm`, `dst: Memory<M>` |  | `rcr` on a quadword. |
+| `rcrq count, dst` | `<M>`, `count: Register<Reg8>`, `dst: Memory<M>` |  | `rcr` on a quadword. `count` must be `%cl`. |
+
+### `movzbw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `movzbw src, dst` | `src: Register<Reg8>`, `dst: Register<Reg16>` |  | `dst = src`, a byte zero-extended into a word. |
+| `movzbw src, dst` | `<M>`, `src: Memory<M>`, `dst: Register<Reg16>` |  | `dst = src`, a byte zero-extended into a word. |
+
+### `movzbl`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `movzbl src, dst` | `src: Register<Reg8>`, `dst: Register<Reg32>` |  | `dst = src`, a byte zero-extended into a long. |
+| `movzbl src, dst` | `<M>`, `src: Memory<M>`, `dst: Register<Reg32>` |  | `dst = src`, a byte zero-extended into a long. |
+
+### `movzbq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `movzbq src, dst` | `src: Register<Reg8>`, `dst: Register<Reg>` |  | `dst = src`, a byte zero-extended into a quadword. |
+| `movzbq src, dst` | `<M>`, `src: Memory<M>`, `dst: Register<Reg>` |  | `dst = src`, a byte zero-extended into a quadword. |
+
+### `movzwl`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `movzwl src, dst` | `src: Register<Reg16>`, `dst: Register<Reg32>` |  | `dst = src`, a word zero-extended into a long. |
+| `movzwl src, dst` | `<M>`, `src: Memory<M>`, `dst: Register<Reg32>` |  | `dst = src`, a word zero-extended into a long. |
+
+### `movzwq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `movzwq src, dst` | `src: Register<Reg16>`, `dst: Register<Reg>` |  | `dst = src`, a word zero-extended into a quadword. |
+| `movzwq src, dst` | `<M>`, `src: Memory<M>`, `dst: Register<Reg>` |  | `dst = src`, a word zero-extended into a quadword. |
+
+### `movsbw`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `movsbw src, dst` | `src: Register<Reg8>`, `dst: Register<Reg16>` |  | `dst = src`, a byte sign-extended into a word. |
+| `movsbw src, dst` | `<M>`, `src: Memory<M>`, `dst: Register<Reg16>` |  | `dst = src`, a byte sign-extended into a word. |
+
+### `movsbl`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `movsbl src, dst` | `src: Register<Reg8>`, `dst: Register<Reg32>` |  | `dst = src`, a byte sign-extended into a long. |
+| `movsbl src, dst` | `<M>`, `src: Memory<M>`, `dst: Register<Reg32>` |  | `dst = src`, a byte sign-extended into a long. |
+
+### `movsbq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `movsbq src, dst` | `src: Register<Reg8>`, `dst: Register<Reg>` |  | `dst = src`, a byte sign-extended into a quadword. |
+| `movsbq src, dst` | `<M>`, `src: Memory<M>`, `dst: Register<Reg>` |  | `dst = src`, a byte sign-extended into a quadword. |
+
+### `movswl`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `movswl src, dst` | `src: Register<Reg16>`, `dst: Register<Reg32>` |  | `dst = src`, a word sign-extended into a long. |
+| `movswl src, dst` | `<M>`, `src: Memory<M>`, `dst: Register<Reg32>` |  | `dst = src`, a word sign-extended into a long. |
+
+### `movswq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `movswq src, dst` | `src: Register<Reg16>`, `dst: Register<Reg>` |  | `dst = src`, a word sign-extended into a quadword. |
+| `movswq src, dst` | `<M>`, `src: Memory<M>`, `dst: Register<Reg>` |  | `dst = src`, a word sign-extended into a quadword. |
+
+### `movslq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `movslq src, dst` | `src: Register<Reg32>`, `dst: Register<Reg>` |  | `dst = src`, a long sign-extended into a quadword. |
+| `movslq src, dst` | `<M>`, `src: Memory<M>`, `dst: Register<Reg>` |  | `dst = src`, a long sign-extended into a quadword. |
+
+### `leaq`
+
+`lea` into a quadword register.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `leaq src, dst` | `<M>`, `src: Memory<M>`, `dst: Register<Reg>` |  |  |
+
+### `leal`
+
+`lea` into a long register.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `leal src, dst` | `<M>`, `src: Memory<M>`, `dst: Register<Reg32>` |  |  |
+
+### `pushq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `pushq src` | `src: Register<Reg>` |  | Pushes `src`. |
+| `pushq src` | `src: Imm` |  | Pushes `src`, sign-extended to 64 bits. |
+| `pushq src` | `src: Memory<MemOperand>` |  | Pushes the quadword at `src`. |
+
+### `popq`
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `popq dst` | `dst: Register<Reg>` |  | Pops into `dst`. |
+| `popq dst` | `dst: Memory<MemOperand>` |  | Pops a quadword into `dst`. |
+
+### `stosl`
+
+`stosd`, under its AT&T name.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `stosl` |  |  |  |
+
+### `lodsl`
+
+`lodsd`, under its AT&T name.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `lodsl` |  |  |  |
+
+### `movsl`
+
+`movsd` (the string move), under its AT&T name.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `movsl` |  |  |  |
+
+### `cmpsl`
+
+`cmpsd` (the string compare), under its AT&T name.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `cmpsl` |  |  |  |
+
+### `scasl`
+
+`scasd`, under its AT&T name.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `scasl` |  |  |  |
+
+## Types
+
+### `Register`
+
+`struct Register<R>`
+
+A register operand, `%rax`.
+
+| Field | Type | Description |
+|---|---|---|
+| `r` | `R` | The register. |
+
+### `Imm`
+
+`struct Imm`
+
+An immediate operand, `$1`.
+
+| Field | Type | Description |
+|---|---|---|
+| `value` | `int` | The value. |
+
+### `Memory`
+
+`struct Memory<M>`
+
+A memory operand. `at` is a `MemOperand`, or a `RipLabel` for
+`label(%rip)`.
+
+| Field | Type | Description |
+|---|---|---|
+| `at` | `M` | Where it is. |
+
+### `Indirect`
+
+`struct Indirect<T>`
+
+The target of an indirect `jmp` or `call`: `*%rax`, or `*8(%rsp)`.
+
+| Field | Type | Description |
+|---|---|---|
+| `through` | `T` | The register or memory holding the target. |
 
 ## Re-exported
 

@@ -7,319 +7,1751 @@
 #! mov %rbx, %rax
 #! mov 8(%rsp), %rax
 #! add $1, %rax
+#! movl $2, %eax
+#! movb %dl, 1(%rdi)
+#! movb $124, 67(%r9)
+#! movzbl (%r8,%rdx), %edx
 #! ```
 #!
 #! ```bytes
 #! 48 89 d8
 #! 48 8b 44 24 08
 #! 48 81 c0 01 00 00 00
+#! b8 02 00 00 00
+#! 88 57 01
+#! 41 c6 41 43 7c
+#! 41 0f b6 14 10
 #! ```
 #!
-#! Memory operands are `(%base)`, `disp(%base)`,
-#! `disp(%base,%index,scale)` and `disp(%rip)`. Only 64-bit operands have
-#! AT&T spellings, and mnemonics take no size suffix (`mov`, not `movq`).
+#! Every operand is a value: `%rax` is a `Register`, `$1` an `Imm`, and each
+#! memory form a `Memory`: `(%rbx)`, `8(%rbx)`, `(%rbx,%rcx)`,
+#! `8(%rbx,%rcx)`, `(%rbx,%rcx,4)`, `8(%rbx,%rcx,4)` and `8(%rip)`. A
+#! displacement can be any expression, like `-4(%rbp)`.
+#!
+#! `label(%rip)` is the address of `label`, relative to the next
+#! instruction, the way GNU `as` reads it; a number before `(%rip)` is a
+#! plain displacement. A label is a `label`, not a number, which is how the
+#! two are told apart.
+#!
+#! A size suffix (`b`, `w`, `l` or `q`, as in `movl` or `cmpq`) is optional
+#! when a register gives the size, and must match it. With only an
+#! immediate and memory, nothing else says the size, so the suffix is
+#! required: `movb $1, (%rdi)`. `movzbl`-style mnemonics extend a byte or
+#! word into a larger register.
+#!
+#! A string instruction can take its prefix on the same line: `rep stosb`.
+#! `*%rax` and `*8(%rsp)` are indirect `jmp` and `call` targets. Data is
+#! `db`, `dw`, `dd` and `dq`, from `std.x86_64.data`; labels, sections and
+#! `pub` work as everywhere in BitterASM rather than as GNU directives.
 #! Every instruction of `std.x86_64.impl` stays available in its explicit
 #! form too: `mov rax, rbx, 0` for a 32-bit move.
 
 pub from .impl import *
-
-## Fails to compile unless `r` is a register number, 0 to 15. The
-## instructions here use it to check their operands.
-pub macro assert_valid_reg(r: Reg) {
-    @assert r.value >= 0 && r.value <= 15, "not a valid register (0-15)"
-}
+pub from .data import *
 
 # =================
-# mov
+# operands
 # =================
+# Wrapping each operand in its own type is what lets an AT&T overload take
+# source-first operands without colliding with `std.x86_64.impl`'s
+# destination-first ones of the same name: `mov %eax, %edx` is
+# `mov(Register<Reg32>, Register<Reg32>)`, which only the overloads here
+# take. Each one unwraps its operands and calls `impl`.
 
-syntax mov(a, b, c) = { mov $a$, $b$, $c$ }
-
-## `rd = rs`.
-pub macro mov(rs: Reg, rd: Reg)
-    | syntax { mov %$rs$, %$rd$ }
-{
-    assert_valid_reg rs
-    mov rd, rs, 1
+## A register operand, `%rax`.
+pub struct Register<R> {
+    ## The register.
+    pub r: R,
 }
 
-# --- load direction: reg <- mem (source first in AT&T) ---
-
-## Loads the value at `[base]` into `rd`.
-pub macro mov_load_base(rd: Reg, base: Reg)
-    | syntax { mov (%$base$), %$rd$ }
-{
-    mov rd, Mem(base, 0), 1
+## An immediate operand, `$1`.
+pub struct Imm {
+    ## The value.
+    pub value: int,
 }
 
-## Loads the value at `[base + disp]` into `rd`.
-pub macro mov_load_base_disp(rd: Reg, disp: int, base: Reg)
-    | syntax { mov $disp$(%$base$), %$rd$ }
-{
-    mov rd, Mem(base, disp), 1
+## A memory operand. `at` is a `MemOperand`, or a `RipLabel` for
+## `label(%rip)`.
+pub struct Memory<M> {
+    ## Where it is.
+    pub at: M,
 }
 
-## Loads the value at `[base + index * scale + disp]` into `rd`.
-pub macro mov_load_indexed(
-    rd: Reg,
+## The target of an indirect `jmp` or `call`: `*%rax`, or `*8(%rsp)`.
+pub struct Indirect<T> {
+    ## The register or memory holding the target.
+    pub through: T,
+}
+
+## `%r`: a register.
+pub macro register<R>(r: R) -> Register<R>
+    | syntax { %$r$ }
+{
+    @return Register<R>(r)
+}
+
+## `$value`: an immediate.
+pub macro immediate(value: int) -> Imm
+    | syntax { \$$value$ }
+{
+    @return Imm(value)
+}
+
+## `$label` would be the label's absolute address, which isn't known until
+## the program is loaded. Fails; use `lea label(%rip), %reg` instead.
+pub macro immediate(_value: label) -> Imm
+    | syntax { \$$_value$ }
+{
+    @assert 0 == 1, "`$label` is an absolute address; use `lea label(%rip), %reg` for it instead"
+}
+
+## `(%base)`.
+pub macro memory_base(base: Reg) -> Memory<MemOperand>
+    | syntax { (%$base$) }
+{
+    @return Memory<MemOperand>(Mem(base, 0))
+}
+
+## `disp(%base)`.
+pub macro memory_disp(disp: int, base: Reg) -> Memory<MemOperand>
+    | syntax { $disp$(%$base$) }
+{
+    @return Memory<MemOperand>(Mem(base, disp))
+}
+
+## `(%base,%index)`.
+pub macro memory_indexed(base: Reg, index: Reg) -> Memory<MemOperand>
+    | syntax { (%$base$,%$index$) }
+{
+    @return Memory<MemOperand>(MemIndexed(base, index, 1, 0))
+}
+
+## `disp(%base,%index)`.
+pub macro memory_disp_indexed(
+    disp: int,
+    base: Reg,
+    index: Reg
+) -> Memory<MemOperand>
+    | syntax { $disp$(%$base$,%$index$) }
+{
+    @return Memory<MemOperand>(MemIndexed(base, index, 1, disp))
+}
+
+## `(%base,%index,scale)`.
+pub macro memory_scaled(base: Reg, index: Reg, scale: int) -> Memory<MemOperand>
+    | syntax { (%$base$,%$index$,$scale$) }
+{
+    @return Memory<MemOperand>(MemIndexed(base, index, scale, 0))
+}
+
+## `disp(%base,%index,scale)`.
+pub macro memory_disp_scaled(
     disp: int,
     base: Reg,
     index: Reg,
     scale: int
-)
-    | syntax { mov $disp$(%$base$,%$index$,$scale$), %$rd$ }
+) -> Memory<MemOperand>
+    | syntax { $disp$(%$base$,%$index$,$scale$) }
 {
-    mov rd, MemIndexed(base, index, scale, disp), 1
+    @return Memory<MemOperand>(MemIndexed(base, index, scale, disp))
 }
 
-## Loads the value at `[rip + disp]`, `disp` bytes past the end of the
-## instruction, into `rd`.
-pub macro mov_load_rip(rd: Reg, disp: int)
-    | syntax { mov $disp$(%rip), %$rd$ }
+## `disp(%rip)`: `disp` bytes past the end of the instruction.
+pub macro memory_rip(disp: int) -> Memory<MemOperand>
+    | syntax { $disp$(%rip) }
 {
-    mov rd, MemRipRelative(disp), 1
+    @return Memory<MemOperand>(MemRipRelative(disp))
 }
 
-# --- store direction: mem <- reg (source first in AT&T) ---
-
-## Stores `rs` at `[base]`.
-pub macro mov_store_base(rs: Reg, base: Reg)
-    | syntax { mov %$rs$, (%$base$) }
+## `label(%rip)`: `label`, addressed relative to the next instruction, so
+## the code works wherever it's loaded.
+pub macro memory_rip(disp: label) -> Memory<RipLabel>
+    | syntax { $disp$(%rip) }
 {
-    mov Mem(base, 0), rs, 1
+    @return Memory<RipLabel>(RipLabel(target = disp))
 }
 
-## Stores `rs` at `[base + disp]`.
-pub macro mov_store_base_disp(rs: Reg, disp: int, base: Reg)
-    | syntax { mov %$rs$, $disp$(%$base$) }
+## `*target`: an indirect `jmp` or `call` through a register or memory.
+pub macro indirect<T>(through: T) -> Indirect<T>
+    | syntax { *$through$ }
 {
-    mov Mem(base, disp), rs, 1
+    @return Indirect<T>(through)
 }
 
-## Stores `rs` at `[base + index * scale + disp]`.
-pub macro mov_store_indexed(
-    rs: Reg,
-    disp: int,
-    base: Reg,
-    index: Reg,
-    scale: int
-)
-    | syntax { mov %$rs$, $disp$(%$base$,%$index$,$scale$) }
-{
-    mov MemIndexed(base, index, scale, disp), rs, 1
+# A suffixed instruction's operands, checked against its suffix. An
+# immediate or a memory operand takes whatever size the suffix says.
+macro suffix_fits(_operand: Imm, _bits: int) {}
+macro suffix_fits<M>(_operand: Memory<M>, _bits: int) {}
+macro suffix_fits(_operand: Register<Reg8>, bits: int) {
+    @assert bits == 8, "this register's size doesn't match the instruction's size suffix"
 }
 
-## Stores `rs` at `[rip + disp]`, `disp` bytes past the end of the
-## instruction.
-pub macro mov_store_rip(rs: Reg, disp: int)
-    | syntax { mov %$rs$, $disp$(%rip) }
-{
-    mov MemRipRelative(disp), rs, 1
+macro suffix_fits(_operand: Register<Reg16>, bits: int) {
+    @assert bits == 16, "this register's size doesn't match the instruction's size suffix"
+}
+
+macro suffix_fits(_operand: Register<Reg32>, bits: int) {
+    @assert bits == 32, "this register's size doesn't match the instruction's size suffix"
+}
+
+macro suffix_fits(_operand: Register<Reg>, bits: int) {
+    @assert bits == 64, "this register's size doesn't match the instruction's size suffix"
 }
 
 # =================
-# ALU ops: add, or, and, sub, xor, cmp, test
+# two operands: mov, add, adc, sub, sbb, and, or, xor, cmp, test
 # =================
 
-syntax add(a, b, c) = { add $a$, $b$, $c$ }
-## `rd = rd + rs`.
-pub macro add(rs: Reg, rd: Reg)
-    | syntax { add %$rs$, %$rd$ }
-{
-    assert_valid_reg rs
-    add rd, rs, 1
+## `dst = src`.
+pub macro mov(src: Register<Reg>, dst: Register<Reg>) { mov dst.r, src.r }
+pub macro mov(src: Register<Reg32>, dst: Register<Reg32>) { mov dst.r, src.r }
+pub macro mov(src: Register<Reg16>, dst: Register<Reg16>) { mov dst.r, src.r }
+pub macro mov(src: Register<Reg8>, dst: Register<Reg8>) { mov dst.r, src.r }
+## `dst = src`.
+pub macro mov<R>(src: Imm, dst: Register<R>) { mov dst.r, src.value }
+## `dst = src`.
+pub macro mov<M, R>(src: Memory<M>, dst: Register<R>) { mov dst.r, src.at }
+## `dst = src`.
+pub macro mov<R, M>(src: Register<R>, dst: Memory<M>) { mov dst.at, src.r }
+## Fails: an immediate and a memory operand need a size suffix, like `movq $1,
+## (%rdi)`.
+pub macro mov(_src: Imm, _dst: Memory<MemOperand>) {
+    @assert 0 == 1, "an immediate and a memory operand need a size suffix, like `movq $1, (%rdi)`"
 }
-
-syntax or(a, b, c) = { or $a$, $b$, $c$ }
-## `rd = rd | rs`.
-pub macro or(rs: Reg, rd: Reg)
-    | syntax { or %$rs$, %$rd$ }
-{
-    assert_valid_reg rs
-    or rd, rs, 1
+## Fails: an immediate can't be stored at a `label(%rip)` operand.
+pub macro mov(_src: Imm, _dst: Memory<RipLabel>) {
+    @assert 0 == 1, "an immediate can't be stored at a `label(%rip)` operand"
 }
-
-syntax and(a, b, c) = { and $a$, $b$, $c$ }
-## `rd = rd & rs`.
-pub macro and(rs: Reg, rd: Reg)
-    | syntax { and %$rs$, %$rd$ }
-{
-    assert_valid_reg rs
-    and rd, rs, 1
+## `mov` on byte operands.
+pub macro movb<S, D>(src: S, dst: D) {
+    suffix_fits src, 8
+    suffix_fits dst, 8
+    mov src, dst
 }
-
-syntax sub(a, b, c) = { sub $a$, $b$, $c$ }
-## `rd = rd - rs`.
-pub macro sub(rs: Reg, rd: Reg)
-    | syntax { sub %$rs$, %$rd$ }
-{
-    assert_valid_reg rs
-    sub rd, rs, 1
+## `mov` on byte operands.
+pub macro movb(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { mov dst.at, src.value, byte }
+## `mov` on word operands.
+pub macro movw<S, D>(src: S, dst: D) {
+    suffix_fits src, 16
+    suffix_fits dst, 16
+    mov src, dst
 }
-
-syntax xor(a, b, c) = { xor $a$, $b$, $c$ }
-## `rd = rd ^ rs`.
-pub macro xor(rs: Reg, rd: Reg)
-    | syntax { xor %$rs$, %$rd$ }
-{
-    assert_valid_reg rs
-    xor rd, rs, 1
+## `mov` on word operands.
+pub macro movw(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { mov dst.at, src.value, word }
+## `mov` on long operands.
+pub macro movl<S, D>(src: S, dst: D) {
+    suffix_fits src, 32
+    suffix_fits dst, 32
+    mov src, dst
 }
-
-syntax cmp(a, b, c) = { cmp $a$, $b$, $c$ }
-## Sets the flags from `rd - rs`, without storing it.
-pub macro cmp(rs: Reg, rd: Reg)
-    | syntax { cmp %$rs$, %$rd$ }
-{
-    assert_valid_reg rs
-    cmp rd, rs, 1
+## `mov` on long operands.
+pub macro movl(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { mov dst.at, src.value, dword }
+## `mov` on quadword operands.
+pub macro movq<S, D>(src: S, dst: D) {
+    suffix_fits src, 64
+    suffix_fits dst, 64
+    mov src, dst
 }
+## `mov` on quadword operands.
+pub macro movq(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { mov dst.at, src.value, qword }
 
-syntax test(a, b, c) = { test $a$, $b$, $c$ }
-## Sets the flags from `rd & rs`, without storing it.
-pub macro test(rs: Reg, rd: Reg)
-    | syntax { test %$rs$, %$rd$ }
-{
-    assert_valid_reg rs
-    test rd, rs, 1
+## `dst = dst + src`.
+pub macro add(src: Register<Reg>, dst: Register<Reg>) { add dst.r, src.r }
+pub macro add(src: Register<Reg32>, dst: Register<Reg32>) { add dst.r, src.r }
+pub macro add(src: Register<Reg16>, dst: Register<Reg16>) { add dst.r, src.r }
+pub macro add(src: Register<Reg8>, dst: Register<Reg8>) { add dst.r, src.r }
+## `dst = dst + src`.
+pub macro add<R>(src: Imm, dst: Register<R>) { add dst.r, src.value }
+## `dst = dst + src`.
+pub macro add<M, R>(src: Memory<M>, dst: Register<R>) { add dst.r, src.at }
+## `dst = dst + src`.
+pub macro add<R, M>(src: Register<R>, dst: Memory<M>) { add dst.at, src.r }
+## Fails: an immediate and a memory operand need a size suffix, like `movq $1,
+## (%rdi)`.
+pub macro add(_src: Imm, _dst: Memory<MemOperand>) {
+    @assert 0 == 1, "an immediate and a memory operand need a size suffix, like `movq $1, (%rdi)`"
 }
+## Fails: an immediate can't be stored at a `label(%rip)` operand.
+pub macro add(_src: Imm, _dst: Memory<RipLabel>) {
+    @assert 0 == 1, "an immediate can't be stored at a `label(%rip)` operand"
+}
+## `add` on byte operands.
+pub macro addb<S, D>(src: S, dst: D) {
+    suffix_fits src, 8
+    suffix_fits dst, 8
+    add src, dst
+}
+## `add` on byte operands.
+pub macro addb(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { add dst.at, src.value, byte }
+## `add` on word operands.
+pub macro addw<S, D>(src: S, dst: D) {
+    suffix_fits src, 16
+    suffix_fits dst, 16
+    add src, dst
+}
+## `add` on word operands.
+pub macro addw(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { add dst.at, src.value, word }
+## `add` on long operands.
+pub macro addl<S, D>(src: S, dst: D) {
+    suffix_fits src, 32
+    suffix_fits dst, 32
+    add src, dst
+}
+## `add` on long operands.
+pub macro addl(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { add dst.at, src.value, dword }
+## `add` on quadword operands.
+pub macro addq<S, D>(src: S, dst: D) {
+    suffix_fits src, 64
+    suffix_fits dst, 64
+    add src, dst
+}
+## `add` on quadword operands.
+pub macro addq(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { add dst.at, src.value, qword }
 
-# Immediate forms overload the same macros as register forms; the literal `$`
-# in their patterns gives them ordinary AT&T `$imm, %dst` spelling.
+## `dst = dst + src + CF`.
+pub macro adc(src: Register<Reg>, dst: Register<Reg>) { adc dst.r, src.r }
+pub macro adc(src: Register<Reg32>, dst: Register<Reg32>) { adc dst.r, src.r }
+pub macro adc(src: Register<Reg16>, dst: Register<Reg16>) { adc dst.r, src.r }
+pub macro adc(src: Register<Reg8>, dst: Register<Reg8>) { adc dst.r, src.r }
+## `dst = dst + src + CF`.
+pub macro adc<R>(src: Imm, dst: Register<R>) { adc dst.r, src.value }
+## `dst = dst + src + CF`.
+pub macro adc<M, R>(src: Memory<M>, dst: Register<R>) { adc dst.r, src.at }
+## `dst = dst + src + CF`.
+pub macro adc<R, M>(src: Register<R>, dst: Memory<M>) { adc dst.at, src.r }
+## Fails: an immediate and a memory operand need a size suffix, like `movq $1,
+## (%rdi)`.
+pub macro adc(_src: Imm, _dst: Memory<MemOperand>) {
+    @assert 0 == 1, "an immediate and a memory operand need a size suffix, like `movq $1, (%rdi)`"
+}
+## Fails: an immediate can't be stored at a `label(%rip)` operand.
+pub macro adc(_src: Imm, _dst: Memory<RipLabel>) {
+    @assert 0 == 1, "an immediate can't be stored at a `label(%rip)` operand"
+}
+## `adc` on byte operands.
+pub macro adcb<S, D>(src: S, dst: D) {
+    suffix_fits src, 8
+    suffix_fits dst, 8
+    adc src, dst
+}
+## `adc` on byte operands.
+pub macro adcb(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { adc dst.at, src.value, byte }
+## `adc` on word operands.
+pub macro adcw<S, D>(src: S, dst: D) {
+    suffix_fits src, 16
+    suffix_fits dst, 16
+    adc src, dst
+}
+## `adc` on word operands.
+pub macro adcw(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { adc dst.at, src.value, word }
+## `adc` on long operands.
+pub macro adcl<S, D>(src: S, dst: D) {
+    suffix_fits src, 32
+    suffix_fits dst, 32
+    adc src, dst
+}
+## `adc` on long operands.
+pub macro adcl(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { adc dst.at, src.value, dword }
+## `adc` on quadword operands.
+pub macro adcq<S, D>(src: S, dst: D) {
+    suffix_fits src, 64
+    suffix_fits dst, 64
+    adc src, dst
+}
+## `adc` on quadword operands.
+pub macro adcq(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { adc dst.at, src.value, qword }
 
-## `rd = imm`.
-pub macro mov(imm: int, rd: Reg)
-    | syntax { mov \$$imm$, %$rd$ } { mov rd, imm, 1 }
+## `dst = dst - src`.
+pub macro sub(src: Register<Reg>, dst: Register<Reg>) { sub dst.r, src.r }
+pub macro sub(src: Register<Reg32>, dst: Register<Reg32>) { sub dst.r, src.r }
+pub macro sub(src: Register<Reg16>, dst: Register<Reg16>) { sub dst.r, src.r }
+pub macro sub(src: Register<Reg8>, dst: Register<Reg8>) { sub dst.r, src.r }
+## `dst = dst - src`.
+pub macro sub<R>(src: Imm, dst: Register<R>) { sub dst.r, src.value }
+## `dst = dst - src`.
+pub macro sub<M, R>(src: Memory<M>, dst: Register<R>) { sub dst.r, src.at }
+## `dst = dst - src`.
+pub macro sub<R, M>(src: Register<R>, dst: Memory<M>) { sub dst.at, src.r }
+## Fails: an immediate and a memory operand need a size suffix, like `movq $1,
+## (%rdi)`.
+pub macro sub(_src: Imm, _dst: Memory<MemOperand>) {
+    @assert 0 == 1, "an immediate and a memory operand need a size suffix, like `movq $1, (%rdi)`"
+}
+## Fails: an immediate can't be stored at a `label(%rip)` operand.
+pub macro sub(_src: Imm, _dst: Memory<RipLabel>) {
+    @assert 0 == 1, "an immediate can't be stored at a `label(%rip)` operand"
+}
+## `sub` on byte operands.
+pub macro subb<S, D>(src: S, dst: D) {
+    suffix_fits src, 8
+    suffix_fits dst, 8
+    sub src, dst
+}
+## `sub` on byte operands.
+pub macro subb(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { sub dst.at, src.value, byte }
+## `sub` on word operands.
+pub macro subw<S, D>(src: S, dst: D) {
+    suffix_fits src, 16
+    suffix_fits dst, 16
+    sub src, dst
+}
+## `sub` on word operands.
+pub macro subw(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { sub dst.at, src.value, word }
+## `sub` on long operands.
+pub macro subl<S, D>(src: S, dst: D) {
+    suffix_fits src, 32
+    suffix_fits dst, 32
+    sub src, dst
+}
+## `sub` on long operands.
+pub macro subl(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { sub dst.at, src.value, dword }
+## `sub` on quadword operands.
+pub macro subq<S, D>(src: S, dst: D) {
+    suffix_fits src, 64
+    suffix_fits dst, 64
+    sub src, dst
+}
+## `sub` on quadword operands.
+pub macro subq(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { sub dst.at, src.value, qword }
 
-## `rd = rd + imm`.
-pub macro add(imm: int, rd: Reg)
-    | syntax { add \$$imm$, %$rd$ } { add rd, imm, 1 }
+## `dst = dst - src - CF`.
+pub macro sbb(src: Register<Reg>, dst: Register<Reg>) { sbb dst.r, src.r }
+pub macro sbb(src: Register<Reg32>, dst: Register<Reg32>) { sbb dst.r, src.r }
+pub macro sbb(src: Register<Reg16>, dst: Register<Reg16>) { sbb dst.r, src.r }
+pub macro sbb(src: Register<Reg8>, dst: Register<Reg8>) { sbb dst.r, src.r }
+## `dst = dst - src - CF`.
+pub macro sbb<R>(src: Imm, dst: Register<R>) { sbb dst.r, src.value }
+## `dst = dst - src - CF`.
+pub macro sbb<M, R>(src: Memory<M>, dst: Register<R>) { sbb dst.r, src.at }
+## `dst = dst - src - CF`.
+pub macro sbb<R, M>(src: Register<R>, dst: Memory<M>) { sbb dst.at, src.r }
+## Fails: an immediate and a memory operand need a size suffix, like `movq $1,
+## (%rdi)`.
+pub macro sbb(_src: Imm, _dst: Memory<MemOperand>) {
+    @assert 0 == 1, "an immediate and a memory operand need a size suffix, like `movq $1, (%rdi)`"
+}
+## Fails: an immediate can't be stored at a `label(%rip)` operand.
+pub macro sbb(_src: Imm, _dst: Memory<RipLabel>) {
+    @assert 0 == 1, "an immediate can't be stored at a `label(%rip)` operand"
+}
+## `sbb` on byte operands.
+pub macro sbbb<S, D>(src: S, dst: D) {
+    suffix_fits src, 8
+    suffix_fits dst, 8
+    sbb src, dst
+}
+## `sbb` on byte operands.
+pub macro sbbb(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { sbb dst.at, src.value, byte }
+## `sbb` on word operands.
+pub macro sbbw<S, D>(src: S, dst: D) {
+    suffix_fits src, 16
+    suffix_fits dst, 16
+    sbb src, dst
+}
+## `sbb` on word operands.
+pub macro sbbw(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { sbb dst.at, src.value, word }
+## `sbb` on long operands.
+pub macro sbbl<S, D>(src: S, dst: D) {
+    suffix_fits src, 32
+    suffix_fits dst, 32
+    sbb src, dst
+}
+## `sbb` on long operands.
+pub macro sbbl(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { sbb dst.at, src.value, dword }
+## `sbb` on quadword operands.
+pub macro sbbq<S, D>(src: S, dst: D) {
+    suffix_fits src, 64
+    suffix_fits dst, 64
+    sbb src, dst
+}
+## `sbb` on quadword operands.
+pub macro sbbq(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { sbb dst.at, src.value, qword }
 
-## `rd = rd | imm`.
-pub macro or(imm: int, rd: Reg)
-    | syntax { or \$$imm$, %$rd$ } { or rd, imm, 1 }
+## `dst = dst & src`.
+pub macro and(src: Register<Reg>, dst: Register<Reg>) { and dst.r, src.r }
+pub macro and(src: Register<Reg32>, dst: Register<Reg32>) { and dst.r, src.r }
+pub macro and(src: Register<Reg16>, dst: Register<Reg16>) { and dst.r, src.r }
+pub macro and(src: Register<Reg8>, dst: Register<Reg8>) { and dst.r, src.r }
+## `dst = dst & src`.
+pub macro and<R>(src: Imm, dst: Register<R>) { and dst.r, src.value }
+## `dst = dst & src`.
+pub macro and<M, R>(src: Memory<M>, dst: Register<R>) { and dst.r, src.at }
+## `dst = dst & src`.
+pub macro and<R, M>(src: Register<R>, dst: Memory<M>) { and dst.at, src.r }
+## Fails: an immediate and a memory operand need a size suffix, like `movq $1,
+## (%rdi)`.
+pub macro and(_src: Imm, _dst: Memory<MemOperand>) {
+    @assert 0 == 1, "an immediate and a memory operand need a size suffix, like `movq $1, (%rdi)`"
+}
+## Fails: an immediate can't be stored at a `label(%rip)` operand.
+pub macro and(_src: Imm, _dst: Memory<RipLabel>) {
+    @assert 0 == 1, "an immediate can't be stored at a `label(%rip)` operand"
+}
+## `and` on byte operands.
+pub macro andb<S, D>(src: S, dst: D) {
+    suffix_fits src, 8
+    suffix_fits dst, 8
+    and src, dst
+}
+## `and` on byte operands.
+pub macro andb(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { and dst.at, src.value, byte }
+## `and` on word operands.
+pub macro andw<S, D>(src: S, dst: D) {
+    suffix_fits src, 16
+    suffix_fits dst, 16
+    and src, dst
+}
+## `and` on word operands.
+pub macro andw(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { and dst.at, src.value, word }
+## `and` on long operands.
+pub macro andl<S, D>(src: S, dst: D) {
+    suffix_fits src, 32
+    suffix_fits dst, 32
+    and src, dst
+}
+## `and` on long operands.
+pub macro andl(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { and dst.at, src.value, dword }
+## `and` on quadword operands.
+pub macro andq<S, D>(src: S, dst: D) {
+    suffix_fits src, 64
+    suffix_fits dst, 64
+    and src, dst
+}
+## `and` on quadword operands.
+pub macro andq(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { and dst.at, src.value, qword }
 
-## `rd = rd & imm`.
-pub macro and(imm: int, rd: Reg)
-    | syntax { and \$$imm$, %$rd$ } { and rd, imm, 1 }
+## `dst = dst | src`.
+pub macro or(src: Register<Reg>, dst: Register<Reg>) { or dst.r, src.r }
+pub macro or(src: Register<Reg32>, dst: Register<Reg32>) { or dst.r, src.r }
+pub macro or(src: Register<Reg16>, dst: Register<Reg16>) { or dst.r, src.r }
+pub macro or(src: Register<Reg8>, dst: Register<Reg8>) { or dst.r, src.r }
+## `dst = dst | src`.
+pub macro or<R>(src: Imm, dst: Register<R>) { or dst.r, src.value }
+## `dst = dst | src`.
+pub macro or<M, R>(src: Memory<M>, dst: Register<R>) { or dst.r, src.at }
+## `dst = dst | src`.
+pub macro or<R, M>(src: Register<R>, dst: Memory<M>) { or dst.at, src.r }
+## Fails: an immediate and a memory operand need a size suffix, like `movq $1,
+## (%rdi)`.
+pub macro or(_src: Imm, _dst: Memory<MemOperand>) {
+    @assert 0 == 1, "an immediate and a memory operand need a size suffix, like `movq $1, (%rdi)`"
+}
+## Fails: an immediate can't be stored at a `label(%rip)` operand.
+pub macro or(_src: Imm, _dst: Memory<RipLabel>) {
+    @assert 0 == 1, "an immediate can't be stored at a `label(%rip)` operand"
+}
+## `or` on byte operands.
+pub macro orb<S, D>(src: S, dst: D) {
+    suffix_fits src, 8
+    suffix_fits dst, 8
+    or src, dst
+}
+## `or` on byte operands.
+pub macro orb(src: Imm, dst: Memory<MemOperand>) { or dst.at, src.value, byte }
+## `or` on word operands.
+pub macro orw<S, D>(src: S, dst: D) {
+    suffix_fits src, 16
+    suffix_fits dst, 16
+    or src, dst
+}
+## `or` on word operands.
+pub macro orw(src: Imm, dst: Memory<MemOperand>) { or dst.at, src.value, word }
+## `or` on long operands.
+pub macro orl<S, D>(src: S, dst: D) {
+    suffix_fits src, 32
+    suffix_fits dst, 32
+    or src, dst
+}
+## `or` on long operands.
+pub macro orl(src: Imm, dst: Memory<MemOperand>) { or dst.at, src.value, dword }
+## `or` on quadword operands.
+pub macro orq<S, D>(src: S, dst: D) {
+    suffix_fits src, 64
+    suffix_fits dst, 64
+    or src, dst
+}
+## `or` on quadword operands.
+pub macro orq(src: Imm, dst: Memory<MemOperand>) { or dst.at, src.value, qword }
 
-## `rd = rd - imm`.
-pub macro sub(imm: int, rd: Reg)
-    | syntax { sub \$$imm$, %$rd$ } { sub rd, imm, 1 }
+## `dst = dst ^ src`.
+pub macro xor(src: Register<Reg>, dst: Register<Reg>) { xor dst.r, src.r }
+pub macro xor(src: Register<Reg32>, dst: Register<Reg32>) { xor dst.r, src.r }
+pub macro xor(src: Register<Reg16>, dst: Register<Reg16>) { xor dst.r, src.r }
+pub macro xor(src: Register<Reg8>, dst: Register<Reg8>) { xor dst.r, src.r }
+## `dst = dst ^ src`.
+pub macro xor<R>(src: Imm, dst: Register<R>) { xor dst.r, src.value }
+## `dst = dst ^ src`.
+pub macro xor<M, R>(src: Memory<M>, dst: Register<R>) { xor dst.r, src.at }
+## `dst = dst ^ src`.
+pub macro xor<R, M>(src: Register<R>, dst: Memory<M>) { xor dst.at, src.r }
+## Fails: an immediate and a memory operand need a size suffix, like `movq $1,
+## (%rdi)`.
+pub macro xor(_src: Imm, _dst: Memory<MemOperand>) {
+    @assert 0 == 1, "an immediate and a memory operand need a size suffix, like `movq $1, (%rdi)`"
+}
+## Fails: an immediate can't be stored at a `label(%rip)` operand.
+pub macro xor(_src: Imm, _dst: Memory<RipLabel>) {
+    @assert 0 == 1, "an immediate can't be stored at a `label(%rip)` operand"
+}
+## `xor` on byte operands.
+pub macro xorb<S, D>(src: S, dst: D) {
+    suffix_fits src, 8
+    suffix_fits dst, 8
+    xor src, dst
+}
+## `xor` on byte operands.
+pub macro xorb(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { xor dst.at, src.value, byte }
+## `xor` on word operands.
+pub macro xorw<S, D>(src: S, dst: D) {
+    suffix_fits src, 16
+    suffix_fits dst, 16
+    xor src, dst
+}
+## `xor` on word operands.
+pub macro xorw(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { xor dst.at, src.value, word }
+## `xor` on long operands.
+pub macro xorl<S, D>(src: S, dst: D) {
+    suffix_fits src, 32
+    suffix_fits dst, 32
+    xor src, dst
+}
+## `xor` on long operands.
+pub macro xorl(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { xor dst.at, src.value, dword }
+## `xor` on quadword operands.
+pub macro xorq<S, D>(src: S, dst: D) {
+    suffix_fits src, 64
+    suffix_fits dst, 64
+    xor src, dst
+}
+## `xor` on quadword operands.
+pub macro xorq(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { xor dst.at, src.value, qword }
 
-## `rd = rd ^ imm`.
-pub macro xor(imm: int, rd: Reg)
-    | syntax { xor \$$imm$, %$rd$ } { xor rd, imm, 1 }
+## Sets the flags from `dst - src`, without storing it.
+pub macro cmp(src: Register<Reg>, dst: Register<Reg>) { cmp dst.r, src.r }
+pub macro cmp(src: Register<Reg32>, dst: Register<Reg32>) { cmp dst.r, src.r }
+pub macro cmp(src: Register<Reg16>, dst: Register<Reg16>) { cmp dst.r, src.r }
+pub macro cmp(src: Register<Reg8>, dst: Register<Reg8>) { cmp dst.r, src.r }
+## Sets the flags from `dst - src`, without storing it.
+pub macro cmp<R>(src: Imm, dst: Register<R>) { cmp dst.r, src.value }
+## Sets the flags from `dst - src`, without storing it.
+pub macro cmp<M, R>(src: Memory<M>, dst: Register<R>) { cmp dst.r, src.at }
+## Sets the flags from `dst - src`, without storing it.
+pub macro cmp<R, M>(src: Register<R>, dst: Memory<M>) { cmp dst.at, src.r }
+## Fails: an immediate and a memory operand need a size suffix, like `movq $1,
+## (%rdi)`.
+pub macro cmp(_src: Imm, _dst: Memory<MemOperand>) {
+    @assert 0 == 1, "an immediate and a memory operand need a size suffix, like `movq $1, (%rdi)`"
+}
+## Fails: an immediate can't be stored at a `label(%rip)` operand.
+pub macro cmp(_src: Imm, _dst: Memory<RipLabel>) {
+    @assert 0 == 1, "an immediate can't be stored at a `label(%rip)` operand"
+}
+## `cmp` on byte operands.
+pub macro cmpb<S, D>(src: S, dst: D) {
+    suffix_fits src, 8
+    suffix_fits dst, 8
+    cmp src, dst
+}
+## `cmp` on byte operands.
+pub macro cmpb(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { cmp dst.at, src.value, byte }
+## `cmp` on word operands.
+pub macro cmpw<S, D>(src: S, dst: D) {
+    suffix_fits src, 16
+    suffix_fits dst, 16
+    cmp src, dst
+}
+## `cmp` on word operands.
+pub macro cmpw(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { cmp dst.at, src.value, word }
+## `cmp` on long operands.
+pub macro cmpl<S, D>(src: S, dst: D) {
+    suffix_fits src, 32
+    suffix_fits dst, 32
+    cmp src, dst
+}
+## `cmp` on long operands.
+pub macro cmpl(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { cmp dst.at, src.value, dword }
+## `cmp` on quadword operands.
+pub macro cmpq<S, D>(src: S, dst: D) {
+    suffix_fits src, 64
+    suffix_fits dst, 64
+    cmp src, dst
+}
+## `cmp` on quadword operands.
+pub macro cmpq(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { cmp dst.at, src.value, qword }
 
-## Sets the flags from `rd - imm`, without storing it.
-pub macro cmp(imm: int, rd: Reg)
-    | syntax { cmp \$$imm$, %$rd$ } { cmp rd, imm, 1 }
+## Sets the flags from `dst & src`, without storing it.
+pub macro test(src: Register<Reg>, dst: Register<Reg>) { test dst.r, src.r }
+pub macro test(src: Register<Reg32>, dst: Register<Reg32>) { test dst.r, src.r }
+pub macro test(src: Register<Reg16>, dst: Register<Reg16>) { test dst.r, src.r }
+pub macro test(src: Register<Reg8>, dst: Register<Reg8>) { test dst.r, src.r }
+## Sets the flags from `dst & src`, without storing it.
+pub macro test<R>(src: Imm, dst: Register<R>) { test dst.r, src.value }
+## Sets the flags from `dst & src`, without storing it.
+pub macro test<M, R>(src: Memory<M>, dst: Register<R>) { test dst.r, src.at }
+## Sets the flags from `dst & src`, without storing it.
+pub macro test<R, M>(src: Register<R>, dst: Memory<M>) { test dst.at, src.r }
+## Fails: an immediate and a memory operand need a size suffix, like `movq $1,
+## (%rdi)`.
+pub macro test(_src: Imm, _dst: Memory<MemOperand>) {
+    @assert 0 == 1, "an immediate and a memory operand need a size suffix, like `movq $1, (%rdi)`"
+}
+## Fails: an immediate can't be stored at a `label(%rip)` operand.
+pub macro test(_src: Imm, _dst: Memory<RipLabel>) {
+    @assert 0 == 1, "an immediate can't be stored at a `label(%rip)` operand"
+}
+## `test` on byte operands.
+pub macro testb<S, D>(src: S, dst: D) {
+    suffix_fits src, 8
+    suffix_fits dst, 8
+    test src, dst
+}
+## `test` on byte operands.
+pub macro testb(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { test dst.at, src.value, byte }
+## `test` on word operands.
+pub macro testw<S, D>(src: S, dst: D) {
+    suffix_fits src, 16
+    suffix_fits dst, 16
+    test src, dst
+}
+## `test` on word operands.
+pub macro testw(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { test dst.at, src.value, word }
+## `test` on long operands.
+pub macro testl<S, D>(src: S, dst: D) {
+    suffix_fits src, 32
+    suffix_fits dst, 32
+    test src, dst
+}
+## `test` on long operands.
+pub macro testl(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { test dst.at, src.value, dword }
+## `test` on quadword operands.
+pub macro testq<S, D>(src: S, dst: D) {
+    suffix_fits src, 64
+    suffix_fits dst, 64
+    test src, dst
+}
+## `test` on quadword operands.
+pub macro testq(
+    src: Imm,
+    dst: Memory<MemOperand>
+) { test dst.at, src.value, qword }
 
-## Sets the flags from `rd & imm`, without storing it.
-pub macro test(imm: int, rd: Reg)
-    | syntax { test \$$imm$, %$rd$ } { test rd, imm, 1 }
+# =================
+# one operand: inc, dec, neg, not, mul, div, idiv
+# =================
+
+## `dst = dst + 1`, leaving CF alone.
+pub macro inc(dst: Register<Reg>) { inc dst.r }
+pub macro inc(dst: Register<Reg32>) { inc dst.r }
+pub macro inc(dst: Register<Reg16>) { inc dst.r }
+pub macro inc(dst: Register<Reg8>) { inc dst.r }
+## Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`.
+pub macro inc(_dst: Memory<MemOperand>) {
+    @assert 0 == 1, "a memory operand alone needs a size suffix, like `incq (%rdi)`"
+}
+## `inc` on a byte.
+pub macro incb(dst: Register<Reg8>) { inc dst.r }
+## `inc` on a byte.
+pub macro incb<M>(dst: Memory<M>) { inc dst.at, byte }
+## `inc` on a word.
+pub macro incw(dst: Register<Reg16>) { inc dst.r }
+## `inc` on a word.
+pub macro incw<M>(dst: Memory<M>) { inc dst.at, word }
+## `inc` on a long.
+pub macro incl(dst: Register<Reg32>) { inc dst.r }
+## `inc` on a long.
+pub macro incl<M>(dst: Memory<M>) { inc dst.at, dword }
+## `inc` on a quadword.
+pub macro incq(dst: Register<Reg>) { inc dst.r }
+## `inc` on a quadword.
+pub macro incq<M>(dst: Memory<M>) { inc dst.at, qword }
+
+## `dst = dst - 1`, leaving CF alone.
+pub macro dec(dst: Register<Reg>) { dec dst.r }
+pub macro dec(dst: Register<Reg32>) { dec dst.r }
+pub macro dec(dst: Register<Reg16>) { dec dst.r }
+pub macro dec(dst: Register<Reg8>) { dec dst.r }
+## Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`.
+pub macro dec(_dst: Memory<MemOperand>) {
+    @assert 0 == 1, "a memory operand alone needs a size suffix, like `incq (%rdi)`"
+}
+## `dec` on a byte.
+pub macro decb(dst: Register<Reg8>) { dec dst.r }
+## `dec` on a byte.
+pub macro decb<M>(dst: Memory<M>) { dec dst.at, byte }
+## `dec` on a word.
+pub macro decw(dst: Register<Reg16>) { dec dst.r }
+## `dec` on a word.
+pub macro decw<M>(dst: Memory<M>) { dec dst.at, word }
+## `dec` on a long.
+pub macro decl(dst: Register<Reg32>) { dec dst.r }
+## `dec` on a long.
+pub macro decl<M>(dst: Memory<M>) { dec dst.at, dword }
+## `dec` on a quadword.
+pub macro decq(dst: Register<Reg>) { dec dst.r }
+## `dec` on a quadword.
+pub macro decq<M>(dst: Memory<M>) { dec dst.at, qword }
+
+## `dst = -dst`.
+pub macro neg(dst: Register<Reg>) { neg dst.r }
+pub macro neg(dst: Register<Reg32>) { neg dst.r }
+pub macro neg(dst: Register<Reg16>) { neg dst.r }
+pub macro neg(dst: Register<Reg8>) { neg dst.r }
+## Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`.
+pub macro neg(_dst: Memory<MemOperand>) {
+    @assert 0 == 1, "a memory operand alone needs a size suffix, like `incq (%rdi)`"
+}
+## `neg` on a byte.
+pub macro negb(dst: Register<Reg8>) { neg dst.r }
+## `neg` on a byte.
+pub macro negb<M>(dst: Memory<M>) { neg dst.at, byte }
+## `neg` on a word.
+pub macro negw(dst: Register<Reg16>) { neg dst.r }
+## `neg` on a word.
+pub macro negw<M>(dst: Memory<M>) { neg dst.at, word }
+## `neg` on a long.
+pub macro negl(dst: Register<Reg32>) { neg dst.r }
+## `neg` on a long.
+pub macro negl<M>(dst: Memory<M>) { neg dst.at, dword }
+## `neg` on a quadword.
+pub macro negq(dst: Register<Reg>) { neg dst.r }
+## `neg` on a quadword.
+pub macro negq<M>(dst: Memory<M>) { neg dst.at, qword }
+
+## `dst = ~dst`.
+pub macro not(dst: Register<Reg>) { not dst.r }
+pub macro not(dst: Register<Reg32>) { not dst.r }
+pub macro not(dst: Register<Reg16>) { not dst.r }
+pub macro not(dst: Register<Reg8>) { not dst.r }
+## Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`.
+pub macro not(_dst: Memory<MemOperand>) {
+    @assert 0 == 1, "a memory operand alone needs a size suffix, like `incq (%rdi)`"
+}
+## `not` on a byte.
+pub macro notb(dst: Register<Reg8>) { not dst.r }
+## `not` on a byte.
+pub macro notb<M>(dst: Memory<M>) { not dst.at, byte }
+## `not` on a word.
+pub macro notw(dst: Register<Reg16>) { not dst.r }
+## `not` on a word.
+pub macro notw<M>(dst: Memory<M>) { not dst.at, word }
+## `not` on a long.
+pub macro notl(dst: Register<Reg32>) { not dst.r }
+## `not` on a long.
+pub macro notl<M>(dst: Memory<M>) { not dst.at, dword }
+## `not` on a quadword.
+pub macro notq(dst: Register<Reg>) { not dst.r }
+## `not` on a quadword.
+pub macro notq<M>(dst: Memory<M>) { not dst.at, qword }
+
+## Unsigned multiply: `rdx:rax = rax * src` (or the smaller registers for a
+## smaller operand).
+pub macro mul(dst: Register<Reg>) { mul dst.r }
+pub macro mul(dst: Register<Reg32>) { mul dst.r }
+pub macro mul(dst: Register<Reg16>) { mul dst.r }
+pub macro mul(dst: Register<Reg8>) { mul dst.r }
+## Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`.
+pub macro mul(_dst: Memory<MemOperand>) {
+    @assert 0 == 1, "a memory operand alone needs a size suffix, like `incq (%rdi)`"
+}
+## `mul` on a byte.
+pub macro mulb(dst: Register<Reg8>) { mul dst.r }
+## `mul` on a byte.
+pub macro mulb<M>(dst: Memory<M>) { mul dst.at, byte }
+## `mul` on a word.
+pub macro mulw(dst: Register<Reg16>) { mul dst.r }
+## `mul` on a word.
+pub macro mulw<M>(dst: Memory<M>) { mul dst.at, word }
+## `mul` on a long.
+pub macro mull(dst: Register<Reg32>) { mul dst.r }
+## `mul` on a long.
+pub macro mull<M>(dst: Memory<M>) { mul dst.at, dword }
+## `mul` on a quadword.
+pub macro mulq(dst: Register<Reg>) { mul dst.r }
+## `mul` on a quadword.
+pub macro mulq<M>(dst: Memory<M>) { mul dst.at, qword }
+
+## Unsigned divide: `rax = rdx:rax / src`, `rdx` = the remainder.
+pub macro div(dst: Register<Reg>) { div dst.r }
+pub macro div(dst: Register<Reg32>) { div dst.r }
+pub macro div(dst: Register<Reg16>) { div dst.r }
+pub macro div(dst: Register<Reg8>) { div dst.r }
+## Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`.
+pub macro div(_dst: Memory<MemOperand>) {
+    @assert 0 == 1, "a memory operand alone needs a size suffix, like `incq (%rdi)`"
+}
+## `div` on a byte.
+pub macro divb(dst: Register<Reg8>) { div dst.r }
+## `div` on a byte.
+pub macro divb<M>(dst: Memory<M>) { div dst.at, byte }
+## `div` on a word.
+pub macro divw(dst: Register<Reg16>) { div dst.r }
+## `div` on a word.
+pub macro divw<M>(dst: Memory<M>) { div dst.at, word }
+## `div` on a long.
+pub macro divl(dst: Register<Reg32>) { div dst.r }
+## `div` on a long.
+pub macro divl<M>(dst: Memory<M>) { div dst.at, dword }
+## `div` on a quadword.
+pub macro divq(dst: Register<Reg>) { div dst.r }
+## `div` on a quadword.
+pub macro divq<M>(dst: Memory<M>) { div dst.at, qword }
+
+## Signed divide: `rax = rdx:rax / src`, `rdx` = the remainder.
+pub macro idiv(dst: Register<Reg>) { idiv dst.r }
+pub macro idiv(dst: Register<Reg32>) { idiv dst.r }
+pub macro idiv(dst: Register<Reg16>) { idiv dst.r }
+pub macro idiv(dst: Register<Reg8>) { idiv dst.r }
+## Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`.
+pub macro idiv(_dst: Memory<MemOperand>) {
+    @assert 0 == 1, "a memory operand alone needs a size suffix, like `incq (%rdi)`"
+}
+## `idiv` on a byte.
+pub macro idivb(dst: Register<Reg8>) { idiv dst.r }
+## `idiv` on a byte.
+pub macro idivb<M>(dst: Memory<M>) { idiv dst.at, byte }
+## `idiv` on a word.
+pub macro idivw(dst: Register<Reg16>) { idiv dst.r }
+## `idiv` on a word.
+pub macro idivw<M>(dst: Memory<M>) { idiv dst.at, word }
+## `idiv` on a long.
+pub macro idivl(dst: Register<Reg32>) { idiv dst.r }
+## `idiv` on a long.
+pub macro idivl<M>(dst: Memory<M>) { idiv dst.at, dword }
+## `idiv` on a quadword.
+pub macro idivq(dst: Register<Reg>) { idiv dst.r }
+## `idiv` on a quadword.
+pub macro idivq<M>(dst: Memory<M>) { idiv dst.at, qword }
+
+# =================
+# imul: one, two and three operands
+# =================
+
+## Signed multiply: `rdx:rax = rax * src` (or the smaller registers).
+pub macro imul(src: Register<Reg>) { imul src.r }
+pub macro imul(src: Register<Reg32>) { imul src.r }
+pub macro imul(src: Register<Reg16>) { imul src.r }
+pub macro imul(src: Register<Reg8>) { imul src.r }
+## `dst = dst * src`, signed.
+pub macro imul(src: Register<Reg>, dst: Register<Reg>) { imul dst.r, src.r }
+pub macro imul(src: Register<Reg32>, dst: Register<Reg32>) { imul dst.r, src.r }
+pub macro imul(src: Register<Reg16>, dst: Register<Reg16>) { imul dst.r, src.r }
+## `dst = dst * src`, signed.
+pub macro imul<R>(
+    src: Memory<MemOperand>,
+    dst: Register<R>
+) { imul dst.r, src.at }
+## `dst = src * imm`, signed.
+pub macro imul<R>(
+    imm: Imm,
+    src: Register<R>,
+    dst: Register<R>
+) { imul dst.r, src.r, imm.value }
+## `dst = [src] * imm`, signed.
+pub macro imul<R>(
+    imm: Imm,
+    src: Memory<MemOperand>,
+    dst: Register<R>
+) { imul dst.r, src.at, imm.value }
+
+# =================
+# shifts and rotates: an immediate or `%cl` count
+# =================
+
+## `dst = dst << count`.
+pub macro shl<R>(count: Imm, dst: Register<R>) { shl dst.r, count.value }
+## `dst = dst << count`. `count` must be `%cl`.
+pub macro shl<R>(count: Register<Reg8>, dst: Register<R>) { shl dst.r, count.r }
+## Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`.
+pub macro shl(_count: Imm, _dst: Memory<MemOperand>) {
+    @assert 0 == 1, "a memory operand alone needs a size suffix, like `incq (%rdi)`"
+}
+## Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`.
+pub macro shl(_count: Register<Reg8>, _dst: Memory<MemOperand>) {
+    @assert 0 == 1, "a memory operand alone needs a size suffix, like `incq (%rdi)`"
+}
+## `shl` on a byte.
+pub macro shlb(count: Imm, dst: Register<Reg8>) { shl dst.r, count.value }
+## `shl` on a byte. `count` must be `%cl`.
+pub macro shlb(
+    count: Register<Reg8>,
+    dst: Register<Reg8>
+) { shl dst.r, count.r }
+## `shl` on a byte.
+pub macro shlb<M>(count: Imm, dst: Memory<M>) { shl dst.at, count.value, byte }
+## `shl` on a byte. `count` must be `%cl`.
+pub macro shlb<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { shl dst.at, count.r, byte }
+## `shl` on a word.
+pub macro shlw(count: Imm, dst: Register<Reg16>) { shl dst.r, count.value }
+## `shl` on a word. `count` must be `%cl`.
+pub macro shlw(
+    count: Register<Reg8>,
+    dst: Register<Reg16>
+) { shl dst.r, count.r }
+## `shl` on a word.
+pub macro shlw<M>(count: Imm, dst: Memory<M>) { shl dst.at, count.value, word }
+## `shl` on a word. `count` must be `%cl`.
+pub macro shlw<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { shl dst.at, count.r, word }
+## `shl` on a long.
+pub macro shll(count: Imm, dst: Register<Reg32>) { shl dst.r, count.value }
+## `shl` on a long. `count` must be `%cl`.
+pub macro shll(
+    count: Register<Reg8>,
+    dst: Register<Reg32>
+) { shl dst.r, count.r }
+## `shl` on a long.
+pub macro shll<M>(count: Imm, dst: Memory<M>) { shl dst.at, count.value, dword }
+## `shl` on a long. `count` must be `%cl`.
+pub macro shll<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { shl dst.at, count.r, dword }
+## `shl` on a quadword.
+pub macro shlq(count: Imm, dst: Register<Reg>) { shl dst.r, count.value }
+## `shl` on a quadword. `count` must be `%cl`.
+pub macro shlq(count: Register<Reg8>, dst: Register<Reg>) { shl dst.r, count.r }
+## `shl` on a quadword.
+pub macro shlq<M>(count: Imm, dst: Memory<M>) { shl dst.at, count.value, qword }
+## `shl` on a quadword. `count` must be `%cl`.
+pub macro shlq<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { shl dst.at, count.r, qword }
+
+## `dst = dst >> count`, shifting in zeros.
+pub macro shr<R>(count: Imm, dst: Register<R>) { shr dst.r, count.value }
+## `dst = dst >> count`, shifting in zeros. `count` must be `%cl`.
+pub macro shr<R>(count: Register<Reg8>, dst: Register<R>) { shr dst.r, count.r }
+## Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`.
+pub macro shr(_count: Imm, _dst: Memory<MemOperand>) {
+    @assert 0 == 1, "a memory operand alone needs a size suffix, like `incq (%rdi)`"
+}
+## Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`.
+pub macro shr(_count: Register<Reg8>, _dst: Memory<MemOperand>) {
+    @assert 0 == 1, "a memory operand alone needs a size suffix, like `incq (%rdi)`"
+}
+## `shr` on a byte.
+pub macro shrb(count: Imm, dst: Register<Reg8>) { shr dst.r, count.value }
+## `shr` on a byte. `count` must be `%cl`.
+pub macro shrb(
+    count: Register<Reg8>,
+    dst: Register<Reg8>
+) { shr dst.r, count.r }
+## `shr` on a byte.
+pub macro shrb<M>(count: Imm, dst: Memory<M>) { shr dst.at, count.value, byte }
+## `shr` on a byte. `count` must be `%cl`.
+pub macro shrb<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { shr dst.at, count.r, byte }
+## `shr` on a word.
+pub macro shrw(count: Imm, dst: Register<Reg16>) { shr dst.r, count.value }
+## `shr` on a word. `count` must be `%cl`.
+pub macro shrw(
+    count: Register<Reg8>,
+    dst: Register<Reg16>
+) { shr dst.r, count.r }
+## `shr` on a word.
+pub macro shrw<M>(count: Imm, dst: Memory<M>) { shr dst.at, count.value, word }
+## `shr` on a word. `count` must be `%cl`.
+pub macro shrw<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { shr dst.at, count.r, word }
+## `shr` on a long.
+pub macro shrl(count: Imm, dst: Register<Reg32>) { shr dst.r, count.value }
+## `shr` on a long. `count` must be `%cl`.
+pub macro shrl(
+    count: Register<Reg8>,
+    dst: Register<Reg32>
+) { shr dst.r, count.r }
+## `shr` on a long.
+pub macro shrl<M>(count: Imm, dst: Memory<M>) { shr dst.at, count.value, dword }
+## `shr` on a long. `count` must be `%cl`.
+pub macro shrl<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { shr dst.at, count.r, dword }
+## `shr` on a quadword.
+pub macro shrq(count: Imm, dst: Register<Reg>) { shr dst.r, count.value }
+## `shr` on a quadword. `count` must be `%cl`.
+pub macro shrq(count: Register<Reg8>, dst: Register<Reg>) { shr dst.r, count.r }
+## `shr` on a quadword.
+pub macro shrq<M>(count: Imm, dst: Memory<M>) { shr dst.at, count.value, qword }
+## `shr` on a quadword. `count` must be `%cl`.
+pub macro shrq<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { shr dst.at, count.r, qword }
+
+## `dst = dst >> count`, shifting in copies of the sign bit.
+pub macro sar<R>(count: Imm, dst: Register<R>) { sar dst.r, count.value }
+## `dst = dst >> count`, shifting in copies of the sign bit. `count` must be
+## `%cl`.
+pub macro sar<R>(count: Register<Reg8>, dst: Register<R>) { sar dst.r, count.r }
+## Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`.
+pub macro sar(_count: Imm, _dst: Memory<MemOperand>) {
+    @assert 0 == 1, "a memory operand alone needs a size suffix, like `incq (%rdi)`"
+}
+## Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`.
+pub macro sar(_count: Register<Reg8>, _dst: Memory<MemOperand>) {
+    @assert 0 == 1, "a memory operand alone needs a size suffix, like `incq (%rdi)`"
+}
+## `sar` on a byte.
+pub macro sarb(count: Imm, dst: Register<Reg8>) { sar dst.r, count.value }
+## `sar` on a byte. `count` must be `%cl`.
+pub macro sarb(
+    count: Register<Reg8>,
+    dst: Register<Reg8>
+) { sar dst.r, count.r }
+## `sar` on a byte.
+pub macro sarb<M>(count: Imm, dst: Memory<M>) { sar dst.at, count.value, byte }
+## `sar` on a byte. `count` must be `%cl`.
+pub macro sarb<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { sar dst.at, count.r, byte }
+## `sar` on a word.
+pub macro sarw(count: Imm, dst: Register<Reg16>) { sar dst.r, count.value }
+## `sar` on a word. `count` must be `%cl`.
+pub macro sarw(
+    count: Register<Reg8>,
+    dst: Register<Reg16>
+) { sar dst.r, count.r }
+## `sar` on a word.
+pub macro sarw<M>(count: Imm, dst: Memory<M>) { sar dst.at, count.value, word }
+## `sar` on a word. `count` must be `%cl`.
+pub macro sarw<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { sar dst.at, count.r, word }
+## `sar` on a long.
+pub macro sarl(count: Imm, dst: Register<Reg32>) { sar dst.r, count.value }
+## `sar` on a long. `count` must be `%cl`.
+pub macro sarl(
+    count: Register<Reg8>,
+    dst: Register<Reg32>
+) { sar dst.r, count.r }
+## `sar` on a long.
+pub macro sarl<M>(count: Imm, dst: Memory<M>) { sar dst.at, count.value, dword }
+## `sar` on a long. `count` must be `%cl`.
+pub macro sarl<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { sar dst.at, count.r, dword }
+## `sar` on a quadword.
+pub macro sarq(count: Imm, dst: Register<Reg>) { sar dst.r, count.value }
+## `sar` on a quadword. `count` must be `%cl`.
+pub macro sarq(count: Register<Reg8>, dst: Register<Reg>) { sar dst.r, count.r }
+## `sar` on a quadword.
+pub macro sarq<M>(count: Imm, dst: Memory<M>) { sar dst.at, count.value, qword }
+## `sar` on a quadword. `count` must be `%cl`.
+pub macro sarq<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { sar dst.at, count.r, qword }
+
+## Rotates `dst` left by `count` bits.
+pub macro rol<R>(count: Imm, dst: Register<R>) { rol dst.r, count.value }
+## Rotates `dst` left by `count` bits. `count` must be `%cl`.
+pub macro rol<R>(count: Register<Reg8>, dst: Register<R>) { rol dst.r, count.r }
+## Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`.
+pub macro rol(_count: Imm, _dst: Memory<MemOperand>) {
+    @assert 0 == 1, "a memory operand alone needs a size suffix, like `incq (%rdi)`"
+}
+## Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`.
+pub macro rol(_count: Register<Reg8>, _dst: Memory<MemOperand>) {
+    @assert 0 == 1, "a memory operand alone needs a size suffix, like `incq (%rdi)`"
+}
+## `rol` on a byte.
+pub macro rolb(count: Imm, dst: Register<Reg8>) { rol dst.r, count.value }
+## `rol` on a byte. `count` must be `%cl`.
+pub macro rolb(
+    count: Register<Reg8>,
+    dst: Register<Reg8>
+) { rol dst.r, count.r }
+## `rol` on a byte.
+pub macro rolb<M>(count: Imm, dst: Memory<M>) { rol dst.at, count.value, byte }
+## `rol` on a byte. `count` must be `%cl`.
+pub macro rolb<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { rol dst.at, count.r, byte }
+## `rol` on a word.
+pub macro rolw(count: Imm, dst: Register<Reg16>) { rol dst.r, count.value }
+## `rol` on a word. `count` must be `%cl`.
+pub macro rolw(
+    count: Register<Reg8>,
+    dst: Register<Reg16>
+) { rol dst.r, count.r }
+## `rol` on a word.
+pub macro rolw<M>(count: Imm, dst: Memory<M>) { rol dst.at, count.value, word }
+## `rol` on a word. `count` must be `%cl`.
+pub macro rolw<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { rol dst.at, count.r, word }
+## `rol` on a long.
+pub macro roll(count: Imm, dst: Register<Reg32>) { rol dst.r, count.value }
+## `rol` on a long. `count` must be `%cl`.
+pub macro roll(
+    count: Register<Reg8>,
+    dst: Register<Reg32>
+) { rol dst.r, count.r }
+## `rol` on a long.
+pub macro roll<M>(count: Imm, dst: Memory<M>) { rol dst.at, count.value, dword }
+## `rol` on a long. `count` must be `%cl`.
+pub macro roll<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { rol dst.at, count.r, dword }
+## `rol` on a quadword.
+pub macro rolq(count: Imm, dst: Register<Reg>) { rol dst.r, count.value }
+## `rol` on a quadword. `count` must be `%cl`.
+pub macro rolq(count: Register<Reg8>, dst: Register<Reg>) { rol dst.r, count.r }
+## `rol` on a quadword.
+pub macro rolq<M>(count: Imm, dst: Memory<M>) { rol dst.at, count.value, qword }
+## `rol` on a quadword. `count` must be `%cl`.
+pub macro rolq<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { rol dst.at, count.r, qword }
+
+## Rotates `dst` right by `count` bits.
+pub macro ror<R>(count: Imm, dst: Register<R>) { ror dst.r, count.value }
+## Rotates `dst` right by `count` bits. `count` must be `%cl`.
+pub macro ror<R>(count: Register<Reg8>, dst: Register<R>) { ror dst.r, count.r }
+## Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`.
+pub macro ror(_count: Imm, _dst: Memory<MemOperand>) {
+    @assert 0 == 1, "a memory operand alone needs a size suffix, like `incq (%rdi)`"
+}
+## Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`.
+pub macro ror(_count: Register<Reg8>, _dst: Memory<MemOperand>) {
+    @assert 0 == 1, "a memory operand alone needs a size suffix, like `incq (%rdi)`"
+}
+## `ror` on a byte.
+pub macro rorb(count: Imm, dst: Register<Reg8>) { ror dst.r, count.value }
+## `ror` on a byte. `count` must be `%cl`.
+pub macro rorb(
+    count: Register<Reg8>,
+    dst: Register<Reg8>
+) { ror dst.r, count.r }
+## `ror` on a byte.
+pub macro rorb<M>(count: Imm, dst: Memory<M>) { ror dst.at, count.value, byte }
+## `ror` on a byte. `count` must be `%cl`.
+pub macro rorb<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { ror dst.at, count.r, byte }
+## `ror` on a word.
+pub macro rorw(count: Imm, dst: Register<Reg16>) { ror dst.r, count.value }
+## `ror` on a word. `count` must be `%cl`.
+pub macro rorw(
+    count: Register<Reg8>,
+    dst: Register<Reg16>
+) { ror dst.r, count.r }
+## `ror` on a word.
+pub macro rorw<M>(count: Imm, dst: Memory<M>) { ror dst.at, count.value, word }
+## `ror` on a word. `count` must be `%cl`.
+pub macro rorw<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { ror dst.at, count.r, word }
+## `ror` on a long.
+pub macro rorl(count: Imm, dst: Register<Reg32>) { ror dst.r, count.value }
+## `ror` on a long. `count` must be `%cl`.
+pub macro rorl(
+    count: Register<Reg8>,
+    dst: Register<Reg32>
+) { ror dst.r, count.r }
+## `ror` on a long.
+pub macro rorl<M>(count: Imm, dst: Memory<M>) { ror dst.at, count.value, dword }
+## `ror` on a long. `count` must be `%cl`.
+pub macro rorl<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { ror dst.at, count.r, dword }
+## `ror` on a quadword.
+pub macro rorq(count: Imm, dst: Register<Reg>) { ror dst.r, count.value }
+## `ror` on a quadword. `count` must be `%cl`.
+pub macro rorq(count: Register<Reg8>, dst: Register<Reg>) { ror dst.r, count.r }
+## `ror` on a quadword.
+pub macro rorq<M>(count: Imm, dst: Memory<M>) { ror dst.at, count.value, qword }
+## `ror` on a quadword. `count` must be `%cl`.
+pub macro rorq<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { ror dst.at, count.r, qword }
+
+## Rotates `dst` and CF left by `count` bits.
+pub macro rcl<R>(count: Imm, dst: Register<R>) { rcl dst.r, count.value }
+## Rotates `dst` and CF left by `count` bits. `count` must be `%cl`.
+pub macro rcl<R>(count: Register<Reg8>, dst: Register<R>) { rcl dst.r, count.r }
+## Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`.
+pub macro rcl(_count: Imm, _dst: Memory<MemOperand>) {
+    @assert 0 == 1, "a memory operand alone needs a size suffix, like `incq (%rdi)`"
+}
+## Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`.
+pub macro rcl(_count: Register<Reg8>, _dst: Memory<MemOperand>) {
+    @assert 0 == 1, "a memory operand alone needs a size suffix, like `incq (%rdi)`"
+}
+## `rcl` on a byte.
+pub macro rclb(count: Imm, dst: Register<Reg8>) { rcl dst.r, count.value }
+## `rcl` on a byte. `count` must be `%cl`.
+pub macro rclb(
+    count: Register<Reg8>,
+    dst: Register<Reg8>
+) { rcl dst.r, count.r }
+## `rcl` on a byte.
+pub macro rclb<M>(count: Imm, dst: Memory<M>) { rcl dst.at, count.value, byte }
+## `rcl` on a byte. `count` must be `%cl`.
+pub macro rclb<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { rcl dst.at, count.r, byte }
+## `rcl` on a word.
+pub macro rclw(count: Imm, dst: Register<Reg16>) { rcl dst.r, count.value }
+## `rcl` on a word. `count` must be `%cl`.
+pub macro rclw(
+    count: Register<Reg8>,
+    dst: Register<Reg16>
+) { rcl dst.r, count.r }
+## `rcl` on a word.
+pub macro rclw<M>(count: Imm, dst: Memory<M>) { rcl dst.at, count.value, word }
+## `rcl` on a word. `count` must be `%cl`.
+pub macro rclw<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { rcl dst.at, count.r, word }
+## `rcl` on a long.
+pub macro rcll(count: Imm, dst: Register<Reg32>) { rcl dst.r, count.value }
+## `rcl` on a long. `count` must be `%cl`.
+pub macro rcll(
+    count: Register<Reg8>,
+    dst: Register<Reg32>
+) { rcl dst.r, count.r }
+## `rcl` on a long.
+pub macro rcll<M>(count: Imm, dst: Memory<M>) { rcl dst.at, count.value, dword }
+## `rcl` on a long. `count` must be `%cl`.
+pub macro rcll<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { rcl dst.at, count.r, dword }
+## `rcl` on a quadword.
+pub macro rclq(count: Imm, dst: Register<Reg>) { rcl dst.r, count.value }
+## `rcl` on a quadword. `count` must be `%cl`.
+pub macro rclq(count: Register<Reg8>, dst: Register<Reg>) { rcl dst.r, count.r }
+## `rcl` on a quadword.
+pub macro rclq<M>(count: Imm, dst: Memory<M>) { rcl dst.at, count.value, qword }
+## `rcl` on a quadword. `count` must be `%cl`.
+pub macro rclq<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { rcl dst.at, count.r, qword }
+
+## Rotates `dst` and CF right by `count` bits.
+pub macro rcr<R>(count: Imm, dst: Register<R>) { rcr dst.r, count.value }
+## Rotates `dst` and CF right by `count` bits. `count` must be `%cl`.
+pub macro rcr<R>(count: Register<Reg8>, dst: Register<R>) { rcr dst.r, count.r }
+## Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`.
+pub macro rcr(_count: Imm, _dst: Memory<MemOperand>) {
+    @assert 0 == 1, "a memory operand alone needs a size suffix, like `incq (%rdi)`"
+}
+## Fails: a memory operand alone needs a size suffix, like `incq (%rdi)`.
+pub macro rcr(_count: Register<Reg8>, _dst: Memory<MemOperand>) {
+    @assert 0 == 1, "a memory operand alone needs a size suffix, like `incq (%rdi)`"
+}
+## `rcr` on a byte.
+pub macro rcrb(count: Imm, dst: Register<Reg8>) { rcr dst.r, count.value }
+## `rcr` on a byte. `count` must be `%cl`.
+pub macro rcrb(
+    count: Register<Reg8>,
+    dst: Register<Reg8>
+) { rcr dst.r, count.r }
+## `rcr` on a byte.
+pub macro rcrb<M>(count: Imm, dst: Memory<M>) { rcr dst.at, count.value, byte }
+## `rcr` on a byte. `count` must be `%cl`.
+pub macro rcrb<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { rcr dst.at, count.r, byte }
+## `rcr` on a word.
+pub macro rcrw(count: Imm, dst: Register<Reg16>) { rcr dst.r, count.value }
+## `rcr` on a word. `count` must be `%cl`.
+pub macro rcrw(
+    count: Register<Reg8>,
+    dst: Register<Reg16>
+) { rcr dst.r, count.r }
+## `rcr` on a word.
+pub macro rcrw<M>(count: Imm, dst: Memory<M>) { rcr dst.at, count.value, word }
+## `rcr` on a word. `count` must be `%cl`.
+pub macro rcrw<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { rcr dst.at, count.r, word }
+## `rcr` on a long.
+pub macro rcrl(count: Imm, dst: Register<Reg32>) { rcr dst.r, count.value }
+## `rcr` on a long. `count` must be `%cl`.
+pub macro rcrl(
+    count: Register<Reg8>,
+    dst: Register<Reg32>
+) { rcr dst.r, count.r }
+## `rcr` on a long.
+pub macro rcrl<M>(count: Imm, dst: Memory<M>) { rcr dst.at, count.value, dword }
+## `rcr` on a long. `count` must be `%cl`.
+pub macro rcrl<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { rcr dst.at, count.r, dword }
+## `rcr` on a quadword.
+pub macro rcrq(count: Imm, dst: Register<Reg>) { rcr dst.r, count.value }
+## `rcr` on a quadword. `count` must be `%cl`.
+pub macro rcrq(count: Register<Reg8>, dst: Register<Reg>) { rcr dst.r, count.r }
+## `rcr` on a quadword.
+pub macro rcrq<M>(count: Imm, dst: Memory<M>) { rcr dst.at, count.value, qword }
+## `rcr` on a quadword. `count` must be `%cl`.
+pub macro rcrq<M>(
+    count: Register<Reg8>,
+    dst: Memory<M>
+) { rcr dst.at, count.r, qword }
+
+# =================
+# zero and sign extension: movzbl, movsbq, movslq, ...
+# =================
+
+## `dst = src`, a byte zero-extended into a word.
+pub macro movzbw(
+    src: Register<Reg8>,
+    dst: Register<Reg16>
+) { movzx dst.r, src.r }
+## `dst = src`, a byte zero-extended into a word.
+pub macro movzbw<M>(
+    src: Memory<M>,
+    dst: Register<Reg16>
+) { movzx dst.r, src.at, byte }
+
+## `dst = src`, a byte zero-extended into a long.
+pub macro movzbl(
+    src: Register<Reg8>,
+    dst: Register<Reg32>
+) { movzx dst.r, src.r }
+## `dst = src`, a byte zero-extended into a long.
+pub macro movzbl<M>(
+    src: Memory<M>,
+    dst: Register<Reg32>
+) { movzx dst.r, src.at, byte }
+
+## `dst = src`, a byte zero-extended into a quadword.
+pub macro movzbq(src: Register<Reg8>, dst: Register<Reg>) { movzx dst.r, src.r }
+## `dst = src`, a byte zero-extended into a quadword.
+pub macro movzbq<M>(
+    src: Memory<M>,
+    dst: Register<Reg>
+) { movzx dst.r, src.at, byte }
+
+## `dst = src`, a word zero-extended into a long.
+pub macro movzwl(
+    src: Register<Reg16>,
+    dst: Register<Reg32>
+) { movzx dst.r, src.r }
+## `dst = src`, a word zero-extended into a long.
+pub macro movzwl<M>(
+    src: Memory<M>,
+    dst: Register<Reg32>
+) { movzx dst.r, src.at, word }
+
+## `dst = src`, a word zero-extended into a quadword.
+pub macro movzwq(
+    src: Register<Reg16>,
+    dst: Register<Reg>
+) { movzx dst.r, src.r }
+## `dst = src`, a word zero-extended into a quadword.
+pub macro movzwq<M>(
+    src: Memory<M>,
+    dst: Register<Reg>
+) { movzx dst.r, src.at, word }
+
+## `dst = src`, a byte sign-extended into a word.
+pub macro movsbw(
+    src: Register<Reg8>,
+    dst: Register<Reg16>
+) { movsx dst.r, src.r }
+## `dst = src`, a byte sign-extended into a word.
+pub macro movsbw<M>(
+    src: Memory<M>,
+    dst: Register<Reg16>
+) { movsx dst.r, src.at, byte }
+
+## `dst = src`, a byte sign-extended into a long.
+pub macro movsbl(
+    src: Register<Reg8>,
+    dst: Register<Reg32>
+) { movsx dst.r, src.r }
+## `dst = src`, a byte sign-extended into a long.
+pub macro movsbl<M>(
+    src: Memory<M>,
+    dst: Register<Reg32>
+) { movsx dst.r, src.at, byte }
+
+## `dst = src`, a byte sign-extended into a quadword.
+pub macro movsbq(src: Register<Reg8>, dst: Register<Reg>) { movsx dst.r, src.r }
+## `dst = src`, a byte sign-extended into a quadword.
+pub macro movsbq<M>(
+    src: Memory<M>,
+    dst: Register<Reg>
+) { movsx dst.r, src.at, byte }
+
+## `dst = src`, a word sign-extended into a long.
+pub macro movswl(
+    src: Register<Reg16>,
+    dst: Register<Reg32>
+) { movsx dst.r, src.r }
+## `dst = src`, a word sign-extended into a long.
+pub macro movswl<M>(
+    src: Memory<M>,
+    dst: Register<Reg32>
+) { movsx dst.r, src.at, word }
+
+## `dst = src`, a word sign-extended into a quadword.
+pub macro movswq(
+    src: Register<Reg16>,
+    dst: Register<Reg>
+) { movsx dst.r, src.r }
+## `dst = src`, a word sign-extended into a quadword.
+pub macro movswq<M>(
+    src: Memory<M>,
+    dst: Register<Reg>
+) { movsx dst.r, src.at, word }
+
+## `dst = src`, a long sign-extended into a quadword.
+pub macro movslq(
+    src: Register<Reg32>,
+    dst: Register<Reg>
+) { movsxd dst.r, src.r }
+## `dst = src`, a long sign-extended into a quadword.
+pub macro movslq<M>(src: Memory<M>, dst: Register<Reg>) { movsxd dst.r, src.at }
 
 # =================
 # lea
 # =================
 
-## Loads the address `[base]` into `rd`, without reading memory.
-pub macro lea_base(rd: Reg, base: Reg)
-    | syntax { lea (%$base$), %$rd$ }
-{
-    lea rd, Mem(base, 0), 1
-}
-
-## Loads the address `[base + disp]` into `rd`, without reading memory.
-pub macro lea_base_disp(rd: Reg, disp: int, base: Reg)
-    | syntax { lea $disp$(%$base$), %$rd$ }
-{
-    lea rd, Mem(base, disp), 1
-}
-
-## Loads the address `[base + index * scale + disp]` into `rd`, without reading
-## memory.
-pub macro lea_indexed(rd: Reg, disp: int, base: Reg, index: Reg, scale: int)
-    | syntax { lea $disp$(%$base$,%$index$,$scale$), %$rd$ }
-{
-    lea rd, MemIndexed(base, index, scale, disp), 1
-}
-
-## Loads the address `[rip + disp]`, `disp` bytes past the end of the
-## instruction, into `rd`.
-pub macro lea_rip(rd: Reg, disp: int)
-    | syntax { lea $disp$(%rip), %$rd$ }
-{
-    lea rd, MemRipRelative(disp), 1
-}
+## `dst = the address of src`, without reading memory.
+pub macro lea<M, R>(src: Memory<M>, dst: Register<R>) { lea dst.r, src.at }
+## `lea` into a quadword register.
+pub macro leaq<M>(src: Memory<M>, dst: Register<Reg>) { lea dst.r, src.at }
+## `lea` into a long register.
+pub macro leal<M>(src: Memory<M>, dst: Register<Reg32>) { lea dst.r, src.at }
 
 # =================
-# shl/shr/sar
+# push, pop
 # =================
 
-syntax shl(a, b, c) = { shl $a$, $b$, $c$ }
-## `rd = rd << imm`.
-pub macro shl(imm: int, rd: Reg)
-    | syntax { shl \$$imm$, %$rd$ } { shl rd, imm, 1 }
-## `rd = rd << cl`.
-pub macro shl_cl(rd: Reg)
-    | syntax { shl %cl, %$rd$ } { shl_cl rd, 1 }
+## Pushes `src`.
+pub macro push(src: Register<Reg>) { push src.r }
+## Pushes `src`.
+pub macro push(src: Register<Reg16>) { push src.r }
+## Pushes `src`, sign-extended to 64 bits.
+pub macro push(src: Imm) { push src.value }
+## Pushes the quadword at `src`.
+pub macro push(src: Memory<MemOperand>) { push src.at }
+## Pushes `src`.
+pub macro pushq(src: Register<Reg>) { push src.r }
+## Pushes `src`, sign-extended to 64 bits.
+pub macro pushq(src: Imm) { push src.value }
+## Pushes the quadword at `src`.
+pub macro pushq(src: Memory<MemOperand>) { push src.at }
 
-syntax shr(a, b, c) = { shr $a$, $b$, $c$ }
-## `rd = rd >> imm`, shifting in zeros.
-pub macro shr_imm(imm: int, rd: Reg)
-    | syntax { shr \$$imm$, %$rd$ } { shr rd, imm, 1 }
-## `rd = rd >> cl`, shifting in zeros.
-pub macro shr_cl(rd: Reg)
-    | syntax { shr %cl, %$rd$ } { shr_cl rd, 1 }
-
-syntax sar(a, b, c) = { sar $a$, $b$, $c$ }
-## `rd = rd >> imm`, shifting in copies of the sign bit.
-pub macro sar(imm: int, rd: Reg)
-    | syntax { sar \$$imm$, %$rd$ } { sar rd, imm, 1 }
-## `rd = rd >> cl`, shifting in copies of the sign bit.
-pub macro sar_cl(rd: Reg)
-    | syntax { sar %cl, %$rd$ } { sar_cl rd, 1 }
+## Pops into `dst`.
+pub macro pop(dst: Register<Reg>) { pop dst.r }
+## Pops into `dst`.
+pub macro pop(dst: Register<Reg16>) { pop dst.r }
+## Pops a quadword into `dst`.
+pub macro pop(dst: Memory<MemOperand>) { pop dst.at }
+## Pops into `dst`.
+pub macro popq(dst: Register<Reg>) { pop dst.r }
+## Pops a quadword into `dst`.
+pub macro popq(dst: Memory<MemOperand>) { pop dst.at }
 
 # =================
-# push/pop, control flow, ret
+# indirect jmp and call
+# =================
+# A direct `jmp label` or `call label` is `std.x86_64.impl`'s own.
+
+## Jumps to the address in a register: `jmp *%rax`.
+pub macro jmp(target: Indirect<Register<Reg>>) { jmp target.through.r }
+## Jumps to the address stored in memory: `jmp *8(%rsp)`.
+pub macro jmp(target: Indirect<Memory<MemOperand>>) { jmp target.through.at }
+## Calls the address in a register: `call *%rax`.
+pub macro call(target: Indirect<Register<Reg>>) { call target.through.r }
+## Calls the address stored in memory: `call *8(%rsp)`.
+pub macro call(target: Indirect<Memory<MemOperand>>) { call target.through.at }
+
+# =================
+# string instructions and their prefixes
 # =================
 
-syntax push(rd) = { push %$rd$ }
-syntax pop(rd) = { pop %$rd$ }
+## `stosd`, under its AT&T name.
+pub macro stosl() { stosd }
+## `lodsd`, under its AT&T name.
+pub macro lodsl() { lodsd }
+## `movsd` (the string move), under its AT&T name.
+pub macro movsl() { movsd }
+## `cmpsd` (the string compare), under its AT&T name.
+pub macro cmpsl() { cmpsd }
+## `scasd`, under its AT&T name.
+pub macro scasl() { scasd }
 
-syntax jmp(target) = { jmp $target$ }
-syntax call(target) = { call $target$ }
-syntax ret() = { ret }
-syntax syscall() = { syscall }
+syntax rep() = { rep }
+## Repeats `instruction` `rcx` times: `rep stosb`.
+pub macro rep(instruction: macro())
+    | syntax { rep $instruction$ }
+{
+    rep
+    instruction
+}
 
-syntax je(target) = { je $target$ }
-syntax jne(target) = { jne $target$ }
-syntax jb(target) = { jb $target$ }
-syntax jae(target) = { jae $target$ }
-syntax ja(target) = { ja $target$ }
-syntax jbe(target) = { jbe $target$ }
-syntax jl(target) = { jl $target$ }
-syntax jge(target) = { jge $target$ }
-syntax jle(target) = { jle $target$ }
-syntax jg(target) = { jg $target$ }
-syntax js(target) = { js $target$ }
-syntax jns(target) = { jns $target$ }
-syntax jo(target) = { jo $target$ }
-syntax jno(target) = { jno $target$ }
-syntax jp(target) = { jp $target$ }
-syntax jnp(target) = { jnp $target$ }
-syntax jz(target) = { jz $target$ }
-syntax jnz(target) = { jnz $target$ }
-syntax jc(target) = { jc $target$ }
-syntax jnae(target) = { jnae $target$ }
-syntax jnc(target) = { jnc $target$ }
-syntax jnb(target) = { jnb $target$ }
-syntax jnbe(target) = { jnbe $target$ }
-syntax jna(target) = { jna $target$ }
-syntax jnge(target) = { jnge $target$ }
-syntax jnl(target) = { jnl $target$ }
-syntax jng(target) = { jng $target$ }
-syntax jnle(target) = { jnle $target$ }
-syntax jpe(target) = { jpe $target$ }
-syntax jpo(target) = { jpo $target$ }
+syntax repe() = { repe }
+## Repeats `instruction` while equal, up to `rcx` times: `repe cmpsb`.
+pub macro repe(instruction: macro())
+    | syntax { repe $instruction$ }
+{
+    repe
+    instruction
+}
+
+syntax repz() = { repz }
+## `repe`, under another name.
+pub macro repz(instruction: macro())
+    | syntax { repz $instruction$ }
+{
+    repz
+    instruction
+}
+
+syntax repne() = { repne }
+## Repeats `instruction` while not equal, up to `rcx` times: `repne scasb`.
+pub macro repne(instruction: macro())
+    | syntax { repne $instruction$ }
+{
+    repne
+    instruction
+}
+
+syntax repnz() = { repnz }
+## `repne`, under another name.
+pub macro repnz(instruction: macro())
+    | syntax { repnz $instruction$ }
+{
+    repnz
+    instruction
+}

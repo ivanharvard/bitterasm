@@ -209,6 +209,84 @@ impl Parser {
         }
     }
 
+    // Postfix operand position (see
+    // `facets::syntax::is_postfix_operand_pattern`): `left` has just been
+    // parsed and the current token opens one of these patterns' literals,
+    // like the `(` of `16(%rsp)`. Tries each such pattern with `left` as its
+    // first capture, the same way `parse_operand_via_syntax` does, and on a
+    // match returns the call `name(operands...)` with the position just past
+    // it. `None`, with the position untouched, when none match.
+    pub(super) fn parse_postfix_operand_via_syntax(&mut self, left: &Expr) -> Result<Option<Expr>, ParseError> {
+        let current = self.current().kind.clone();
+        let candidates: Vec<(String, SyntaxPattern)> = self
+            .unanchored_syntaxes
+            .iter()
+            .filter(|(_, pattern)| {
+                crate::facets::syntax::is_postfix_operand_pattern(pattern)
+                    && matches!(
+                        pattern.segments.get(1),
+                        Some(PatternSegment::Literal(tokens)) if tokens.first() == Some(&current)
+                    )
+            })
+            .cloned()
+            .collect();
+
+        if candidates.is_empty() {
+            return Ok(None);
+        }
+
+        let start_pos = self.pos;
+        let mut matches: Vec<(String, Vec<Expr>, usize, usize)> = Vec::new();
+
+        for (name, pattern) in &candidates {
+            self.pos = start_pos;
+            let Some(PatternSegment::Capture(first)) = pattern.segments.first() else { continue };
+            let captured = HashMap::from([(first.clone(), left.clone())]);
+            if let Ok(operands) = self.match_syntax_segments(name, pattern, 1, captured) {
+                let specificity = literal_token_count(pattern);
+                if !matches.iter().any(|(known, args, _, _)| known == name && args == &operands) {
+                    matches.push((name.clone(), operands, self.pos, specificity));
+                }
+            }
+        }
+
+        if let Some(max_specificity) = matches.iter().map(|(_, _, _, specificity)| *specificity).max() {
+            matches.retain(|(_, _, _, specificity)| *specificity == max_specificity);
+        }
+
+        match matches.len() {
+            0 => {
+                self.pos = start_pos;
+                Ok(None)
+            }
+            1 => {
+                let (name, operands, end_pos, _) = matches.pop().unwrap();
+                self.pos = end_pos;
+                let span = Span::new(left.span().start, self.previous().span.end);
+                let arguments = operands
+                    .into_iter()
+                    .map(|value| CallArgument { name: None, span: value.span(), value })
+                    .collect();
+                Ok(Some(Expr::Call {
+                    callee: Box::new(Expr::Identifier { name, span: left.span() }),
+                    generic_args: Vec::new(),
+                    arguments,
+                    span,
+                }))
+            }
+            _ => {
+                let mut names: Vec<&str> = matches.iter().map(|(name, _, _, _)| name.as_str()).collect();
+                names.sort_unstable();
+                names.dedup();
+
+                Err(ParseError::new(
+                    format!("ambiguous syntax for `{}`: multiple patterns match this operand", names.join("`/`")),
+                    self.tokens[start_pos].span,
+                ))
+            }
+        }
+    }
+
     // Matches `pattern`'s segments from the current position, returning the
     // captured expressions reordered into the macro's declared parameter
     // order. Leaves the position just past the last segment; what may
@@ -219,9 +297,19 @@ impl Parser {
         name: &str,
         pattern: &SyntaxPattern,
     ) -> Result<Vec<Expr>, ParseError> {
-        let mut captured: HashMap<String, Expr> = HashMap::new();
+        self.match_syntax_segments(name, pattern, 0, HashMap::new())
+    }
 
-        for (index, segment) in pattern.segments.iter().enumerate() {
+    // `match_syntax_pattern` from segment `first` on, with `captured`
+    // holding whatever the segments before it captured.
+    fn match_syntax_segments(
+        &mut self,
+        name: &str,
+        pattern: &SyntaxPattern,
+        first: usize,
+        mut captured: HashMap<String, Expr>,
+    ) -> Result<Vec<Expr>, ParseError> {
+        for (index, segment) in pattern.segments.iter().enumerate().skip(first) {
             match segment {
                 PatternSegment::Literal(tokens) => {
                     for expected in tokens {

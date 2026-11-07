@@ -1440,6 +1440,39 @@ fn operand_syntax_that_does_not_match_falls_back_to_ordinary_parsing() {
 }
 
 #[test]
+fn postfix_operand_syntax_takes_the_whole_expression_before_it() {
+    let source = "macro mem(disp: int, base: int) -> int | syntax { $disp$(%$base$) } {\n    @return disp\n}\n\n\
+                  mov -4 + 1(%rbp), rax\n";
+
+    let program = parse(lex(source).unwrap()).unwrap();
+    let Statement::Invocation(invocation) = &program.statements[1] else {
+        panic!("expected invocation");
+    };
+    let Expr::Call { callee, arguments, .. } = &invocation.operands[0] else {
+        panic!("expected `-4 + 1(%rbp)` to parse as a call, got {:?}", invocation.operands[0]);
+    };
+    assert!(matches!(callee.as_ref(), Expr::Identifier { name, .. } if name == "mem"));
+    // The displacement is all of `-4 + 1`, not just `1`.
+    assert!(matches!(&arguments[0].value, Expr::Binary { .. }), "{:?}", arguments[0].value);
+    assert!(matches!(&arguments[1].value, Expr::Identifier { name, .. } if name == "rbp"));
+}
+
+#[test]
+fn postfix_operand_syntax_that_does_not_match_leaves_an_ordinary_call() {
+    let source = "macro mem(disp: int, base: int) -> int | syntax { $disp$(%$base$) } {\n    @return disp\n}\n\n\
+                  show double(3)\n";
+
+    let program = parse(lex(source).unwrap()).unwrap();
+    let Statement::Invocation(invocation) = &program.statements[1] else {
+        panic!("expected invocation");
+    };
+    let Expr::Call { callee, .. } = &invocation.operands[0] else {
+        panic!("expected a call, got {:?}", invocation.operands[0]);
+    };
+    assert!(matches!(callee.as_ref(), Expr::Identifier { name, .. } if name == "double"));
+}
+
+#[test]
 fn unanchored_syntax_matches_without_the_macros_own_name() {
     let source = "macro add(rd: int, rs1: int, rs2: int) | syntax { $rd$ = $rs1$ + $rs2$ } {\n}\n\n\
                   x1 = x2 + x3\n";

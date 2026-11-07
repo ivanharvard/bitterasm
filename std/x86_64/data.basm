@@ -1,0 +1,95 @@
+#! Data for x86-64 programs: NASM's `db`, `dw`, `dd` and `dq`, shared by
+#! `std.x86_64.nasm` and `std.x86_64.att`, since data is spelled the same
+#! whichever syntax the instructions use.
+#!
+#! ```
+#! from std.x86_64.data import *
+#!
+#! db "Hi", 10
+#! dw 0x1234
+#! ```
+#!
+#! ```bytes
+#! 48 69 0a
+#! 34 12
+#! ```
+
+from .impl import Bytes, byte_of
+from std.strings.utf8 import string_from_struct
+
+## `value` as `width` little-endian bytes, truncated the way NASM does.
+pub macro data_int(value: int, width: int) -> Bytes<...> {
+    @return Bytes<width> {
+        @for i in 0..width {
+            __el`i`: byte_of(value, i),
+        }
+    }
+}
+
+## A string literal's UTF-8 bytes, with no terminator.
+# A string's `String<N>` packs its first byte most significant, hence the
+# reversed index.
+pub macro data_string<S>(source: S) -> Bytes<...> {
+    const packed = string_from_struct(source)
+    const n = packed.len
+    @return Bytes<n> {
+        @for i in 0..n {
+            __el`i`: byte_of(packed.value, n - 1 - i),
+        }
+    }
+}
+
+## Bytes. Each operand is an integer, stored in one byte, or a string
+## literal, stored as its UTF-8 bytes with no terminator (add `, 0`
+## yourself). Up to four operands; `db "Hello", 10` is the common case.
+pub macro db(a: int) { @emit data_int(a, 1) }
+pub macro db<S>(a: S) { @emit data_string(a) }
+pub macro db<S>(a: S, b: int) {
+    @emit data_string(a)
+    @emit data_int(b, 1)
+}
+
+pub macro db<S>(a: S, b: int, c: int) {
+    @emit data_string(a)
+    @emit data_int(b, 1)
+    @emit data_int(c, 1)
+}
+
+pub macro db(a: int, b: int) {
+    @emit data_int(a, 1)
+    @emit data_int(b, 1)
+}
+
+pub macro db(a: int, b: int, c: int) {
+    @emit data_int(a, 1)
+    @emit data_int(b, 1)
+    @emit data_int(c, 1)
+}
+
+pub macro db(a: int, b: int, c: int, d: int) {
+    @emit data_int(a, 1)
+    @emit data_int(b, 1)
+    @emit data_int(c, 1)
+    @emit data_int(d, 1)
+}
+
+## 16-bit little-endian words, one or two per line.
+pub macro dw(a: int) { @emit data_int(a, 2) }
+pub macro dw(a: int, b: int) {
+    @emit data_int(a, 2)
+    @emit data_int(b, 2)
+}
+
+## 32-bit little-endian doublewords, one or two per line.
+pub macro dd(a: int) { @emit data_int(a, 4) }
+pub macro dd(a: int, b: int) {
+    @emit data_int(a, 4)
+    @emit data_int(b, 4)
+}
+
+## 64-bit little-endian quadwords, one or two per line.
+pub macro dq(a: int) { @emit data_int(a, 8) }
+pub macro dq(a: int, b: int) {
+    @emit data_int(a, 8)
+    @emit data_int(b, 8)
+}
