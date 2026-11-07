@@ -369,8 +369,11 @@ macro char_or_nul<S>(source: S, i: int) -> int {
 ## label after it still counts words.
 pub macro asciz<S>(source: S) {
     @for k in 0..source.len / 5 + 1 {
-        const first = place(char_or_nul(source, 5 * k), 35, 29) | place(char_or_nul(source, 5 * k + 1), 28, 22)
-        const rest = place(char_or_nul(source, 5 * k + 2), 21, 15) | place(char_or_nul(source, 5 * k + 3), 14, 8) | place(char_or_nul(source, 5 * k + 4), 7, 1)
-        @emit Word(first | rest)
+        const c0 = place(char_or_nul(source, 5 * k), 35, 29)
+        const c1 = place(char_or_nul(source, 5 * k + 1), 28, 22)
+        const c2 = place(char_or_nul(source, 5 * k + 2), 21, 15)
+        const c3 = place(char_or_nul(source, 5 * k + 3), 14, 8)
+        const c4 = place(char_or_nul(source, 5 * k + 4), 7, 1)
+        @emit Word(c0 | c1 | c2 | c3 | c4)
     }
 }

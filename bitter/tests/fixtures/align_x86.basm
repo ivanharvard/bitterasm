@@ -12,9 +12,9 @@ macro offset_of(start_at: int, end_at: int) {
 }
 
 start:
-offset_of start, target
-mov eax, 1
-xor edi, edi
-align 16
+    offset_of start, target
+    mov eax, 1
+    xor edi, edi
+    align 16
 target:
-ret
+    ret

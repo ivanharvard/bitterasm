@@ -160,4 +160,3 @@ pub macro appended<T, const N: int>(
         __el`N`: value,
     }
 }
-

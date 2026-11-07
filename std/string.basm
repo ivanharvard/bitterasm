@@ -157,7 +157,7 @@ pub macro string_from_struct<S>(source: S)
     const packed = @fold value = 0, len = 0 @for codepoint in source {
         const width = utf8_codepoint_byte_len(codepoint)
         @next value = (value << (width * BITS_PER_BYTE)) | utf8_codepoint_packed(codepoint),
-              len = len + width
+            len = len + width
     }
     @return String<packed.len> {
         value: packed.value,
@@ -199,10 +199,10 @@ macro utf8_sequence_at(
     @if b0 >= 0xC2 && b0 <= 0xDF {
         @assert index + 1 < len, "truncated two-byte UTF-8 sequence"
         @assert is_continuation(byte_at(
-                value,
-                len,
-                index + 1,
-                endian
+            value,
+            len,
+            index + 1,
+            endian
         )), "invalid UTF-8 continuation byte"
         @return 2
     }

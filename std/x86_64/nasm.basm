@@ -55,9 +55,10 @@ from std.string import string_from_struct
 ## 48 69 0a
 ## ```
 pub macro rel(target: int) -> RipLabel
-    | syntax { [rel $target$] } {
-        @return RipLabel(target = target)
-    }
+    | syntax { [rel $target$] }
+{
+    @return RipLabel(target = target)
+}
 
 # =================
 # data: db/dw/dd/dq

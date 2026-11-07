@@ -267,12 +267,12 @@ macro r_type(
     rs2: Reg
 ) -> LittleEndian<RType, 32> {
     @return LittleEndian<RType, 32> { value: RType(
-            funct7 = Funct7(funct7),
-            rs2 = rs2,
-            rs1 = rs1,
-            funct3 = Funct3(funct3),
-            rd = rd,
-            opcode = Opcode(opcode)
+        funct7 = Funct7(funct7),
+        rs2 = rs2,
+        rs1 = rs1,
+        funct3 = Funct3(funct3),
+        rd = rd,
+        opcode = Opcode(opcode)
     ) }
 }
 
@@ -284,11 +284,11 @@ macro i_type(
     imm: int
 ) -> LittleEndian<IType, 32> {
     @return LittleEndian<IType, 32> { value: IType(
-            imm = truncate(imm, 12),
-            rs1 = rs1,
-            funct3 = Funct3(funct3),
-            rd = rd,
-            opcode = Opcode(opcode)
+        imm = truncate(imm, 12),
+        rs1 = rs1,
+        funct3 = Funct3(funct3),
+        rd = rd,
+        opcode = Opcode(opcode)
     ) }
 }
 
@@ -300,12 +300,12 @@ macro s_type(
     offset: int
 ) -> LittleEndian<SType, 32> {
     @return LittleEndian<SType, 32> { value: SType(
-            imm_hi = field(offset, 11, 5),
-            rs2 = rs2,
-            rs1 = rs1,
-            funct3 = Funct3(funct3),
-            imm_lo = field(offset, 4, 0),
-            opcode = Opcode(opcode)
+        imm_hi = field(offset, 11, 5),
+        rs2 = rs2,
+        rs1 = rs1,
+        funct3 = Funct3(funct3),
+        imm_lo = field(offset, 4, 0),
+        opcode = Opcode(opcode)
     ) }
 }
 
@@ -320,14 +320,14 @@ macro b_type(
 ) -> LittleEndian<BType, 32> {
     const offset = span(here(), target)
     @return LittleEndian<BType, 32> { value: BType(
-            imm12 = field(offset, 12, 12),
-            imm10_5 = field(offset, 10, 5),
-            rs2 = rs2,
-            rs1 = rs1,
-            funct3 = Funct3(funct3),
-            imm4_1 = field(offset, 4, 1),
-            imm11 = field(offset, 11, 11),
-            opcode = Opcode(opcode)
+        imm12 = field(offset, 12, 12),
+        imm10_5 = field(offset, 10, 5),
+        rs2 = rs2,
+        rs1 = rs1,
+        funct3 = Funct3(funct3),
+        imm4_1 = field(offset, 4, 1),
+        imm11 = field(offset, 11, 11),
+        opcode = Opcode(opcode)
     ) }
 }
 
@@ -337,9 +337,9 @@ macro u_type(
     imm: int
 ) -> LittleEndian<UType, 32> {
     @return LittleEndian<UType, 32> { value: UType(
-            imm = truncate(imm, 20),
-            rd = rd,
-            opcode = Opcode(opcode)
+        imm = truncate(imm, 20),
+        rd = rd,
+        opcode = Opcode(opcode)
     ) }
 }
 
@@ -350,12 +350,12 @@ macro j_type(
 ) -> LittleEndian<JType, 32> {
     const offset = span(here(), target)
     @return LittleEndian<JType, 32> { value: JType(
-            imm20 = field(offset, 20, 20),
-            imm10_1 = field(offset, 10, 1),
-            imm11 = field(offset, 11, 11),
-            imm19_12 = field(offset, 19, 12),
-            rd = rd,
-            opcode = Opcode(opcode)
+        imm20 = field(offset, 20, 20),
+        imm10_1 = field(offset, 10, 1),
+        imm11 = field(offset, 11, 11),
+        imm19_12 = field(offset, 19, 12),
+        rd = rd,
+        opcode = Opcode(opcode)
     ) }
 }
 
@@ -861,16 +861,16 @@ pub macro la(rd: Reg, symbol: int) {
     # Both halves measure from the `auipc`, and the `addi` sits 4 bytes
     # after it. The upper part rounds up for the same reason as `li`'s.
     @emit LittleEndian<UTypeLate, 32> { value: UTypeLate(
-            imm = field(add(span(here(), symbol), 0x800), 31, 12),
-            rd = rd,
-            opcode = Opcode(AUIPC)
+        imm = field(add(span(here(), symbol), 0x800), 31, 12),
+        rd = rd,
+        opcode = Opcode(AUIPC)
     ) }
     @emit LittleEndian<ITypeLate, 32> { value: ITypeLate(
-            imm = field(add(span(here(), symbol), 4), 11, 0),
-            rs1 = rd,
-            funct3 = Funct3(0b000),
-            rd = rd,
-            opcode = Opcode(OP_IMM)
+        imm = field(add(span(here(), symbol), 4), 11, 0),
+        rs1 = rd,
+        funct3 = Funct3(0b000),
+        rd = rd,
+        opcode = Opcode(OP_IMM)
     ) }
 }
 

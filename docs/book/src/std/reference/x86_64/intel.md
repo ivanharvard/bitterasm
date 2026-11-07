@@ -2070,7 +2070,7 @@ Fails to compile unless `r` is a register number, 0 to 15.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `[ base+index*scale ]` | `base: Reg`, `index: Reg`, `scale: int` | returns `MemOperand` |  |
+| `[base+index*scale]` | `base: Reg`, `index: Reg`, `scale: int` | returns `MemOperand` |  |
 
 ### `mem_indexed`
 
@@ -2078,7 +2078,7 @@ Fails to compile unless `r` is a register number, 0 to 15.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `[ base+index*scale+disp ]` | `base: Reg`, `index: Reg`, `scale: int`, `disp: int` | returns `MemOperand` |  |
+| `[base+index*scale+disp]` | `base: Reg`, `index: Reg`, `scale: int`, `disp: int` | returns `MemOperand` |  |
 
 ### `mem_indexed_minus`
 
@@ -2086,7 +2086,7 @@ Fails to compile unless `r` is a register number, 0 to 15.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `[ base+index*scale-disp ]` | `base: Reg`, `index: Reg`, `scale: int`, `disp: int` | returns `MemOperand` |  |
+| `[base+index*scale-disp]` | `base: Reg`, `index: Reg`, `scale: int`, `disp: int` | returns `MemOperand` |  |
 
 ### `mem_rip`
 

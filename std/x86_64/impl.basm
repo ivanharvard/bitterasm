@@ -457,8 +457,10 @@ pub macro add(
     rd: Reg,
     rs: Reg,
     w: int
-) | emits Bytes<...> { 
-    @emit reg_reg_instr(0x01, rd, rs, w) 
+)
+    | emits Bytes<...>
+{
+    @emit reg_reg_instr(0x01, rd, rs, w)
 }
 ## `rd = rd | rs`.
 pub macro or(
@@ -649,10 +651,10 @@ pub macro MemIndexed(
     # from `rsp` (0100), so only `rsp` itself can't be an index.
     @assert index.value != 4, "rsp cannot be a SIB index register"
     @return MemOperand.Indexed(MemSib(
-            base = base,
-            index = index,
-            scale = scale,
-            disp = disp
+        base = base,
+        index = index,
+        scale = scale,
+        disp = disp
     ))
 }
 
@@ -967,19 +969,19 @@ macro modrm_instr(
     const need_rex = w || r == 1 || addr.rex_x == 1 || addr.rex_b == 1 || need == 1
     @assert !(need_rex && forbid == 1), "ah, ch, dh and bh can't be used in an instruction that needs a REX prefix"
     @return encoding_bytes(Encoding(
-            prefix = size == 16,
-            need_rex = need_rex,
-            rex = rex_byte(w, r, addr.rex_x, addr.rex_b),
-            escape = opcode > 0xFF,
-            opcode = Byte(opcode & 0xFF),
-            has_modrm = 1,
-            modrm = modrm_byte(addr.mode, reg & 0b111, addr.rm),
-            has_sib = addr.has_sib,
-            sib = addr.sib,
-            disp = addr.disp,
-            disp_len = addr.disp_len,
-            imm = imm,
-            imm_len = imm_len
+        prefix = size == 16,
+        need_rex = need_rex,
+        rex = rex_byte(w, r, addr.rex_x, addr.rex_b),
+        escape = opcode > 0xFF,
+        opcode = Byte(opcode & 0xFF),
+        has_modrm = 1,
+        modrm = modrm_byte(addr.mode, reg & 0b111, addr.rm),
+        has_sib = addr.has_sib,
+        sib = addr.sib,
+        disp = addr.disp,
+        disp_len = addr.disp_len,
+        imm = imm,
+        imm_len = imm_len
     ))
 }
 
@@ -1083,19 +1085,19 @@ macro reg_in_opcode_instr(
     const need_rex = w || reg_ext(r.num) == 1 || r.rex == 1
     @assert !(need_rex && r.rex == -1), "ah, ch, dh and bh can't be used in an instruction that needs a REX prefix"
     @return encoding_bytes(Encoding(
-            prefix = size == 16,
-            need_rex = need_rex,
-            rex = rex_byte(w, 0, 0, reg_ext(r.num)),
-            escape = opcode > 0xFF,
-            opcode = Byte((opcode & 0xFF) + reg_field(r.num)),
-            has_modrm = 0,
-            modrm = Byte(0),
-            has_sib = 0,
-            sib = Byte(0),
-            disp = 0,
-            disp_len = 0,
-            imm = imm,
-            imm_len = imm_len
+        prefix = size == 16,
+        need_rex = need_rex,
+        rex = rex_byte(w, 0, 0, reg_ext(r.num)),
+        escape = opcode > 0xFF,
+        opcode = Byte((opcode & 0xFF) + reg_field(r.num)),
+        has_modrm = 0,
+        modrm = Byte(0),
+        has_sib = 0,
+        sib = Byte(0),
+        disp = 0,
+        disp_len = 0,
+        imm = imm,
+        imm_len = imm_len
     ))
 }
 
@@ -1359,8 +1361,8 @@ pub macro jmp(target: int)
     @emit Rel32Instr(
         opcode = Byte(0xE9),
         rel32 = LittleEndian<Positioned<32>, 32> { value: Positioned<32> { value: rel32_offset(
-                    target,
-                    5
+            target,
+            5
         ) } }
     )
 }
@@ -1374,8 +1376,8 @@ pub macro call(target: int)
     @emit Rel32Instr(
         opcode = Byte(0xE8),
         rel32 = LittleEndian<Positioned<32>, 32> { value: Positioned<32> { value: rel32_offset(
-                    target,
-                    5
+            target,
+            5
         ) } }
     )
 }
@@ -1393,8 +1395,8 @@ macro jcc_instr(
         opcode1 = Byte(0x0F),
         opcode2 = Byte(0x80 | condition),
         rel32 = LittleEndian<Positioned<32>, 32> { value: Positioned<32> { value: rel32_offset(
-                    target,
-                    6
+            target,
+            6
         ) } }
     )
 }
@@ -1632,8 +1634,8 @@ pub macro rip_label_instr(
             opcode = Byte(opcode),
             modrm = modrm,
             disp32 = LittleEndian<Positioned<32>, 32> { value: Positioned<32> { value: rel32_offset(
-                        addr.target,
-                        7
+                addr.target,
+                7
             ) } }
         )
     } @else {
@@ -1641,8 +1643,8 @@ pub macro rip_label_instr(
             opcode = Byte(opcode),
             modrm = modrm,
             disp32 = LittleEndian<Positioned<32>, 32> { value: Positioned<32> { value: rel32_offset(
-                        addr.target,
-                        6
+                addr.target,
+                6
             ) } }
         )
     }
@@ -1926,19 +1928,19 @@ macro imm_instr(
     imm_len: int
 ) -> Bytes<...> {
     @return encoding_bytes(Encoding(
-            prefix = prefix,
-            need_rex = 0,
-            rex = Byte(0),
-            escape = opcode > 0xFF,
-            opcode = Byte(opcode & 0xFF),
-            has_modrm = 0,
-            modrm = Byte(0),
-            has_sib = 0,
-            sib = Byte(0),
-            disp = 0,
-            disp_len = 0,
-            imm = imm,
-            imm_len = imm_len
+        prefix = prefix,
+        need_rex = 0,
+        rex = Byte(0),
+        escape = opcode > 0xFF,
+        opcode = Byte(opcode & 0xFF),
+        has_modrm = 0,
+        modrm = Byte(0),
+        has_sib = 0,
+        sib = Byte(0),
+        disp = 0,
+        disp_len = 0,
+        imm = imm,
+        imm_len = imm_len
     ))
 }
 
@@ -2199,16 +2201,19 @@ pub macro mov<R>(sr: SReg, rs: R)
 }
 ## Stores `sr` at `dst`, 16 bits wide.
 pub macro mov(dst: MemOperand, sr: SReg)
-    | emits Bytes<...> { @emit modrm_instr(
-            32,
-            0x8C,
-            sr.num,
-            0,
-            0,
-            addr_mode(dst),
-            0,
-            0
-    ) }
+    | emits Bytes<...>
+{
+    @emit modrm_instr(
+        32,
+        0x8C,
+        sr.num,
+        0,
+        0,
+        addr_mode(dst),
+        0,
+        0
+    )
+}
 ## Stores `sr` at `dst`; `size` must be `word`.
 pub macro mov(dst: MemOperand, sr: SReg, size: OperandSize)
     | emits Bytes<...>
@@ -2218,16 +2223,19 @@ pub macro mov(dst: MemOperand, sr: SReg, size: OperandSize)
 }
 ## Loads `sr` from the 16 bits at `src`.
 pub macro mov(sr: SReg, src: MemOperand)
-    | emits Bytes<...> { @emit modrm_instr(
-            32,
-            0x8E,
-            sr.num,
-            0,
-            0,
-            addr_mode(src),
-            0,
-            0
-    ) }
+    | emits Bytes<...>
+{
+    @emit modrm_instr(
+        32,
+        0x8E,
+        sr.num,
+        0,
+        0,
+        addr_mode(src),
+        0,
+        0
+    )
+}
 ## Loads `sr` from `src`; `size` must be `word`.
 pub macro mov(sr: SReg, src: MemOperand, size: OperandSize)
     | emits Bytes<...>

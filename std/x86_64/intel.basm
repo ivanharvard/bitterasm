@@ -76,9 +76,10 @@ pub macro mem_minus(base: Reg, disp: int) -> MemOperand
 
 ## `[base+index*scale]`.
 pub macro mem_scaled(base: Reg, index: Reg, scale: int) -> MemOperand
-    | syntax { [
-            $base$+$index$*$scale$
-    ] } { @return MemIndexed(base, index, scale, 0) }
+    | syntax { [$base$+$index$*$scale$] }
+{
+    @return MemIndexed(base, index, scale, 0)
+}
 
 ## `[base+index*scale+disp]`.
 pub macro mem_indexed(
@@ -87,9 +88,10 @@ pub macro mem_indexed(
     scale: int,
     disp: int
 ) -> MemOperand
-    | syntax { [
-            $base$+$index$*$scale$+$disp$
-    ] } { @return MemIndexed(base, index, scale, disp) }
+    | syntax { [$base$+$index$*$scale$+$disp$] }
+{
+    @return MemIndexed(base, index, scale, disp)
+}
 
 ## `[base+index*scale-disp]`.
 pub macro mem_indexed_minus(
@@ -98,9 +100,10 @@ pub macro mem_indexed_minus(
     scale: int,
     disp: int
 ) -> MemOperand
-    | syntax { [
-            $base$+$index$*$scale$-$disp$
-    ] } { @return MemIndexed(base, index, scale, -disp) }
+    | syntax { [$base$+$index$*$scale$-$disp$] }
+{
+    @return MemIndexed(base, index, scale, -disp)
+}
 
 ## `[rip+disp]`: `disp` bytes past the end of the instruction.
 pub macro mem_rip(disp: int) -> MemOperand
