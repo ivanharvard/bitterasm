@@ -29,7 +29,7 @@ pub use macro_body::MacroExpansion;
 pub use symbols::*;
 pub use toplevel::{unroll_module, unroll_top_level};
 pub use types::*;
-pub use values::Value;
+pub use values::{Scope, Value};
 
 use crate::ast::{Program, Statement};
 use crate::token::Span;

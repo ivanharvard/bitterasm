@@ -1,0 +1,8 @@
+macro show(value: int) {
+    @assert value < 2, "too big"
+    @emit value
+}
+
+@for i in 0..5 {
+    show i
+}

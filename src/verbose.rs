@@ -136,7 +136,7 @@ impl Drop for VerboseReporter {
 /// syscall, cheap enough to call after every expanded invocation, unlike
 /// shelling out to `ps`. `ru_maxrss` is bytes on macOS/BSD but kibibytes on
 /// Linux; `getrusage` itself defines no portable unit.
-fn current_memory_mb() -> f64 {
+pub(crate) fn current_memory_mb() -> f64 {
     let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
     let bytes = unsafe {
         if libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) != 0 {

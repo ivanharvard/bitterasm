@@ -13,7 +13,6 @@
 //! package declared the struct and whichever exporter reads the emitted
 //! value; this evaluator only threads them through.
 
-use std::collections::HashMap;
 
 use crate::ast::{literal_name, BinaryOp, CallArgument, ConstructItem, Expr, NamePart, Statement};
 use crate::eval::{self, EvalError, Int};
@@ -26,6 +25,10 @@ use super::structs::describe_type;
 use super::symbols::{SymbolId, SymbolKind};
 use super::types::{BuiltinType, ResolvedGenericArg, ResolvedType};
 use super::ResolveError;
+
+/// Names bound while evaluating: macro parameters, loop variables, `const`s
+/// in a body, a struct's fields while its invariant runs.
+pub type Scope = crate::fxhash::FxHashMap<String, Value>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -136,7 +139,7 @@ impl<'a> AliasResolver<'a> {
         variant: &str,
         arguments: &[CallArgument],
         span: Span,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<Value, ResolveError> {
         let base = TypeExpr::Named { path: vec![enum_name.to_string()], span };
         let ty = if generic_args.is_empty() {
@@ -179,7 +182,7 @@ impl<'a> AliasResolver<'a> {
     pub fn eval_value(
         &mut self,
         expr: &Expr,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<Value, ResolveError> {
         match expr {
             Expr::Binary { left, op: BinaryOp::Equal, right, .. } => {
@@ -207,10 +210,7 @@ impl<'a> AliasResolver<'a> {
             // module doc): a Member/Call leaf inside a Binary/Unary tree
             // never reaches this match arm to be resolved as a Value.
             Expr::Integer { .. } | Expr::Unary { .. } | Expr::Binary { .. } => {
-                let rewritten = self.materialize_int_expr(expr, scope)?;
-                eval::eval(&rewritten, &HashMap::new())
-                    .map(Value::Int)
-                    .map_err(|error| into_value_error(error, scope))
+                self.eval_int_expr(expr, scope).map(Value::Int)
             }
 
             // A name not bound in the current scope (a macro's own params,
@@ -447,15 +447,21 @@ impl<'a> AliasResolver<'a> {
         }
     }
 
-    fn materialize_int_expr(
+    /// An arithmetic expression's value. Every operand is evaluated, left
+    /// to right, before its operator applies, so a nested `a && b` (as in
+    /// `(a && b) + 1`) evaluates `b` even when `a` is 0; only a top-level
+    /// `&&`/`||` short-circuits (`eval_value`).
+    fn eval_int_expr(
         &mut self,
         expr: &Expr,
-        scope: &HashMap<String, Value>,
-    ) -> Result<Expr, ResolveError> {
+        scope: &Scope,
+    ) -> Result<Int, ResolveError> {
         match expr {
-            Expr::Integer { .. } => Ok(expr.clone()),
-            Expr::Unary { op, operand, span } => {
-                let materialized = match self.materialize_int_expr(operand, scope) {
+            Expr::Integer { raw, span } => {
+                eval::parse_int_literal(raw, *span).map_err(|error| into_value_error(error, scope))
+            }
+            Expr::Unary { op, operand, .. } => {
+                let value = match self.eval_int_expr(operand, scope) {
                     // `-1 as T` parses as `-(1 as T)`, since `as` binds more
                     // tightly than any prefix operator.
                     Err(ResolveError::NonIntOperand { found, span: operand_span, .. })
@@ -477,20 +483,16 @@ impl<'a> AliasResolver<'a> {
                     }
                     other => other?,
                 };
-                Ok(Expr::Unary { op: *op, operand: Box::new(materialized), span: *span })
+                Ok(eval::apply_unary(*op, value))
             }
-            Expr::Binary { left, op, right, span } => Ok(Expr::Binary {
-                left: Box::new(self.materialize_int_expr(left, scope)?),
-                op: *op,
-                right: Box::new(self.materialize_int_expr(right, scope)?),
-                span: *span,
-            }),
-            Expr::Splice { inner, .. } => self.materialize_int_expr(inner, scope),
+            Expr::Binary { left, op, right, span } => {
+                let l = self.eval_int_expr(left, scope)?;
+                let r = self.eval_int_expr(right, scope)?;
+                eval::apply_binary(*op, l, r, *span).map_err(|error| into_value_error(error, scope))
+            }
+            Expr::Splice { inner, .. } => self.eval_int_expr(inner, scope),
             other => match self.eval_value(other, scope)? {
-                Value::Int(value) => Ok(Expr::Integer {
-                    raw: value.to_string(),
-                    span: other.span(),
-                }),
+                Value::Int(value) => Ok(value),
                 // A deferred cross-unit label (`Value::ExternLabel`) type-
                 // checks as `int` (`value_type`) but isn't a compile-time
                 // constant this evaluator's real `BigInt` arithmetic can
@@ -519,7 +521,7 @@ impl<'a> AliasResolver<'a> {
         name: &str,
         arguments: &[CallArgument],
         span: Span,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<Value, ResolveError> {
         if arguments.iter().any(|argument| argument.name.is_some()) {
             return Err(ResolveError::ExpectedValueExpression { span });
@@ -539,7 +541,7 @@ impl<'a> AliasResolver<'a> {
         bound: Option<SymbolId>,
         arguments: &[CallArgument],
         span: Span,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<super::macro_body::MacroExpansion, ResolveError> {
         if arguments.iter().any(|argument| argument.name.is_some()) {
             return Err(ResolveError::ExpectedValueExpression { span });
@@ -573,7 +575,7 @@ impl<'a> AliasResolver<'a> {
         symbol: SymbolId,
         arguments: &[CallArgument],
         span: Span,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<Value, ResolveError> {
         if arguments.iter().any(|argument| argument.name.is_some()) {
             return Err(ResolveError::ExpectedValueExpression { span });
@@ -614,7 +616,7 @@ impl<'a> AliasResolver<'a> {
         callee: &Expr,
         arguments: &[CallArgument],
         span: Span,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<Value, ResolveError> {
         let Expr::Identifier { name, span: callee_span } = callee else {
             return Err(ResolveError::UnsupportedCallExpression { span: callee.span() });
@@ -668,7 +670,7 @@ impl<'a> AliasResolver<'a> {
             });
         }
 
-        let mut by_name: HashMap<String, Value> = HashMap::new();
+        let mut by_name: Scope = Scope::default();
 
         for (index, argument) in arguments.iter().enumerate() {
             let field_name = match &argument.name {
@@ -709,7 +711,7 @@ impl<'a> AliasResolver<'a> {
         // args only — never sibling field values, so field-to-field
         // dependencies (and the evaluation-order question they'd raise)
         // never come up.
-        let default_scope: HashMap<String, Value> = declaration
+        let default_scope: Scope = declaration
             .generic_params
             .iter()
             .zip(&args)
@@ -781,7 +783,7 @@ impl<'a> AliasResolver<'a> {
         generic_args: &[TypeArgument],
         fields: &[ConstructItem],
         span: Span,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<Value, ResolveError> {
         let Expr::Identifier { name, span: callee_span } = callee else {
             return Err(ResolveError::UnsupportedCallExpression { span: callee.span() });
@@ -819,7 +821,7 @@ impl<'a> AliasResolver<'a> {
             });
         }
 
-        let mut by_name: HashMap<String, Value> = HashMap::new();
+        let mut by_name: Scope = Scope::default();
 
         for (field_name, value) in provided {
             let Some((_, _, is_pub, ..)) =
@@ -849,7 +851,7 @@ impl<'a> AliasResolver<'a> {
 
         // Same default-eval scope choice as `eval_call_value`: the struct's
         // own bound generic const args only, never sibling field values.
-        let default_scope: HashMap<String, Value> = self
+        let default_scope: Scope = self
             .find_struct_declaration_rc(symbol)?
             .generic_params
             .iter()
@@ -864,11 +866,11 @@ impl<'a> AliasResolver<'a> {
 
         let mut result_fields = Vec::with_capacity(declared.len());
 
-        for (field_name, expected, _is_pub, _is_skip, default) in declared {
-            let value = match by_name.remove(&field_name) {
+        for (field_name, expected, _is_pub, _is_skip, default) in declared.iter() {
+            let value = match by_name.remove(field_name) {
                 Some(value) => value,
                 None => {
-                    let default = default.ok_or_else(|| ResolveError::Internal {
+                    let default = default.as_ref().ok_or_else(|| ResolveError::Internal {
                         message: format!(
                             "brace construction of `{name}` passed arity/default checks but field \
                              `{field_name}` has neither a provided value nor a default",
@@ -877,22 +879,22 @@ impl<'a> AliasResolver<'a> {
                     })?;
 
                     let declaring_module = self.symbol_module(symbol);
-                    self.with_module(declaring_module, |this| this.eval_value(&default, &default_scope))?
+                    self.with_module(declaring_module, |this| this.eval_value(default, &default_scope))?
                 }
             };
 
             let actual = self.value_type(&value)?;
 
-            if actual != expected {
+            if actual != *expected {
                 return Err(ResolveError::TypeMismatch {
-                    name: field_name,
-                    expected: describe_type(&expected, self),
+                    name: field_name.clone(),
+                    expected: describe_type(expected, self),
                     actual: describe_type(&actual, self),
                     span,
                 });
             }
 
-            result_fields.push((field_name, value));
+            result_fields.push((field_name.clone(), value));
         }
 
         self.check_struct_invariants(symbol, &args, &result_fields, span)?;
@@ -916,7 +918,7 @@ impl<'a> AliasResolver<'a> {
         symbol: SymbolId,
         args: &[TypeArgument],
         span: Span,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<Vec<ResolvedGenericArg>, ResolveError> {
         let expected = self.find_struct_declaration(symbol)?.generic_params.len();
 
@@ -958,7 +960,7 @@ impl<'a> AliasResolver<'a> {
     pub(super) fn resolve_value_type_expr(
         &mut self,
         ty: &TypeExpr,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<ResolvedType, ResolveError> {
         let materialized = self.materialize_type_const_args(ty, scope)?;
         self.resolve_type_expr(&materialized)
@@ -967,7 +969,7 @@ impl<'a> AliasResolver<'a> {
     fn materialize_type_const_args(
         &mut self,
         ty: &TypeExpr,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<TypeExpr, ResolveError> {
         match ty {
             TypeExpr::Named { .. } => Ok(ty.clone()),
@@ -1014,7 +1016,7 @@ impl<'a> AliasResolver<'a> {
     fn eval_generic_const_arg(
         &mut self,
         expr: &Expr,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<Int, ResolveError> {
         match self.eval_value(expr, scope)? {
             Value::Int(value) => Ok(value),
@@ -1052,7 +1054,7 @@ impl<'a> AliasResolver<'a> {
     fn unroll_construct_items(
         &mut self,
         items: &[ConstructItem],
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<Vec<(String, Value)>, ResolveError> {
         let mut fields = Vec::new();
 
@@ -1181,7 +1183,7 @@ impl<'a> AliasResolver<'a> {
 
         match target {
             ResolvedType::Alias { symbol, binder, invariants, underlying, .. } => {
-                let mut layer_scope: HashMap<String, Value> = HashMap::new();
+                let mut layer_scope: Scope = Scope::default();
 
                 if let Some(binder) = binder {
                     layer_scope.insert(binder.clone(), value.clone());
@@ -1293,7 +1295,7 @@ impl<'a> AliasResolver<'a> {
     ) -> Result<Option<Value>, ResolveError> {
         let mut candidates = Vec::new();
 
-        let mut to_scope = HashMap::new();
+        let mut to_scope = Scope::default();
         to_scope.insert("source".to_string(), value.clone());
         if let Some(target_value) = self.type_argument_value(target)? {
             to_scope.insert("target".to_string(), target_value);
@@ -1305,7 +1307,7 @@ impl<'a> AliasResolver<'a> {
             }
         }
 
-        let mut from_scope = HashMap::new();
+        let mut from_scope = Scope::default();
         from_scope.insert("source".to_string(), value.clone());
         if let Some(target_value) = self.type_argument_value(target)? {
             from_scope.insert("target".to_string(), target_value);
@@ -1452,7 +1454,7 @@ impl<'a> AliasResolver<'a> {
     fn conversion_fits(
         &mut self,
         template: &Expr,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
         target: &ResolvedType,
         owner: Option<SymbolId>,
     ) -> Result<bool, ResolveError> {
@@ -1468,7 +1470,7 @@ impl<'a> AliasResolver<'a> {
     fn conversion_fits_here(
         &mut self,
         template: &Expr,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
         target: &ResolvedType,
     ) -> Result<bool, ResolveError> {
         let declaration = self.template_macro(template)?.clone();
@@ -1572,11 +1574,11 @@ impl<'a> AliasResolver<'a> {
             declaration.and_then(|declaration| {
                 let value = declaration.value.clone();
                 let ty = declaration.ty.clone();
-                let value = this.eval_value(&value, &HashMap::new())?;
+                let value = this.eval_value(&value, &Scope::default())?;
 
                 match ty {
                     Some(ty) => {
-                        let target = this.resolve_value_type_expr(&ty, &HashMap::new())?;
+                        let target = this.resolve_value_type_expr(&ty, &Scope::default())?;
                         this.convert_to(value, &target, declaration.span)
                     }
                     None => Ok(value),
@@ -1600,7 +1602,7 @@ impl<'a> AliasResolver<'a> {
     }
 
     /// Resolves every top-level `const`'s *value* up front, extending
-    /// `main::resolve_structs_and_aliases`'s "a broken declaration fails the
+    /// `compile::resolve_structs_and_aliases`'s "a broken declaration fails the
     /// whole command even if nothing reaches it" guarantee (already applied
     /// to every struct/type-alias) to const values too. Without this, a
     /// const's value is purely demand-driven (`resolve_const_value`, just
@@ -1693,7 +1695,7 @@ impl<'a> AliasResolver<'a> {
     pub(super) fn eval_int(
         &mut self,
         expr: &Expr,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<Int, ResolveError> {
         match self.eval_value(expr, scope)? {
             Value::Int(value) => Ok(value),
@@ -1710,7 +1712,7 @@ impl<'a> AliasResolver<'a> {
     pub(super) fn eval_truthy(
         &mut self,
         expr: &Expr,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<bool, ResolveError> {
         Ok(self.eval_int(expr, scope)? != Int::from(0))
     }
@@ -1724,7 +1726,7 @@ impl<'a> AliasResolver<'a> {
     pub(super) fn resolve_spliced_name(
         &mut self,
         parts: &[NamePart],
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<String, ResolveError> {
         let mut out = String::new();
 
@@ -1850,7 +1852,7 @@ fn resolved_type_symbol(ty: &ResolvedType) -> Option<SymbolId> {
     }
 }
 
-fn into_value_error(error: EvalError, scope: &HashMap<String, Value>) -> ResolveError {
+fn into_value_error(error: EvalError, scope: &Scope) -> ResolveError {
     match error {
         // If the name is in scope at all, it was used where an Int was
         // needed rather than being genuinely unknown.
@@ -1879,7 +1881,7 @@ mod tests {
     use crate::parser;
     use crate::resolver::{collect_symbols, AliasResolver, ResolveError};
 
-    use super::{BuiltinType, ResolvedGenericArg, ResolvedType, Value};
+    use super::{BuiltinType, ResolvedGenericArg, ResolvedType, Scope, Value};
 
     fn parse_fixture(name: &str) -> Program {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1931,7 +1933,7 @@ mod tests {
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
-        let mut scope = HashMap::new();
+        let mut scope = Scope::default();
         scope.insert("x".to_string(), Value::Int(Int::from(21)));
 
         let value = resolver.eval_value(emit_expr(declaration), &scope).unwrap();
@@ -1948,7 +1950,7 @@ mod tests {
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
-        let value = resolver.eval_value(emit_expr(declaration), &HashMap::new()).unwrap();
+        let value = resolver.eval_value(emit_expr(declaration), &Scope::default()).unwrap();
         assert!(matches!(value, Value::Enum { ref variant, payload: None, .. } if variant == "Little"));
     }
 
@@ -1962,7 +1964,7 @@ mod tests {
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
-        let mut scope = HashMap::new();
+        let mut scope = Scope::default();
         scope.insert("v".to_string(), Value::Int(Int::from(2)));
 
         let value = resolver.eval_value(emit_expr(declaration), &scope).unwrap();
@@ -1991,7 +1993,7 @@ mod tests {
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
-        let mut scope = HashMap::new();
+        let mut scope = Scope::default();
         scope.insert("v".to_string(), Value::Int(Int::from(2)));
 
         let value = resolver.eval_value(emit_expr(declaration), &scope).unwrap();
@@ -2020,7 +2022,7 @@ mod tests {
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
-        let mut scope = HashMap::new();
+        let mut scope = Scope::default();
         scope.insert(
             "dst".to_string(),
             Value::Struct {
@@ -2048,7 +2050,7 @@ mod tests {
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
-        let mut scope = HashMap::new();
+        let mut scope = Scope::default();
         scope.insert("v".to_string(), Value::Int(Int::from(2)));
 
         assert!(matches!(
@@ -2066,7 +2068,7 @@ mod tests {
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
-        let mut scope = HashMap::new();
+        let mut scope = Scope::default();
         scope.insert("v".to_string(), Value::Int(Int::from(2)));
 
         assert!(matches!(
@@ -2084,7 +2086,7 @@ mod tests {
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
-        let mut scope = HashMap::new();
+        let mut scope = Scope::default();
         scope.insert("v".to_string(), Value::Int(Int::from(1)));
 
         // `A.id` is declared `int`; the body constructs it from `B(...)`, a
@@ -2109,7 +2111,7 @@ mod tests {
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
-        let mut scope = HashMap::new();
+        let mut scope = Scope::default();
         scope.insert("v".to_string(), Value::Int(Int::from(2)));
 
         assert!(matches!(
@@ -2131,13 +2133,13 @@ mod tests {
         // `read r0` — a direct reference to a struct-valued top-level
         // const, used as an invocation operand rather than passed down
         // from an enclosing macro's own params.
-        let via_r0 = resolver.expand_invocation(invocations[0], &HashMap::new()).unwrap();
+        let via_r0 = resolver.expand_invocation(invocations[0], &Scope::default()).unwrap();
         assert_eq!(via_r0.emitted, vec![Value::Int(Int::from(0))]);
 
         // `read zero` — `zero`'s own value (`r0`) is itself a bare
         // identifier referencing another struct-valued const, so this
         // exercises the same fallback recursively.
-        let via_zero = resolver.expand_invocation(invocations[1], &HashMap::new()).unwrap();
+        let via_zero = resolver.expand_invocation(invocations[1], &Scope::default()).unwrap();
         assert_eq!(via_zero.emitted, vec![Value::Int(Int::from(0))]);
     }
 
@@ -2149,7 +2151,7 @@ mod tests {
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
-        let mut member_scope = HashMap::new();
+        let mut member_scope = Scope::default();
         member_scope.insert("idx".to_string(), Value::Int(Int::from(2)));
         member_scope.insert("len".to_string(), Value::Int(Int::from(5)));
         assert_eq!(
@@ -2157,7 +2159,7 @@ mod tests {
             Value::Int(Int::from(1)),
         );
 
-        let mut at_upper_bound_scope = HashMap::new();
+        let mut at_upper_bound_scope = Scope::default();
         at_upper_bound_scope.insert("idx".to_string(), Value::Int(Int::from(5)));
         at_upper_bound_scope.insert("len".to_string(), Value::Int(Int::from(5)));
         assert_eq!(
@@ -2174,7 +2176,7 @@ mod tests {
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
-        let mut scope = HashMap::new();
+        let mut scope = Scope::default();
         scope.insert("idx".to_string(), Value::Int(Int::from(5)));
         scope.insert("len".to_string(), Value::Int(Int::from(5)));
 
@@ -2206,7 +2208,7 @@ mod tests {
         };
 
         let mut matches = |needle: i64| {
-            let mut scope = HashMap::new();
+            let mut scope = Scope::default();
             scope.insert("needle".to_string(), Value::Int(Int::from(needle)));
             scope.insert("m".to_string(), mixed.clone());
             resolver.eval_value(emit_expr(declaration), &scope).unwrap()
@@ -2260,7 +2262,7 @@ mod tests {
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
-        let mut scope = HashMap::new();
+        let mut scope = Scope::default();
         scope.insert("v".to_string(), Value::Int(Int::from(2)));
 
         let value = resolver.eval_value(emit_expr(declaration), &scope).unwrap();
@@ -2289,7 +2291,7 @@ mod tests {
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
-        let mut scope = HashMap::new();
+        let mut scope = Scope::default();
         scope.insert("v".to_string(), Value::Int(Int::from(3)));
 
         let value = resolver.eval_value(emit_expr(declaration), &scope).unwrap();
@@ -2317,7 +2319,7 @@ mod tests {
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
-        let mut scope = HashMap::new();
+        let mut scope = Scope::default();
         scope.insert("v".to_string(), Value::Int(Int::from(3)));
 
         let value = resolver.eval_value(emit_expr(declaration), &scope).unwrap();
@@ -2338,7 +2340,7 @@ mod tests {
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
-        let mut scope = HashMap::new();
+        let mut scope = Scope::default();
         scope.insert("v".to_string(), Value::Int(Int::from(5)));
 
         let value = resolver.eval_value(emit_expr(declaration), &scope).unwrap();
@@ -2360,7 +2362,7 @@ mod tests {
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
-        let value = resolver.eval_value(emit_expr(declaration), &HashMap::new()).unwrap();
+        let value = resolver.eval_value(emit_expr(declaration), &Scope::default()).unwrap();
 
         assert_eq!(
             value,
@@ -2389,7 +2391,7 @@ mod tests {
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
-        let mut scope = HashMap::new();
+        let mut scope = Scope::default();
         scope.insert("index".to_string(), Value::Int(Int::from(1)));
         scope.insert("value".to_string(), Value::Int(Int::from(9)));
 
@@ -2418,7 +2420,7 @@ mod tests {
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
-        let mut scope = HashMap::new();
+        let mut scope = Scope::default();
         scope.insert("v".to_string(), Value::Int(Int::from(3)));
 
         assert!(resolver.eval_value(emit_expr(declaration), &scope).is_ok());
@@ -2433,7 +2435,7 @@ mod tests {
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
-        let mut scope = HashMap::new();
+        let mut scope = Scope::default();
         scope.insert("v".to_string(), Value::Int(Int::from(300)));
 
         assert!(matches!(
@@ -2451,7 +2453,7 @@ mod tests {
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
-        let mut scope = HashMap::new();
+        let mut scope = Scope::default();
         scope.insert("v".to_string(), Value::Int(Int::from(50)));
 
         assert!(resolver.eval_value(emit_expr(declaration), &scope).is_ok());
@@ -2466,7 +2468,7 @@ mod tests {
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
-        let value = resolver.eval_value(emit_expr(declaration), &HashMap::new()).unwrap();
+        let value = resolver.eval_value(emit_expr(declaration), &Scope::default()).unwrap();
 
         let Value::Struct { fields, .. } = value else {
             panic!("expected a generated string struct");
@@ -2490,7 +2492,7 @@ mod tests {
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
-        let value = resolver.eval_value(emit_expr(declaration), &HashMap::new()).unwrap();
+        let value = resolver.eval_value(emit_expr(declaration), &Scope::default()).unwrap();
 
         let Value::Struct { fields, .. } = value else {
             panic!("expected a generated string struct");
@@ -2515,7 +2517,7 @@ mod tests {
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
-        let mut scope = HashMap::new();
+        let mut scope = Scope::default();
         scope.insert("v".to_string(), Value::Int(Int::from(-1)));
 
         assert!(matches!(
@@ -2536,7 +2538,7 @@ mod tests {
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
         let ubyte = resolver.resolve_alias(ubyte_id).unwrap();
 
-        let mut scope = HashMap::new();
+        let mut scope = Scope::default();
         scope.insert("v".to_string(), Value::Int(Int::from(50)));
 
         let value = resolver.eval_value(emit_expr(declaration), &scope).unwrap();
@@ -2608,7 +2610,7 @@ const converted = original as Sized<derived_len, Order.Second>
         // 150 fits inside `Bits<8>` (< 256) but fails `UByte`'s own,
         // stricter `value < 100` — must be caught at the alias layer, not
         // silently accepted because the underlying struct is happy.
-        let mut scope = HashMap::new();
+        let mut scope = Scope::default();
         scope.insert("v".to_string(), Value::Int(Int::from(150)));
 
         match resolver.eval_value(emit_expr(declaration), &scope) {
@@ -2631,7 +2633,7 @@ const converted = original as Sized<derived_len, Order.Second>
         // -5 satisfies `UByte`'s own `value < 100` (checked first, at the
         // alias layer) but not `Bits`'s `value >= 0` — caught after
         // auto-wrapping, by the terminal struct's own invariant.
-        let mut scope = HashMap::new();
+        let mut scope = Scope::default();
         scope.insert("v".to_string(), Value::Int(Int::from(-5)));
 
         match resolver.eval_value(emit_expr(declaration), &scope) {
@@ -2711,7 +2713,7 @@ const converted = original as Sized<derived_len, Order.Second>
         let invocations = find_invocations(&program, "use_five");
         assert_eq!(invocations.len(), 1);
 
-        let expansion = resolver.expand_invocation(invocations[0], &HashMap::new()).unwrap();
+        let expansion = resolver.expand_invocation(invocations[0], &Scope::default()).unwrap();
 
         assert_eq!(
             expansion.emitted,

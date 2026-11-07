@@ -16,6 +16,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::fxhash::FxHashMap;
+
 use crate::ast::{Expr, Program, Statement};
 use crate::eval::{self, EvalError, Int};
 use crate::token::Span;
@@ -151,7 +153,7 @@ fn substitute_expr(expr: &Expr, substitutions: &HashMap<String, TypeArgument>) -
 /// position, including ones after the current point; `Strict` (the real
 /// pass) trusts that discovery already ran to completion, so an
 /// unresolved-but-known label at that point is a resolver bug, not a
-/// legitimate forward reference. See `main::resolve_and_expand`.
+/// legitimate forward reference. See `compile::resolve_and_expand`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LabelMode {
     Tolerant,
@@ -194,7 +196,7 @@ pub struct AliasResolver<'a> {
     // advanced once per `@emit` (see `macro_body::walk_macro_body`).
     // Unlike `stack` above, this must *not* reset per top-level invocation:
     // it tracks a position in the same flattened stream
-    // `main::resolve_and_expand`'s own `emitted` accumulates across the
+    // `compile::resolve_and_expand`'s own `emitted` accumulates across the
     // whole program, so it only resets when a fresh `AliasResolver` is
     // constructed for a new pass.
     pub(super) values_emitted: Int,
@@ -206,7 +208,7 @@ pub struct AliasResolver<'a> {
     // `docs/sections-and-linking/PROGRESS.md`'s "Decided scope": no
     // `section` statement at all is byte-for-byte identical to today's
     // behavior). Changed by walking a `Statement::Section`
-    // (`macro_body::walk_macro_body`, `main::walk_top_level`); saved and
+    // (`macro_body::walk_macro_body`, `compile::walk_top_level`); saved and
     // restored around every macro call the same way `generic_scope`/
     // `current_module` already are (`macro_body::run_macro_body_inner`), so
     // a section change made *inside* a macro call never leaks into the
@@ -217,7 +219,7 @@ pub struct AliasResolver<'a> {
     // `@emit`'d value, in the same whole-program emission order — pushed
     // once per `@emit`, right alongside `values_emitted`'s own increment,
     // so this stays index-aligned with whatever the final flattened
-    // `emitted: Vec<Value>` accumulates into (see `main::resolve_and_expand`).
+    // `emitted: Vec<Value>` accumulates into (see `compile::resolve_and_expand`).
     pub(super) emitted_sections: Vec<Option<String>>,
 
     // Declarations discovered mid-resolution — a macro's `generated`
@@ -243,7 +245,7 @@ pub struct AliasResolver<'a> {
     // both `&self` and `&mut self` methods, and the cache is purely an
     // internal memoization detail, not resolver state any caller should
     // need `&mut self` to touch.
-    pub(super) macro_decl_cache: RefCell<HashMap<SymbolId, Rc<crate::ast::MacroDeclaration>>>,
+    pub(super) macro_decl_cache: RefCell<FxHashMap<SymbolId, Rc<crate::ast::MacroDeclaration>>>,
 
     // Same idea as `macro_decl_cache`, for the other three declaration
     // kinds `find_struct_declaration`/`find_enum_declaration`/
@@ -252,13 +254,13 @@ pub struct AliasResolver<'a> {
     // `instantiate_struct_fields_named`'s `unroll_struct_body`) and used to
     // pay for cloning the whole declaration (fields included) every time,
     // on every one of N unrolled struct-constructing macro calls.
-    pub(super) struct_decl_cache: RefCell<HashMap<SymbolId, Rc<crate::ast::StructDeclaration>>>,
-    pub(super) enum_decl_cache: RefCell<HashMap<SymbolId, Rc<crate::ast::EnumDeclaration>>>,
-    pub(super) alias_decl_cache: RefCell<HashMap<SymbolId, Rc<crate::ast::TypeAliasDeclaration>>>,
+    pub(super) struct_decl_cache: RefCell<FxHashMap<SymbolId, Rc<crate::ast::StructDeclaration>>>,
+    pub(super) enum_decl_cache: RefCell<FxHashMap<SymbolId, Rc<crate::ast::EnumDeclaration>>>,
+    pub(super) alias_decl_cache: RefCell<FxHashMap<SymbolId, Rc<crate::ast::TypeAliasDeclaration>>>,
 
     // Set once `resolve_label_value` (`super::values`) ever actually
     // substitutes a placeholder for a not-yet-recorded label position.
-    // `main::resolve_and_expand`'s two-pass driver checks this after the
+    // `compile::resolve_and_expand`'s two-pass driver checks this after the
     // `Tolerant` discovery pass: per that pass's own invariant (a
     // placeholder changes a *value*, never how many values get emitted —
     // see `resolve_label_value`'s doc), if this never went `true`, every
@@ -289,9 +291,63 @@ pub struct AliasResolver<'a> {
     // them, indexed by module id (`crate::loader::ModuleOrigins::scopes`).
     // Empty unless set with `with_module_scopes`.
     pub(super) module_scopes: Vec<HashMap<String, String>>,
+
+    // Where each of `program`'s declarations is, by kind and name: indices
+    // into `program.statements`, in program order (several only for a
+    // macro's overloads). Built once, so a lookup doesn't scan every
+    // statement — an unrolled `@for` can leave hundreds of thousands.
+    decl_index: [FxHashMap<String, Vec<usize>>; DeclKind::COUNT],
+
+    // `instantiate_struct_fields_named`'s results, by struct and the module
+    // resolving it, then by generic arguments: a struct is built over and
+    // over with the same few argument lists, and its fields' layout and
+    // types depend on nothing else.
+    pub(super) struct_fields_cache: FxHashMap<(SymbolId, usize), Vec<(Vec<ResolvedGenericArg>, NamedFields)>>,
+}
+
+/// A struct's fields under one instantiation: name, type, `is_pub`,
+/// `is_skip` and default — see `instantiate_struct_fields_named`.
+pub(super) type NamedFields = Rc<Vec<NamedField>>;
+
+/// One field of [`NamedFields`].
+pub(super) type NamedField = (String, ResolvedType, bool, bool, Option<Expr>);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum DeclKind {
+    Struct,
+    Enum,
+    Alias,
+    Macro,
+    ExternLabel,
+}
+
+impl DeclKind {
+    const COUNT: usize = 5;
+}
+
+fn declaration_key(statement: &Statement) -> Option<(DeclKind, String)> {
+    let (kind, name) = match statement {
+        Statement::Struct(declaration) => (DeclKind::Struct, &declaration.name),
+        Statement::Enum(declaration) => (DeclKind::Enum, &declaration.name),
+        Statement::TypeAlias(declaration) => (DeclKind::Alias, &declaration.name),
+        Statement::Macro(declaration) => (DeclKind::Macro, &declaration.name),
+        Statement::ExternLabel(label) => return Some((DeclKind::ExternLabel, label.name.clone())),
+        _ => return None,
+    };
+    crate::ast::literal_name(name).map(|name| (kind, name))
 }
 
 impl<'a> AliasResolver<'a> {
+    /// `program`'s declarations of `kind` named `name`, in program order.
+    fn indexed(&self, kind: DeclKind, name: &str) -> impl Iterator<Item = &Statement> + '_ {
+        let program: &Program = self.program;
+        self.decl_index[kind as usize]
+            .get(name)
+            .into_iter()
+            .flatten()
+            .map(move |&index| &program.statements[index])
+    }
+
     /// Lets a name built during resolution (`` x`i` ``) find what it means
     /// in the module that built it.
     pub fn with_module_scopes(mut self, scopes: Vec<HashMap<String, String>>) -> Self {
@@ -307,7 +363,7 @@ impl<'a> AliasResolver<'a> {
     /// `label_mode`/`known_label_positions` select which of the two label
     /// -resolution passes this instance runs: `Tolerant` with an empty map
     /// for position-discovery, `Strict` with that pass's completed map for
-    /// the real expansion. See `main::resolve_and_expand`.
+    /// the real expansion. See `compile::resolve_and_expand`.
     ///
     /// `entry_module` is the module id of the file `bitterasm` was actually
     /// asked to compile (`crate::loader::ModuleOrigins::entry_module`) —
@@ -322,6 +378,13 @@ impl<'a> AliasResolver<'a> {
     ) -> Self {
         let mut states = HashMap::new();
         let mut const_value_states = HashMap::new();
+
+        let mut decl_index: [FxHashMap<String, Vec<usize>>; DeclKind::COUNT] = Default::default();
+        for (index, statement) in program.statements.iter().enumerate() {
+            if let Some((kind, name)) = declaration_key(statement) {
+                decl_index[kind as usize].entry(name).or_default().push(index);
+            }
+        }
 
         for symbol in symbols.iter() {
             if symbol.kind == SymbolKind::TypeAlias {
@@ -353,14 +416,16 @@ impl<'a> AliasResolver<'a> {
             emitted_sections: Vec::new(),
             generated_symbols: SymbolTable::with_base(symbols.len()),
             generated: Vec::new(),
-            macro_decl_cache: RefCell::new(HashMap::new()),
-            struct_decl_cache: RefCell::new(HashMap::new()),
-            enum_decl_cache: RefCell::new(HashMap::new()),
-            alias_decl_cache: RefCell::new(HashMap::new()),
+            macro_decl_cache: RefCell::new(FxHashMap::default()),
+            struct_decl_cache: RefCell::new(FxHashMap::default()),
+            enum_decl_cache: RefCell::new(FxHashMap::default()),
+            alias_decl_cache: RefCell::new(FxHashMap::default()),
             used_forward_label_placeholder: false,
             current_module: entry_module,
             error_module: None,
             module_scopes: Vec::new(),
+            decl_index,
+            struct_fields_cache: FxHashMap::default(),
         }
     }
 
@@ -371,7 +436,7 @@ impl<'a> AliasResolver<'a> {
     /// pre-recorded label positions, and entry module `0` (fine for a
     /// single-file fixture with no cross-module privacy to exercise). A
     /// real `bitterasm compile`/`expand` run should go through the
-    /// two-pass driver in `main.rs` instead.
+    /// two-pass driver in `compile.rs` instead.
     pub fn new_single_pass(
         program: &'a Program,
         symbols: &'a SymbolTable,
@@ -405,7 +470,7 @@ impl<'a> AliasResolver<'a> {
 
     /// Records `id`'s position as "however many values have been emitted
     /// so far" — called when a top-level `Statement::Label` is walked (see
-    /// `main::resolve_and_expand`; nested, in-macro-body labels never call
+    /// `compile::resolve_and_expand`; nested, in-macro-body labels never call
     /// this, they stay uninvolved in label resolution entirely).
     /// The module the most recent error arose in — the innermost macro
     /// whose call failed — if a macro was running. Spans carry no file of
@@ -425,7 +490,7 @@ impl<'a> AliasResolver<'a> {
     }
 
     /// A non-consuming read of the same map `into_label_positions` would
-    /// hand back — for a caller (`main::resolve_and_expand`, building the
+    /// hand back — for a caller (`compile::resolve_and_expand`, building the
     /// `pub`-label-position manifest `bitter build`'s multi-file linking
     /// needs, Phase 6) that still needs `self` afterward for
     /// `take_emitted_sections`/`into_symbols_with_generated`.
@@ -434,7 +499,7 @@ impl<'a> AliasResolver<'a> {
     }
 
     /// Sets which named section is active for top-level code (outside any
-    /// macro call) — called when `main::walk_top_level` walks a top-level
+    /// macro call) — called when `compile::walk_top_level` walks a top-level
     /// `Statement::Section`. There's no caller to restore to at this level
     /// (see "Decided scope": a section stays active until the next
     /// `section` statement, no nesting), so this is a plain, unscoped
@@ -447,7 +512,7 @@ impl<'a> AliasResolver<'a> {
     /// Takes this resolver's whole-program-persistent record of which
     /// section was active for each `@emit`'d value, leaving an empty `Vec`
     /// behind — mirrors `into_label_positions`/`into_symbols_with_generated`
-    /// but by `&mut self`, since `main::resolve_and_expand` still needs
+    /// but by `&mut self`, since `compile::resolve_and_expand` still needs
     /// `self` afterward (for `into_symbols_with_generated`) on the
     /// short-circuit, no-second-pass path.
     pub fn take_emitted_sections(&mut self) -> Vec<Option<String>> {
@@ -992,15 +1057,22 @@ impl<'a> AliasResolver<'a> {
             }
         }
 
-        let mut scope = self.consts.clone();
-
-        for (name, binding) in &self.generic_scope {
-            if let GenericBinding::Const(Some(value)) = binding {
-                scope.insert(name.clone(), value.clone());
+        // A bound const generic shadows a top-level const of the same name.
+        struct ConstScope<'s> {
+            generics: &'s HashMap<String, GenericBinding>,
+            consts: &'s HashMap<String, Int>,
+        }
+        impl eval::IntScope for ConstScope<'_> {
+            fn get_int(&self, name: &str) -> Option<Int> {
+                match self.generics.get(name) {
+                    Some(GenericBinding::Const(Some(value))) => Some(value.clone()),
+                    _ => self.consts.get(name).cloned(),
+                }
             }
         }
 
-        eval::eval(expr, &scope).map_err(|error| self.into_resolve_error(error))
+        let scope = ConstScope { generics: &self.generic_scope, consts: self.consts };
+        eval::eval_in(expr, &scope).map_err(|error| self.into_resolve_error(error))
     }
 
     fn into_resolve_error(&self, error: EvalError) -> ResolveError {
@@ -1038,7 +1110,7 @@ impl<'a> AliasResolver<'a> {
     ) -> Result<&crate::ast::TypeAliasDeclaration, ResolveError> {
         let symbol = self.get_symbol(id);
 
-        for statement in self.program.statements.iter().chain(&self.generated) {
+        for statement in self.indexed(DeclKind::Alias, &symbol.name).chain(&self.generated) {
             if let Statement::TypeAlias(declaration) = statement {
                 if crate::ast::literal_name(&declaration.name).as_deref() == Some(symbol.name.as_str()) {
                     return Ok(declaration);
@@ -1063,7 +1135,7 @@ impl<'a> AliasResolver<'a> {
     ) -> Result<&crate::ast::StructDeclaration, ResolveError> {
         let symbol = self.get_symbol(id);
 
-        for statement in self.program.statements.iter().chain(&self.generated) {
+        for statement in self.indexed(DeclKind::Struct, &symbol.name).chain(&self.generated) {
             if let Statement::Struct(declaration) = statement {
                 if crate::ast::literal_name(&declaration.name).as_deref() == Some(symbol.name.as_str()) {
                     return Ok(declaration);
@@ -1092,7 +1164,7 @@ impl<'a> AliasResolver<'a> {
     ) -> Result<&crate::ast::ExternLabel, ResolveError> {
         let symbol = self.get_symbol(id);
 
-        for statement in self.program.statements.iter().chain(&self.generated) {
+        for statement in self.indexed(DeclKind::ExternLabel, &symbol.name).chain(&self.generated) {
             if let Statement::ExternLabel(extern_label) = statement {
                 if extern_label.name == symbol.name {
                     return Ok(extern_label);
@@ -1116,7 +1188,7 @@ impl<'a> AliasResolver<'a> {
         id: SymbolId,
     ) -> Result<&crate::ast::EnumDeclaration, ResolveError> {
         let symbol = self.get_symbol(id);
-        for statement in self.program.statements.iter().chain(&self.generated) {
+        for statement in self.indexed(DeclKind::Enum, &symbol.name).chain(&self.generated) {
             if let Statement::Enum(declaration) = statement {
                 if crate::ast::literal_name(&declaration.name).as_deref() == Some(symbol.name.as_str()) {
                     return Ok(declaration);
@@ -1137,10 +1209,12 @@ impl<'a> AliasResolver<'a> {
         id: SymbolId,
     ) -> Result<&crate::ast::MacroDeclaration, ResolveError> {
         let symbol = self.get_symbol(id);
-        let (table, statements): (&SymbolTable, &[Statement]) = if id.0 < self.symbols.len() {
-            (self.symbols, &self.program.statements)
+        let in_program = id.0 < self.symbols.len();
+        let table = if in_program { self.symbols } else { &self.generated_symbols };
+        let statements: Box<dyn Iterator<Item = &Statement>> = if in_program {
+            Box::new(self.indexed(DeclKind::Macro, &symbol.name))
         } else {
-            (&self.generated_symbols, &self.generated)
+            Box::new(self.generated.iter())
         };
         // Spans are local to their original source file and can coincide
         // after imports are flattened. Match the overload's ordinal in its
@@ -1151,7 +1225,6 @@ impl<'a> AliasResolver<'a> {
             .position(|candidate| *candidate == id)
             .expect("a macro symbol must occur in its table's name index");
         if let Some(declaration) = statements
-            .iter()
             .filter_map(|statement| match statement {
                 Statement::Macro(declaration)
                     if crate::ast::literal_name(&declaration.name).as_deref() == Some(symbol.name.as_str()) =>

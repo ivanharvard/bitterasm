@@ -726,11 +726,16 @@ fn collect_declarations(
             | Statement::Enum(_)
             | Statement::TypeAlias(_)
             | Statement::Const(_)
-            | Statement::Macro(_)
-            | Statement::Meta(_) => {
+            | Statement::Macro(_) => {
                 out.push(statement.clone());
                 out_modules.push(module.module_id);
             }
+
+            // Every top-level `@if`/`@match`/`@fold` is unrolled by now, and
+            // the only `@for` left is a loop of invocations
+            // (`resolver::unroll_module`): a program body, like the
+            // invocations themselves.
+            Statement::Meta(_) => {}
 
             // Labels and invocations are program bodies, not declarations;
             // nothing else imports them. A syntax override isn't a

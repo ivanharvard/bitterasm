@@ -6,7 +6,6 @@
 //! internal name (`bits#3`), so a single flat table — rather than one
 //! scoped per module — is enough.
 
-use std::collections::HashMap;
 
 use crate::token::Span;
 
@@ -62,7 +61,7 @@ pub struct Symbol {
 #[derive(Debug, Clone, Default)]
 pub struct SymbolTable {
     symbols: Vec<Symbol>,
-    by_name: HashMap<String, Vec<SymbolId>>,
+    by_name: crate::fxhash::FxHashMap<String, Vec<SymbolId>>,
 
     /// `SymbolId`s handed out by this table start at `base` rather than 0
     /// — lets a second table (e.g. `AliasResolver::generated_symbols`)

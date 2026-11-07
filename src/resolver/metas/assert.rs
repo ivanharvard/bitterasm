@@ -10,17 +10,17 @@
 //! [`ResolveError::AssertionFailed`], carrying the optional message
 //! along verbatim so the caller decides how to display it.
 
-use std::collections::HashMap;
 
 use crate::ast::Expr;
 use crate::token::Span;
 
-use crate::resolver::{AliasResolver, ResolveError, Value};
+use crate::resolver::{AliasResolver, ResolveError};
+use crate::resolver::Scope;
 
 pub fn check(
     resolver: &mut AliasResolver<'_>,
     args: &[Expr],
-    scope: &HashMap<String, Value>,
+    scope: &Scope,
     span: Span,
 ) -> Result<(), ResolveError> {
     let (condition, message) = match args {

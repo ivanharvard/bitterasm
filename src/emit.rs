@@ -13,6 +13,7 @@
 //! entries. `docs/book/src/tools/em-format.md` is its specification.
 
 use std::collections::BTreeMap;
+use std::io::{BufWriter, Write};
 
 use serde::{Deserialize, Serialize};
 
@@ -61,13 +62,10 @@ pub struct EmFile {
 impl EmFile {
     /// A file for `entries`, requiring exactly the features they use.
     pub fn new(module: String, exports: BTreeMap<String, u64>, entries: Vec<EmittedEntry>) -> Self {
-        let mut requires = Vec::new();
-        if entries.iter().any(|entry| entry.section.is_some()) {
-            requires.push(features::SECTIONS.to_string());
-        }
-        if entries.iter().any(|entry| contains_deferred(&entry.value)) {
-            requires.push(features::EXTERN_LABELS.to_string());
-        }
+        let requires = required_features(
+            entries.iter().any(|entry| entry.section.is_some()),
+            entries.iter().any(|entry| contains_deferred(&entry.value)),
+        );
 
         Self { version: EM_VERSION, requires, module, exports, entries }
     }
@@ -76,20 +74,27 @@ impl EmFile {
     /// the pre-v1 plain-list format, another `version`, or a required
     /// feature not in `supported`.
     pub fn parse(json: &str, supported: &[&str]) -> Result<Self, String> {
-        let raw: serde_json::Value = serde_json::from_str(json).map_err(|error| error.to_string())?;
-
-        let object = match &raw {
-            serde_json::Value::Object(object) => object,
-            serde_json::Value::Array(_) => {
+        match json.trim_start().as_bytes().first() {
+            Some(b'{') => {}
+            Some(b'[') => {
                 return Err(format!(
                     "this is an unversioned `.em` file from before `.em` version {EM_VERSION}; \
                      recompile its source with this `bitterasm`"
                 ));
             }
             _ => return Err("a `.em` file must be a JSON object".to_string()),
-        };
+        }
 
-        match object.get("version").and_then(serde_json::Value::as_u64) {
+        // Only `version` first, skipping everything else unread, so a file
+        // from another version is refused before its entries are parsed
+        // against this version's shapes.
+        #[derive(Deserialize)]
+        struct Header {
+            version: Option<serde_json::Value>,
+        }
+        let header: Header = serde_json::from_str(json).map_err(|error| error.to_string())?;
+
+        match header.version.as_ref().and_then(serde_json::Value::as_u64) {
             Some(EM_VERSION) => {}
             Some(other) => {
                 return Err(format!(
@@ -99,7 +104,7 @@ impl EmFile {
             None => return Err("this `.em` file has no `version`".to_string()),
         }
 
-        let file: EmFile = serde_json::from_value(raw).map_err(|error| error.to_string())?;
+        let file: EmFile = serde_json::from_str(json).map_err(|error| error.to_string())?;
 
         for feature in &file.requires {
             if !supported.contains(&feature.as_str()) {
@@ -110,6 +115,158 @@ impl EmFile {
         }
 
         Ok(file)
+    }
+}
+
+/// `requires` for a file that has sections and/or deferred values, in the
+/// order [`features::ALL`] lists them.
+fn required_features(has_sections: bool, has_deferred: bool) -> Vec<String> {
+    let mut requires = Vec::new();
+    if has_sections {
+        requires.push(features::SECTIONS.to_string());
+    }
+    if has_deferred {
+        requires.push(features::EXTERN_LABELS.to_string());
+    }
+    requires
+}
+
+/// Writes a `.em` file as compact JSON, converting one value at a time
+/// rather than building the whole file in memory first. `sections` is
+/// index-aligned with `values`. Reads back as the same [`EmFile`] that
+/// [`EmFile::new`] would build from the converted entries.
+pub fn write_em<W: Write>(
+    out: W,
+    module: &str,
+    exports: &BTreeMap<String, u64>,
+    ids: &TypeIds,
+    values: &[Value],
+    sections: &[Option<String>],
+) -> std::io::Result<()> {
+    let mut out = BufWriter::with_capacity(1 << 16, out);
+    let requires = required_features(
+        sections.iter().any(Option::is_some),
+        values.iter().any(value_contains_extern_label),
+    );
+
+    write!(out, "{{\"version\":{EM_VERSION},\"requires\":")?;
+    serde_json::to_writer(&mut out, &requires)?;
+    out.write_all(b",\"module\":")?;
+    serde_json::to_writer(&mut out, module)?;
+    out.write_all(b",\"exports\":")?;
+    serde_json::to_writer(&mut out, exports)?;
+    out.write_all(b",\"entries\":[")?;
+    for (index, (value, section)) in values.iter().zip(sections).enumerate() {
+        if index > 0 {
+            out.write_all(b",")?;
+        }
+        let entry = EmittedEntry { value: reify_value(ids, value), section: section.clone() };
+        serde_json::to_writer(&mut out, &entry)?;
+    }
+    out.write_all(b"]}")?;
+    out.flush()
+}
+
+fn value_contains_extern_label(value: &Value) -> bool {
+    match value {
+        Value::ExternLabel { .. } => true,
+        Value::Int(_) | Value::Macro(_) => false,
+        Value::Struct { fields, .. } => fields.iter().any(|(_, field)| value_contains_extern_label(field)),
+        Value::Enum { payload, .. } => payload.as_deref().is_some_and(value_contains_extern_label),
+    }
+}
+
+/// Indents compact JSON as it's written through, in one pass and without
+/// parsing it into a tree: two spaces per level, `": "` after keys, and
+/// `[]`/`{}` for empty containers, the same layout as
+/// `serde_json::to_string_pretty`. Expects JSON with no whitespace outside
+/// strings, which is what `serde_json::to_writer` produces.
+pub struct PrettyJson<W: Write> {
+    out: W,
+    depth: usize,
+    in_string: bool,
+    escaped: bool,
+    // A `[` or `{` not yet written: whether it's empty depends on the next
+    // byte.
+    pending_open: Option<u8>,
+}
+
+impl<W: Write> PrettyJson<W> {
+    pub fn new(out: W) -> Self {
+        Self { out, depth: 0, in_string: false, escaped: false, pending_open: None }
+    }
+
+    /// Writes any trailing newline and returns the inner writer.
+    pub fn finish(mut self) -> std::io::Result<W> {
+        if let Some(open) = self.pending_open.take() {
+            self.out.write_all(&[open])?;
+        }
+        self.out.write_all(b"\n")?;
+        self.out.flush()?;
+        Ok(self.out)
+    }
+
+    fn newline(&mut self) -> std::io::Result<()> {
+        self.out.write_all(b"\n")?;
+        for _ in 0..self.depth {
+            self.out.write_all(b"  ")?;
+        }
+        Ok(())
+    }
+
+    fn byte(&mut self, byte: u8) -> std::io::Result<()> {
+        if self.in_string {
+            if self.escaped {
+                self.escaped = false;
+            } else if byte == b'\\' {
+                self.escaped = true;
+            } else if byte == b'"' {
+                self.in_string = false;
+            }
+            return self.out.write_all(&[byte]);
+        }
+
+        if let Some(open) = self.pending_open.take() {
+            if (open, byte) == (b'[', b']') || (open, byte) == (b'{', b'}') {
+                return self.out.write_all(&[open, byte]);
+            }
+            self.out.write_all(&[open])?;
+            self.depth += 1;
+            self.newline()?;
+        }
+
+        match byte {
+            b'[' | b'{' => self.pending_open = Some(byte),
+            b']' | b'}' => {
+                self.depth -= 1;
+                self.newline()?;
+                self.out.write_all(&[byte])?;
+            }
+            b',' => {
+                self.out.write_all(b",")?;
+                self.newline()?;
+            }
+            b':' => self.out.write_all(b": ")?,
+            b'"' => {
+                self.in_string = true;
+                self.out.write_all(b"\"")?;
+            }
+            other => self.out.write_all(&[other])?,
+        }
+        Ok(())
+    }
+}
+
+impl<W: Write> Write for PrettyJson<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        for &byte in buf {
+            self.byte(byte)?;
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.out.flush()
     }
 }
 
@@ -378,6 +535,53 @@ mod tests {
         let file = EmFile::new("m".to_string(), [("start".to_string(), 0)].into(), vec![int_entry(Some(".text"))]);
         let json = serde_json::to_string(&file).unwrap();
         assert_eq!(EmFile::parse(&json, features::ALL).unwrap(), file);
+    }
+
+    #[test]
+    fn pretty_json_matches_serde_pretty() {
+        let value = serde_json::json!({
+            "empty_list": [],
+            "empty_object": {},
+            "tricky": "a \\\"quoted\\\" [string], {with: punctuation}\\\\",
+            "nested": [[1, [2]], {"k": [true, null]}],
+        });
+        let compact = serde_json::to_string(&value).unwrap();
+        let mut pretty = PrettyJson::new(Vec::new());
+        pretty.write_all(compact.as_bytes()).unwrap();
+        let written = String::from_utf8(pretty.finish().unwrap()).unwrap();
+        assert_eq!(written, serde_json::to_string_pretty(&value).unwrap() + "\n");
+    }
+
+    #[test]
+    fn write_em_reads_back_like_em_file_new() {
+        let program = parse_fixture("generic_alias.basm");
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
+        let module_paths = ["fixture".to_string()];
+        let ids = TypeIds::new(&symbols, &module_paths);
+        let bits = symbols.lookup("bits").unwrap();
+        let values = vec![
+            Value::Int(Int::from(-7)),
+            Value::Struct {
+                symbol: bits,
+                args: vec![ResolvedGenericArg::Const(Int::from(8))],
+                fields: vec![("value".to_string(), Value::Int(Int::from(3)))],
+                nominal: None,
+            },
+        ];
+        let sections = vec![None, Some(".text".to_string())];
+        let exports = BTreeMap::from([("start".to_string(), 1)]);
+
+        let mut written = Vec::new();
+        write_em(&mut written, "fixture", &exports, &ids, &values, &sections).unwrap();
+
+        let entries = values
+            .iter()
+            .zip(&sections)
+            .map(|(value, section)| EmittedEntry { value: reify_value(&ids, value), section: section.clone() })
+            .collect();
+        let expected = EmFile::new("fixture".to_string(), exports, entries);
+        let json = String::from_utf8(written).unwrap();
+        assert_eq!(EmFile::parse(&json, features::ALL).unwrap(), expected);
     }
 
     #[test]

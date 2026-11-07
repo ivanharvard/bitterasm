@@ -25,8 +25,8 @@ enum Command {
 
     /// The whole pipeline in one command: compile one or more .basm
     /// programs, link them together, and write the packed bytes, marked
-    /// executable — `bitterasm compile` + `bitter encode` without the
-    /// intermediate .em files. Given more than one path, same-named
+    /// executable — `bitterasm compile` + `bitter encode` in one process,
+    /// without the intermediate .em files. Given more than one path, same-named
     /// `section`s are concatenated across every input (command-line order),
     /// and a `pub` label imported (`from file import label`) in one input
     /// but declared in another resolves against that other input.
@@ -43,6 +43,11 @@ enum Command {
         /// Defaults to the first path with its extension dropped.
         #[arg(short, long)]
         output: Option<PathBuf>,
+
+        /// Print how long each phase took, peak memory, and the output's
+        /// size to stderr.
+        #[arg(long)]
+        timings: bool,
     },
 
     /// Anything `bitter` doesn't recognize itself is handed to `bitterasm`
@@ -59,7 +64,7 @@ fn main() {
 
     match cli.command {
         Command::Encode { path, output } => encode(&path, output),
-        Command::Build { paths, output } => build(&paths, output),
+        Command::Build { paths, output, timings } => build(&paths, output, timings),
         Command::External(args) => delegate_to_bitterasm(&args),
     }
 }
@@ -110,6 +115,7 @@ fn encode(path: &PathBuf, output: Option<PathBuf>) {
     };
 
     let file = read_em(path, &json);
+    drop(json);
 
     // Laid out exactly as `bitter build` lays out one input: grouped by
     // section, with label positions translated to match. A cross-file
@@ -166,60 +172,25 @@ fn exports_as_positions(exports: std::collections::BTreeMap<String, u64>) -> std
         .collect()
 }
 
-/// Runs `bitterasm compile <path> -o <em_path>` as a subprocess (the same
-/// sibling-binary lookup `delegate_to_bitterasm` uses), the way a real
-/// `cc`-style driver shells out to a separate compiler pass rather than
-/// re-implementing it.
-fn run_bitterasm_compile(path: &std::path::Path, em_path: &std::path::Path) {
-    let bitterasm = bitterasm_path();
-
-    let status = std::process::Command::new(&bitterasm)
-        .args(["compile", &path.display().to_string(), "-o", &em_path.display().to_string()])
-        .status();
-
-    match status {
-        Ok(status) if status.success() => {}
-        Ok(status) => std::process::exit(status.code().unwrap_or(1)),
-
-        Err(error) => {
-            eprintln!("failed to run `{} compile`: {error}", bitterasm.display());
-            std::process::exit(1);
-        }
-    }
-}
-
-/// Compiles one `bitter build` input and reads its `.em` back as a
-/// `link::LinkInput`: its entries, its module path (what other inputs'
+/// Compiles one `bitter build` input in this process, with no `.em` file
+/// in between: its entries, its module path (what other inputs'
 /// `Deferred` references name it by) and its exported `pub` labels.
-fn compile_input(path: &std::path::Path, unique: &str) -> link::LinkInput {
-    let em_path = std::env::temp_dir().join(format!("bitter-build-{unique}.em"));
+/// Diagnostics are printed as `bitterasm compile` would print them.
+fn compile_input(path: &std::path::Path, timings: &mut bitterasm::compile::Timings) -> link::LinkInput {
+    let options = bitterasm::compile::DiagnosticOptions::default();
+    let expansion = bitterasm::compile::analyze(path, &options, None, timings)
+        .unwrap_or_else(|bitterasm::compile::Failed| std::process::exit(1));
+    let (module, exports, entries) = expansion.into_entries();
+    timings.lap("convert");
 
-    run_bitterasm_compile(path, &em_path);
-
-    let em_json = std::fs::read_to_string(&em_path).unwrap_or_else(|error| {
-        eprintln!("failed to read {}: {error}", em_path.display());
-        std::process::exit(1);
-    });
-    let _ = std::fs::remove_file(&em_path);
-
-    let file = read_em(&em_path, &em_json);
-
-    link::LinkInput {
-        file: path.to_path_buf(),
-        module: file.module,
-        entries: file.entries,
-        labels: exports_as_positions(file.exports),
-    }
+    link::LinkInput { file: path.to_path_buf(), module, entries, labels: exports_as_positions(exports) }
 }
 
-fn build(paths: &[PathBuf], output: Option<PathBuf>) {
+fn build(paths: &[PathBuf], output: Option<PathBuf>, print_timings: bool) {
     let output_path = output.unwrap_or_else(|| paths[0].with_extension(""));
+    let mut timings = bitterasm::compile::Timings::new();
 
-    let inputs: Vec<link::LinkInput> = paths
-        .iter()
-        .enumerate()
-        .map(|(index, path)| compile_input(path, &format!("{}-{index}", std::process::id())))
-        .collect();
+    let inputs: Vec<link::LinkInput> = paths.iter().map(|path| compile_input(path, &mut timings)).collect();
 
     let values = match link::link(inputs) {
         Ok(linked) => linked.values,
@@ -230,6 +201,8 @@ fn build(paths: &[PathBuf], output: Option<PathBuf>) {
         }
     };
 
+    timings.lap("link");
+
     let bytes = match pack::pack_stream(&values) {
         Ok(bytes) => bytes,
 
@@ -238,10 +211,18 @@ fn build(paths: &[PathBuf], output: Option<PathBuf>) {
             std::process::exit(1);
         }
     };
+    timings.lap("pack");
 
     if let Err(error) = write_executable(&output_path, &bytes) {
         eprintln!("failed to write {}: {error}", output_path.display());
         std::process::exit(1);
+    }
+    timings.lap("write");
+
+    if print_timings {
+        timings.report();
+        eprintln!("  {:<22} {:>10}", "values", values.len());
+        eprintln!("  {:<22} {:>10}", "output bytes", bytes.len());
     }
 
     println!(

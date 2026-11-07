@@ -4,7 +4,8 @@
 an evaluator such as `bitter` reads it. This is the contract between them;
 anything that reads `.em` should follow it.
 
-A `.em` file is one JSON object:
+A `.em` file is one JSON object. `bitterasm compile` writes it with no
+whitespace; `--pretty` indents it as below. Readers must accept either.
 
 ```json
 {

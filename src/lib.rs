@@ -25,6 +25,7 @@
 //! (as written in source) and the resolver (as resolved against symbols).
 
 pub mod ast;
+pub mod compile;
 pub mod emit;
 pub mod expander;
 pub mod lexer;
@@ -37,6 +38,7 @@ pub mod loader;
 pub mod facets;
 pub mod eval;
 pub mod formatter;
+pub mod fxhash;
 pub mod diagnostics;
 pub mod doc;
 pub mod verbose;

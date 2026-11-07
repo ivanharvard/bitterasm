@@ -74,6 +74,7 @@ use super::symbols::SymbolId;
 use super::types::{ResolvedGenericArg, ResolvedType};
 use super::values::Value;
 use super::ResolveError;
+use crate::resolver::Scope;
 
 /// Safety cap on `@for`'s iteration count — `Int` is arbitrary-precision,
 /// so an unbounded or accidentally-huge range (`@for i in 0..N` with a
@@ -112,7 +113,7 @@ impl<'a> AliasResolver<'a> {
     pub fn expand_invocation(
         &mut self,
         invocation: &Invocation,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<MacroExpansion, ResolveError> {
         let mut stack = Vec::new();
         self.expand_invocation_inner(invocation, scope, &mut stack)
@@ -121,7 +122,7 @@ impl<'a> AliasResolver<'a> {
     fn expand_invocation_inner(
         &mut self,
         invocation: &Invocation,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
         stack: &mut Vec<SymbolId>,
     ) -> Result<MacroExpansion, ResolveError> {
         let arguments = invocation
@@ -436,7 +437,7 @@ impl<'a> AliasResolver<'a> {
         &mut self,
         declaration: &MacroDeclaration,
         arguments: Vec<Value>,
-    ) -> Result<(HashMap<String, Value>, HashMap<String, GenericBinding>), ResolveError> {
+    ) -> Result<(Scope, HashMap<String, GenericBinding>), ResolveError> {
         let required = declaration.params.iter().filter(|param| param.default.is_none()).count();
         if arguments.len() < required || arguments.len() > declaration.params.len() {
             return Err(ResolveError::InvalidArgumentCount {
@@ -448,7 +449,7 @@ impl<'a> AliasResolver<'a> {
         let generic_names: HashSet<&str> =
             declaration.generic_params.iter().map(|param| param_name(param)).collect();
 
-        let mut scope = HashMap::new();
+        let mut scope = Scope::default();
         let mut generic_scope: HashMap<String, GenericBinding> = HashMap::new();
         let mut arguments = arguments.into_iter();
 
@@ -665,7 +666,7 @@ impl<'a> AliasResolver<'a> {
     fn run_hook_template(
         &mut self,
         template: &Expr,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<MacroExpansion, ResolveError> {
         let Expr::Call { callee, arguments, span } = template else {
             return Err(ResolveError::ExpectedValueExpression { span: template.span() });
@@ -687,7 +688,7 @@ impl<'a> AliasResolver<'a> {
     pub(super) fn walk_macro_body(
         &mut self,
         body: &[Statement],
-        initial_scope: &HashMap<String, Value>,
+        initial_scope: &Scope,
         allowed_emits: &[ResolvedType],
     ) -> Result<MacroExpansion, ResolveError> {
         // Borrowed until a bare (non-`pub`) `const` actually extends it
@@ -696,7 +697,7 @@ impl<'a> AliasResolver<'a> {
         // `HashMap` clone on every single nested call; `Cow::to_mut` pays
         // for the clone only the first time this body's own scope is
         // actually mutated.
-        let mut scope: Cow<'_, HashMap<String, Value>> = Cow::Borrowed(initial_scope);
+        let mut scope: Cow<'_, Scope> = Cow::Borrowed(initial_scope);
 
         let mut emitted = Vec::new();
         let mut generated = Vec::new();
@@ -846,7 +847,7 @@ impl<'a> AliasResolver<'a> {
                         for arm in &meta.match_arms {
                             let bindings = match &arm.pattern {
                                 Some(pattern) => self.match_pattern(pattern, &value, &scope)?,
-                                None => Some(HashMap::new()),
+                                None => Some(Scope::default()),
                             };
                             if let Some(bindings) = bindings {
                                 chosen = Some((&arm.body, bindings));
@@ -1117,7 +1118,7 @@ impl<'a> AliasResolver<'a> {
     fn eval_direct_self_tail_call(
         &mut self,
         expr: &Expr,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<Option<Vec<Value>>, ResolveError> {
         let Some(current) = self.macro_call_stack.last().copied() else {
             return Ok(None);
@@ -1149,8 +1150,8 @@ impl<'a> AliasResolver<'a> {
         &mut self,
         pattern: &Expr,
         value: &Value,
-        scope: &HashMap<String, Value>,
-    ) -> Result<Option<HashMap<String, Value>>, ResolveError> {
+        scope: &Scope,
+    ) -> Result<Option<Scope>, ResolveError> {
         if let Value::Enum { symbol, variant, payload, .. } = value
             && let Some((written, argument)) = self.variant_pattern(pattern, *symbol)?
         {
@@ -1158,22 +1159,22 @@ impl<'a> AliasResolver<'a> {
                 return Ok(None);
             }
             return match (argument, payload.as_deref()) {
-                (None, None) => Ok(Some(HashMap::new())),
+                (None, None) => Ok(Some(Scope::default())),
                 (Some(Expr::Identifier { name: binding, .. }), Some(payload)) => {
-                    let mut bindings = HashMap::new();
+                    let mut bindings = Scope::default();
                     if binding != "_" {
                         bindings.insert(binding.clone(), payload.clone());
                     }
                     Ok(Some(bindings))
                 }
                 (Some(argument), Some(payload)) => {
-                    Ok((self.eval_value(argument, scope)? == *payload).then(HashMap::new))
+                    Ok((self.eval_value(argument, scope)? == *payload).then(Scope::default))
                 }
                 _ => Ok(None),
             };
         }
 
-        Ok((self.eval_value(pattern, scope)? == *value).then(HashMap::new))
+        Ok((self.eval_value(pattern, scope)? == *value).then(Scope::default))
     }
 
     /// When `pattern` names one of `enum_symbol`'s variants — bare
@@ -1240,7 +1241,7 @@ impl<'a> AliasResolver<'a> {
     fn splice_decl_name(
         &mut self,
         name: &[NamePart],
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<crate::ast::SplicedName, ResolveError> {
         let literal = self.resolve_spliced_name(name, scope)?;
         Ok(vec![NamePart::Literal(literal)])
@@ -1249,7 +1250,7 @@ impl<'a> AliasResolver<'a> {
     fn splice_const(
         &mut self,
         decl: &ConstDeclaration,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<ConstDeclaration, ResolveError> {
         let name = self.resolve_spliced_name(&decl.name, scope)?;
 
@@ -1271,7 +1272,7 @@ impl<'a> AliasResolver<'a> {
     fn splice_expr(
         &mut self,
         expr: &Expr,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<Expr, ResolveError> {
         match expr {
             Expr::Splice { inner, span } => {
@@ -1391,7 +1392,7 @@ impl<'a> AliasResolver<'a> {
     fn splice_construct_items(
         &mut self,
         items: &[ConstructItem],
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<Vec<ConstructItem>, ResolveError> {
         items
             .iter()
@@ -1505,6 +1506,7 @@ mod tests {
     use crate::resolver::{collect_symbols, AliasResolver, LabelMode, ResolveError, ResolvedGenericArg};
 
     use super::{MacroExpansion, Value};
+    use crate::resolver::Scope;
 
     fn parse_fixture(name: &str) -> Program {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1787,7 +1789,7 @@ mod tests {
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         let result = resolver
-            .expand_invocation(invocation, &HashMap::new())
+            .expand_invocation(invocation, &Scope::default())
             .unwrap();
 
         assert_eq!(
@@ -2142,7 +2144,7 @@ mod tests {
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
         let invocation = find_invocation(&program, "calculate");
         assert_eq!(
-            resolver.expand_invocation(invocation, &HashMap::new()).unwrap().emitted,
+            resolver.expand_invocation(invocation, &Scope::default()).unwrap().emitted,
             vec![Value::Int(Int::from(720))]
         );
     }
@@ -2161,7 +2163,7 @@ mod tests {
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
         let invocation = find_invocation(&program, "calculate");
         assert_eq!(
-            resolver.expand_invocation(invocation, &HashMap::new()).unwrap().emitted,
+            resolver.expand_invocation(invocation, &Scope::default()).unwrap().emitted,
             vec![Value::Int(Int::from(5050))]
         );
     }
@@ -2177,7 +2179,7 @@ mod tests {
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
         let invocation = find_invocation(&program, "calculate");
         assert!(matches!(
-            resolver.expand_invocation(invocation, &HashMap::new()),
+            resolver.expand_invocation(invocation, &Scope::default()),
             Err(ResolveError::MacroTailCallLimitExceeded { name, max_iterations: 4096, .. })
                 if name == "forever"
         ));
@@ -2193,7 +2195,7 @@ mod tests {
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         assert!(matches!(
-            resolver.expand_invocation(invocation, &HashMap::new()),
+            resolver.expand_invocation(invocation, &Scope::default()),
             Err(ResolveError::ExpectedMacro { .. })
         ));
     }
@@ -2208,7 +2210,7 @@ mod tests {
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
         assert!(matches!(
-            resolver.expand_invocation(invocation, &HashMap::new()),
+            resolver.expand_invocation(invocation, &Scope::default()),
             Err(ResolveError::UnknownMacro { .. })
         ));
     }
@@ -2365,7 +2367,7 @@ mod tests {
         let consts = HashMap::new();
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
 
-        let result = resolver.expand_invocation(invocation, &HashMap::new()).unwrap();
+        let result = resolver.expand_invocation(invocation, &Scope::default()).unwrap();
 
         let Some(Value::Struct { fields, .. }) = result.returned else {
             panic!("expected `updated` to return a struct value");
@@ -2551,7 +2553,7 @@ mod tests {
         let consts = HashMap::new();
 
         // Pass 1 (position discovery, tolerant): mirrors
-        // `main::resolve_and_expand`'s own two-pass driver — walk every
+        // `compile::resolve_and_expand`'s own two-pass driver — walk every
         // top-level statement, expanding invocations for real and
         // recording each label's position as it's reached. Forward
         // references get a silent placeholder; only the resulting
@@ -2568,7 +2570,7 @@ mod tests {
         for statement in &program.statements {
             match statement {
                 Statement::Invocation(invocation) => {
-                    discovery.expand_invocation(invocation, &HashMap::new()).unwrap();
+                    discovery.expand_invocation(invocation, &Scope::default()).unwrap();
                 }
 
                 Statement::Label(label) => {
@@ -2598,7 +2600,7 @@ mod tests {
         for statement in &program.statements {
             match statement {
                 Statement::Invocation(invocation) => {
-                    let expansion = resolver.expand_invocation(invocation, &HashMap::new()).unwrap();
+                    let expansion = resolver.expand_invocation(invocation, &Scope::default()).unwrap();
                     emitted.extend(expansion.emitted);
                 }
 
@@ -3029,11 +3031,11 @@ mod tests {
             .collect();
 
         assert_eq!(
-            resolver.expand_invocation(invocations[0], &HashMap::new()).unwrap().emitted,
+            resolver.expand_invocation(invocations[0], &Scope::default()).unwrap().emitted,
             vec![Value::Int(Int::from(11))]
         );
         assert_eq!(
-            resolver.expand_invocation(invocations[1], &HashMap::new()).unwrap().emitted,
+            resolver.expand_invocation(invocations[1], &Scope::default()).unwrap().emitted,
             vec![Value::Int(Int::from(22))]
         );
     }
@@ -3056,7 +3058,7 @@ mod tests {
                 _ => None,
             })
             .map(|invocation| {
-                resolver.expand_invocation(invocation, &HashMap::new()).unwrap().emitted[0].clone()
+                resolver.expand_invocation(invocation, &Scope::default()).unwrap().emitted[0].clone()
             })
             .collect();
         assert_eq!(emitted, vec![Value::Int(Int::from(7)), Value::Int(Int::from(1003))]);
@@ -3080,7 +3082,7 @@ mod tests {
                 _ => None,
             })
             .map(|invocation| {
-                resolver.expand_invocation(invocation, &HashMap::new()).unwrap().emitted[0].clone()
+                resolver.expand_invocation(invocation, &Scope::default()).unwrap().emitted[0].clone()
             })
             .collect();
         assert_eq!(emitted, vec![Value::Int(Int::from(1)), Value::Int(Int::from(2))]);
@@ -3101,7 +3103,7 @@ mod tests {
                 Statement::Invocation(invocation) => Some(invocation),
                 _ => None,
             })
-            .map(|invocation| resolver.expand_invocation(invocation, &HashMap::new()).unwrap().emitted[0].clone())
+            .map(|invocation| resolver.expand_invocation(invocation, &Scope::default()).unwrap().emitted[0].clone())
             .collect();
         assert_eq!(emitted, vec![Value::Int(Int::from(60)), Value::Int(Int::from(120)), Value::Int(Int::from(15))]);
     }
@@ -3117,7 +3119,7 @@ mod tests {
         let mut resolver = AliasResolver::new_single_pass(&program, &symbols, &consts);
         let invocation = find_invocation(&program, "use_default");
         assert_eq!(
-            resolver.expand_invocation(invocation, &HashMap::new()).unwrap().emitted,
+            resolver.expand_invocation(invocation, &Scope::default()).unwrap().emitted,
             vec![Value::Int(Int::from(10))]
         );
     }
@@ -3139,7 +3141,7 @@ mod tests {
                 Statement::Invocation(invocation) => Some(invocation),
                 _ => None,
             })
-            .map(|invocation| resolver.expand_invocation(invocation, &HashMap::new()).unwrap().emitted[0].clone())
+            .map(|invocation| resolver.expand_invocation(invocation, &Scope::default()).unwrap().emitted[0].clone())
             .collect();
         assert_eq!(emitted, vec![Value::Int(Int::from(1)), Value::Int(Int::from(2))]);
     }
@@ -3156,7 +3158,7 @@ mod tests {
         let invocation = find_invocation(&program, "choose");
 
         assert!(matches!(
-            resolver.expand_invocation(invocation, &HashMap::new()),
+            resolver.expand_invocation(invocation, &Scope::default()),
             Err(ResolveError::AmbiguousMacroOverload { name, .. }) if name == "choose"
         ));
     }
@@ -3174,7 +3176,7 @@ mod tests {
         let invocation = find_invocation(&program, "choose");
 
         assert!(matches!(
-            resolver.expand_invocation(invocation, &HashMap::new()),
+            resolver.expand_invocation(invocation, &Scope::default()),
             Err(ResolveError::NoMatchingMacroOverload { name, actual, .. })
                 if name == "choose" && actual == ["int", "int"]
         ));
@@ -3193,7 +3195,7 @@ mod tests {
         let invocation = find_invocation(&program, "choose");
 
         assert!(matches!(
-            resolver.expand_invocation(invocation, &HashMap::new()),
+            resolver.expand_invocation(invocation, &Scope::default()),
             Err(ResolveError::NoMatchingMacroOverload { name, actual, .. })
                 if name == "choose" && actual == ["__string$0"]
         ));

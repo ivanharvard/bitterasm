@@ -1,0 +1,26 @@
+# The same program as kept.basm, but every loop body holds a declaration,
+# so each is unrolled into copies instead.
+macro show(value: int) {
+    @emit value
+}
+
+macro twice(value: int) -> int {
+    @return value * 2
+}
+
+const n = 3
+
+@for i in 0..n {
+    const outer`i` = i
+    show i * 10
+    @for j in i..n {
+        const inner`i * n + j` = j
+        show j
+    }
+}
+
+@for i in 0..=1 {
+    const last`i` = i
+    show -i
+    show twice(i + 1)
+}

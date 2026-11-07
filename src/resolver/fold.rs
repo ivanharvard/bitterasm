@@ -12,7 +12,6 @@
 //! `@emit`s may appear ([`AliasResolver::eval_value_keeping_emits`]): a
 //! `@fold` and a macro call are treated identically.
 
-use std::collections::HashMap;
 
 use crate::ast::{Expr, FoldBinding, MetaStatement, NamePart, Statement, StructDeclaration};
 use crate::token::Span;
@@ -24,6 +23,7 @@ use super::symbols::SymbolKind;
 use super::types::{ResolvedGenericArg, ResolvedType};
 use super::values::Value;
 use super::ResolveError;
+use crate::resolver::Scope;
 
 /// Where a `@next` reached right now would go. Saved and restored around
 /// every fold body, plain `@for` body and macro call, so a `@next` always
@@ -71,7 +71,7 @@ impl<'a> AliasResolver<'a> {
     pub(super) fn run_fold(
         &mut self,
         fold: &MetaStatement,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
         allowed_emits: &[ResolvedType],
     ) -> Result<FoldOutcome, ResolveError> {
         let [Expr::Identifier { name: var, .. }, source] = fold.args.as_slice() else {
@@ -184,7 +184,7 @@ impl<'a> AliasResolver<'a> {
     pub(super) fn record_next(
         &mut self,
         next: &MetaStatement,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<(), ResolveError> {
         self.check_next_target(next.span)?;
 
@@ -254,7 +254,7 @@ impl<'a> AliasResolver<'a> {
     pub(super) fn eval_value_keeping_emits(
         &mut self,
         expr: &Expr,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
         allowed_emits: &[ResolvedType],
         emitted: &mut Vec<Value>,
         generated: &mut Vec<Statement>,

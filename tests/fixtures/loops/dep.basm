@@ -1,0 +1,8 @@
+pub macro show(value: int) {
+    @emit value
+}
+
+# A program body: it runs when this file is compiled, not when it's imported.
+@for i in 0..3 {
+    show i
+}

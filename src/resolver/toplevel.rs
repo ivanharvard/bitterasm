@@ -1,8 +1,15 @@
 //! Unrolls every top-level `@for`/`@if` into concrete statements *before*
 //! symbol collection or any other resolution runs — [`collect_symbols`],
-//! [`super::ConstEvaluator`], and `main::walk_top_level` all see an
+//! [`super::ConstEvaluator`], and `compile::walk_top_level` all see an
 //! ordinary, `@for`/`@if`-free statement list, exactly as they did before
 //! this pass existed.
+//!
+//! One exception: a `@for` whose body holds only invocations (and nested
+//! `@for`s of them over constant bounds) declares nothing, so it's kept as
+//! a loop with its bounds folded to literals, and `compile::walk_top_level`
+//! runs it with the loop variable in scope
+//! ([`super::AliasResolver::expand_top_level_loop`]). That means the same
+//! as its literalized copies, without making a million of them.
 //!
 //! The mechanism is a thin combination of two things that already exist
 //! for other reasons: [`eval::eval`] (the pure, context-free `Int`
@@ -275,6 +282,26 @@ fn unroll_meta(
             let start = eval_top_level_const(start_expr, consts)?;
             let end = eval_top_level_const(end_expr, consts)?;
 
+            // A body of nothing but invocations (and loops of them) stays a
+            // loop, with its bounds folded: `walk_top_level` runs it with
+            // the loop variable in scope, which means the same as running
+            // each literalized copy, without making the copies.
+            if keeps_as_loop(body, consts, &mut vec![var_name.as_str()]) {
+                let count = if inclusive { &end - &start + 1 } else { &end - &start };
+                if count > Int::from(MAX_FOR_ITERATIONS) {
+                    return Err(ResolveError::ForLoopTooLarge { span: meta.span });
+                }
+                let mut kept = meta.clone();
+                kept.args[1] = Expr::Range {
+                    start: Box::new(int_literal(&start, start_expr.span())),
+                    end: Box::new(int_literal(&end, end_expr.span())),
+                    inclusive,
+                    span: source.span(),
+                };
+                out.push(Statement::Meta(kept));
+                return Ok(());
+            }
+
             let mut i = start;
             let mut iterations: u64 = 0;
 
@@ -517,6 +544,132 @@ fn fold_spliced_name(
         .collect()
 }
 
+/// Whether a top-level `@for` body holds only invocations and nested
+/// `@for`s of them, each nested range over earlier consts and enclosing
+/// loop variables (`loop_vars`). Such a loop is kept rather than unrolled;
+/// see [`AliasResolver::expand_top_level_loop`]. Anything else — a
+/// declaration, a label, an `@if` — unrolls as before.
+fn keeps_as_loop<'s>(body: &'s [Statement], consts: &HashMap<String, Int>, loop_vars: &mut Vec<&'s str>) -> bool {
+    body.iter().all(|statement| match statement {
+        Statement::Invocation(_) => true,
+        Statement::Meta(meta) if meta.name == "for" => {
+            let [Expr::Identifier { name: var, .. }, Expr::Range { start, end, .. }] = meta.args.as_slice() else {
+                return false;
+            };
+            let Some(nested) = &meta.body else { return false };
+            if meta.else_body.is_some() || !meta.bindings.is_empty() || !meta.match_arms.is_empty() {
+                return false;
+            }
+            if !is_constant_bound(start, consts, loop_vars) || !is_constant_bound(end, consts, loop_vars) {
+                return false;
+            }
+            loop_vars.push(var);
+            let keeps = keeps_as_loop(nested, consts, loop_vars);
+            loop_vars.pop();
+            keeps
+        }
+        _ => false,
+    })
+}
+
+/// Integer arithmetic over literals, `consts` and `loop_vars` only.
+fn is_constant_bound(expr: &Expr, consts: &HashMap<String, Int>, loop_vars: &[&str]) -> bool {
+    match expr {
+        Expr::Integer { .. } => true,
+        Expr::Identifier { name, .. } => consts.contains_key(name) || loop_vars.contains(&name.as_str()),
+        Expr::Unary { operand, .. } => is_constant_bound(operand, consts, loop_vars),
+        Expr::Binary { left, right, .. } => {
+            is_constant_bound(left, consts, loop_vars) && is_constant_bound(right, consts, loop_vars)
+        }
+        Expr::Splice { inner, .. } => is_constant_bound(inner, consts, loop_vars),
+        _ => false,
+    }
+}
+
+impl super::AliasResolver<'_> {
+    /// Runs a top-level `@for` that `unroll_top_level` kept as a loop:
+    /// `each` gets every invocation in its body, in order, with the loop
+    /// variables bound in `scope`. `consts` is every top-level const, for
+    /// a nested loop's bounds.
+    pub fn expand_top_level_loop(
+        &mut self,
+        meta: &MetaStatement,
+        consts: &HashMap<String, Int>,
+        each: &mut dyn FnMut(&mut Self, &crate::ast::Invocation, &crate::resolver::Scope) -> Result<(), ResolveError>,
+    ) -> Result<(), ResolveError> {
+        self.run_kept_loop(meta, &crate::resolver::Scope::default(), consts, each)
+    }
+
+    fn run_kept_loop(
+        &mut self,
+        meta: &MetaStatement,
+        outer: &crate::resolver::Scope,
+        consts: &HashMap<String, Int>,
+        each: &mut dyn FnMut(&mut Self, &crate::ast::Invocation, &crate::resolver::Scope) -> Result<(), ResolveError>,
+    ) -> Result<(), ResolveError> {
+        let (
+            [Expr::Identifier { name: var, .. }, Expr::Range { start, end, inclusive, .. }],
+            Some(body),
+        ) = (meta.args.as_slice(), &meta.body)
+        else {
+            return Err(ResolveError::Internal {
+                message: "a kept top-level `@for` is always `var in start..end` with a body".to_string(),
+                span: meta.span,
+            });
+        };
+
+        // A bound sees the enclosing loops' variables, then the consts.
+        struct Bounds<'s> {
+            vars: &'s crate::resolver::Scope,
+            consts: &'s HashMap<String, Int>,
+        }
+        impl eval::IntScope for Bounds<'_> {
+            fn get_int(&self, name: &str) -> Option<Int> {
+                match self.vars.get(name) {
+                    Some(Value::Int(value)) => Some(value.clone()),
+                    _ => self.consts.get(name).cloned(),
+                }
+            }
+        }
+        let bounds = Bounds { vars: outer, consts };
+        let bound = |expr: &Expr| {
+            eval::eval_in(expr, &bounds).map_err(|error| match error {
+                EvalError::UnknownConstant { name, span } => ResolveError::UnknownConstant { name, span },
+                EvalError::NotConstant { span } => ResolveError::ExpectedConstantExpression { span },
+                EvalError::DivisionByZero { span } => ResolveError::DivisionByZero { span },
+            })
+        };
+        let (mut i, end) = (bound(start)?, bound(end)?);
+
+        let mut scope = outer.clone();
+        let mut iterations: u64 = 0;
+        while if *inclusive { i <= end } else { i < end } {
+            iterations += 1;
+            if iterations > MAX_FOR_ITERATIONS {
+                return Err(ResolveError::ForLoopTooLarge { span: meta.span });
+            }
+
+            scope.insert(var.clone(), Value::Int(i.clone()));
+            for statement in body {
+                match statement {
+                    Statement::Invocation(invocation) => each(self, invocation, &scope)?,
+                    Statement::Meta(nested) => self.run_kept_loop(nested, &scope, consts, each)?,
+                    other => {
+                        return Err(ResolveError::Internal {
+                            message: "a kept top-level `@for` holds only invocations and loops".to_string(),
+                            span: super::generated::statement_span(other),
+                        });
+                    }
+                }
+            }
+
+            i += Int::from(1);
+        }
+
+        Ok(())
+    }
+}
+
 fn eval_top_level_const(expr: &Expr, consts: &HashMap<String, Int>) -> Result<Int, ResolveError> {
     eval::eval(expr, consts).map_err(|error| match error {
         EvalError::UnknownConstant { name, span } => ResolveError::UnknownConstant { name, span },
@@ -566,7 +719,8 @@ mod tests {
 
     #[test]
     fn for_unrolls_into_one_invocation_per_iteration_with_the_loop_var_literalized() {
-        let program = unroll("@for i in 0..3 {\n    make_reg(i)\n}\n").unwrap();
+        // The `const` makes it unroll; a loop of only invocations is kept.
+        let program = unroll("@for i in 0..3 {\n    make_reg(i)\n    const c`i` = i\n}\n").unwrap();
 
         assert_eq!(invocation_names(&program), vec!["make_reg", "make_reg", "make_reg"]);
         assert_eq!(invocation_first_arg_raw(&program, 0), "0");
@@ -582,7 +736,7 @@ mod tests {
 
     #[test]
     fn for_bound_may_reference_an_earlier_top_level_const() {
-        let program = unroll("const n = 2\n@for i in 0..n {\n    make_reg(i)\n}\n").unwrap();
+        let program = unroll("const n = 2\n@for i in 0..n {\n    make_reg(i)\n    const c`i` = i\n}\n").unwrap();
         assert_eq!(invocation_names(&program), vec!["make_reg", "make_reg"]);
     }
 
@@ -618,7 +772,9 @@ mod tests {
 
     #[test]
     fn nested_for_inside_for_unrolls_fully() {
-        let program = unroll("@for i in 0..2 {\n    @for j in 0..2 {\n        pair(i)\n    }\n}\n").unwrap();
+        let program =
+            unroll("@for i in 0..2 {\n    @for j in 0..2 {\n        pair(i)\n        const p`i * 2 + j` = 0\n    }\n}\n")
+                .unwrap();
         assert_eq!(invocation_names(&program), vec!["pair", "pair", "pair", "pair"]);
     }
 
@@ -647,7 +803,7 @@ mod tests {
 
     #[test]
     fn for_over_an_inclusive_range_includes_the_end_bound() {
-        let program = unroll("@for i in 0..=2 {\n    make_reg(i)\n}\n").unwrap();
+        let program = unroll("@for i in 0..=2 {\n    make_reg(i)\n    const c`i` = i\n}\n").unwrap();
 
         assert_eq!(invocation_names(&program), vec!["make_reg", "make_reg", "make_reg"]);
         assert_eq!(invocation_first_arg_raw(&program, 0), "0");
@@ -657,7 +813,50 @@ mod tests {
 
     #[test]
     fn for_over_an_empty_inclusive_range_produces_one_iteration() {
-        let program = unroll("@for i in 0..=0 {\n    make_reg(i)\n}\n").unwrap();
+        let program = unroll("@for i in 0..=0 {\n    make_reg(i)\n    const c`i` = i\n}\n").unwrap();
         assert_eq!(invocation_names(&program), vec!["make_reg"]);
+    }
+
+    fn kept_loop(program: &Program) -> &MetaStatement {
+        let [Statement::Meta(meta)] = program.statements.as_slice() else {
+            panic!("expected one kept loop, found {:?}", program.statements);
+        };
+        meta
+    }
+
+    fn integer_raw(expr: &Expr) -> &str {
+        match expr {
+            Expr::Integer { raw, .. } => raw,
+            other => panic!("expected an integer, found {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_loop_of_invocations_is_kept_with_its_bounds_folded() {
+        let program = unroll("const n = 2\n@for i in 1..n + 1 {\n    make_reg(i)\n}\n").unwrap();
+        let statements = Program { statements: program.statements[1..].to_vec(), ..program };
+        let meta = kept_loop(&statements);
+
+        let Expr::Range { start, end, inclusive, .. } = &meta.args[1] else { panic!("expected a range") };
+        assert_eq!((integer_raw(start), integer_raw(end), *inclusive), ("1", "3", false));
+        assert_eq!(meta.body.as_ref().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_nested_loop_over_the_outer_variable_is_kept() {
+        let program = unroll("@for i in 0..3 {\n    @for j in i..3 {\n        pair i, j\n    }\n}\n").unwrap();
+        kept_loop(&program);
+    }
+
+    #[test]
+    fn a_nested_loop_over_an_unknown_name_still_unrolls_and_is_rejected() {
+        let error = unroll("@for i in 0..2 {\n    @for j in 0..m {\n        pair(i)\n    }\n}\n").unwrap_err();
+        assert!(matches!(error, ResolveError::UnknownConstant { .. }));
+    }
+
+    #[test]
+    fn a_kept_loop_over_too_many_iterations_is_rejected() {
+        let source = format!("@for i in 0..{} {{\n    make_reg(i)\n}}\n", MAX_FOR_ITERATIONS + 1);
+        assert!(matches!(unroll(&source).unwrap_err(), ResolveError::ForLoopTooLarge { .. }));
     }
 }

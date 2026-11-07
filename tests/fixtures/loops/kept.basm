@@ -1,0 +1,22 @@
+# Only invocations and loops of them: kept as a loop, not copied out.
+macro show(value: int) {
+    @emit value
+}
+
+macro twice(value: int) -> int {
+    @return value * 2
+}
+
+const n = 3
+
+@for i in 0..n {
+    show i * 10
+    @for j in i..n {
+        show j
+    }
+}
+
+@for i in 0..=1 {
+    show -i
+    show twice(i + 1)
+}

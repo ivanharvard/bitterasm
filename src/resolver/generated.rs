@@ -10,7 +10,6 @@
 //! `AliasResolver` a mutable/growable `Program` or doing lifetime surgery —
 //! see [`AliasResolver::get_symbol`]/[`AliasResolver::lookup_symbol`].
 
-use std::collections::HashMap;
 
 use crate::ast::{Expr, Statement, StructDeclaration};
 use crate::eval::Int;
@@ -22,6 +21,7 @@ use super::macro_body::MAX_FOR_ITERATIONS;
 use super::symbols::{Symbol, SymbolId, SymbolKind};
 use super::values::Value;
 use super::ResolveError;
+use crate::resolver::Scope;
 
 impl<'a> AliasResolver<'a> {
     /// `self.symbols` first, `self.generated_symbols` as a fallback — the
@@ -37,14 +37,15 @@ impl<'a> AliasResolver<'a> {
     }
 
     pub(super) fn lookup_symbol(&self, name: &str) -> Option<SymbolId> {
-        if overload_set_members(name).is_some() {
+        if is_overload_set(name) {
             return self.lookup_symbols(name).first().copied();
         }
         self.symbols.lookup(name).or_else(|| self.generated_symbols.lookup(name))
     }
 
     pub(super) fn lookup_symbols(&self, name: &str) -> Vec<SymbolId> {
-        if let Some(members) = overload_set_members(name) {
+        if is_overload_set(name) {
+            let members = overload_set_members(name).expect("checked just above");
             return members.iter().flat_map(|member| self.lookup_symbols(member)).collect();
         }
         self.symbols
@@ -168,7 +169,7 @@ impl<'a> AliasResolver<'a> {
         end: &Expr,
         inclusive: bool,
         span: Span,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<Value, ResolveError> {
         let start_value = self.eval_int(start, scope)?;
         let end_value = self.eval_int(end, scope)?;
@@ -323,7 +324,7 @@ impl<'a> AliasResolver<'a> {
     pub(super) fn eval_for_source(
         &mut self,
         source: &Expr,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<Vec<(String, Value)>, ResolveError> {
         // A literal `start..end` source never needs `eval_range_value`'s
         // materialized struct — nothing here treats the range as a value in
@@ -365,7 +366,7 @@ impl<'a> AliasResolver<'a> {
         end: &Expr,
         inclusive: bool,
         span: Span,
-        scope: &HashMap<String, Value>,
+        scope: &Scope,
     ) -> Result<Vec<(String, Value)>, ResolveError> {
         let start_value = self.eval_int(start, scope)?;
         let end_value = self.eval_int(end, scope)?;
@@ -389,7 +390,7 @@ impl<'a> AliasResolver<'a> {
     }
 }
 
-fn statement_span(statement: &Statement) -> Span {
+pub(super) fn statement_span(statement: &Statement) -> Span {
     match statement {
         Statement::Import(s) => s.span,
         Statement::Struct(s) => s.span,
@@ -409,6 +410,12 @@ fn statement_span(statement: &Statement) -> Span {
 /// A macro reference the loader rewrote to `name#a,b,...` means every
 /// overload of `name` declared in modules `a`, `b`, ... (whose own internal
 /// names are `name#a`, `name#b`, ...). See the loader's "namespaces".
+/// Whether `name` names an overload set spread over several modules
+/// (`mov#3,5`), without building its members' names.
+fn is_overload_set(name: &str) -> bool {
+    name.rsplit_once('#').is_some_and(|(_, modules)| modules.contains(','))
+}
+
 fn overload_set_members(name: &str) -> Option<Vec<String>> {
     let (base, modules) = name.rsplit_once('#')?;
     if !modules.contains(',') {

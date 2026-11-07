@@ -7,7 +7,7 @@ from std.bitter.deferred import *
 # no `deferred_uleb128 span(...)` pairs, so no top-level labels at all, and
 # in particular no *forward*-referenced ones. Exists purely to isolate the
 # cost of the `@for`-unrolled macro-expansion work itself from the
-# two-pass label-position-discovery machinery `main::resolve_and_expand`
+# two-pass label-position-discovery machinery `compile::resolve_and_expand`
 # only needs when a label actually IS forward-referenced (as the section
 # spans in the other file are).
 macro wrap_i32(v: int) -> int {

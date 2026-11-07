@@ -28,6 +28,7 @@ use super::symbols::{SymbolId, SymbolKind, SymbolTable};
 use super::types::{BuiltinType, ResolvedGenericArg, ResolvedType};
 use super::values::Value;
 use super::ResolveError;
+use crate::resolver::Scope;
 
 /// A struct body item, fully unrolled down to a concrete field: a
 /// literal (never-spliced) name paired with its still-unresolved
@@ -143,7 +144,33 @@ impl<'a> AliasResolver<'a> {
         &mut self,
         id: SymbolId,
         args: &[ResolvedGenericArg],
-    ) -> Result<Vec<(String, ResolvedType, bool, bool, Option<Expr>)>, ResolveError> {
+    ) -> Result<super::aliases::NamedFields, ResolveError> {
+        // Past this many distinct argument lists for one struct, later ones
+        // are worked out each time rather than kept.
+        const MAX_CACHED_INSTANTIATIONS: usize = 256;
+
+        let key = (id, self.current_module);
+        if let Some((_, fields)) = self
+            .struct_fields_cache
+            .get(&key)
+            .and_then(|entries| entries.iter().find(|(cached, _)| cached.as_slice() == args))
+        {
+            return Ok(fields.clone());
+        }
+
+        let fields = std::rc::Rc::new(self.instantiate_struct_fields_uncached(id, args)?);
+        let entries = self.struct_fields_cache.entry(key).or_default();
+        if entries.len() < MAX_CACHED_INSTANTIATIONS {
+            entries.push((args.to_vec(), fields.clone()));
+        }
+        Ok(fields)
+    }
+
+    fn instantiate_struct_fields_uncached(
+        &mut self,
+        id: SymbolId,
+        args: &[ResolvedGenericArg],
+    ) -> Result<Vec<super::aliases::NamedField>, ResolveError> {
         let declaration = self.find_struct_declaration_rc(id)?;
         let scope = generic_arg_scope(&declaration.generic_params, args);
 
@@ -180,8 +207,8 @@ impl<'a> AliasResolver<'a> {
     ) -> Result<Vec<bool>, ResolveError> {
         Ok(self
             .instantiate_struct_fields_named(id, args)?
-            .into_iter()
-            .map(|(_, _, is_pub, is_skip, _)| is_pub && !is_skip)
+            .iter()
+            .map(|(_, _, is_pub, is_skip, _)| *is_pub && !*is_skip)
             .collect())
     }
 
@@ -202,16 +229,16 @@ impl<'a> AliasResolver<'a> {
         fields: &[(String, Value)],
         span: Span,
     ) -> Result<(), ResolveError> {
-        let declaration = self.find_struct_declaration(symbol)?;
+        let declaration = self.find_struct_declaration_rc(symbol)?;
         let invariants = facets::extract_invariants(&declaration.facets);
 
         if invariants.is_empty() {
             return Ok(());
         }
 
-        let generic_params = declaration.generic_params.clone();
+        let generic_params = &declaration.generic_params;
 
-        let mut scope: HashMap<String, Value> = HashMap::new();
+        let mut scope: Scope = Scope::default();
 
         for (param, arg) in generic_params.iter().zip(args) {
             if let (param @ GenericParameter::Const { name, .. }, ResolvedGenericArg::Const(value)) =
@@ -468,7 +495,7 @@ impl<'a> AliasResolver<'a> {
     // A throwaway `Value` scope of every concrete generic const in
     // `self.generic_scope` (`Type`/still-unbound entries have no `Value`
     // form), for evaluating a struct-body loop's source.
-    fn const_value_scope(&self) -> HashMap<String, Value> {
+    fn const_value_scope(&self) -> Scope {
         self.generic_scope
             .iter()
             .filter_map(|(name, binding)| match binding {
