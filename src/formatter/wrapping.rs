@@ -213,8 +213,8 @@ pub(super) fn wrap_code(
         // becomes `) -> int` and `) -> int {`. Leading closers don't count;
         // they already start the line.
         let still_open = outer.len().saturating_sub(leading_closers);
-        if let Some((position, depth)) = closings.iter().find(|(_, depth)| *depth <= still_open) {
-            if !content[..*position].trim().is_empty() {
+        if let Some((position, depth)) = closings.iter().find(|(_, depth)| *depth <= still_open)
+            && !content[..*position].trim().is_empty() {
                 return vec![
                     format!("{first_indent}{}", content[..*position].trim()),
                     format!(
@@ -224,7 +224,6 @@ pub(super) fn wrap_code(
                     ),
                 ];
             }
-        }
         return vec![format!("{first_indent}{content}")];
     }
     if breaks.is_empty() {

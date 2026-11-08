@@ -129,8 +129,8 @@ impl<'a> ConstEvaluator<'a> {
         let mut scope = HashMap::new();
 
         for name in referenced_identifiers(&value) {
-            if let Some(referenced_id) = self.symbols.lookup(&name) {
-                if self.symbols.get(referenced_id).kind == SymbolKind::Const {
+            if let Some(referenced_id) = self.symbols.lookup(&name)
+                && self.symbols.get(referenced_id).kind == SymbolKind::Const {
                     let referenced = find_const_declaration(self.program, &name, self.symbols)?;
 
                     // A struct-valued const referenced here (`const foo =
@@ -146,7 +146,6 @@ impl<'a> ConstEvaluator<'a> {
                         scope.insert(name, self.evaluate(referenced_id)?);
                     }
                 }
-            }
         }
 
         eval::eval(&value, &scope).map_err(|error| into_resolve_error(error, &symbol.name))

@@ -246,11 +246,10 @@ fn write_docs(paths: &[PathBuf], output: &Path, check: bool, summary: Option<&Pa
     for path in existing.into_iter().filter(|path| !expected.contains(path)) {
         eprintln!("warning: {} isn't a page of this reference; delete it if it's an old one", path.display());
     }
-    if let Some((path, _, updated)) = summary_update {
-        if let Err(error) = std::fs::write(path, updated) {
+    if let Some((path, _, updated)) = summary_update
+        && let Err(error) = std::fs::write(path, updated) {
             fail(format!("failed to write {}: {error}", path.display()));
         }
-    }
     println!("wrote {} page(s) to {}", reference.pages.len(), output.display());
 }
 

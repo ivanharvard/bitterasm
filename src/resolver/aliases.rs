@@ -303,12 +303,15 @@ pub struct AliasResolver<'a> {
     // resolving it, then by generic arguments: a struct is built over and
     // over with the same few argument lists, and its fields' layout and
     // types depend on nothing else.
-    pub(super) struct_fields_cache: FxHashMap<(SymbolId, usize), Vec<(Vec<ResolvedGenericArg>, NamedFields)>>,
+    pub(super) struct_fields_cache: FxHashMap<(SymbolId, usize), StructFieldsByArgs>,
 }
 
 /// A struct's fields under one instantiation: name, type, `is_pub`,
 /// `is_skip` and default — see `instantiate_struct_fields_named`.
 pub(super) type NamedFields = Rc<Vec<NamedField>>;
+
+/// One struct's cached instantiations, by generic arguments.
+pub(super) type StructFieldsByArgs = Vec<(Vec<ResolvedGenericArg>, NamedFields)>;
 
 /// One field of [`NamedFields`].
 pub(super) type NamedField = (String, ResolvedType, bool, bool, Option<Expr>);
@@ -1015,11 +1018,10 @@ impl<'a> AliasResolver<'a> {
                 // own field types in the abstract, before any particular
                 // instantiation) stays symbolic rather than being folded —
                 // there's nothing to fold it *to*.
-                if let Expr::Identifier { name, .. } = expr {
-                    if let Some(GenericBinding::Const(None)) = self.generic_scope.get(name) {
+                if let Expr::Identifier { name, .. } = expr
+                    && let Some(GenericBinding::Const(None)) = self.generic_scope.get(name) {
                         return Ok(ResolvedGenericArg::ConstParam(name.clone()));
                     }
-                }
 
                 Ok(ResolvedGenericArg::Const(self.eval_const_expr(expr)?))
             }
@@ -1035,28 +1037,24 @@ impl<'a> AliasResolver<'a> {
         if let Expr::Member { object, member, span } = expr {
             let member = crate::ast::literal_name(member)
                 .ok_or(ResolveError::ExpectedConstantExpression { span: *span })?;
-            if let Expr::Identifier { name, .. } = object.as_ref() {
-                if let Some(id) = self.lookup_symbol(name) {
-                    if self.get_symbol(id).kind == SymbolKind::Enum {
+            if let Expr::Identifier { name, .. } = object.as_ref()
+                && let Some(id) = self.lookup_symbol(name)
+                    && self.get_symbol(id).kind == SymbolKind::Enum {
                         let declaration = self.find_enum_declaration_rc(id)?;
                         if let Some((index, variant)) = declaration
                             .variants
                             .iter()
                             .enumerate()
                             .find(|(_, variant)| variant.name == member)
-                        {
-                            if variant.payload.is_none() {
+                            && variant.payload.is_none() {
                                 return Ok(Int::from(index));
                             }
-                        }
                         return Err(ResolveError::UnknownField {
                             type_name: name.clone(),
                             field: member,
                             span: *span,
                         });
                     }
-                }
-            }
         }
 
         // A bound const generic shadows a top-level const of the same name.
@@ -1074,10 +1072,10 @@ impl<'a> AliasResolver<'a> {
         }
 
         let scope = ConstScope { generics: &self.generic_scope, consts: self.consts };
-        eval::eval_in(expr, &scope).map_err(|error| self.into_resolve_error(error))
+        eval::eval_in(expr, &scope).map_err(|error| self.eval_error_to_resolve(error))
     }
 
-    fn into_resolve_error(&self, error: EvalError) -> ResolveError {
+    fn eval_error_to_resolve(&self, error: EvalError) -> ResolveError {
         match error {
             EvalError::UnknownConstant { name, span } => {
                 // `name` names *something* (a struct, a type alias, a
@@ -1113,11 +1111,10 @@ impl<'a> AliasResolver<'a> {
         let symbol = self.get_symbol(id);
 
         for statement in self.indexed(DeclKind::Alias, &symbol.name).chain(&self.generated) {
-            if let Statement::TypeAlias(declaration) = statement {
-                if crate::ast::literal_name(&declaration.name).as_deref() == Some(symbol.name.as_str()) {
+            if let Statement::TypeAlias(declaration) = statement
+                && crate::ast::literal_name(&declaration.name).as_deref() == Some(symbol.name.as_str()) {
                     return Ok(declaration);
                 }
-            }
         }
 
         // there is some internal compiler inconsistency rather than bad
@@ -1138,11 +1135,10 @@ impl<'a> AliasResolver<'a> {
         let symbol = self.get_symbol(id);
 
         for statement in self.indexed(DeclKind::Struct, &symbol.name).chain(&self.generated) {
-            if let Statement::Struct(declaration) = statement {
-                if crate::ast::literal_name(&declaration.name).as_deref() == Some(symbol.name.as_str()) {
+            if let Statement::Struct(declaration) = statement
+                && crate::ast::literal_name(&declaration.name).as_deref() == Some(symbol.name.as_str()) {
                     return Ok(declaration);
                 }
-            }
         }
 
         // there is some internal compiler inconsistency rather than bad
@@ -1167,11 +1163,10 @@ impl<'a> AliasResolver<'a> {
         let symbol = self.get_symbol(id);
 
         for statement in self.indexed(DeclKind::ExternLabel, &symbol.name).chain(&self.generated) {
-            if let Statement::ExternLabel(extern_label) = statement {
-                if extern_label.name == symbol.name {
+            if let Statement::ExternLabel(extern_label) = statement
+                && extern_label.name == symbol.name {
                     return Ok(extern_label);
                 }
-            }
         }
 
         // there is some internal compiler inconsistency rather than bad
@@ -1191,11 +1186,10 @@ impl<'a> AliasResolver<'a> {
     ) -> Result<&crate::ast::EnumDeclaration, ResolveError> {
         let symbol = self.get_symbol(id);
         for statement in self.indexed(DeclKind::Enum, &symbol.name).chain(&self.generated) {
-            if let Statement::Enum(declaration) = statement {
-                if crate::ast::literal_name(&declaration.name).as_deref() == Some(symbol.name.as_str()) {
+            if let Statement::Enum(declaration) = statement
+                && crate::ast::literal_name(&declaration.name).as_deref() == Some(symbol.name.as_str()) {
                     return Ok(declaration);
                 }
-            }
         }
         Err(ResolveError::Internal {
             message: format!(

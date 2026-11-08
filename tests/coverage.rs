@@ -79,8 +79,8 @@ fn parse(path: &Path) -> Architecture {
     let mut forms = Vec::new();
     for line in text.lines() {
         let columns: Vec<&str> = line.splitn(3, '|').collect();
-        if let [marker, form, sample] = columns.as_slice() {
-            if !line.starts_with('#') {
+        if let [marker, form, sample] = columns.as_slice()
+            && !line.starts_with('#') {
                 forms.push(Form {
                     covered: marker.trim() == "x",
                     form: form.trim().to_string(),
@@ -88,7 +88,6 @@ fn parse(path: &Path) -> Architecture {
                 });
                 continue;
             }
-        }
         if forms.is_empty() {
             header.push(line);
         }

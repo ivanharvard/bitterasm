@@ -278,11 +278,10 @@ impl<'a> AliasResolver<'a> {
 
             Expr::Member { object, member, span } => {
                 let member = self.resolve_spliced_name(member, scope)?;
-                if let Expr::Identifier { name, .. } = object.as_ref() {
-                    if self.lookup_symbol(name).is_some_and(|id| self.get_symbol(id).kind == SymbolKind::Enum) {
+                if let Expr::Identifier { name, .. } = object.as_ref()
+                    && self.lookup_symbol(name).is_some_and(|id| self.get_symbol(id).kind == SymbolKind::Enum) {
                         return self.eval_enum_variant(name, &[], &member, &[], *span, scope);
                     }
-                }
                 match self.eval_value(object, scope)? {
                 Value::Struct { symbol, args, fields, .. } => {
                     // A field declared without `pub` may only be read from
@@ -1248,11 +1247,10 @@ impl<'a> AliasResolver<'a> {
         allow_explicit: bool,
     ) -> Result<Value, ResolveError> {
         let source_ty = self.value_type(&value)?;
-        if allow_explicit && source_ty != *target {
-            if let Some(converted) = self.try_explicit_conversion(&value, &source_ty, target, span)? {
+        if allow_explicit && source_ty != *target
+            && let Some(converted) = self.try_explicit_conversion(&value, &source_ty, target, span)? {
                 return Ok(converted);
             }
-        }
 
         match target {
             ResolvedType::Alias { symbol, binder, invariants, underlying, .. } => {

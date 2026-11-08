@@ -23,13 +23,12 @@ pub(super) fn normalize_macro_signatures(source: &str, config: &FormatConfig) ->
                 add_pub(&mut lines[index]);
                 continue;
             }
-            if config.return_type_on_declaration {
-                if let Some(return_type) = trimmed.strip_prefix("| ->") {
+            if config.return_type_on_declaration
+                && let Some(return_type) = trimmed.strip_prefix("| ->") {
                     lines[index].push_str(" ->");
                     lines[index].push_str(return_type);
                     continue;
                 }
-            }
 
             if trimmed.starts_with('|') || trimmed.is_empty() {
                 lines.push(line.to_string());

@@ -30,11 +30,10 @@ impl Parser {
         let mut left = self.parse_prefix_expr(stop)?;
 
         loop {
-            if let Some(stop) = stop {
-                if same_variant(&self.current().kind, stop) {
+            if let Some(stop) = stop
+                && same_variant(&self.current().kind, stop) {
                     break;
                 }
-            }
 
             // postfix: member access
             //

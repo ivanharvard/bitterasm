@@ -1143,11 +1143,10 @@ impl Binders {
     // A declaration nested in a macro body is generated when the macro
     // runs, under its own name.
     fn nested(&mut self, name: &[NamePart], top: bool) {
-        if !top {
-            if let Some(name) = literal_name(name) {
+        if !top
+            && let Some(name) = literal_name(name) {
                 self.both(&name);
             }
-        }
     }
 
     fn statement(&mut self, statement: &Statement, top: bool) {
@@ -1583,11 +1582,10 @@ fn rename_generic_parameter(param: &mut GenericParameter, renames: &mut Renamer)
 fn rename_type_expr(ty: &mut TypeExpr, renames: &mut Renamer) {
     match ty {
         TypeExpr::Named { path, .. } => {
-            if path.len() == 1 {
-                if let Some(mangled) = renames.get_type(&path[0]) {
+            if path.len() == 1
+                && let Some(mangled) = renames.get_type(&path[0]) {
                     path[0] = mangled.clone();
                 }
-            }
         }
 
         TypeExpr::Apply { base, args, .. } => {

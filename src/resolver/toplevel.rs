@@ -64,7 +64,7 @@ pub fn unroll_top_level(
 
     for (statement, &module) in program.statements.iter().zip(module_of) {
         let unrolled = unroll_statements(std::slice::from_ref(statement), &mut consts, &mut NextState::default())?;
-        statement_modules.extend(std::iter::repeat(module).take(unrolled.len()));
+        statement_modules.extend(std::iter::repeat_n(module, unrolled.len()));
         statements.extend(unrolled);
     }
 
@@ -153,11 +153,10 @@ fn unroll_statements(
                 // a const whose value isn't staticaly evaluable this way is
                 // simply not tracked, and any real error in it surfaces
                 // later from `ConstEvaluator` instead.
-                if let Some(name) = literal_name(&decl.name) {
-                    if let Ok(value) = eval::eval(&decl.value, consts) {
+                if let Some(name) = literal_name(&decl.name)
+                    && let Ok(value) = eval::eval(&decl.value, consts) {
                         consts.insert(name, value);
                     }
-                }
 
                 out.push(Statement::Const(decl));
             }

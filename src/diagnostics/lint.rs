@@ -390,9 +390,8 @@ fn lint_macro(
     }
     for statement in &declaration.body { collect_statement_identifiers(statement, &mut referenced); }
     for facet in &declaration.facets {
-        if !is_lint_facet(&facet.name) {
-            if let FacetPayload::Expr(expr) = &facet.payload { collect_expr_identifiers(expr, &mut referenced); }
-        }
+        if !is_lint_facet(&facet.name)
+            && let FacetPayload::Expr(expr) = &facet.payload { collect_expr_identifiers(expr, &mut referenced); }
     }
 
     let mut occurred = HashSet::new();

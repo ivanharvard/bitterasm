@@ -46,11 +46,10 @@ impl<'a> MacroTable<'a> {
             // Keyed by the name as declared, without the loader's internal
             // `#module` suffix, since that's what an invocation here says
             // and what a nested one is demangled to below.
-            if let Statement::Macro(decl) = statement {
-                if let Some(name) = crate::ast::literal_name(&decl.name) {
+            if let Statement::Macro(decl) = statement
+                && let Some(name) = crate::ast::literal_name(&decl.name) {
                     table.insert(crate::loader::demangle(&name), decl);
                 }
-            }
         }
 
         Self(table)
@@ -106,7 +105,7 @@ pub fn expand_source(
     // Descending by start so an earlier edit's length change never shifts
     // the byte offset an edit later in this loop (earlier in the file)
     // still needs to land at.
-    edits.sort_by(|a, b| b.0.start.cmp(&a.0.start));
+    edits.sort_by_key(|edit| std::cmp::Reverse(edit.0.start));
 
     let mut result = source.to_string();
 

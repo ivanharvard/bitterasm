@@ -38,7 +38,7 @@ pub(super) fn alias_invariant_binder(
         return Ok(None);
     }
 
-    let bound: HashSet<&str> = generic_params.iter().map(|param| param_name(param)).collect();
+    let bound: HashSet<&str> = generic_params.iter().map(param_name).collect();
 
     let mut candidates: HashSet<String> = HashSet::new();
 

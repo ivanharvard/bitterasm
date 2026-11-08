@@ -199,7 +199,7 @@ impl<'a> AliasResolver<'a> {
                 // `bind_macro_arguments` (run once the overload is chosen)
                 // needs every one actually bound.
                 let generic_names: HashSet<&str> =
-                    declaration.generic_params.iter().map(|param| param_name(param)).collect();
+                    declaration.generic_params.iter().map(param_name).collect();
                 let mut generic_scope = HashMap::new();
                 declaration
                     .params
@@ -447,7 +447,7 @@ impl<'a> AliasResolver<'a> {
         }
 
         let generic_names: HashSet<&str> =
-            declaration.generic_params.iter().map(|param| param_name(param)).collect();
+            declaration.generic_params.iter().map(param_name).collect();
 
         let mut scope = Scope::default();
         let mut generic_scope: HashMap<String, GenericBinding> = HashMap::new();
@@ -521,8 +521,8 @@ impl<'a> AliasResolver<'a> {
         scope: &mut HashMap<String, GenericBinding>,
         span: Span,
     ) -> Result<(), ResolveError> {
-        if let TypeExpr::Named { path, .. } = expected {
-            if path.len() == 1 && generic_names.contains(path[0].as_str()) {
+        if let TypeExpr::Named { path, .. } = expected
+            && path.len() == 1 && generic_names.contains(path[0].as_str()) {
                 let name = &path[0];
                 return match scope.get(name) {
                     Some(GenericBinding::Type(bound)) if bound == actual => Ok(()),
@@ -544,7 +544,6 @@ impl<'a> AliasResolver<'a> {
                     }
                 };
             }
-        }
 
         if let TypeExpr::Apply { base, args, span: apply_span } = expected {
             if let Some(expansion) = self.expand_generic_alias(base, args, *apply_span)? {
@@ -583,8 +582,8 @@ impl<'a> AliasResolver<'a> {
                     }
 
                     (TypeArgument::Const(expr), ResolvedGenericArg::Const(value)) => {
-                        if let Expr::Identifier { name, .. } = expr {
-                            if generic_names.contains(name.as_str()) {
+                        if let Expr::Identifier { name, .. } = expr
+                            && generic_names.contains(name.as_str()) {
                                 match scope.get(name) {
                                     Some(GenericBinding::Const(Some(bound))) if bound == value => {}
                                     Some(_) => return Err(mismatch()),
@@ -594,7 +593,6 @@ impl<'a> AliasResolver<'a> {
                                 }
                                 continue;
                             }
-                        }
 
                         if self.eval_const_expr(expr)? != *value {
                             return Err(mismatch());
@@ -765,12 +763,11 @@ impl<'a> AliasResolver<'a> {
                     },
 
                     "return" => {
-                        if let [expr] = meta.args.as_slice() {
-                            if let Some(arguments) = self.eval_direct_self_tail_call(expr, &scope)? {
+                        if let [expr] = meta.args.as_slice()
+                            && let Some(arguments) = self.eval_direct_self_tail_call(expr, &scope)? {
                                 self.pending_tail_call = Some(arguments);
                                 return Ok(MacroExpansion { emitted, generated, returned: None });
                             }
-                        }
                         let value = match meta.args.as_slice() {
                             [] => None,
                             [expr] => match self.eval_value_keeping_emits(
