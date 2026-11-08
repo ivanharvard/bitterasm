@@ -227,11 +227,17 @@ pub fn lint_program_with(
 
 fn collect_program_statement_references(statement: &Statement, names: &mut HashSet<String>) {
     match statement {
-        Statement::Import(_) | Statement::Label(_) | Statement::ExternLabel(_) | Statement::Section(_) => {}
+        Statement::Import(_) | Statement::Label(_) | Statement::ExternLabel(_) => {}
+        // A `section .text` line uses an imported `.text`.
+        Statement::Section(section) => {
+            names.insert(section.name.clone());
+            if let Some(space) = &section.space { collect_expr_identifiers(space, names); }
+            section.facets.iter().for_each(|facet| collect_expr_identifiers(facet, names));
+        }
         Statement::Struct(declaration) => {
             for item in &declaration.fields { collect_struct_item_references(item, names); }
             for facet in &declaration.facets {
-                if let FacetPayload::Expr(expr) = &facet.payload { collect_expr_identifiers(expr, names); }
+                if let FacetPayload::Expr(expr) | FacetPayload::Applied(expr) = &facet.payload { collect_expr_identifiers(expr, names); }
             }
         }
         Statement::Enum(declaration) => {
@@ -243,6 +249,9 @@ fn collect_program_statement_references(statement: &Statement, names: &mut HashS
         Statement::Const(declaration) => {
             if let Some(ty) = &declaration.ty { collect_type_references(ty, names); }
             collect_expr_identifiers(&declaration.value, names);
+            if let crate::ast::ConstKind::Space { facets } = &declaration.kind {
+                facets.iter().for_each(|facet| collect_expr_identifiers(facet, names));
+            }
         }
         Statement::Invocation(invocation) => {
             names.insert(invocation.name.clone());
@@ -265,7 +274,7 @@ fn collect_program_statement_references(statement: &Statement, names: &mut HashS
             for facet in &declaration.facets {
                 if !is_lint_facet(&facet.name) {
                     match &facet.payload {
-                        FacetPayload::Expr(expr) => collect_expr_identifiers(expr, names),
+                        FacetPayload::Expr(expr) | FacetPayload::Applied(expr) => collect_expr_identifiers(expr, names),
                         FacetPayload::Type(ty) => collect_type_references(ty, names),
                         _ => {}
                     }
@@ -362,6 +371,12 @@ fn lint_missing_docs(program: &Program, source: SourceId, config: &LintConfig, d
             Statement::Label(label) => {
                 if label.is_pub && label.doc.is_none() {
                     emit_lint(missing_docs("label", &label.name, label.span, source), level, diagnostics);
+                }
+                continue;
+            }
+            Statement::Section(section) => {
+                if section.is_pub && section.doc.is_none() {
+                    emit_lint(missing_docs("section", &section.name, section.span, source), level, diagnostics);
                 }
                 continue;
             }
@@ -742,7 +757,14 @@ fn collect_statement_identifiers(statement: &Statement, names: &mut HashSet<Stri
         Statement::Enum(value) => collect_name_splice_identifiers(&value.name, names),
         Statement::TypeAlias(value) => collect_name_splice_identifiers(&value.name, names),
         Statement::Macro(value) => collect_name_splice_identifiers(&value.name, names),
-        Statement::Import(_) | Statement::Label(_) | Statement::ExternLabel(_) | Statement::Section(_) |
+        // A macro's `section` line can use its parameters and an imported
+        // section.
+        Statement::Section(section) => {
+            names.insert(section.name.clone());
+            if let Some(space) = &section.space { collect_expr_identifiers(space, names); }
+            section.facets.iter().for_each(|facet| collect_expr_identifiers(facet, names));
+        }
+        Statement::Import(_) | Statement::Label(_) | Statement::ExternLabel(_) |
         Statement::SyntaxOverride(_) => {}
     }
 }
@@ -767,6 +789,19 @@ fn collect_meta_identifiers(value: &crate::ast::MetaStatement, names: &mut HashS
 fn collect_expr_identifiers(expr: &Expr, names: &mut HashSet<String>) {
     match expr {
         Expr::Fold { fold, .. } => collect_meta_identifiers(fold, names),
+        Expr::Extend { subject, fields, .. } => {
+            collect_expr_identifiers(subject, names);
+            for field in fields {
+                match &field.value {
+                    crate::ast::ExtendValue::Value { ty, value } => {
+                        collect_type_references(ty, names);
+                        collect_expr_identifiers(value, names);
+                    }
+                    crate::ast::ExtendValue::Type(ty) => collect_type_references(ty, names),
+                }
+            }
+        }
+        Expr::HasField { subject, .. } => collect_expr_identifiers(subject, names),
         Expr::Identifier { name, .. } => { names.insert(name.clone()); }
         Expr::SplicedIdentifier { name, .. } => {
             if let Some(literal) = crate::ast::literal_spliced_name(name) { names.insert(literal); }

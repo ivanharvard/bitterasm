@@ -1,0 +1,7 @@
+macro size(sp: space, boxes: int) -> space {
+    @return @extend sp { size: int = boxes }
+}
+
+space flash = stream
+    | size 1
+    | size 2

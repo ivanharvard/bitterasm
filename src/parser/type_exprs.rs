@@ -19,7 +19,13 @@ impl Parser {
         // separated by dots, e.g. `foo.bar.Baz`.
         let mut path = Vec::new();
 
-        path.push(self.expect_identifier()?);
+        // `section` is a keyword, but also the type of a section.
+        if self.check(&TokenKind::Section) {
+            self.advance();
+            path.push("section".to_string());
+        } else {
+            path.push(self.expect_identifier()?);
+        }
 
         while self.check(&TokenKind::Dot) {
             self.advance();

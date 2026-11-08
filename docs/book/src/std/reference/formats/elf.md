@@ -34,6 +34,57 @@ RISC-V are.
 
 ## Macros
 
+### `progbits`
+
+The section's contents are stored in the file: code and data. Sets
+`elf_type` to `SHT_PROGBITS`.
+
+```basm
+from std.formats.elf import progbits, alloc, exec
+
+section .text
+    | progbits
+    | alloc
+    | exec
+```
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `progbits(sec)` | `sec: section` | returns `section` |  |
+
+### `nobits`
+
+The section takes no room in the file and is zeroed when the program
+loads, like `.bss`. Sets `elf_type` to `SHT_NOBITS`.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `nobits(sec)` | `sec: section` | returns `section` |  |
+
+### `alloc`
+
+The section is in memory while the program runs. Sets `alloc`.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `alloc(sec)` | `sec: section` | returns `section` |  |
+
+### `write`
+
+The program can write to the section. Sets `write`.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `write(sec)` | `sec: section` | returns `section` |  |
+
+### `exec`
+
+The section holds code. Sets `exec`.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `exec(sec)` | `sec: section` | returns `section` |  |
+
 ### `elf64_executable`
 
 A 64-bit ELF header and its one program header, 120 bytes. `machine` is
@@ -62,3 +113,14 @@ RV32. The parameters mean what they do for `elf64_executable`.
 | `PF_X` |  | `1` | `segment_flags`: the segment is executable. |
 | `PF_W` |  | `2` | `segment_flags`: the segment is writable. |
 | `PF_R` |  | `4` | `segment_flags`: the segment is readable. |
+| `SHT_PROGBITS` |  | `1` | A section's `elf_type`: its contents are stored in the file. |
+| `SHT_NOBITS` |  | `8` | A section's `elf_type`: it takes no room in the file, and is zeroed when the program loads. |
+
+## Sections
+
+| Section | Space | Facets | Description |
+|---|---|---|---|
+| `.text` | `stream` | `progbits`, `alloc`, `exec` | Code: stored in the file, in memory while running, and executable. |
+| `.rodata` | `stream` | `progbits`, `alloc` | Constants: stored in the file and in memory while running. |
+| `.data` | `stream` | `progbits`, `alloc`, `write` | Variables with starting values: stored in the file, and writable. |
+| `.bss` | `stream` | `nobits`, `alloc`, `write` | Variables that start at zero: no room in the file, and writable. |

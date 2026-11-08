@@ -1,0 +1,4 @@
+from std.spaces import start
+
+pub space rom = stream
+    | start 0x100

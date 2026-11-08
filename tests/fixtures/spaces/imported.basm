@@ -1,0 +1,10 @@
+# A space from another module, and a section in it.
+from .lib import rom
+
+macro show(value: int) {
+    @emit value
+}
+
+section .data in rom
+
+show rom.start

@@ -379,9 +379,9 @@ fn unroll_meta(
             Ok(())
         }
 
-        // `@emit`, `@return` and `@assert` only mean something while a
-        // macro runs.
-        "emit" | "return" | "assert" => Err(ResolveError::MetaOutsideMacro {
+        // `@emit`, `@return`, `@assert` and `@error` only mean something
+        // while a macro runs.
+        "emit" | "return" | "assert" | "error" => Err(ResolveError::MetaOutsideMacro {
             kind: format!("@{}", meta.name),
             span: meta.span,
         }),

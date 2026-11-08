@@ -188,6 +188,73 @@ fn parses_section_with_multiple_dotted_segments() {
 }
 
 #[test]
+fn parses_a_section_declaration_with_its_space_and_facets() {
+    let program = parse(lex("section .text in flash | progbits\n    | alloc\nnop\n").unwrap()).unwrap();
+
+    let Statement::Section(section) = &program.statements[0] else {
+        panic!("expected section");
+    };
+    assert_eq!(section.name, ".text");
+    // The space stops at `|`: it's `flash`, not `flash | progbits`.
+    assert!(matches!(&section.space, Some(Expr::Identifier { name, .. }) if name == "flash"));
+    assert_eq!(section.facets.len(), 2);
+    assert!(matches!(&program.statements[1], Statement::Invocation(_)));
+}
+
+#[test]
+fn parses_a_space_declaration_as_a_pipeline_of_facet_calls() {
+    let source = "macro unit<S>(sp: space) -> space {\n    @return sp\n}\n\n\
+                  space flash = stream | unit<bits<16>>\n    | start 0x8000, 2\n";
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    let Statement::Const(declaration) = &program.statements[1] else {
+        panic!("expected a space declaration");
+    };
+    let crate::ast::ConstKind::Space { facets } = &declaration.kind else {
+        panic!("expected a space, got {:?}", declaration.kind);
+    };
+    assert!(matches!(&declaration.value, Expr::Identifier { name, .. } if name == "stream"));
+
+    let [Expr::Call { generic_args, arguments: no_arguments, .. }, Expr::Call { arguments, .. }] = facets.as_slice()
+    else {
+        panic!("expected two facet calls, got {facets:?}");
+    };
+    assert_eq!(generic_args.len(), 1);
+    assert!(no_arguments.is_empty());
+    assert_eq!(arguments.len(), 2);
+}
+
+#[test]
+fn space_is_only_a_keyword_before_a_declaration() {
+    let program = parse(lex("space 1, 2\n").unwrap()).unwrap();
+    assert!(matches!(&program.statements[0], Statement::Invocation(invocation) if invocation.name == "space"));
+}
+
+#[test]
+fn extend_and_hasfield_are_values_not_statements() {
+    let program = parse(lex("macro f(s: section) -> section {\n    @return @extend s { a: int = 1, t: type = int }\n}\n").unwrap());
+    assert!(program.is_ok(), "{program:?}");
+
+    let error = parse(lex("@extend s { a: int = 1 }\n").unwrap()).unwrap_err();
+    assert!(error.to_string().contains("`@extend` gives a value and changes nothing"), "{error}");
+}
+
+#[test]
+fn hasfield_takes_one_name_and_leaves_the_rest_of_the_condition() {
+    let source = "macro f(s: section) {\n    @if @hasfield s, a && @hasfield s, b {\n    }\n}\n";
+    let program = parse(lex(source).unwrap()).unwrap();
+    let Statement::Macro(declaration) = &program.statements[0] else {
+        panic!("expected macro");
+    };
+    let Statement::Meta(meta) = &declaration.body[0] else {
+        panic!("expected @if");
+    };
+    assert!(matches!(&meta.args[0], Expr::Binary { left, right, .. }
+        if matches!(left.as_ref(), Expr::HasField { field, .. } if field == "a")
+            && matches!(right.as_ref(), Expr::HasField { field, .. } if field == "b")));
+}
+
+#[test]
 fn parses_reopened_sections() {
     let source = "section .text\nnop\nsection .data\nsection .text\nnop\n";
 

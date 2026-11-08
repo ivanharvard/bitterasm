@@ -461,6 +461,91 @@ impl Parser {
             }
 
             // ============
+            // `@extend subject { name: Type = value, ... }`
+            // ============
+
+            TokenKind::At
+                if matches!(
+                    self.tokens.get(self.pos + 1).map(|next| &next.kind),
+                    Some(TokenKind::Identifier(name)) if name == "extend"
+                ) =>
+            {
+                let start = token.span.start;
+                self.advance(); // `@`
+                self.advance(); // `extend`
+
+                // The `{` belongs to the `@extend`, not a construction.
+                let outer_restriction = self.restrict_brace_construction;
+                self.restrict_brace_construction = true;
+                let subject = self.parse_expr();
+                self.restrict_brace_construction = outer_restriction;
+                let subject = subject?;
+
+                self.expect_simple(TokenKind::LBrace)?;
+                self.skip_newlines();
+
+                let mut fields = Vec::new();
+                while !self.check(&TokenKind::RBrace) {
+                    let field_start = self.current().span.start;
+                    let name = self.expect_identifier()?;
+                    self.expect_simple(TokenKind::Colon)?;
+
+                    // `unit: type = S` holds a type; anything else a value.
+                    let value = if self.check(&TokenKind::Type) {
+                        self.advance();
+                        self.expect_simple(TokenKind::Equal)?;
+                        ExtendValue::Type(self.parse_type_expr()?)
+                    } else {
+                        let ty = self.parse_type_expr()?;
+                        self.expect_simple(TokenKind::Equal)?;
+                        ExtendValue::Value { ty, value: self.parse_expr()? }
+                    };
+                    fields.push(ExtendField {
+                        name,
+                        value,
+                        span: Span::new(field_start, self.previous().span.end),
+                    });
+
+                    self.skip_newlines();
+                    if self.check(&TokenKind::Comma) {
+                        self.advance();
+                        self.skip_newlines();
+                    } else if !self.check(&TokenKind::RBrace) {
+                        return Err(ParseError::new(
+                            "expected `,` or `}` after an `@extend` field",
+                            self.current().span,
+                        ));
+                    }
+                }
+                let close = self.advance().span;
+
+                Ok(Expr::Extend { subject: Box::new(subject), fields, span: Span::new(start, close.end) })
+            }
+
+            // ============
+            // `@hasfield subject, name`
+            // ============
+
+            TokenKind::At
+                if matches!(
+                    self.tokens.get(self.pos + 1).map(|next| &next.kind),
+                    Some(TokenKind::Identifier(name)) if name == "hasfield"
+                ) =>
+            {
+                let start = token.span.start;
+                self.advance(); // `@`
+                self.advance(); // `hasfield`
+
+                // The name is a single identifier, so whatever follows it
+                // (`&& ...`, `{`) belongs to the surrounding expression.
+                let subject = self.parse_expr()?;
+                self.expect_simple(TokenKind::Comma)?;
+                let field = self.expect_identifier()?;
+
+                Ok(Expr::HasField { subject: Box::new(subject), field, span: Span::new(start, self.previous().span.end) })
+            }
+
+            // ============
             // `expr` — evaluate and splice
             // ============
 
@@ -723,7 +808,9 @@ fn set_expr_span(expr: &mut Expr, new_span: Span) {
         | Expr::Splice { span, .. }
         | Expr::Range { span, .. }
         | Expr::In { span, .. }
-        | Expr::Fold { span, .. } => {
+        | Expr::Fold { span, .. }
+        | Expr::Extend { span, .. }
+        | Expr::HasField { span, .. } => {
             *span = new_span;
         }
     }

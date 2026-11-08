@@ -1,0 +1,11 @@
+from std.binary import bits
+from std.spaces import unit
+
+macro show(value: int) {
+    @emit value
+}
+
+space flash = stream
+    | unit<bits<16>>
+
+show flash.unit

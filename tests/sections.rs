@@ -62,12 +62,14 @@ fn one_section_tags_every_entry_with_it() {
     assert_eq!(entries, vec![int("1", Some(".text")), int("1", Some(".text"))]);
 }
 
+// Entries are written grouped by section, in the order each section first
+// appears, so a label's position counts the same layout `bitter` packs.
 #[test]
 fn reopening_a_section_is_the_same_group_not_a_new_one() {
     let entries = compile_to_entries("tests/fixtures/emit/sections_reopened.basm");
     assert_eq!(
         entries,
-        vec![int("1", Some(".text")), int("2", Some(".data")), int("3", Some(".text"))],
+        vec![int("1", Some(".text")), int("3", Some(".text")), int("2", Some(".data"))],
     );
 }
 
@@ -76,7 +78,7 @@ fn a_macros_section_change_is_scoped_to_its_own_call_not_leaked_to_the_caller() 
     let entries = compile_to_entries("tests/fixtures/emit/sections_macro_scoped.basm");
     assert_eq!(
         entries,
-        vec![int("1", Some(".text")), int("99", Some(".data")), int("2", Some(".text"))],
+        vec![int("1", Some(".text")), int("2", Some(".text")), int("99", Some(".data"))],
     );
 }
 

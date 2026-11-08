@@ -438,6 +438,9 @@ impl<'a> AliasResolver<'a> {
         declaration: &MacroDeclaration,
         arguments: Vec<Value>,
     ) -> Result<(Scope, HashMap<String, GenericBinding>), ResolveError> {
+        // Taken first, before anything below can call another macro.
+        let explicit = self.explicit_macro_generics.take();
+
         let required = declaration.params.iter().filter(|param| param.default.is_none()).count();
         if arguments.len() < required || arguments.len() > declaration.params.len() {
             return Err(ResolveError::InvalidArgumentCount {
@@ -452,6 +455,40 @@ impl<'a> AliasResolver<'a> {
         let mut scope = Scope::default();
         let mut generic_scope: HashMap<String, GenericBinding> = HashMap::new();
         let mut arguments = arguments.into_iter();
+
+        // `unit<bits<16>>(sp)`: bound before inference, which then has to
+        // agree with them.
+        if let Some(explicit) = explicit {
+            if explicit.len() != declaration.generic_params.len() {
+                return Err(ResolveError::InvalidGenericArity {
+                    name: macro_display_name(&declaration.name),
+                    expected: declaration.generic_params.len(),
+                    actual: explicit.len(),
+                    span: declaration.span,
+                });
+            }
+            for (param, arg) in declaration.generic_params.iter().zip(explicit) {
+                let name = param_name(param).to_string();
+                let binding = match (param, arg) {
+                    (crate::types::GenericParameter::Type { .. }, ResolvedGenericArg::Type(ty)) => GenericBinding::Type(*ty),
+                    (crate::types::GenericParameter::Const { .. }, ResolvedGenericArg::Const(value)) => {
+                        GenericBinding::Const(Some(value))
+                    }
+                    _ => {
+                        return Err(ResolveError::TypeMismatch {
+                            name: name.clone(),
+                            expected: match param {
+                                crate::types::GenericParameter::Type { .. } => "a type".to_string(),
+                                _ => "a constant".to_string(),
+                            },
+                            actual: "the other kind of generic argument".to_string(),
+                            span: declaration.span,
+                        })
+                    }
+                };
+                generic_scope.insert(name, binding);
+            }
+        }
 
         for param in &declaration.params {
             let value = match arguments.next() {
@@ -544,6 +581,72 @@ impl<'a> AliasResolver<'a> {
                     }
                 };
             }
+
+        // `label<S>`: binds `S` to the label's space. A label whose space
+        // isn't known yet leaves `S` open for a later argument to decide.
+        if let TypeExpr::Apply { base, args, .. } = expected
+            && base.name() == Some("label")
+            && let [TypeArgument::Type(TypeExpr::Named { path, .. })] = args.as_slice()
+            && path.len() == 1
+            && generic_names.contains(path[0].as_str())
+        {
+            let name = &path[0];
+            let found = match actual {
+                ResolvedType::LabelIn(space) => Some(space.clone()),
+                ResolvedType::Builtin(super::BuiltinType::Label) => None,
+                _ => {
+                    return Err(ResolveError::TypeMismatch {
+                        name: name.clone(),
+                        expected: format!("label<{name}>"),
+                        actual: describe_type(actual, self),
+                        span,
+                    })
+                }
+            };
+            match scope.get(name) {
+                Some(GenericBinding::Type(ResolvedType::Space(Some(bound)))) => {
+                    if let Some(found) = &found
+                        && found != bound
+                    {
+                        return Err(ResolveError::TypeMismatch {
+                            name: name.clone(),
+                            expected: format!("label<{}>", crate::loader::demangle(bound)),
+                            actual: describe_type(actual, self),
+                            span,
+                        });
+                    }
+                }
+                Some(GenericBinding::Type(ResolvedType::Space(None))) | None => {
+                    scope.insert(name.clone(), GenericBinding::Type(ResolvedType::Space(found)));
+                }
+                Some(_) => {
+                    return Err(ResolveError::TypeMismatch {
+                        name: name.clone(),
+                        expected: "a space".to_string(),
+                        actual: describe_type(actual, self),
+                        span,
+                    })
+                }
+            }
+            return Ok(());
+        }
+
+        // `label<flash>` or `label<...>` among other generic parameters.
+        if let TypeExpr::Apply { base, .. } = expected
+            && base.name() == Some("label")
+        {
+            let resolved = self.resolve_type_expr(expected)?;
+            return if resolved.accepts(actual) {
+                Ok(())
+            } else {
+                Err(ResolveError::TypeMismatch {
+                    name: "label".to_string(),
+                    expected: describe_type(&resolved, self),
+                    actual: describe_type(actual, self),
+                    span,
+                })
+            };
+        }
 
         if let TypeExpr::Apply { base, args, span: apply_span } = expected {
             if let Some(expansion) = self.expand_generic_alias(base, args, *apply_span)? {
@@ -750,6 +853,7 @@ impl<'a> AliasResolver<'a> {
                             // ends up in the final flattened `emitted`
                             // stream) — see `AliasResolver::emitted_sections`.
                             self.emitted_sections.push(self.current_section.clone());
+                            self.count_emitted_value();
                         }
 
                         other => {
@@ -797,6 +901,8 @@ impl<'a> AliasResolver<'a> {
                     }
 
                     "assert" => super::metas::assert::check(self, &meta.args, &scope, meta.span)?,
+
+                    "error" => return Err(super::metas::error::raise(&meta.args, meta.span)),
 
                     "if" => {
                         let [condition] = meta.args.as_slice() else {
@@ -1071,6 +1177,12 @@ impl<'a> AliasResolver<'a> {
                 // purpose. See "Decided scope" in
                 // `docs/sections-and-linking/PROGRESS.md`.
                 Statement::Section(section) => {
+                    // Its space and facets may use this macro's arguments.
+                    if section.declares() {
+                        let module = self.current_module;
+                        self.declare_section(section, &scope, module)?;
+                    }
+                    self.used_sections.insert(section.name.clone());
                     self.current_section = Some(section.name.clone());
                 }
 
@@ -1262,6 +1374,12 @@ impl<'a> AliasResolver<'a> {
             is_pub: decl.is_pub,
             ty: decl.ty.clone(),
             value: self.splice_expr(&decl.value, scope)?,
+            kind: match &decl.kind {
+                crate::ast::ConstKind::Const => crate::ast::ConstKind::Const,
+                crate::ast::ConstKind::Space { facets } => crate::ast::ConstKind::Space {
+                    facets: facets.iter().map(|facet| self.splice_expr(facet, scope)).collect::<Result<_, _>>()?,
+                },
+            },
             doc: decl.doc.clone(),
             span: decl.span,
         })
@@ -1393,6 +1511,34 @@ impl<'a> AliasResolver<'a> {
                 source: Box::new(self.splice_expr(source, scope)?),
                 span: *span,
             }),
+
+            // Field types aren't dug into, the same as `As` above.
+            Expr::Extend { subject, fields, span } => Ok(Expr::Extend {
+                subject: Box::new(self.splice_expr(subject, scope)?),
+                fields: fields
+                    .iter()
+                    .map(|field| {
+                        Ok(crate::ast::ExtendField {
+                            name: field.name.clone(),
+                            value: match &field.value {
+                                crate::ast::ExtendValue::Value { ty, value } => crate::ast::ExtendValue::Value {
+                                    ty: ty.clone(),
+                                    value: self.splice_expr(value, scope)?,
+                                },
+                                other @ crate::ast::ExtendValue::Type(_) => other.clone(),
+                            },
+                            span: field.span,
+                        })
+                    })
+                    .collect::<Result<_, ResolveError>>()?,
+                span: *span,
+            }),
+
+            Expr::HasField { subject, field, span } => Ok(Expr::HasField {
+                subject: Box::new(self.splice_expr(subject, scope)?),
+                field: field.clone(),
+                span: *span,
+            }),
         }
     }
 
@@ -1487,7 +1633,8 @@ impl<'a> AliasResolver<'a> {
 fn reify_value(value: &Value, span: Span) -> Result<Expr, ResolveError> {
     match value {
         Value::Int(int) => Ok(Expr::Integer { raw: int.to_string(), span }),
-        Value::Struct { .. } | Value::Enum { .. } | Value::Macro(_) | Value::ExternLabel { .. } | Value::Label(_) => {
+        Value::Struct { .. } | Value::Enum { .. } | Value::Macro(_) | Value::ExternLabel { .. } | Value::Label(_)
+        | Value::Record(_) => {
             Err(ResolveError::UnsupportedSpliceValue { span })
         }
     }
@@ -1497,7 +1644,7 @@ fn reify_value(value: &Value, span: Span) -> Result<Expr, ResolveError> {
 /// compile-time machinery rather than data.
 fn holds_compile_time_value(value: &Value) -> bool {
     match value {
-        Value::Macro(_) | Value::Label(_) => true,
+        Value::Macro(_) | Value::Label(_) | Value::Record(_) => true,
         // An empty `Array<label, 0>` holds no label, but its type still
         // names one.
         Value::Struct { args, fields, .. } => {
@@ -1519,7 +1666,10 @@ fn arg_is_compile_time(arg: &super::ResolvedGenericArg) -> bool {
 
 fn type_is_compile_time(ty: &ResolvedType) -> bool {
     match ty.strip_alias() {
-        ResolvedType::Builtin(super::BuiltinType::Label) | ResolvedType::MacroType { .. } => true,
+        ResolvedType::Builtin(super::BuiltinType::Label | super::BuiltinType::Space | super::BuiltinType::Section)
+        | ResolvedType::LabelIn(_)
+        | ResolvedType::Space(_)
+        | ResolvedType::MacroType { .. } => true,
         ResolvedType::Struct { args, .. } | ResolvedType::Enum { args, .. } => args.iter().any(arg_is_compile_time),
         _ => false,
     }

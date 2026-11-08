@@ -79,11 +79,19 @@ pub fn print_statement(statement: &Statement, indent: usize) -> String {
                 None => String::new(),
             };
 
-            format!(
-                "{pad}{pub_kw}const {name}{ty} = {value}",
-                name = print_spliced_name(&decl.name),
-                value = print_expr(&decl.value),
-            )
+            match &decl.kind {
+                crate::ast::ConstKind::Const => format!(
+                    "{pad}{pub_kw}const {name}{ty} = {value}",
+                    name = print_spliced_name(&decl.name),
+                    value = print_expr(&decl.value),
+                ),
+                crate::ast::ConstKind::Space { facets } => format!(
+                    "{pad}{pub_kw}space {name} = {value}{facets}",
+                    name = print_spliced_name(&decl.name),
+                    value = print_expr(&decl.value),
+                    facets = print_applied_facets(facets),
+                ),
+            }
         }
 
         Statement::Label(label) => {
@@ -104,7 +112,13 @@ pub fn print_statement(statement: &Statement, indent: usize) -> String {
             file = extern_label.file,
         ),
 
-        Statement::Section(section) => format!("{pad}section {name}", name = section.name),
+        Statement::Section(section) => format!(
+            "{pad}{pub_kw}section {name}{space}{facets}",
+            pub_kw = if section.is_pub { "pub " } else { "" },
+            name = section.name,
+            space = section.space.as_ref().map(|space| format!(" in {}", print_expr(space))).unwrap_or_default(),
+            facets = print_applied_facets(&section.facets),
+        ),
 
         Statement::Invocation(invocation) => {
             if invocation.operands.is_empty() {
@@ -334,6 +348,8 @@ fn print_facet(facet: &Facet) -> String {
         FacetPayload::Pattern(tokens) => {
             format!("{} {{ {} }}", facet.name, print_pattern_tokens(tokens))
         }
+
+        FacetPayload::Applied(call) => print_applied_facets(std::slice::from_ref(call)).trim_start_matches(" | ").to_string(),
     }
 }
 
@@ -563,7 +579,39 @@ pub fn print_expr(expr: &Expr) -> String {
         Expr::In { value, source, .. } => format!("{} in {}", print_expr(value), print_expr(source)),
 
         Expr::Fold { fold, .. } => print_loop_meta(fold, 0),
+
+        Expr::Extend { subject, fields, .. } => {
+            let fields = fields
+                .iter()
+                .map(|field| match &field.value {
+                    crate::ast::ExtendValue::Value { ty, value } => {
+                        format!("{}: {} = {}", field.name, print_type_expr(ty), print_expr(value))
+                    }
+                    crate::ast::ExtendValue::Type(ty) => format!("{}: type = {}", field.name, print_type_expr(ty)),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("@extend {} {{ {fields} }}", print_expr(subject))
+        }
+
+        Expr::HasField { subject, field, .. } => format!("@hasfield {}, {field}", print_expr(subject)),
     }
+}
+
+/// ` | unit<bits<16>> | start 0x8000`: a space's or section's facets, each
+/// a call written without its first argument.
+fn print_applied_facets(facets: &[Expr]) -> String {
+    facets
+        .iter()
+        .map(|facet| match facet {
+            Expr::Call { callee, generic_args, arguments, .. } => {
+                let arguments = arguments.iter().map(|argument| print_expr(&argument.value)).collect::<Vec<_>>();
+                let arguments = if arguments.is_empty() { String::new() } else { format!(" {}", arguments.join(", ")) };
+                format!(" | {}{}{arguments}", print_expr(callee), print_generic_arguments(generic_args))
+            }
+            other => format!(" | {}", print_expr(other)),
+        })
+        .collect()
 }
 
 fn print_generic_arguments(args: &[TypeArgument]) -> String {

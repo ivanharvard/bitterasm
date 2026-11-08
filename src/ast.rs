@@ -149,7 +149,29 @@ pub struct ExternLabel {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Section {
     pub name: String,
+    /// `section .text in flash`: the space the section's values go in.
+    /// Only a declaring `section` line has one.
+    pub space: Option<Expr>,
+    /// `| progbits`-style facets, each a call to a macro written without
+    /// its first argument (the section it's applied to).
+    pub facets: Vec<Expr>,
+    /// `pub section .text ...`: other files can import it, by name
+    /// (`from x import .text`) or with `*`.
+    pub is_pub: bool,
+    /// Spliced in by the loader from another file's `pub section`: it
+    /// declares the section, but doesn't switch to it.
+    pub imported: bool,
     pub span: Span,
+    /// A `pub section`'s `##` doc comment.
+    pub doc: Option<Doc>,
+}
+
+impl Section {
+    /// Whether this line declares the section (giving its space or facets,
+    /// or exporting it) rather than only switching to it.
+    pub fn declares(&self) -> bool {
+        self.is_pub || self.space.is_some() || !self.facets.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -302,6 +324,40 @@ pub enum Expr {
         fold: Box<MetaStatement>,
         span: Span,
     },
+
+    /// `@extend subject { name: Type = value, ... }`: `subject` (a space or
+    /// section) with more fields. Gives a new value; `subject` itself is
+    /// unchanged.
+    Extend {
+        subject: Box<Expr>,
+        fields: Vec<ExtendField>,
+        span: Span,
+    },
+
+    /// `@hasfield subject, name`: `1` if `subject` has a field `name`, else
+    /// `0`.
+    HasField {
+        subject: Box<Expr>,
+        field: String,
+        span: Span,
+    },
+}
+
+/// One field an `@extend` adds.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtendField {
+    pub name: String,
+    pub value: ExtendValue,
+    pub span: Span,
+}
+
+/// What an `@extend` field holds.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExtendValue {
+    /// `start: int = address`.
+    Value { ty: TypeExpr, value: Expr },
+    /// `unit: type = S`: a type, which only a space or section can hold.
+    Type(TypeExpr),
 }
 
 impl Expr {
@@ -321,7 +377,9 @@ impl Expr {
             | Expr::Splice { span, .. }
             | Expr::Range { span, .. }
             | Expr::In { span, .. }
-            | Expr::Fold { span, .. } => *span,
+            | Expr::Fold { span, .. }
+            | Expr::Extend { span, .. }
+            | Expr::HasField { span, .. } => *span,
         }
     }
 }
@@ -508,8 +566,22 @@ pub struct ConstDeclaration {
     /// Optional explicit annotation
     pub ty: Option<TypeExpr>,
     pub value: Expr,
+    /// `const` or `space`.
+    pub kind: ConstKind,
     pub span: Span,
     pub doc: Option<Doc>,
+}
+
+/// What a [`ConstDeclaration`] declares.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConstKind {
+    Const,
+
+    /// `space flash = stream | unit<bits<16>> | start 0x8000`: a new space
+    /// built from `value`, then passed through each facet in order. Each
+    /// facet is a call to a macro, written without its first argument (the
+    /// space it's applied to).
+    Space { facets: Vec<Expr> },
 }
 
 /// An enum declaration. A variant may be payload-free (`None`) or carry one
@@ -602,4 +674,8 @@ pub enum FacetPayload {
     /// `{ ... }`'s raw tokens (balanced braces, not otherwise parsed) —
     /// `syntax`'s payload shape (`PayloadShape::Pattern`).
     Pattern(Vec<TokenKind>),
+
+    /// A user-defined facet: a call to the macro the facet names, written
+    /// without its first argument (what the facet is applied to).
+    Applied(Expr),
 }

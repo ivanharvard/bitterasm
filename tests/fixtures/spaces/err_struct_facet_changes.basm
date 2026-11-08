@@ -1,0 +1,8 @@
+macro bump(reg: Reg) -> Reg {
+    @return Reg(reg.id + 1)
+}
+
+struct Reg | bump {
+    pub id: int,
+}
+const r = Reg(1)

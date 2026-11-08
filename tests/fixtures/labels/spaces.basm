@@ -1,0 +1,34 @@
+macro show(value: int) {
+    @emit value
+}
+
+macro same<S>(a: label<S>, b: label<S>) {
+    @emit b as int - a as int
+}
+
+macro in_flash(at: label<flash>) {
+    @emit at as int
+}
+
+macro anywhere(at: label<...>) {
+    @emit at as int
+}
+
+macro bare(at: label) {
+    @emit at as int
+}
+
+space flash = stream
+space ram = stream
+
+section .text in flash
+start:
+    show 1
+    same start, finish
+    in_flash finish
+    anywhere data_label
+    bare data_label
+finish:
+section .data in ram
+data_label:
+    show 2

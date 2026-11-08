@@ -18,3 +18,4 @@
 //! `@assert`, is expected.
 
 pub mod assert;
+pub mod error;

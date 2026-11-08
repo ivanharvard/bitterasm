@@ -23,7 +23,9 @@ position isn't an address.
 
 When you do need the number, `as int` gives the index of the next value
 emitted after the label: `0` for the first emitted value, `1` for the
-second, and so on.
+second, and so on. The count is in the order values are laid out, which
+[groups each section's values together](sections.md#sections-are-grouped),
+not necessarily the order the file emits them in.
 
 ```basm
 macro show(value: int) {
@@ -49,6 +51,9 @@ end:
 ```
 
 A label can be used before it appears in the file, like `end` above.
+
+A label is in the [space](spaces.md) of its section, and its full type
+says which: `label<flash>`. A bare `label` takes a label in any space.
 
 Because `label` and `int` are different types, an instruction can take
 either and mean different things. That's how `std.x86_64.att` reads

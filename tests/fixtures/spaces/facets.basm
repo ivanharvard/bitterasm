@@ -1,0 +1,44 @@
+# Spaces and sections built up by facets, read back as fields.
+from std.binary import bits, bool, true
+from std.spaces import start, unit
+
+macro show(value: int) {
+    @emit value
+}
+
+macro size(sp: space, boxes: int) -> space {
+    @return @extend sp { size: int = boxes }
+}
+
+macro tagged(sec: section) -> section {
+    @return @extend sec { tagged: bool = true }
+}
+
+space flash = stream
+    | unit<bits<16>>
+    | start 0x8000
+    | size 1024
+
+# Derived from `flash`: its fields, plus one more.
+space boot = flash | start_offset 16
+
+macro start_offset(sp: space, offset: int) -> space {
+    @return @extend sp { offset: int = offset }
+}
+
+section .text in flash
+    | tagged
+
+show flash.start
+show flash.size
+show boot.start
+show boot.offset
+show @hasfield flash, unit
+show @hasfield flash, offset
+show @hasfield stream, start && 1
+# The explicit call form of a facet.
+show start(stream, 7).start
+# A facet called on `flash` gives a new value; `flash` itself still has
+# no `offset`.
+show @hasfield start_offset(flash, 1), offset
+show @hasfield flash, offset

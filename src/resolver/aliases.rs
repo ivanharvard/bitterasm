@@ -179,6 +179,16 @@ pub struct AliasResolver<'a> {
     pub(super) const_value_states: HashMap<SymbolId, ConstValueState>,
     pub(super) const_value_stack: Vec<SymbolId>,
 
+    /// Generic arguments a call gave explicitly (`unit<bits<16>>(sp)`),
+    /// waiting for `bind_macro_arguments` to take them.
+    pub(super) explicit_macro_generics: Option<Vec<ResolvedGenericArg>>,
+
+    /// Structs whose user-defined facets are running right now.
+    pub(super) running_struct_facets: std::collections::HashSet<SymbolId>,
+
+    /// Each declared section, by name.
+    pub(super) section_records: HashMap<String, SectionRecord>,
+
     // Shared by statement invocations and expression-position macro calls.
     // Repeated symbols are allowed because terminating recursion is useful
     // for compile-time algorithms; `macro_body` enforces a finite depth.
@@ -222,6 +232,22 @@ pub struct AliasResolver<'a> {
     // so this stays index-aligned with whatever the final flattened
     // `emitted: Vec<Value>` accumulates into (see `compile::resolve_and_expand`).
     pub(super) emitted_sections: Vec<Option<String>>,
+
+    // How the output looks once grouped by section, which is how it's
+    // written out: each section in the order it first got a value or a
+    // label, how many values it has so far, and which section, and how far
+    // into it, each label sits. A label's position counts values in that
+    // grouped order, not in the order they were emitted.
+    pub(super) section_order: Vec<Option<String>>,
+    pub(super) section_sizes: HashMap<Option<String>, Int>,
+    pub(super) label_slots: HashMap<SymbolId, (Option<String>, Int)>,
+    // The space each placed label is in: its section's, else `stream`.
+    pub(super) label_spaces: HashMap<SymbolId, String>,
+    // Every section switched to so far, so one can't be declared after
+    // it's already been used.
+    pub(super) used_sections: std::collections::HashSet<String>,
+    // Whether anything read a label's position during this pass.
+    pub(super) read_label_position: bool,
 
     // Declarations discovered mid-resolution — a macro's `generated`
     // output, or a `0..N` range's synthesized struct — rather than present
@@ -309,6 +335,15 @@ pub struct AliasResolver<'a> {
 /// A struct's fields under one instantiation: name, type, `is_pub`,
 /// `is_skip` and default — see `instantiate_struct_fields_named`.
 pub(super) type NamedFields = Rc<Vec<NamedField>>;
+
+/// A declared section: where it was declared (module and the `section`
+/// line's span), whether it came from another file's `pub section`, and its
+/// value (a `Value::Record`).
+pub(super) struct SectionRecord {
+    pub declared_at: (usize, Span),
+    pub imported: bool,
+    pub value: super::values::Value,
+}
 
 /// One struct's cached instantiations, by generic arguments.
 pub(super) type StructFieldsByArgs = Vec<(Vec<ResolvedGenericArg>, NamedFields)>;
@@ -407,6 +442,9 @@ impl<'a> AliasResolver<'a> {
             states,
             stack: Vec::new(),
             const_value_states,
+            explicit_macro_generics: None,
+            running_struct_facets: std::collections::HashSet::new(),
+            section_records: HashMap::new(),
             const_value_stack: Vec::new(),
             macro_call_stack: Vec::new(),
             pending_tail_call: None,
@@ -418,6 +456,12 @@ impl<'a> AliasResolver<'a> {
             label_mode,
             current_section: None,
             emitted_sections: Vec::new(),
+            section_order: Vec::new(),
+            section_sizes: HashMap::new(),
+            label_slots: HashMap::new(),
+            label_spaces: HashMap::new(),
+            used_sections: std::collections::HashSet::new(),
+            read_label_position: false,
             generated_symbols: SymbolTable::with_base(symbols.len()),
             generated: Vec::new(),
             macro_decl_cache: RefCell::new(FxHashMap::default()),
@@ -484,7 +528,87 @@ impl<'a> AliasResolver<'a> {
     }
 
     pub fn record_label_position(&mut self, id: SymbolId) {
-        self.label_positions.insert(id, self.values_emitted.clone());
+        let section = self.current_section.clone();
+        self.note_section(&section);
+        let index = self.section_sizes.get(&section).cloned().unwrap_or_default();
+        let space = self.section_space(section.as_deref());
+        self.label_spaces.insert(id, space);
+        self.label_slots.insert(id, (section, index));
+        // The real pass already knows every grouped position; the
+        // discovery pass makes do with the emitted order until it's done.
+        if self.label_mode == LabelMode::Tolerant {
+            self.label_positions.insert(id, self.values_emitted.clone());
+        }
+    }
+
+    /// The space a section is in: the one it was declared `in`, else
+    /// `stream`.
+    fn section_space(&self, section: Option<&str>) -> String {
+        let declared = section.and_then(|name| self.section_records.get(name));
+        match declared.map(|record| &record.value) {
+            Some(super::values::Value::Record(record)) => match record.field("space") {
+                Some(super::values::RecordField::Value(super::values::Value::Record(space))) => space.identity.clone(),
+                _ => "stream".to_string(),
+            },
+            _ => "stream".to_string(),
+        }
+    }
+
+    /// Every placed label's space, to seed the real pass with.
+    pub fn label_spaces(&self) -> &HashMap<SymbolId, String> {
+        &self.label_spaces
+    }
+
+    /// Seeds a real-pass resolver with the spaces the discovery pass found,
+    /// so a label read before it's placed still knows its space.
+    pub fn with_label_spaces(mut self, spaces: HashMap<SymbolId, String>) -> Self {
+        self.label_spaces = spaces;
+        self
+    }
+
+    /// Counts one `@emit`'d value toward the section it went in.
+    pub(super) fn count_emitted_value(&mut self) {
+        let section = self.current_section.clone();
+        self.note_section(&section);
+        *self.section_sizes.entry(section).or_default() += Int::from(1);
+    }
+
+    fn note_section(&mut self, section: &Option<String>) {
+        if !self.section_sizes.contains_key(section) {
+            self.section_sizes.insert(section.clone(), Int::from(0));
+            self.section_order.push(section.clone());
+        }
+    }
+
+    /// The order sections are written out in: first value or label first.
+    pub fn section_order(&self) -> &[Option<String>] {
+        &self.section_order
+    }
+
+    /// Every label's position once the output is grouped by section.
+    pub fn grouped_label_positions(&self) -> HashMap<SymbolId, Int> {
+        let mut offsets = HashMap::new();
+        let mut offset = Int::from(0);
+        for section in &self.section_order {
+            offsets.insert(section, offset.clone());
+            offset += self.section_sizes[section].clone();
+        }
+        self.label_slots
+            .iter()
+            .map(|(id, (section, index))| (*id, offsets[section].clone() + index.clone()))
+            .collect()
+    }
+
+    /// Whether a second pass is needed: a label was read before its
+    /// position was known, or was read at a position that grouping by
+    /// section has since moved.
+    pub fn needs_label_pass(&self) -> bool {
+        self.used_forward_label_placeholder
+            || (self.read_label_position
+                && self
+                    .grouped_label_positions()
+                    .iter()
+                    .any(|(id, grouped)| self.label_positions.get(id) != Some(grouped)))
     }
 
     /// Consumes a position-discovery-pass resolver, handing back its
@@ -510,6 +634,9 @@ impl<'a> AliasResolver<'a> {
     /// mutation — unlike the push/pop `run_macro_body_inner` does around a
     /// macro call.
     pub fn set_current_section(&mut self, name: Option<String>) {
+        if let Some(name) = &name {
+            self.used_sections.insert(name.clone());
+        }
         self.current_section = name;
     }
 
@@ -716,6 +843,48 @@ impl<'a> AliasResolver<'a> {
         }
     }
 
+    /// `label<flash>`, `label<S>` or `label<...>`: a label in one space, in
+    /// whatever space `S` is bound to, or in any.
+    fn resolve_label_type(&mut self, args: &[TypeArgument], span: Span) -> Result<ResolvedType, ResolveError> {
+        let [arg] = args else {
+            return Err(ResolveError::InvalidGenericArity { name: "label".to_string(), expected: 1, actual: args.len(), span });
+        };
+        let (name, name_span) = match arg {
+            TypeArgument::Wildcard(_) => return Ok(ResolvedType::Builtin(BuiltinType::Label)),
+            TypeArgument::Type(TypeExpr::Named { path, span }) if path.len() == 1 => (&path[0], *span),
+            TypeArgument::Type(other) => {
+                return Err(ResolveError::ExpectedSpace { found: crate::printer::print_type_expr(other), span: other.span() })
+            }
+            TypeArgument::Const(expr) => {
+                return Err(ResolveError::ExpectedSpace { found: crate::printer::print_expr(expr), span: expr.span() })
+            }
+        };
+
+        match self.generic_scope.get(name) {
+            Some(GenericBinding::Type(ResolvedType::Space(Some(space)))) => return Ok(ResolvedType::LabelIn(space.clone())),
+            // Not bound to a space yet, or unknown: any space will do.
+            Some(GenericBinding::Type(ResolvedType::Space(None) | ResolvedType::TypeParameter { .. })) => {
+                return Ok(ResolvedType::Builtin(BuiltinType::Label));
+            }
+            Some(_) => {
+                return Err(ResolveError::ExpectedSpace { found: format!("`{}`", crate::loader::demangle(name)), span: name_span })
+            }
+            None => {}
+        }
+
+        let value = if name == "stream" && self.lookup_symbol(name).is_none() {
+            super::values::Value::Record(Box::new(super::values::Record::stream()))
+        } else {
+            self.resolve_const_value(name, name_span)?
+        };
+        match value {
+            super::values::Value::Record(record) if record.kind == super::values::RecordKind::Space => {
+                Ok(ResolvedType::LabelIn(record.identity))
+            }
+            _ => Err(ResolveError::ExpectedSpace { found: format!("`{}`", crate::loader::demangle(name)), span: name_span }),
+        }
+    }
+
     pub(super) fn resolve_named_type(
         &mut self,
         path: &[String],
@@ -748,6 +917,8 @@ impl<'a> AliasResolver<'a> {
         match name.as_str() {
             "int" => return Ok(ResolvedType::Builtin(BuiltinType::Int)),
             "label" => return Ok(ResolvedType::Builtin(BuiltinType::Label)),
+            "space" => return Ok(ResolvedType::Builtin(BuiltinType::Space)),
+            "section" => return Ok(ResolvedType::Builtin(BuiltinType::Section)),
             _ => {}
         }
 
@@ -809,6 +980,10 @@ impl<'a> AliasResolver<'a> {
     ) -> Result<ResolvedType, ResolveError> {
         if let Some(expansion) = self.expand_generic_alias(base, args, span)? {
             return self.resolve_generic_alias(expansion);
+        }
+
+        if base.name() == Some("label") && !self.generic_scope.contains_key("label") {
+            return self.resolve_label_type(args, span);
         }
 
         let base_type = self.resolve_type_expr(base)?;
@@ -874,6 +1049,11 @@ impl<'a> AliasResolver<'a> {
                     span,
                 })
             }
+
+            ResolvedType::LabelIn(_) | ResolvedType::Space(_) => Err(ResolveError::ExpectedType {
+                name: base.name().unwrap_or("<type>").to_string(),
+                span,
+            }),
 
             // Applying generic args to an already-resolved alias isn't
             // supported (a generic alias's own target has no mechanism to

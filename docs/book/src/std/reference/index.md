@@ -15,6 +15,7 @@
 | [`option`](option.md) | `Option<T>`: a value that may be missing. |
 | [`pdp10/`](pdp10/index.md) | `impl`, `tops10` |
 | [`riscv/`](riscv/index.md) | `c_like`, `impl`, `native` |
+| [`spaces`](spaces.md) | Facets for describing spaces. A space is a memory that sections go in, like a chip's flash or its RAM. Every space is built from `stream`, the default one, and gains fields from its facets: |
 | [`strings/`](strings/index.md) | `ascii`, `cstring`, `packed`, `utf16`, `utf8` |
 | [`unsigned`](unsigned.md) | `uint`, an `int` that can't be negative. |
 | [`wasm/`](wasm/index.md) | `impl`, `leb128`, `module` |

@@ -1,0 +1,24 @@
+macro below(reg: Reg, limit: int) -> Reg {
+    @assert reg.id < limit, "register out of range"
+    @return reg
+}
+
+macro even(reg: Reg) -> Reg {
+    # Builds a Reg of its own: this doesn't run `Reg`'s facets again.
+    @assert reg.id % 2 == Reg(0).id, "odd register"
+    @return reg
+}
+
+struct Reg
+    | below 16
+    | even
+{
+    pub id: int,
+}
+
+macro show(reg: Reg) {
+    @emit reg.id
+}
+
+show Reg(4)
+show Reg { id: 6 }

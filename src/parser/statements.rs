@@ -46,7 +46,7 @@ impl Parser {
 
             TokenKind::Section => {
                 Ok(Statement::Section(
-                    self.parse_section()?
+                    self.parse_section(false)?
                 ))
             }
 
@@ -78,6 +78,14 @@ impl Parser {
                         self.parse_from_import(true)?
                     )),
 
+                    TokenKind::Section => Ok(Statement::Section(
+                        self.parse_section(true)?
+                    )),
+
+                    TokenKind::Identifier(_) if self.at_space_declaration() => Ok(Statement::Const(
+                        self.parse_space_declaration(true)?
+                    )),
+
                     TokenKind::Identifier(_) if self.check_next(&TokenKind::Colon) => {
                         Ok(Statement::Label(
                             self.parse_label(true)?
@@ -102,6 +110,8 @@ impl Parser {
 
                 if name == "syntax" && self.at_syntax_override_start() {
                     Ok(Statement::SyntaxOverride(self.parse_syntax_override()?))
+                } else if self.at_space_declaration() {
+                    Ok(Statement::Const(self.parse_space_declaration(false)?))
                 } else if self.check_next(&TokenKind::Colon) {
                     Ok(Statement::Label(
                         self.parse_label(false)?
@@ -150,11 +160,12 @@ impl Parser {
         } else {
             let mut names = Vec::new();
 
-            names.push(self.expect_identifier()?);
+            // A section is imported by its dotted name: `import .text`.
+            names.push(self.parse_imported_name()?);
 
             while self.check(&TokenKind::Comma) {
                 self.advance();
-                names.push(self.expect_identifier()?);
+                names.push(self.parse_imported_name()?);
             }
 
             ImportItems::Names(names)
@@ -172,6 +183,21 @@ impl Parser {
         self.imports.push(import.clone());
 
         Ok(import)
+    }
+
+    fn parse_imported_name(&mut self) -> Result<String, ParseError> {
+        if self.check(&TokenKind::Dot) {
+            self.advance();
+            let mut name = format!(".{}", self.expect_identifier()?);
+            while self.check(&TokenKind::Dot) {
+                self.advance();
+                name.push('.');
+                name.push_str(&self.expect_identifier()?);
+            }
+            Ok(name)
+        } else {
+            self.expect_identifier()
+        }
     }
 
     fn parse_module_path(&mut self) -> Result<ModulePath, ParseError> {
@@ -247,8 +273,8 @@ impl Parser {
     // `.rela.text`). Stored as a single literal string, dots included; no
     // further character restrictions beyond what an identifier already
     // allows.
-    fn parse_section(&mut self) -> Result<Section, ParseError> {
-        let start = self.current().span.start;
+    fn parse_section(&mut self, is_pub: bool) -> Result<Section, ParseError> {
+        let start = if is_pub { self.previous().span.start } else { self.current().span.start };
 
         self.expect_simple(TokenKind::Section)?;
 
@@ -267,11 +293,34 @@ impl Parser {
             name.push_str(&self.expect_identifier()?);
         }
 
+        // `section .text in flash | progbits` declares the section: which
+        // space it's in, and its facets. The space stops at `|`, so a
+        // facet can follow it on the same line.
+        let space = if self.check(&TokenKind::In) {
+            self.advance();
+            Some(self.parse_expr_bp_until(0, Some(&TokenKind::Pipe))?)
+        } else {
+            None
+        };
+        let facets = self.parse_applied_facets()?;
+
+        if !self.at_statement_end() {
+            return Err(ParseError::new(
+                format!("unexpected token after section name: {:?}", self.current().kind),
+                self.current().span,
+            ));
+        }
+
         let end = self.statement_end()?;
 
         Ok(Section {
             name,
+            space,
+            facets,
+            is_pub,
+            imported: false,
             span: Span::new(start, end),
+            doc: None,
         })
     }
 
@@ -367,9 +416,105 @@ impl Parser {
             is_pub,
             ty,
             value,
+            kind: ConstKind::Const,
             doc: None,
             span: Span::new(start, end),
         })
+    }
+
+    // `space name = value`, then its facets: `| unit<bits<16>>`, each on
+    // its own line or after the value. `space` is only a keyword here, so
+    // it stays usable as an ordinary name everywhere else.
+    fn parse_space_declaration(&mut self, is_pub: bool) -> Result<ConstDeclaration, ParseError> {
+        let start = if is_pub { self.previous().span.start } else { self.current().span.start };
+
+        self.advance(); // `space`
+
+        let (name, _) = self.parse_spliced_name()?;
+
+        self.expect_simple(TokenKind::Equal)?;
+
+        // Stops at `|`, so `space flash = stream | unit<bits<16>>` is the
+        // value followed by a facet, not a bitwise or.
+        let value = self.parse_expr_bp_until(0, Some(&TokenKind::Pipe))?;
+        let facets = self.parse_applied_facets()?;
+
+        if !self.at_statement_end() {
+            return Err(ParseError::new(
+                format!("unexpected token after space declaration: {:?}", self.current().kind),
+                self.current().span,
+            ));
+        }
+
+        let end = self.statement_end()?;
+
+        Ok(ConstDeclaration {
+            name,
+            is_pub,
+            ty: None,
+            value,
+            kind: ConstKind::Space { facets },
+            doc: None,
+            span: Span::new(start, end),
+        })
+    }
+
+    // `space name =` at the start of a statement.
+    pub(super) fn at_space_declaration(&self) -> bool {
+        matches!(&self.current().kind, TokenKind::Identifier(word) if word == "space")
+            && matches!(self.tokens.get(self.pos + 1).map(|token| &token.kind), Some(TokenKind::Identifier(_)))
+            && matches!(self.tokens.get(self.pos + 2).map(|token| &token.kind), Some(TokenKind::Equal))
+    }
+
+    // Facets applied to a space or section: `| name`, `| name<T>` or
+    // `| name arg, ...`, each a call to the macro `name` with the subject
+    // left out. A facet may continue on the next line.
+    pub(super) fn parse_applied_facets(&mut self) -> Result<Vec<Expr>, ParseError> {
+        let mut facets = Vec::new();
+
+        loop {
+            let before_newlines = self.pos;
+            self.skip_newlines();
+            if !self.check(&TokenKind::Pipe) {
+                self.pos = before_newlines;
+                break;
+            }
+            let pipe = self.advance().span;
+
+            let name_token = self.current().clone();
+            let name = self.expect_identifier()?;
+            let callee = Expr::Identifier { name: name.clone(), span: name_token.span };
+
+            let generic_args = if self.check(&TokenKind::Less) {
+                self.parse_generic_argument_list(Some(&name), name_token.span.start)?.0
+            } else {
+                Vec::new()
+            };
+
+            // Like a built-in facet's expression, each argument stops at
+            // the next `|`; parentheses allow a bitwise or inside one.
+            let mut arguments = Vec::new();
+            if !self.at_statement_end() && !self.check(&TokenKind::Pipe) {
+                loop {
+                    let value = self.parse_expr_bp_until(0, Some(&TokenKind::Pipe))?;
+                    arguments.push(CallArgument { name: None, span: value.span(), value });
+                    if !self.check(&TokenKind::Comma) {
+                        break;
+                    }
+                    self.advance();
+                }
+            }
+
+            let end = self.previous().span.end;
+            facets.push(Expr::Call {
+                callee: Box::new(callee),
+                generic_args,
+                arguments,
+                span: Span::new(pipe.start, end),
+            });
+        }
+
+        Ok(facets)
     }
 
     // `name` (already known to not be a label) either invokes some macro

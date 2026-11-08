@@ -2,18 +2,21 @@
 
 Words starting with `@` are **meta keywords**. They control what a macro
 does while the compiler runs it: emit values, return, check conditions,
-branch and loop. There are eight:
+branch and loop. There are eleven:
 
 | Keyword | Does | Page |
 |---|---|---|
 | `@emit value` | Adds `value` to the program's output | [`@emit`](emit.md) |
 | `@return [value]` | Ends the macro, optionally with a value | [`@return`](return.md) |
 | `@assert cond[, "message"]` | Fails compilation if `cond` is false | [`@assert`](assert.md) |
+| `@error "message"` | Fails compilation | [`@assert`](assert.md#error) |
 | `@if cond { } @else { }` | Runs one branch | [`@if` and `@else`](if.md) |
 | `@match value { pattern => { } }` | Runs the first arm that matches | [`@match`](match.md) |
 | `@for x in source { }` | Runs the body once per element | [`@for`](for.md) |
 | `@fold acc = init @for x in source { }` | A `@for` that carries values between iterations | [`@fold` and `@next`](fold.md) |
 | `@next value` | Moves a `@fold` to its next iteration | [`@fold` and `@next`](fold.md) |
+| `@extend subject { ... }` | A space or section with more fields | [Spaces](../programs/spaces.md#extend) |
+| `@hasfield subject, name` | Whether `subject` has a field `name` | [Spaces](../programs/spaces.md#hasfield) |
 
 Nothing a meta keyword does survives into the output except what it emits.
 There's no `@if` at run time on the target machine; that would be an
@@ -23,7 +26,7 @@ instruction, which is a macro some architecture package provides.
 
 | | Macro body | Top level | Struct declaration | Struct construction |
 |---|---|---|---|---|
-| `@emit`, `@return`, `@assert` | ✓ | | | |
+| `@emit`, `@return`, `@assert`, `@error` | ✓ | | | |
 | `@if`, `@for`, `@fold`/`@next` | ✓ | ✓ | ✓ | ✓ |
 | `@match` | ✓ | ✓ | | |
 

@@ -1,0 +1,17 @@
+# `x` is read after it's declared, but `.data` is written after all of
+# `.text`, so `x` lands at 2, not at 1 where it was emitted.
+macro show(value: int) {
+    @emit value
+}
+
+macro position(at: label) {
+    @emit at as int
+}
+
+section .text
+show 10
+section .data
+x:
+    show 20
+section .text
+position x

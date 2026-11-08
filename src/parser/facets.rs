@@ -46,6 +46,44 @@ impl Parser {
         Ok(facets)
     }
 
+    // `name<T> arg, ...` after a user-defined facet's `|`: a call with its
+    // first argument left out. Arguments stop at the next `|`, and at a
+    // `{` that starts the declaration's body.
+    fn parse_applied_facet(&mut self, name: String, start: usize) -> Result<Expr, ParseError> {
+        let name_span = self.previous().span;
+        let generic_args = if self.check(&TokenKind::Less) {
+            self.parse_generic_argument_list(Some(&name), name_span.start)?.0
+        } else {
+            Vec::new()
+        };
+
+        let outer_restriction = self.restrict_brace_construction;
+        self.restrict_brace_construction = true;
+        let mut arguments = Vec::new();
+        let result = (|| {
+            if !self.at_statement_end() && !self.check(&TokenKind::Pipe) && !self.check(&TokenKind::LBrace) {
+                loop {
+                    let value = self.parse_expr_bp_until(0, Some(&TokenKind::Pipe))?;
+                    arguments.push(CallArgument { name: None, span: value.span(), value });
+                    if !self.check(&TokenKind::Comma) {
+                        break;
+                    }
+                    self.advance();
+                }
+            }
+            Ok(())
+        })();
+        self.restrict_brace_construction = outer_restriction;
+        result?;
+
+        Ok(Expr::Call {
+            callee: Box::new(Expr::Identifier { name, span: name_span }),
+            generic_args,
+            arguments,
+            span: Span::new(start, self.previous().span.end),
+        })
+    }
+
     fn parse_facet(&mut self) -> Result<Facet, ParseError> {
         let start = self.current().span.start;
 
@@ -56,11 +94,10 @@ impl Parser {
             self.expect_identifier()?
         };
 
+        // Any other name is a user-defined facet: a macro.
         let Some(shape) = facets::payload_shape(&name) else {
-            return Err(ParseError::new(
-                format!("unknown facet `{name}`"),
-                self.previous().span,
-            ));
+            let call = self.parse_applied_facet(name.clone(), start)?;
+            return Ok(Facet { name, payload: FacetPayload::Applied(call), span: Span::new(start, self.previous().span.end) });
         };
 
         let is_lint_facet = matches!(name.as_str(), "allow" | "expect" | "warn" | "deny" | "forbid");

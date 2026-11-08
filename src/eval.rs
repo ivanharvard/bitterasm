@@ -86,7 +86,9 @@ pub fn eval_in<S: IntScope + ?Sized>(expr: &Expr, scope: &S) -> Result<Int, Eval
         | Expr::As { span, .. }
         | Expr::Range { span, .. }
         | Expr::In { span, .. }
-        | Expr::Fold { span, .. } => Err(EvalError::NotConstant { span: *span }),
+        | Expr::Fold { span, .. }
+        | Expr::Extend { span, .. }
+        | Expr::HasField { span, .. } => Err(EvalError::NotConstant { span: *span }),
 
         Expr::Unary { op, operand, .. } => Ok(apply_unary(*op, eval_in(operand, scope)?)),
 

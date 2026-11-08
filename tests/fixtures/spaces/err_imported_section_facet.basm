@@ -1,0 +1,4 @@
+# Importing a section runs its facets.
+from .section_lib import .boom
+
+section .boom

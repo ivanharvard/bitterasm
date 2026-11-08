@@ -63,7 +63,9 @@ impl<'a> ConstEvaluator<'a> {
 
             let declaration = find_const_declaration(self.program, &name, self.symbols)?;
 
-            if !is_int_shaped(self.program, &declaration.value) {
+            if matches!(declaration.kind, crate::ast::ConstKind::Space { .. })
+                || !is_int_shaped(self.program, &declaration.value)
+            {
                 // Not every const is meant to hold an Int (e.g. a struct
                 // value like `const r0: Reg64 = Reg64(0)`) — skip it here
                 // rather than failing the whole program. Such a const
@@ -261,6 +263,15 @@ pub(super) fn referenced_identifiers(expr: &crate::ast::Expr) -> Vec<String> {
             }
 
             Expr::Fold { fold, .. } => push_meta_exprs(fold, &mut stack),
+            Expr::Extend { subject, fields, .. } => {
+                stack.push(subject);
+                for field in fields {
+                    if let crate::ast::ExtendValue::Value { value, .. } = &field.value {
+                        stack.push(value);
+                    }
+                }
+            }
+            Expr::HasField { subject, .. } => stack.push(subject),
         }
     }
 

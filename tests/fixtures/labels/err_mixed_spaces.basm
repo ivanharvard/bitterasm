@@ -1,0 +1,10 @@
+macro same<S>(_a: label<S>, _b: label<S>) {
+    @emit 0
+}
+space flash = stream
+space ram = stream
+section .text in flash
+a:
+    same a, b
+section .data in ram
+b:

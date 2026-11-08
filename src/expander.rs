@@ -238,6 +238,12 @@ fn substitute_statement(statement: &Statement, substitutions: &HashMap<String, E
             is_pub: decl.is_pub,
             ty: decl.ty.as_ref().map(|ty| substitute_type_expr(ty, substitutions)),
             value: substitute_expr(&decl.value, substitutions),
+            kind: match &decl.kind {
+                crate::ast::ConstKind::Const => crate::ast::ConstKind::Const,
+                crate::ast::ConstKind::Space { facets } => crate::ast::ConstKind::Space {
+                    facets: facets.iter().map(|facet| substitute_expr(facet, substitutions)).collect(),
+                },
+            },
             doc: decl.doc.clone(),
             span: decl.span,
         }),
@@ -467,6 +473,7 @@ fn substitute_facets(facets: &[Facet], substitutions: &HashMap<String, Expr>) ->
                 // `substitutions` (the call site being expanded) — nothing
                 // in it is ever substitutable.
                 FacetPayload::Pattern(tokens) => FacetPayload::Pattern(tokens.clone()),
+                FacetPayload::Applied(call) => FacetPayload::Applied(substitute_expr(call, substitutions)),
             },
             span: facet.span,
         })
@@ -611,6 +618,33 @@ pub fn substitute_expr(expr: &Expr, substitutions: &HashMap<String, Expr>) -> Ex
             };
             Expr::Fold { fold: Box::new(fold), span: *span }
         }
+
+        Expr::Extend { subject, fields, span } => Expr::Extend {
+            subject: Box::new(substitute_expr(subject, substitutions)),
+            fields: fields
+                .iter()
+                .map(|field| crate::ast::ExtendField {
+                    name: field.name.clone(),
+                    value: match &field.value {
+                        crate::ast::ExtendValue::Value { ty, value } => crate::ast::ExtendValue::Value {
+                            ty: substitute_type_expr(ty, substitutions),
+                            value: substitute_expr(value, substitutions),
+                        },
+                        crate::ast::ExtendValue::Type(ty) => {
+                            crate::ast::ExtendValue::Type(substitute_type_expr(ty, substitutions))
+                        }
+                    },
+                    span: field.span,
+                })
+                .collect(),
+            span: *span,
+        },
+
+        Expr::HasField { subject, field, span } => Expr::HasField {
+            subject: Box::new(substitute_expr(subject, substitutions)),
+            field: field.clone(),
+            span: *span,
+        },
     }
 }
 

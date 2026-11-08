@@ -56,6 +56,7 @@ pub(super) enum ItemKind {
     Alias(TypeAliasDeclaration),
     Const(ConstDeclaration),
     Label(Label),
+    Section(crate::ast::Section),
 }
 
 impl ItemKind {
@@ -67,6 +68,7 @@ impl ItemKind {
             ItemKind::Alias(declaration) => declaration.doc.as_ref(),
             ItemKind::Const(declaration) => declaration.doc.as_ref(),
             ItemKind::Label(label) => label.doc.as_ref(),
+            ItemKind::Section(section) => section.doc.as_ref(),
         }
     }
 }
@@ -224,6 +226,7 @@ fn collect_docs(statements: &[Statement], out: &mut Vec<Doc>) {
             Statement::Const(declaration) => &declaration.doc,
             Statement::Label(label) => &label.doc,
             Statement::SyntaxOverride(override_statement) => &override_statement.doc,
+            Statement::Section(section) => &section.doc,
             Statement::Meta(meta) => {
                 for body in [&meta.body, &meta.else_body].into_iter().flatten() {
                     collect_docs(body, out);
@@ -233,7 +236,7 @@ fn collect_docs(statements: &[Statement], out: &mut Vec<Doc>) {
                 }
                 continue;
             }
-            Statement::Import(_) | Statement::ExternLabel(_) | Statement::Section(_) | Statement::Invocation(_) => continue,
+            Statement::Import(_) | Statement::ExternLabel(_) | Statement::Invocation(_) => continue,
         };
         out.extend(doc.iter().cloned());
     }
@@ -255,6 +258,7 @@ fn declared_item(statement: &Statement) -> Option<(String, ItemKind)> {
             (literal_name(&declaration.name)?, declaration.is_pub, ItemKind::Const(declaration.clone()))
         }
         Statement::Label(label) => (label.name.clone(), label.is_pub, ItemKind::Label(label.clone())),
+        Statement::Section(section) => (section.name.clone(), section.is_pub, ItemKind::Section(section.clone())),
         _ => return None,
     };
     is_pub.then_some((name, kind))

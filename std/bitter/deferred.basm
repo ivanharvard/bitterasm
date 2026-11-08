@@ -272,10 +272,11 @@ pub macro band(
 # the type `std/riscv`'s branch instructions take as their `target`).
 ## The number of bytes from position `start` to position `end`, negative
 ## if `end` comes first. Either may be `here()`. Labels are positions, so
-## `span(here(), target)` is a relative branch offset.
-pub macro span(
-    start: label,
-    end: label
+## `span(here(), target)` is a relative branch offset. Two labels must be in
+## the same space: there's no distance between two different memories.
+pub macro span<S>(
+    start: label<S>,
+    end: label<S>
 ) -> Deferred {
     @return Deferred.Node(BinOp(
         op = Op.Span,

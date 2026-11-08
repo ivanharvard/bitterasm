@@ -40,6 +40,15 @@ impl Parser {
             "if" => self.parse_if_meta(start),
             "match" => self.parse_match_meta(start),
 
+            // Values, not statements: nothing can be changed in place.
+            "extend" | "hasfield" => Err(ParseError::new(
+                format!(
+                    "`@{name}` gives a value and changes nothing, so it can't stand alone; \
+                     use it where a value goes, like `@return @{name} ...`"
+                ),
+                Span::new(start, self.previous().span.end),
+            )),
+
             _ => {
                 let mut args = Vec::new();
 
@@ -381,6 +390,13 @@ impl Parser {
         let (name, _) = self.parse_spliced_name()?;
 
         let generic_params = self.parse_generic_params()?;
+        // So `unit<bits<16>>(...)` and `| unit<bits<16>>` can pass generic
+        // arguments explicitly. A struct of the same name keeps its own.
+        if let Some(literal) = literal_name(&name)
+            && !self.generic_signatures.contains_key(&literal)
+        {
+            self.register_generic_signature(&literal, &generic_params);
+        }
 
         self.expect_simple(TokenKind::LParen)?;
         self.skip_newlines();

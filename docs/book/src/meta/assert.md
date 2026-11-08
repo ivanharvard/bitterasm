@@ -45,6 +45,27 @@ shift amount must be 0 to 31
 - A passing `@assert` emits nothing and has no other effect.
 - The error points at the `@assert` that failed.
 
+## `@error`
+
+`@error "message"` always fails, with `message`. It's the same as
+`@assert 0, "message"`, for the branch of an `@if` that's never allowed:
+
+```basm,fail
+macro width(bits: int) {
+    @if bits == 8 || bits == 16 {
+        @emit bits
+    } @else {
+        @error "only 8 and 16 bits are supported"
+    }
+}
+
+width 12
+```
+
+```error
+only 8 and 16 bits are supported
+```
+
 ## Asserts, hooks and invariants
 
 An `@assert` checks something at one point in one macro. For checks that

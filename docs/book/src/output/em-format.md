@@ -33,7 +33,9 @@ whitespace; `--pretty` indents it as below. Readers must accept either.
   because ignoring one produces wrong output with no error:
   - `sections`: some entry has a `section`. Lay entries out grouped by
     section name, sections in order of first appearance, entries within a
-    section in file order.
+    section in file order. `bitterasm` already writes them grouped, so a
+    label's position (the `exports`, and `label as int`) counts entries in
+    the order they appear in the file.
   - `extern-labels`: some value is a `Deferred` (see below), which only a
     linker with the other file's `.em` can resolve.
 - **`module`** is the compiled file's module path: its path relative to the

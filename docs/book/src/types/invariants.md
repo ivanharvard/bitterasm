@@ -123,6 +123,41 @@ emit_offset 64 as Imm12
 bits<12> { value: 64 }
 ```
 
+## Checks written as macros
+
+A struct can also name a macro as a facet. Every value the struct makes is
+passed to that macro, which can check it with `@assert` and must return it
+unchanged. Unlike an invariant's condition, the check can take arguments,
+be shared between structs, and give its own error:
+
+```basm,fail
+macro below(reg: Reg, limit: int) -> Reg {
+    @assert reg.id < limit, "register out of range"
+    @return reg
+}
+
+struct Reg
+    | below 16
+{
+    pub id: int,
+}
+
+macro show(reg: Reg) {
+    @emit reg.id
+}
+
+show Reg(20)
+```
+
+```error
+register out of range
+```
+
+The macro takes the value as its first parameter, and `| below 16` calls
+`below(value, 16)`. A value of the same struct made inside the macro isn't
+passed back through it. [Spaces and sections](../programs/spaces.md) take
+facets written as macros too.
+
 ## Invariants versus `@assert`
 
 | | Invariant | [`@assert`](../meta/assert.md) |

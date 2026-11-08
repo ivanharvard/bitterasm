@@ -64,6 +64,7 @@
 - [Programs](programs/index.md)
     - [Labels](programs/labels.md)
     - [Sections](programs/sections.md)
+    - [Spaces](programs/spaces.md)
     - [Linking multiple files](programs/linking.md)
     - [Executables](programs/executables.md)
 
@@ -110,6 +111,7 @@
         - [`c_like`](std/reference/riscv/c_like.md)
         - [`impl`](std/reference/riscv/impl.md)
         - [`native`](std/reference/riscv/native.md)
+    - [`spaces`](std/reference/spaces.md)
     - [`strings`](std/reference/strings/index.md)
         - [`ascii`](std/reference/strings/ascii.md)
         - [`cstring`](std/reference/strings/cstring.md)

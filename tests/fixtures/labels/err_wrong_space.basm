@@ -1,0 +1,8 @@
+macro in_flash(at: label<flash>) {
+    @emit at as int
+}
+space flash = stream
+space ram = stream
+section .data in ram
+b:
+    in_flash b

@@ -76,7 +76,18 @@ pub(super) fn page(module: &Module, links: &Links) -> String {
         .filter(own)
         .filter(|item| matches!(item.kind, ItemKind::Struct(_) | ItemKind::Enum(_) | ItemKind::Alias(_)))
         .collect();
-    let consts: Vec<&Item> = module.items.iter().filter(own).filter(|item| matches!(item.kind, ItemKind::Const(_))).collect();
+    let is_space = |item: &&Item| {
+        matches!(&item.kind, ItemKind::Const(declaration) if matches!(declaration.kind, crate::ast::ConstKind::Space { .. }))
+    };
+    let consts: Vec<&Item> = module
+        .items
+        .iter()
+        .filter(own)
+        .filter(|item| matches!(item.kind, ItemKind::Const(_)) && !is_space(item))
+        .collect();
+    let spaces: Vec<&Item> = module.items.iter().filter(own).filter(is_space).collect();
+    let sections: Vec<&Item> =
+        module.items.iter().filter(own).filter(|item| matches!(item.kind, ItemKind::Section(_))).collect();
     let labels: Vec<&Item> = module.items.iter().filter(own).filter(|item| matches!(item.kind, ItemKind::Label(_))).collect();
 
     if !macros.is_empty() {
@@ -111,6 +122,38 @@ pub(super) fn page(module: &Module, links: &Links) -> String {
                 cell(&ty),
                 cell(&code(&print_expr(&declaration.value))),
                 summary(declaration.doc.as_ref()),
+            ));
+        }
+        out.push('\n');
+    }
+
+    if !spaces.is_empty() {
+        out.push_str("## Spaces\n\n| Space | Built from | Facets | Description |\n|---|---|---|---|\n");
+        for item in spaces {
+            let ItemKind::Const(declaration) = &item.kind else { continue };
+            let crate::ast::ConstKind::Space { facets } = &declaration.kind else { continue };
+            out.push_str(&format!(
+                "| {} | {} | {} | {} |\n",
+                cell(&code(&item.name)),
+                cell(&code(&print_expr(&declaration.value))),
+                cell(&facet_list(facets)),
+                summary(declaration.doc.as_ref()),
+            ));
+        }
+        out.push('\n');
+    }
+
+    if !sections.is_empty() {
+        out.push_str("## Sections\n\n| Section | Space | Facets | Description |\n|---|---|---|---|\n");
+        for item in sections {
+            let ItemKind::Section(section) = &item.kind else { continue };
+            let space = section.space.as_ref().map_or_else(|| "stream".to_string(), print_expr);
+            out.push_str(&format!(
+                "| {} | {} | {} | {} |\n",
+                cell(&code(&item.name)),
+                cell(&code(&space)),
+                cell(&facet_list(&section.facets)),
+                summary(section.doc.as_ref()),
             ));
         }
         out.push('\n');
@@ -435,6 +478,35 @@ fn join_words(words: &[String]) -> String {
         [one] => one.clone(),
         [init @ .., last] => format!("{} and {last}", init.join(", ")),
     }
+}
+
+// `progbits`, `alloc`, `start 0x8000`: a space's or section's facets, each
+// as a call without its first argument.
+fn facet_list(facets: &[crate::ast::Expr]) -> String {
+    facets
+        .iter()
+        .map(|facet| match facet {
+            crate::ast::Expr::Call { callee, generic_args, arguments, .. } => {
+                let mut text = crate::loader::demangle(&print_expr(callee));
+                if !generic_args.is_empty() {
+                    let generic = print_expr(&crate::ast::Expr::Call {
+                        callee: callee.clone(),
+                        generic_args: generic_args.clone(),
+                        arguments: Vec::new(),
+                        span: facet.span(),
+                    });
+                    text = crate::loader::demangle(generic.trim_end_matches("()"));
+                }
+                let arguments: Vec<String> = arguments.iter().map(|argument| print_expr(&argument.value)).collect();
+                if !arguments.is_empty() {
+                    text = format!("{text} {}", arguments.join(", "));
+                }
+                code(&text)
+            }
+            other => code(&print_expr(other)),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[cfg(test)]

@@ -1,0 +1,6 @@
+macro swap(sp: space) -> space {
+    @return stream
+}
+
+space flash = stream
+    | swap

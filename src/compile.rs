@@ -291,6 +291,31 @@ fn emit_diagnostics(diagnostics: &[Diagnostic], run: &DiagnosticRun) -> bool {
 /// (`AliasResolver::record_label_position`) by the time this runs — true of
 /// both `resolve_and_expand`'s return points, the single-pass short-circuit
 /// and the real pass after a two-pass fallback.
+/// Reorders the emitted values so each section's are together, sections in
+/// `order`: the layout every label position counts in. `bitter` groups
+/// sections the same way, so this changes nothing it produces, but a
+/// `label as int` now means the same thing to both.
+fn group_by_section(
+    emitted: Vec<Value>,
+    sections: Vec<Option<String>>,
+    order: &[Option<String>],
+) -> (Vec<Value>, Vec<Option<String>>) {
+    if order.len() <= 1 {
+        return (emitted, sections);
+    }
+    let index: HashMap<&Option<String>, usize> = order.iter().enumerate().map(|(i, section)| (section, i)).collect();
+    let mut buckets: Vec<Vec<Value>> = order.iter().map(|_| Vec::new()).collect();
+    for (value, section) in emitted.into_iter().zip(&sections) {
+        buckets[index[section]].push(value);
+    }
+    let sections = order
+        .iter()
+        .zip(&buckets)
+        .flat_map(|(section, bucket)| std::iter::repeat_n(section.clone(), bucket.len()))
+        .collect();
+    (buckets.into_iter().flatten().collect(), sections)
+}
+
 fn pub_label_positions(
     program: &Program,
     symbols: &SymbolTable,
@@ -441,9 +466,10 @@ fn resolve_and_expand(
     // and it's already the exact final answer. Most programs have no
     // labels at all (or none referenced before their own declaration), so
     // this skips a full second walk of the entire program for them.
-    if !discovery.used_forward_label_placeholder() {
-        let pub_labels = pub_label_positions(&program, &symbols, discovery.label_positions());
+    if !discovery.needs_label_pass() {
+        let pub_labels = pub_label_positions(&program, &symbols, &discovery.grouped_label_positions());
         let sections = discovery.take_emitted_sections();
+        let (emitted, sections) = group_by_section(emitted, sections, discovery.section_order());
         let symbols = discovery.into_symbols_with_generated();
         return Ok(Expansion {
             symbols,
@@ -477,7 +503,9 @@ fn resolve_and_expand(
     // (`resolver::unroll_top_level`) doesn't have this problem at all — it
     // runs before either pass, over plain top-level consts only, with no
     // notion of labels yet.
-    let label_positions = discovery.into_label_positions();
+    let label_positions = discovery.grouped_label_positions();
+    let label_spaces = discovery.label_spaces().clone();
+    drop(discovery);
 
     // Reported once, outside the per-invocation lines above: this second
     // pass re-expands the exact same program, so repeating a full
@@ -495,7 +523,8 @@ fn resolve_and_expand(
         label_positions,
         entry_module,
     )
-    .with_module_scopes(origins.scopes().to_vec());
+    .with_module_scopes(origins.scopes().to_vec())
+    .with_label_spaces(label_spaces);
 
     resolve_structs_and_aliases(&mut alias_resolver).map_err(|error| {
         CompileError::Resolve(error, alias_resolver.take_error_module().map(|module| origins.path(module).to_path_buf()))
@@ -518,6 +547,7 @@ fn resolve_and_expand(
 
     let pub_labels = pub_label_positions(&program, &symbols, alias_resolver.label_positions());
     let sections = alias_resolver.take_emitted_sections();
+    let (emitted, sections) = group_by_section(emitted, sections, alias_resolver.section_order());
     let symbols = alias_resolver.into_symbols_with_generated();
     Ok(Expansion {
         symbols,
@@ -611,7 +641,16 @@ fn walk_top_level(
             }
 
             Statement::Section(section) => {
-                alias_resolver.set_current_section(Some(section.name.clone()));
+                if section.declares() {
+                    alias_resolver.declare_section(section, &Scope::default(), statement_modules[index]).map_err(|error| {
+                        let module = alias_resolver.take_error_module().unwrap_or(statement_modules[index]);
+                        (error, module)
+                    })?;
+                }
+                // Another file's `pub section`: declared, not switched to.
+                if !section.imported {
+                    alias_resolver.set_current_section(Some(section.name.clone()));
+                }
             }
 
             // A top-level `@for` of invocations, kept as a loop by

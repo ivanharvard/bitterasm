@@ -439,6 +439,68 @@ pub enum ResolveError {
         span: Span,
     },
 
+    /// `flash.start` when `flash` has no `start`.
+    UnknownRecordField {
+        subject: String,
+        field: String,
+        span: Span,
+    },
+
+    /// `flash.unit` read as a value: it holds a type.
+    RecordFieldIsType {
+        subject: String,
+        field: String,
+        span: Span,
+    },
+
+    /// `@extend` of a field the space or section already has.
+    DuplicateRecordField {
+        subject: String,
+        field: String,
+        span: Span,
+    },
+
+    /// `@extend` of something that isn't a space or section.
+    ExtendNotRecord {
+        found: String,
+        span: Span,
+    },
+
+    /// A user-defined facet returned something other than the space or
+    /// section it was applied to.
+    FacetMustReturnSubject {
+        facet: String,
+        subject: String,
+        span: Span,
+    },
+
+    /// A `space` declaration, or a section's `in`, given something that
+    /// isn't a space.
+    ExpectedSpace {
+        found: String,
+        span: Span,
+    },
+
+    /// `| name` on a macro or type alias, where `name` isn't a built-in
+    /// facet: only structs, spaces and sections take user-defined ones.
+    UserFacetNotApplicable {
+        facet: String,
+        span: Span,
+    },
+
+    /// A second `section` line declaring the same section.
+    SectionRedeclared {
+        name: String,
+        span: Span,
+    },
+
+    /// A `section` line declaring a section that earlier code already
+    /// switched to.
+    SectionUsedBeforeDeclared {
+        name: String,
+        span: Span,
+    },
+
     // `as`'s target, after unwrapping every nominal alias layer, is a
     // struct that isn't already the source value's own shape and doesn't
     // have exactly one field to auto-wrap the source value into — there's
@@ -527,7 +589,12 @@ impl ResolveError {
             | Self::CannotCoerce { span, .. }
             | Self::AmbiguousConversion { span, .. } | Self::AmbiguousInvariantBinder { span, .. }
             | Self::Internal { span, .. } | Self::ForLoopTooLarge { span }
-            | Self::ComputedNameNotAllowed { span } | Self::TopLevelForRequiresRange { span } => *span,
+            | Self::ComputedNameNotAllowed { span } | Self::TopLevelForRequiresRange { span }
+            | Self::UnknownRecordField { span, .. } | Self::RecordFieldIsType { span, .. }
+            | Self::DuplicateRecordField { span, .. } | Self::ExtendNotRecord { span, .. }
+            | Self::FacetMustReturnSubject { span, .. } | Self::ExpectedSpace { span, .. }
+            | Self::SectionRedeclared { span, .. } | Self::SectionUsedBeforeDeclared { span, .. }
+            | Self::UserFacetNotApplicable { span, .. } => *span,
         }
     }
 

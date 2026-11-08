@@ -6,13 +6,17 @@ A section is a named region of the output, such as code or read-only data.
 
 ```basm,ignore
 section name
+section name in space | facet ...
+pub section name in space | facet ...
 ```
 
 Everything emitted after a `section` statement belongs to that section, until
 the next `section` statement. A name can be reopened any number of times.
 
 The name means nothing to the compiler, or to `bitter`: `.text`, `.rodata`
-and `code` are all just names.
+and `code` are all just names. What a section *is* comes from the second
+form, which declares the [space](spaces.md) it goes in and its facets, once.
+A `pub` one can be [imported](spaces.md#importing-sections).
 
 ## Sections are grouped
 

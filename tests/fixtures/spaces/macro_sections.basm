@@ -1,0 +1,20 @@
+from std.spaces import start
+
+macro tagged(sec: section, value: int) -> section {
+    @return @extend sec { tag: int = value }
+}
+
+macro show(value: int) {
+    @emit value
+}
+
+macro code_in(sp: space) {
+    section .text in sp
+        | tagged 7
+    show 1
+}
+
+space flash = stream | start 0x100
+
+code_in flash
+code_in flash

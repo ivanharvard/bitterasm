@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 
 use crate::ast::{
     literal_name, ConstructItem, Doc, Expr, ExternLabel, Facet, FacetPayload, ImportItems,
-    ImportStatement, MetaStatement, ModulePath, NamePart, Program, Statement,
+    ImportStatement, MetaStatement, ModulePath, NamePart, Program, Section, Statement,
 };
 use crate::eval::Int;
 use crate::lexer;
@@ -181,6 +181,12 @@ struct LoadedModule {
     // label declarations, each with the id of the module that declares it.
     extern_labels: Vec<(ExternLabel, usize)>,
 
+    // The `pub` sections this file imports, and the ones a file importing
+    // it can import in turn (its own, and any it re-exports), each with the
+    // id of the module that declares it.
+    imported_sections: Vec<(Section, usize)>,
+    exported_sections: Vec<(Section, usize)>,
+
     span: Span,
 
     // Generic signatures and macro syntax patterns for the names this
@@ -296,6 +302,12 @@ pub fn load_program_with_modules(entry: &Path) -> Result<(Program, ModuleOrigins
 
     let mut statements = Vec::new();
     let mut module_of_statement = Vec::new();
+
+    // The sections it imports are declared before anything uses them.
+    for (section, module_id) in &entry_module.imported_sections {
+        statements.push(Statement::Section(Section { imported: true, ..section.clone() }));
+        module_of_statement.push(*module_id);
+    }
 
     for statement in &entry_module.statements {
         match statement {
@@ -587,8 +599,13 @@ fn load_module(path: &Path, state: &mut LoadState) -> Result<(), LoadError> {
             unrolled,
             doc: program.doc,
             stray_docs: program.stray_docs,
+            exported_sections: own_pub_sections(&statements, module_id)
+                .into_iter()
+                .chain(imported.reexported_sections)
+                .collect(),
             statements,
             extern_labels: imported.extern_labels,
+            imported_sections: imported.sections,
             span: program.span,
             seed,
             scope,
@@ -758,6 +775,12 @@ fn collect_declarations(
         out_modules.push(*module_id);
     }
 
+    // And the sections it imports: its macros may switch to them.
+    for (section, module_id) in &module.imported_sections {
+        out.push(Statement::Section(Section { imported: true, ..section.clone() }));
+        out_modules.push(*module_id);
+    }
+
     Ok(())
 }
 
@@ -918,6 +941,19 @@ struct ImportedBindings {
     // The part of `scope` its `pub from` imports re-export.
     exports: HashMap<String, Binding>,
     extern_labels: Vec<(ExternLabel, usize)>,
+    // The `pub` sections they bring in, and the part `pub from` re-exports.
+    sections: Vec<(Section, usize)>,
+    reexported_sections: Vec<(Section, usize)>,
+}
+
+fn own_pub_sections(statements: &[Statement], module_id: usize) -> Vec<(Section, usize)> {
+    statements
+        .iter()
+        .filter_map(|statement| match statement {
+            Statement::Section(section) if section.is_pub => Some((section.clone(), module_id)),
+            _ => None,
+        })
+        .collect()
 }
 
 // What a file's imports bring in. A name imported explicitly
@@ -930,6 +966,14 @@ fn imported_bindings(
     // (name, binding, explicit, re-exported)
     let mut candidates: Vec<(String, Binding, bool, bool)> = Vec::new();
     let mut extern_labels = Vec::new();
+    let mut sections: Vec<(Section, usize)> = Vec::new();
+    let mut reexported_sections: Vec<(Section, usize)> = Vec::new();
+    let mut add_sections = |found: Vec<(Section, usize)>, is_pub: bool| {
+        if is_pub {
+            reexported_sections.extend(found.iter().cloned());
+        }
+        sections.extend(found);
+    };
 
     for statement in statements {
         let Statement::Import(import) = statement else { continue };
@@ -939,6 +983,23 @@ fn imported_bindings(
                 let target = &cache[&target_path];
 
                 for name in names {
+                    if name.starts_with('.') {
+                        let found: Vec<_> = target
+                            .exported_sections
+                            .iter()
+                            .filter(|(section, _)| &section.name == name)
+                            .cloned()
+                            .collect();
+                        if found.is_empty() {
+                            return Err(LoadError::UnknownImportedName {
+                                module: module_display(&import.module),
+                                name: name.clone(),
+                            });
+                        }
+                        add_sections(found, import.is_pub);
+                        continue;
+                    }
+
                     if let Some(binding) = target.exports.get(name) {
                         candidates.push((name.clone(), binding.clone(), true, import.is_pub));
                         continue;
@@ -975,6 +1036,7 @@ fn imported_bindings(
                 for (name, binding) in &cache[&target_path].exports {
                     candidates.push((name.clone(), binding.clone(), false, import.is_pub));
                 }
+                add_sections(cache[&target_path].exported_sections.clone(), import.is_pub);
             }
 
             (ImportResolution::Package(target_paths), _) => {
@@ -982,6 +1044,7 @@ fn imported_bindings(
                     for (name, binding) in &cache[&target_path].exports {
                         candidates.push((name.clone(), binding.clone(), false, import.is_pub));
                     }
+                    add_sections(cache[&target_path].exported_sections.clone(), import.is_pub);
                 }
             }
         }
@@ -1007,7 +1070,7 @@ fn imported_bindings(
         glob
     };
 
-    Ok(ImportedBindings { scope: resolve(false), exports: resolve(true), extern_labels })
+    Ok(ImportedBindings { scope: resolve(false), exports: resolve(true), extern_labels, sections, reexported_sections })
 }
 
 // A file's own declarations over what it imports: its own name wins, except
@@ -1174,6 +1237,9 @@ impl Binders {
             Statement::Const(decl) => {
                 self.nested(&decl.name, top);
                 self.expr(&decl.value);
+                if let crate::ast::ConstKind::Space { facets } = &decl.kind {
+                    facets.iter().for_each(|facet| self.expr(facet));
+                }
             }
 
             Statement::Macro(decl) => {
@@ -1247,7 +1313,7 @@ impl Binders {
     fn facets(&mut self, facets: &[Facet]) {
         for facet in facets {
             match &facet.payload {
-                FacetPayload::Expr(expr) => self.expr(expr),
+                FacetPayload::Expr(expr) | FacetPayload::Applied(expr) => self.expr(expr),
                 FacetPayload::Block(statements) => {
                     for statement in statements {
                         self.statement(statement, false);
@@ -1318,6 +1384,15 @@ impl Binders {
                 self.expr(right);
             }
             Expr::Splice { inner, .. } | Expr::As { value: inner, .. } => self.expr(inner),
+            Expr::Extend { subject, fields, .. } => {
+                self.expr(subject);
+                for field in fields {
+                    if let crate::ast::ExtendValue::Value { value, .. } = &field.value {
+                        self.expr(value);
+                    }
+                }
+            }
+            Expr::HasField { subject, .. } => self.expr(subject),
 
             Expr::Identifier { .. } | Expr::SplicedIdentifier { .. } | Expr::Integer { .. }
             | Expr::String { .. } | Expr::EnumVariant { payload: None, .. } => {}
@@ -1393,6 +1468,18 @@ fn rename_statement(statement: &mut Statement, renames: &mut Renamer) {
             }
 
             rename_expr(&mut decl.value, renames);
+
+            if let crate::ast::ConstKind::Space { facets } = &mut decl.kind {
+                facets.iter_mut().for_each(|facet| rename_expr(facet, renames));
+            }
+        }
+
+        // `in flash | progbits` names this module's spaces and macros.
+        Statement::Section(section) => {
+            if let Some(space) = &mut section.space {
+                rename_expr(space, renames);
+            }
+            section.facets.iter_mut().for_each(|facet| rename_expr(facet, renames));
         }
 
         Statement::Macro(decl) => {
@@ -1451,7 +1538,7 @@ fn rename_statement(statement: &mut Statement, renames: &mut Renamer) {
         // Nothing to rename. `collect_declarations` never splices a
         // `SyntaxOverride` or `ExternLabel` into a statement list for this
         // to run on; they're matched here for exhaustiveness.
-        Statement::Import(_) | Statement::Label(_) | Statement::Section(_)
+        Statement::Import(_) | Statement::Label(_)
         | Statement::SyntaxOverride(_) | Statement::ExternLabel(_) => {}
     }
 }
@@ -1553,7 +1640,7 @@ fn rename_facet(facet: &mut Facet, renames: &mut Renamer) {
     match &mut facet.payload {
         FacetPayload::Bare => {}
 
-        FacetPayload::Expr(expr) => rename_expr(expr, renames),
+        FacetPayload::Expr(expr) | FacetPayload::Applied(expr) => rename_expr(expr, renames),
 
         FacetPayload::Block(statements) => {
             for statement in statements {
@@ -1710,6 +1797,21 @@ fn rename_expr(expr: &mut Expr, renames: &mut Renamer) {
         }
 
         Expr::Fold { fold, .. } => rename_meta_statement(fold, renames),
+
+        Expr::Extend { subject, fields, .. } => {
+            rename_expr(subject, renames);
+            for field in fields {
+                match &mut field.value {
+                    crate::ast::ExtendValue::Value { ty, value } => {
+                        rename_type_expr(ty, renames);
+                        rename_expr(value, renames);
+                    }
+                    crate::ast::ExtendValue::Type(ty) => rename_type_expr(ty, renames),
+                }
+            }
+        }
+
+        Expr::HasField { subject, .. } => rename_expr(subject, renames),
     }
 }
 

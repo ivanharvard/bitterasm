@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::ast::{
-    BinaryOp, CallArgument, ConstDeclaration, Expr, ImportItems, ImportStatement,
+    BinaryOp, CallArgument, ConstDeclaration, ConstKind, Expr, ExtendField, ExtendValue, ImportItems, ImportStatement,
     Invocation, Label, MacroDeclaration, MacroParameter, MetaStatement, ModulePath,
     NamePart, Program, Section, Statement, SyntaxOverrideStatement, UnaryOp, TypeAliasDeclaration,
 };

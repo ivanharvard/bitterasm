@@ -62,6 +62,16 @@ pub enum ResolvedType {
         params: Vec<ResolvedType>,
         ret: Option<Box<ResolvedType>>,
     },
+
+    /// `label<flash>`: a label in one space, named by its identity (see
+    /// `values::Record`). A bare `label`, or `label<...>`, is
+    /// `Builtin(Label)`, which accepts a label in any space.
+    LabelIn(String),
+
+    /// A space standing in for a type: what `S` is bound to in
+    /// `span<S>(a: label<S>, b: label<S>)`. `None` is a space not known
+    /// yet, like a label read before it's placed.
+    Space(Option<String>),
 }
 
 impl ResolvedType {
@@ -89,6 +99,10 @@ impl ResolvedType {
                 ResolvedType::Enum { symbol: expected, args: expected_args },
                 ResolvedType::Enum { symbol: found, args: actual_args },
             ) => expected == found && generic_args_accept(expected_args, actual_args),
+            // A bare `label` takes a label in any space; `label<flash>` one
+            // in `flash`, or one whose space isn't known yet.
+            (ResolvedType::Builtin(BuiltinType::Label), ResolvedType::LabelIn(_))
+            | (ResolvedType::LabelIn(_), ResolvedType::Builtin(BuiltinType::Label)) => true,
             _ => false,
         }
     }
@@ -121,6 +135,12 @@ pub enum BuiltinType {
     /// A label: a position in the emitted stream, not a number. Compile-time
     /// only, like a macro type — see `Value::Label`.
     Label,
+    /// A space: a memory that sections are laid out in. Compile-time only —
+    /// see `Value::Record`.
+    Space,
+    /// A section: a named run of values in a space. Compile-time only —
+    /// see `Value::Record`.
+    Section,
 }
 
 #[derive(Debug, Clone, PartialEq)]

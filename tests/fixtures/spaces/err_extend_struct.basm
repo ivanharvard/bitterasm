@@ -1,0 +1,8 @@
+from std.binary import bits
+
+macro show(value: int) {
+    @emit value
+}
+
+const b = bits<8> { value: 1 }
+show @extend b { extra: int = 2 }.extra

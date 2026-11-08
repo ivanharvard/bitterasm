@@ -231,8 +231,16 @@ impl<'a> AliasResolver<'a> {
     ) -> Result<(), ResolveError> {
         let declaration = self.find_struct_declaration_rc(symbol)?;
         let invariants = facets::extract_invariants(&declaration.facets);
+        let applied: Vec<Expr> = declaration
+            .facets
+            .iter()
+            .filter_map(|facet| match &facet.payload {
+                crate::ast::FacetPayload::Applied(call) => Some(call.clone()),
+                _ => None,
+            })
+            .collect();
 
-        if invariants.is_empty() {
+        if invariants.is_empty() && applied.is_empty() {
             return Ok(());
         }
 
@@ -279,7 +287,17 @@ impl<'a> AliasResolver<'a> {
                 }
             }
 
-            Ok(())
+            // User-defined facets: `| checked` passes every new value
+            // through `checked(value)`, which must return it unchanged.
+            // Values of this struct built while its own facets run aren't
+            // passed through them again.
+            if applied.is_empty() || !this.running_struct_facets.insert(symbol) {
+                return Ok(());
+            }
+            let subject = scope["source"].clone();
+            let result = this.apply_struct_facets(subject, &applied, &scope, span);
+            this.running_struct_facets.remove(&symbol);
+            result
         })
     }
 
@@ -633,10 +651,15 @@ pub(super) fn describe_type(ty: &ResolvedType, symbols: &impl TypeSymbolNames) -
     match ty {
         ResolvedType::Builtin(BuiltinType::Int) => "int".to_string(),
         ResolvedType::Builtin(BuiltinType::Label) => "label".to_string(),
+        ResolvedType::Builtin(BuiltinType::Space) => "space".to_string(),
+        ResolvedType::Builtin(BuiltinType::Section) => "section".to_string(),
         ResolvedType::Struct { symbol, args } | ResolvedType::Enum { symbol, args } => {
             format!("{}{}", symbols.type_symbol_name(*symbol), describe_args(args, symbols))
         }
         ResolvedType::TypeParameter { name } => name.clone(),
+        ResolvedType::LabelIn(space) => format!("label<{}>", crate::loader::demangle(space)),
+        ResolvedType::Space(Some(space)) => crate::loader::demangle(space),
+        ResolvedType::Space(None) => "a space not known yet".to_string(),
 
         // The alias's own name reads better in a diagnostic than its
         // underlying struct's — "expected `uint8_t`, got `int`" over

@@ -95,6 +95,15 @@ fn validate_facets(decl_kind: DeclKind, decl_facets: &[Facet]) -> Result<(), Res
     let mut counts: HashMap<&str, usize> = HashMap::new();
 
     for facet in decl_facets {
+        // A user-defined facet: only a struct takes one here (a space's and
+        // a section's are on their own declarations).
+        if matches!(facet.payload, crate::ast::FacetPayload::Applied(_)) {
+            if decl_kind != DeclKind::Struct {
+                return Err(ResolveError::UserFacetNotApplicable { facet: facet.name.clone(), span: facet.span });
+            }
+            continue;
+        }
+
         let count = counts.entry(facet.name.as_str()).or_insert(0);
         *count += 1;
 

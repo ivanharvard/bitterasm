@@ -28,7 +28,7 @@
 #! change that. Every multi-byte field is little-endian, as x86-64 and
 #! RISC-V are.
 
-from std.binary import bits
+from std.binary import bits, bool, true
 from std.bitter.deferred import *
 from std.bitter.byte_order import LittleEndian
 from std.bitter.link import image_start, image_end
@@ -44,6 +44,77 @@ pub const PF_X = 1
 pub const PF_W = 2
 ## `segment_flags`: the segment is readable.
 pub const PF_R = 4
+
+# =================
+# section facets
+# =================
+# What ELF says about a section, as facets on its `section` line. Nothing
+# writes ELF section headers yet, so nothing reads these fields either.
+
+## A section's `elf_type`: its contents are stored in the file.
+pub const SHT_PROGBITS = 1
+## A section's `elf_type`: it takes no room in the file, and is zeroed when
+## the program loads.
+pub const SHT_NOBITS = 8
+
+## The section's contents are stored in the file: code and data. Sets
+## `elf_type` to `SHT_PROGBITS`.
+##
+## ```
+## from std.formats.elf import progbits, alloc, exec
+##
+## section .text
+##     | progbits
+##     | alloc
+##     | exec
+## ```
+pub macro progbits(sec: section) -> section {
+    @return @extend sec { elf_type: int = SHT_PROGBITS }
+}
+
+## The section takes no room in the file and is zeroed when the program
+## loads, like `.bss`. Sets `elf_type` to `SHT_NOBITS`.
+pub macro nobits(sec: section) -> section {
+    @return @extend sec { elf_type: int = SHT_NOBITS }
+}
+
+## The section is in memory while the program runs. Sets `alloc`.
+pub macro alloc(sec: section) -> section {
+    @return @extend sec { alloc: bool = true }
+}
+
+## The program can write to the section. Sets `write`.
+pub macro write(sec: section) -> section {
+    @return @extend sec { write: bool = true }
+}
+
+## The section holds code. Sets `exec`.
+pub macro exec(sec: section) -> section {
+    @return @extend sec { exec: bool = true }
+}
+
+## Code: stored in the file, in memory while running, and executable.
+pub section .text
+    | progbits
+    | alloc
+    | exec
+
+## Constants: stored in the file and in memory while running.
+pub section .rodata
+    | progbits
+    | alloc
+
+## Variables with starting values: stored in the file, and writable.
+pub section .data
+    | progbits
+    | alloc
+    | write
+
+## Variables that start at zero: no room in the file, and writable.
+pub section .bss
+    | nobits
+    | alloc
+    | write
 
 # A little-endian field `bytes` wide holding `value`.
 macro elf_field(value: int, bytes: int) {

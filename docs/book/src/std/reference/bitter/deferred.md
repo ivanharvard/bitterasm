@@ -90,7 +90,7 @@ refers to that value's position instead.
 
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
-| `span(start, end)` | `start: label`, `end: label` | returns `Deferred` | The number of bytes from position `start` to position `end`, negative if `end` comes first. Either may be `here()`. Labels are positions, so `span(here(), target)` is a relative branch offset. |
+| `span(start, end)` | `<S>`, `start: label<S>`, `end: label<S>` | returns `Deferred` | The number of bytes from position `start` to position `end`, negative if `end` comes first. Either may be `here()`. Labels are positions, so `span(here(), target)` is a relative branch offset. Two labels must be in the same space: there's no distance between two different memories. |
 | `span(start, end)` | `start: Deferred`, `end: label` | returns `Deferred` |  |
 | `span(start, end)` | `start: label`, `end: Deferred` | returns `Deferred` |  |
 

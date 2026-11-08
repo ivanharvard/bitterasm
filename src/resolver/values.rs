@@ -94,13 +94,67 @@ pub enum Value {
     /// or an imported one's `ExternLabel`, for `std.bitter.deferred` to
     /// build on.
     Label(LabelValue),
+
+    /// A space or section — see `Record`. Compile-time only, like a label.
+    Record(Box<Record>),
+}
+
+/// A space or section, as a value: compile-time machinery that's never
+/// emitted. `identity` says which one it is (a space's declared name, a
+/// section's `.name`), and stays the same through every `@extend`, which
+/// is how a facet is checked to return what it was given.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Record {
+    pub kind: RecordKind,
+    pub identity: String,
+    pub fields: Vec<(String, RecordField)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordKind {
+    Space,
+    Section,
+}
+
+impl RecordKind {
+    pub fn name(self) -> &'static str {
+        match self {
+            RecordKind::Space => "space",
+            RecordKind::Section => "section",
+        }
+    }
+}
+
+/// What one of a record's fields holds.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RecordField {
+    Value(Value),
+    /// `unit: type = bits<16>`.
+    Type(ResolvedType),
+}
+
+impl Record {
+    /// The default space every program starts in.
+    pub fn stream() -> Self {
+        Record { kind: RecordKind::Space, identity: "stream".to_string(), fields: Vec::new() }
+    }
+
+    pub fn field(&self, name: &str) -> Option<&RecordField> {
+        self.fields.iter().find(|(field, _)| field == name).map(|(_, value)| value)
+    }
+
+    /// How a message names it: `space flash`, `section .text`.
+    pub fn describe(&self) -> String {
+        format!("{} `{}`", self.kind.name(), crate::loader::demangle(&self.identity))
+    }
 }
 
 /// Which label a `Value::Label` is.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LabelValue {
-    /// A label in this file: how many values are emitted before it.
-    Local(Int),
+    /// A label in this file: how many values come before it, and the space
+    /// its section is in (`None` while it isn't placed yet).
+    Local(Int, Option<String>),
     /// A `pub` label imported from another file — see `Value::ExternLabel`.
     Extern { module: String, name: String },
 }
@@ -254,6 +308,9 @@ impl<'a> AliasResolver<'a> {
                         self.resolve_macro_value(name, *span)
                     }
 
+                    // The default space, which every other is built from.
+                    None if name == "stream" => Ok(Value::Record(Box::new(Record::stream()))),
+
                     _ => self.resolve_const_value(name, *span),
                 },
             },
@@ -328,6 +385,16 @@ impl<'a> AliasResolver<'a> {
                         })
                 }
 
+                Value::Record(record) => match record.field(&member) {
+                    Some(RecordField::Value(value)) => Ok(value.clone()),
+                    Some(RecordField::Type(_)) => Err(ResolveError::RecordFieldIsType {
+                        subject: record.describe(),
+                        field: member,
+                        span: *span,
+                    }),
+                    None => Err(ResolveError::UnknownRecordField { subject: record.describe(), field: member, span: *span }),
+                },
+
                 Value::Int(_) | Value::Enum { .. } | Value::Macro(_) | Value::ExternLabel { .. } | Value::Label(_) => {
                     Err(ResolveError::ExpectedStructValue { span: *span })
                 }
@@ -342,10 +409,17 @@ impl<'a> AliasResolver<'a> {
                     let member = self.resolve_spliced_name(member, scope)?;
                     return self.eval_enum_variant(name, &[], &member, arguments, *span, scope);
                 }
-                // Only a generic struct's name parses with `<...>` before
-                // `(...)` (macros register no generic signature), so this
-                // is always a construction.
+                // `unit<bits<16>>(sp)`: a macro given its generic arguments
+                // explicitly. Otherwise `<...>` before `(...)` is a generic
+                // struct's construction.
                 if !generic_args.is_empty() {
+                    if let Expr::Identifier { name, .. } = callee.as_ref()
+                        && self.lookup_symbol(name).is_some_and(|id| self.get_symbol(id).kind == SymbolKind::Macro)
+                    {
+                        return self
+                            .call_macro_for_value(name, generic_args, arguments, *span, scope)?
+                            .ok_or(ResolveError::ExpectedValueExpression { span: *span });
+                    }
                     return self.eval_call_value(callee, generic_args, arguments, *span, scope);
                 }
                 if let Expr::Identifier { name, .. } = callee.as_ref() {
@@ -423,6 +497,18 @@ impl<'a> AliasResolver<'a> {
             // idx in 0..len`. Anything else (a struct/array value) falls
             // back to `eval_for_source`, walking exactly the same `pub`,
             // non-`skip` fields `@for` would visit.
+            Expr::Extend { subject, fields, span } => self.eval_extend(subject, fields, *span, scope),
+
+            // A struct's fields count too: `@hasfield` only asks whether
+            // the name is there.
+            Expr::HasField { subject, field, span } => match self.eval_value(subject, scope)? {
+                Value::Record(record) => Ok(Value::Int(Int::from(u8::from(record.field(field).is_some())))),
+                Value::Struct { fields, .. } => {
+                    Ok(Value::Int(Int::from(u8::from(fields.iter().any(|(name, _)| name == field)))))
+                }
+                _ => Err(ResolveError::ExpectedStructValue { span: *span }),
+            },
+
             // A fold inside a larger expression: only its value is kept.
             Expr::Fold { fold, span } => {
                 let outcome = self.run_fold(fold, scope, &[])?;
@@ -543,12 +629,263 @@ impl<'a> AliasResolver<'a> {
                     ),
                     span: other.span(),
                 }),
+                Value::Record(record) => Err(ResolveError::NonIntOperand {
+                    found: record.describe(),
+                    hint: None,
+                    span: other.span(),
+                }),
                 value @ (Value::Struct { .. } | Value::Enum { .. } | Value::Macro(_)) => {
                     let ty = self.value_type(&value)?;
                     Err(ResolveError::NonIntOperand { found: describe_type(&ty, self), hint: None, span: other.span() })
                 }
             },
         }
+    }
+
+    /// `section .text in flash | progbits`: works out the section's value —
+    /// its space (the default `stream` without `in`), then its facets,
+    /// evaluated in `scope` as module `module` — and records it.
+    ///
+    /// A section is declared once: later `section .text` lines only switch
+    /// to it. The same line running again (a macro called twice) is no
+    /// conflict unless it gives a different value. A declaration imported
+    /// from another file's `pub section` gives way to this file's own, as
+    /// long as nothing has used the section yet.
+    pub fn declare_section(
+        &mut self,
+        section: &crate::ast::Section,
+        scope: &Scope,
+        module: usize,
+    ) -> Result<(), ResolveError> {
+        let declared_at = (module, section.span);
+        let redeclared = || ResolveError::SectionRedeclared { name: section.name.clone(), span: section.span };
+        let mut same_line = false;
+        match self.section_records.get(&section.name) {
+            Some(existing) if existing.declared_at == declared_at => same_line = true,
+            Some(existing) if existing.imported && !section.imported => {
+                if self.used_sections.contains(&section.name) {
+                    return Err(ResolveError::SectionUsedBeforeDeclared { name: section.name.clone(), span: section.span });
+                }
+            }
+            Some(_) => return Err(redeclared()),
+            None if !section.imported && self.used_sections.contains(&section.name) => {
+                return Err(ResolveError::SectionUsedBeforeDeclared { name: section.name.clone(), span: section.span });
+            }
+            None => {}
+        }
+
+        let value = self.with_module(module, |this| {
+            let space = match &section.space {
+                Some(expr) => match this.eval_value(expr, scope)? {
+                    Value::Record(record) if record.kind == RecordKind::Space => *record,
+                    Value::Record(record) => {
+                        return Err(ResolveError::ExpectedSpace { found: record.describe(), span: expr.span() })
+                    }
+                    other => {
+                        let ty = this.value_type(&other)?;
+                        return Err(ResolveError::ExpectedSpace {
+                            found: format!("`{}`", describe_type(&ty, this)),
+                            span: expr.span(),
+                        });
+                    }
+                },
+                None => Record::stream(),
+            };
+
+            let record = Record {
+                kind: RecordKind::Section,
+                identity: section.name.clone(),
+                fields: vec![("space".to_string(), RecordField::Value(Value::Record(Box::new(space))))],
+            };
+            this.apply_facets(Value::Record(Box::new(record)), &section.facets, scope)
+        })?;
+
+        if same_line && self.section_records[&section.name].value != value {
+            return Err(redeclared());
+        }
+        self.section_records.insert(
+            section.name.clone(),
+            super::aliases::SectionRecord { declared_at, imported: section.imported, value },
+        );
+        Ok(())
+    }
+
+    /// `@extend subject { name: Type = value, ... }`: a copy of `subject`
+    /// with more fields. Only a space or section can be extended: a struct
+    /// value's fields are fixed by its type.
+    fn eval_extend(
+        &mut self,
+        subject: &Expr,
+        fields: &[crate::ast::ExtendField],
+        span: Span,
+        scope: &Scope,
+    ) -> Result<Value, ResolveError> {
+        let value = self.eval_value(subject, scope)?;
+        let Value::Record(mut record) = value else {
+            let ty = self.value_type(&value)?;
+            return Err(ResolveError::ExtendNotRecord { found: format!("`{}`", describe_type(&ty, self)), span });
+        };
+
+        for field in fields {
+            if record.field(&field.name).is_some() {
+                return Err(ResolveError::DuplicateRecordField {
+                    subject: record.describe(),
+                    field: field.name.clone(),
+                    span: field.span,
+                });
+            }
+            let stored = match &field.value {
+                crate::ast::ExtendValue::Value { ty, value } => {
+                    let target = self.resolve_value_type_expr(ty, scope)?;
+                    let value = self.eval_value(value, scope)?;
+                    RecordField::Value(self.convert_to(value, &target, field.span)?)
+                }
+                crate::ast::ExtendValue::Type(ty) => RecordField::Type(self.resolve_value_type_expr(ty, scope)?),
+            };
+            record.fields.push((field.name.clone(), stored));
+        }
+
+        Ok(Value::Record(record))
+    }
+
+    /// Passes `subject` (a space or section) through each facet in turn:
+    /// `| start 0x8000` calls `start(subject, 0x8000)`. A user-defined
+    /// facet must return the same space or section it was given, extended
+    /// or not, never a different one.
+    pub(super) fn apply_facets(&mut self, subject: Value, facets: &[Expr], scope: &Scope) -> Result<Value, ResolveError> {
+        // Can't collide with a real name: identifiers never start with `#`.
+        const SUBJECT: &str = "#subject";
+
+        let mut subject = subject;
+        for facet in facets {
+            let Expr::Call { callee, generic_args, arguments, span } = facet else {
+                return Err(ResolveError::Internal { message: "a facet should parse as a call".to_string(), span: facet.span() });
+            };
+            let Expr::Identifier { name, span: name_span } = callee.as_ref() else {
+                return Err(ResolveError::Internal { message: "a facet's name should be an identifier".to_string(), span: *span });
+            };
+            match self.lookup_symbol(name) {
+                Some(id) if self.get_symbol(id).kind == SymbolKind::Macro => {}
+                Some(_) => return Err(ResolveError::ExpectedMacro { name: crate::loader::demangle(name), span: *name_span }),
+                None => return Err(ResolveError::UnknownMacro { name: crate::loader::demangle(name), span: *name_span }),
+            }
+
+            let Value::Record(record) = &subject else {
+                unreachable!("only a space or section has facets applied");
+            };
+            let (kind, identity, described) = (record.kind, record.identity.clone(), record.describe());
+
+            let mut facet_scope = scope.clone();
+            facet_scope.insert(SUBJECT.to_string(), subject);
+            let mut with_subject = vec![CallArgument {
+                name: None,
+                value: Expr::Identifier { name: SUBJECT.to_string(), span: *span },
+                span: *span,
+            }];
+            with_subject.extend(arguments.iter().cloned());
+
+            let returned = self.call_macro_for_value(name, generic_args, &with_subject, *span, &facet_scope)?;
+            subject = match returned {
+                Some(Value::Record(record)) if record.kind == kind && record.identity == identity => Value::Record(record),
+                _ => {
+                    return Err(ResolveError::FacetMustReturnSubject {
+                        facet: crate::loader::demangle(name),
+                        subject: described,
+                        span: *span,
+                    })
+                }
+            };
+        }
+        Ok(subject)
+    }
+
+    /// A struct's user-defined facets, run on a value it just built: each
+    /// is called with the value, and must return it unchanged. `scope`
+    /// holds the struct's const generic arguments, which a facet's own
+    /// arguments may name.
+    pub(super) fn apply_struct_facets(
+        &mut self,
+        subject: Value,
+        facets: &[Expr],
+        scope: &Scope,
+        span: Span,
+    ) -> Result<(), ResolveError> {
+        const SUBJECT: &str = "#subject";
+        let Value::Struct { symbol, .. } = &subject else {
+            unreachable!("only a struct value has struct facets");
+        };
+        let type_name = crate::loader::demangle(&self.get_symbol(*symbol).name);
+
+        for facet in facets {
+            let Expr::Call { callee, generic_args, arguments, .. } = facet else {
+                return Err(ResolveError::Internal { message: "a facet should parse as a call".to_string(), span: facet.span() });
+            };
+            let Expr::Identifier { name, span: name_span } = callee.as_ref() else {
+                return Err(ResolveError::Internal { message: "a facet's name should be an identifier".to_string(), span });
+            };
+            match self.lookup_symbol(name) {
+                Some(id) if self.get_symbol(id).kind == SymbolKind::Macro => {}
+                Some(_) => return Err(ResolveError::ExpectedMacro { name: crate::loader::demangle(name), span: *name_span }),
+                None => return Err(ResolveError::UnknownMacro { name: crate::loader::demangle(name), span: *name_span }),
+            }
+
+            let mut facet_scope = scope.clone();
+            facet_scope.insert(SUBJECT.to_string(), subject.clone());
+            let mut with_subject = vec![CallArgument {
+                name: None,
+                value: Expr::Identifier { name: SUBJECT.to_string(), span },
+                span,
+            }];
+            with_subject.extend(arguments.iter().cloned());
+
+            if self.call_macro_for_value(name, generic_args, &with_subject, span, &facet_scope)?.as_ref() != Some(&subject) {
+                return Err(ResolveError::FacetMustReturnSubject {
+                    facet: crate::loader::demangle(name),
+                    subject: format!("`{type_name}` value"),
+                    span,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Calls the macro `name`, with `generic_args` given explicitly
+    /// (`unit<bits<16>>(sp)`) or, when empty, inferred as usual, and
+    /// returns what it `@return`s, if anything.
+    fn call_macro_for_value(
+        &mut self,
+        name: &str,
+        generic_args: &[TypeArgument],
+        arguments: &[CallArgument],
+        span: Span,
+        scope: &Scope,
+    ) -> Result<Option<Value>, ResolveError> {
+        if arguments.iter().any(|argument| argument.name.is_some()) {
+            return Err(ResolveError::ExpectedValueExpression { span });
+        }
+        let explicit = generic_args
+            .iter()
+            .map(|arg| match arg {
+                TypeArgument::Type(ty) => Ok(ResolvedGenericArg::Type(Box::new(self.resolve_value_type_expr(ty, scope)?))),
+                TypeArgument::Const(expr) => Ok(ResolvedGenericArg::Const(self.eval_generic_const_arg(expr, scope)?)),
+                TypeArgument::Wildcard(span) => Err(ResolveError::ExpectedValueExpression { span: *span }),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let values = arguments
+            .iter()
+            .map(|argument| self.eval_value(&argument.value, scope))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let (symbol, declaration) = self.resolve_macro_overload(name, &values, span)?;
+        // Taken by `bind_macro_arguments` before it evaluates anything, so
+        // no call nested inside this one sees them.
+        self.explicit_macro_generics = (!explicit.is_empty()).then_some(explicit);
+        let expansion = self.run_macro_body_inner(symbol, &declaration, values);
+        self.explicit_macro_generics = None;
+        let expansion = expansion?;
+
+        self.reject_expression_emits(&format!("`{}`", crate::loader::demangle(name)), &expansion, span)?;
+        Ok(expansion.returned)
     }
 
     fn eval_macro_call(
@@ -823,7 +1160,8 @@ impl<'a> AliasResolver<'a> {
             let expected = self.field_type(&struct_ty, &field_name, span)?;
             let actual = self.value_type(&value)?;
 
-            if actual != expected && !self.int_fits_alias(&expected, &value, span)? {
+            // `accepts`, so a `label` field takes a label in any space.
+            if !expected.accepts(&actual) && !self.int_fits_alias(&expected, &value, span)? {
                 return Err(ResolveError::TypeMismatch {
                     name: field_name,
                     expected: describe_type(&expected, self),
@@ -957,7 +1295,7 @@ impl<'a> AliasResolver<'a> {
 
             let actual = self.value_type(&value)?;
 
-            if actual != *expected {
+            if !expected.accepts(&actual) {
                 return Err(ResolveError::TypeMismatch {
                     name: field_name.clone(),
                     expected: describe_type(expected, self),
@@ -1105,7 +1443,7 @@ impl<'a> AliasResolver<'a> {
                 Ok(Int::from(index))
             }
             Value::Enum { .. } | Value::Struct { .. } | Value::Macro(_)
-            | Value::ExternLabel { .. } | Value::Label(_) => {
+            | Value::ExternLabel { .. } | Value::Label(_) | Value::Record(_) => {
                 Err(ResolveError::ExpectedIntValue { span: expr.span() })
             }
         }
@@ -1316,9 +1654,9 @@ impl<'a> AliasResolver<'a> {
                 // coercion.
                 Value::Int(_) | Value::ExternLabel { .. } => Ok(value),
                 // `label as int`: its position, for `std.bitter.deferred`.
-                Value::Label(LabelValue::Local(position)) => Ok(Value::Int(position)),
+                Value::Label(LabelValue::Local(position, _)) => Ok(Value::Int(position)),
                 Value::Label(LabelValue::Extern { module, name }) => Ok(Value::ExternLabel { module, name }),
-                Value::Struct { .. } | Value::Enum { .. } | Value::Macro(_) => {
+                Value::Struct { .. } | Value::Enum { .. } | Value::Macro(_) | Value::Record(_) => {
                     Err(ResolveError::ExpectedIntValue { span })
                 }
             },
@@ -1328,6 +1666,28 @@ impl<'a> AliasResolver<'a> {
                 Value::Label(_) => Ok(value),
                 _ => Err(ResolveError::CannotCoerce { type_name: "label".to_string(), span }),
             },
+
+            ResolvedType::Builtin(BuiltinType::Space) => match &value {
+                Value::Record(record) if record.kind == RecordKind::Space => Ok(value),
+                _ => Err(ResolveError::CannotCoerce { type_name: "space".to_string(), span }),
+            },
+
+            ResolvedType::Builtin(BuiltinType::Section) => match &value {
+                Value::Record(record) if record.kind == RecordKind::Section => Ok(value),
+                _ => Err(ResolveError::CannotCoerce { type_name: "section".to_string(), span }),
+            },
+
+            ResolvedType::LabelIn(space) => match &value {
+                Value::Label(LabelValue::Local(_, Some(actual))) if actual == space => Ok(value),
+                // Not placed yet, or in another file: taken on trust.
+                Value::Label(LabelValue::Local(_, None) | LabelValue::Extern { .. }) => Ok(value),
+                _ => Err(ResolveError::CannotCoerce {
+                    type_name: describe_type(target, self),
+                    span,
+                }),
+            },
+
+            ResolvedType::Space(_) => Err(ResolveError::CannotCoerce { type_name: describe_type(target, self), span }),
 
             ResolvedType::TypeParameter { name } => {
                 Err(ResolveError::ExpectedType { name: name.clone(), span })
@@ -1466,7 +1826,8 @@ impl<'a> AliasResolver<'a> {
                 (*symbol, args, &self.find_enum_declaration_rc(*symbol)?.generic_params)
             }
             ResolvedType::Alias { underlying, .. } => return self.type_argument_value(underlying),
-            ResolvedType::Builtin(_) | ResolvedType::TypeParameter { .. } | ResolvedType::MacroType { .. } => {
+            ResolvedType::Builtin(_) | ResolvedType::TypeParameter { .. } | ResolvedType::MacroType { .. }
+            | ResolvedType::LabelIn(_) | ResolvedType::Space(_) => {
                 return Ok(None);
             }
         };
@@ -1656,6 +2017,23 @@ impl<'a> AliasResolver<'a> {
                 let ty = declaration.ty.clone();
                 let value = this.eval_value(&value, &Scope::default())?;
 
+                // `space flash = stream | ...`: a new space, starting with
+                // `stream`'s fields, then each facet in turn.
+                if let crate::ast::ConstKind::Space { facets } = &declaration.kind {
+                    let Value::Record(mut record) = value else {
+                        let ty = this.value_type(&value)?;
+                        return Err(ResolveError::ExpectedSpace {
+                            found: format!("`{}`", describe_type(&ty, this)),
+                            span: declaration.value.span(),
+                        });
+                    };
+                    if record.kind != RecordKind::Space {
+                        return Err(ResolveError::ExpectedSpace { found: record.describe(), span: declaration.value.span() });
+                    }
+                    record.identity = name.to_string();
+                    return this.apply_facets(Value::Record(record), facets, &Scope::default());
+                }
+
                 match ty {
                     Some(ty) => {
                         let target = this.resolve_value_type_expr(&ty, &Scope::default())?;
@@ -1717,8 +2095,9 @@ impl<'a> AliasResolver<'a> {
     /// it was recorded at (see `AliasResolver::record_label_position`).
     /// `id` is already known to be `SymbolKind::Label` by the caller.
     pub(super) fn resolve_label_value(&mut self, id: SymbolId, span: Span) -> Result<Value, ResolveError> {
+        self.read_label_position = true;
         match self.label_positions.get(&id) {
-            Some(position) => Ok(Value::Label(LabelValue::Local(position.clone()))),
+            Some(position) => Ok(Value::Label(LabelValue::Local(position.clone(), self.label_spaces.get(&id).cloned()))),
 
             None => match self.label_mode {
                 // Position-discovery pass: this label's own `foo:` line
@@ -1731,7 +2110,7 @@ impl<'a> AliasResolver<'a> {
                 // the module doc on why that invariant holds today).
                 LabelMode::Tolerant => {
                     self.used_forward_label_placeholder = true;
-                    Ok(Value::Label(LabelValue::Local(Int::from(0))))
+                    Ok(Value::Label(LabelValue::Local(Int::from(0), None)))
                 }
 
                 // The real pass: every top-level label's position was
@@ -1780,7 +2159,7 @@ impl<'a> AliasResolver<'a> {
         match self.eval_value(expr, scope)? {
             Value::Int(value) => Ok(value),
             Value::Struct { .. } | Value::Enum { .. } | Value::Macro(_)
-            | Value::ExternLabel { .. } | Value::Label(_) => {
+            | Value::ExternLabel { .. } | Value::Label(_) | Value::Record(_) => {
                 Err(ResolveError::ExpectedIntValue { span: expr.span() })
             }
         }
@@ -1849,7 +2228,14 @@ impl<'a> AliasResolver<'a> {
             // linker fills in, so it types as one.
             Value::ExternLabel { .. } => ResolvedType::Builtin(BuiltinType::Int),
 
+            Value::Label(LabelValue::Local(_, Some(space))) => ResolvedType::LabelIn(space.clone()),
+            // Not placed yet, or in another file: its space isn't known.
             Value::Label(_) => ResolvedType::Builtin(BuiltinType::Label),
+
+            Value::Record(record) => ResolvedType::Builtin(match record.kind {
+                RecordKind::Space => BuiltinType::Space,
+                RecordKind::Section => BuiltinType::Section,
+            }),
 
             Value::Macro(symbol) => self.macro_value_type(*symbol)?,
 
@@ -1915,7 +2301,8 @@ fn tag_nominal(value: Value, alias: &ResolvedType) -> Value {
             Value::Struct { symbol, args, fields, nominal: Some(Box::new(alias.clone())) }
         }
 
-        Value::Int(_) | Value::Macro(_) | Value::Enum { .. } | Value::ExternLabel { .. } | Value::Label(_) => value,
+        Value::Int(_) | Value::Macro(_) | Value::Enum { .. } | Value::ExternLabel { .. } | Value::Label(_)
+        | Value::Record(_) => value,
     }
 }
 
