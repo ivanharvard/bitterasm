@@ -8,7 +8,9 @@ macro mark(n: int) {
     @emit n
 }
 
-macro leaks_on_purpose() | leaks_section {
+macro leaks_on_purpose()
+    | leaks_section
+{
     section .data
     mark 99
 }

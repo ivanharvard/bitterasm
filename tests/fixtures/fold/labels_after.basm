@@ -12,4 +12,4 @@ macro show(position: label) {
 
 three
 after:
-show after
+    show after

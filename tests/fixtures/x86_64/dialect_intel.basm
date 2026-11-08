@@ -47,9 +47,9 @@ push rax
 pop rax
 
 target:
-call target
-jmp target
-je target
-jne target
-ret
-syscall
+    call target
+    jmp target
+    je target
+    jne target
+    ret
+    syscall

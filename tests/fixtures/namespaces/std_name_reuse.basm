@@ -1,4 +1,5 @@
-# `std.strings.utf8` uses `std.binary`'s `bits` internally; that doesn't stop this
+# `std.strings.utf8` uses `std.binary`'s `bits` internally; that doesn't stop
+# this
 # file from declaring its own.
 from std.strings.utf8 import string_from_struct
 

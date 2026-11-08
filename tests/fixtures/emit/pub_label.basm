@@ -14,6 +14,6 @@ macro reads_target(target: label) {
 
 pub loop_start:
 private_marker:
-noop
-reads_target loop_start
-noop
+    noop
+    reads_target loop_start
+    noop

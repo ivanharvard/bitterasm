@@ -7,8 +7,8 @@ macro reads_target(target: label) {
 }
 
 loop_start:
-noop
-reads_target loop_start
-reads_target skip_target
-noop
+    noop
+    reads_target loop_start
+    reads_target skip_target
+    noop
 skip_target:

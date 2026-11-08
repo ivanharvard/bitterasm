@@ -6,9 +6,12 @@ macro double(x: int) -> int {
     @return x * 2
 }
 
-macro apply(x: int, f: macro(
-    int
-) -> int) -> int {
+macro apply(
+    x: int,
+    f: macro(
+        int
+    ) -> int
+) -> int {
     @return f(x)
 }
 
