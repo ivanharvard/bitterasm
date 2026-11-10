@@ -36,6 +36,15 @@ fn sections_are_written_and_placed_by_the_link_macro() {
 }
 
 #[test]
+fn every_section_with_values_goes_to_the_link_stage() {
+    let dir = scratch("left-out");
+    let built = build(&["left_out.basm"], &dir.join("out"));
+    assert!(!built.status.success());
+    let stderr = String::from_utf8_lossy(&built.stderr);
+    assert!(stderr.contains("1 value(s) are in a section the link stage neither writes nor places"), "{stderr}");
+}
+
+#[test]
 fn an_offset_needs_a_link_stage() {
     let dir = scratch("no-link");
     let built = build(&["offset_without_link.basm"], &dir.join("out"));

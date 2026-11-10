@@ -52,7 +52,9 @@ ff 02 01
 
 The link macro takes its sections as arguments, so a program says which
 sections it has and in what order. There's no list of every section for it
-to find: the program's own argument is the list.
+to find: the program's own argument is the list. A section with values in
+it that the link stage neither writes nor places is an error, so one can't
+go missing, and so is writing or placing the same section twice.
 
 ## Placing sections
 

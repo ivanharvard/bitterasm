@@ -1,0 +1,20 @@
+# `.data` has a value, but the link macro is only given `.text`.
+from std.binary import bits
+from std.bitter.image import write_section
+
+macro db(value: int) {
+    @emit value as bits<8>
+}
+
+macro only(code: section) {
+    write_section code
+}
+
+const CODE = section .text
+
+@link only(CODE)
+
+@into CODE
+db 1
+section .data
+db 2

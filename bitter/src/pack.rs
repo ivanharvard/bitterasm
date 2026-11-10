@@ -183,6 +183,19 @@ pub fn pack_linked(values: &[EmittedValue], link: std::ops::Range<usize>) -> Res
         }
     }
 
+    // Everything outside the link section must be written or placed: a
+    // section the link macro wasn't given would vanish otherwise. (A
+    // section that's only placed, like `.bss`, takes no room in the file.)
+    let left_out = (0..values.len())
+        .filter(|index| !link.contains(index) && offsets[*index].is_none() && addresses[*index].is_none())
+        .count();
+    if left_out > 0 {
+        return Err(format!(
+            "{left_out} value(s) are in a section the link stage neither writes nor places; \
+             pass every section with something in it to the `@link` macro"
+        ));
+    }
+
     let layout = Layout { widths: &widths, offsets: Some(&offsets), addresses: Some(&addresses) };
     let mut bytes = Vec::new();
     let mut pad_to = Vec::new();
