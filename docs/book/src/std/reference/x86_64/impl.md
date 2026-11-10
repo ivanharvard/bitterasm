@@ -30,9 +30,9 @@ again:
 ```bytes
 48 89 d8
 8b 44 24 08
-48 81 03 01 00 00 00
-48 81 e9 01 00 00 00
-0f 85 f3 ff ff ff
+48 83 03 01
+48 83 e9 01
+0f 85 f6 ff ff ff
 ```
 
 The first instructions written here also have a form that takes the
@@ -40,8 +40,10 @@ size as a final `w` instead, 1 for 64 bits and 0 for 32, with every
 register a `Reg`: `mov rax, rbx, 0` is `mov eax, ebx`. `std.x86_64.att`
 uses those.
 
-Jumps and calls use a 32-bit offset, worked out by `bitter` once the
-program is laid out; there's no automatic choice of the short form.
+An immediate or displacement that fits in one byte takes the 1-byte
+form, as `add Mem(rbx, 0), 1, qword` does above. Jumps and calls use a
+32-bit offset, worked out by `bitter` once the program is laid out;
+there's no automatic choice of the short form.
 `loop`, `jrcxz` and `jecxz` have only the 8-bit one.
 
 ## Macros
@@ -115,7 +117,7 @@ Byte `index` of `value`, counting from the least significant, byte 0.
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
 | `mov rd, rs, w` | `rd: Reg`, `rs: Reg`, `w: int` | emits `Bytes<...>` | `rd = rs`. |
-| `mov rd, imm, w` | `rd: Reg`, `imm: int`, `w: int` | emits `Bytes<...>` | `rd = imm`. With `w` = 1 it takes a full 64-bit `imm`. |
+| `mov rd, imm, w` | `rd: Reg`, `imm: int`, `w: int` | emits `Bytes<...>` | `rd = imm`. With `w` = 1 it takes a full 64-bit `imm`, encoded as a sign-extended 32-bit one when it fits. |
 | `mov dst, rs, w` | `dst: MemOperand`, `rs: Reg`, `w: int` | emits `Bytes<...>` | Stores `rs` at `dst`. |
 | `mov rd, src, w` | `rd: Reg`, `src: MemOperand`, `w: int` | emits `Bytes<...>` | Loads the value at `src` into `rd`. |
 | `mov dst, imm, w` | `dst: MemOperand`, `imm: int`, `w: int` | emits `Bytes<...>` | Stores `imm` at `dst`: 32 bits, sign-extended to 64 when `w` is 1. |
@@ -126,7 +128,7 @@ Byte `index` of `value`, counting from the least significant, byte 0.
 | `mov dst, rs` | `dst: RipLabel`, `rs: Reg` |  | Stores `rs` at the label `dst`. |
 | `mov dst, rs` | `dst: RipLabel`, `rs: Reg32` |  |  |
 | `mov rd, rs` | `<R>`, `rd: R`, `rs: R` | emits `Bytes<...>` | `rd = rs`. |
-| `mov rd, imm` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | `rd = imm`. A 64-bit `rd` takes a full 64-bit `imm`. |
+| `mov rd, imm` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | `rd = imm`. A 64-bit `rd` takes a full 64-bit `imm`, encoded as a sign-extended 32-bit one when it fits. |
 | `mov rd, src` | `<R>`, `rd: R`, `src: MemOperand` | emits `Bytes<...>` | Loads the value at `src` into `rd`. |
 | `mov rd, src, size` | `<R>`, `rd: R`, `src: MemOperand`, `size: OperandSize` | emits `Bytes<...>` | Loads the value at `src` into `rd`; `size` must match `rd`'s. |
 | `mov dst, rs` | `<R>`, `dst: MemOperand`, `rs: R` | emits `Bytes<...>` | Stores `rs` at `dst`. |

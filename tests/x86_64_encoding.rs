@@ -97,10 +97,14 @@ fn regdirect_encodes_correctly() {
         0x48, 0x89, 0xD8,
         // mov rax, 0x12345678, 0 — no REX, opcode=0xB8+rax(0)=0xB8, imm32 LE
         0xB8, 0x78, 0x56, 0x34, 0x12,
-        // mov r15, 0x1, 1 — REX.W + REX.B: REX(W=1,R=0,X=0,B=ext(r15)=1)=0x49,
-        // opcode=0xB8+(r15&7=7)=0xBF, imm64 LE (REX.W widens the immediate itself, not
+        // mov r15, 0x1, 1 — REX.W + REX.B: REX(W=1,R=0,X=0,B=ext(r15)=1)=0x49;
+        // 0x1 fits a sign-extended imm32, so opcode=0xC7 /0,
+        // ModRM(mod=11, digit=0, rm=r15&7=7)=0xC7, imm32 LE
+        0x49, 0xC7, 0xC7, 0x01, 0x00, 0x00, 0x00,
+        // mov r14, 0x123456789, 1 — too big for an imm32: REX(W=1,B=ext(r14)=1)=0x49,
+        // opcode=0xB8+(r14&7=6)=0xBE, imm64 LE (REX.W widens the immediate itself, not
         // just sign-extension — 0xB8+reg takes a full imm64 under REX.W)
-        0x49, 0xBF, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x49, 0xBE, 0x89, 0x67, 0x45, 0x23, 0x01, 0x00, 0x00, 0x00,
         // add rcx, rdx, 0 — opcode=0x01, ModRM(mod=11, reg=rdx=2, rm=rcx=1)=0xD1
         0x01, 0xD1,
         // or rax, rbx, 0 — opcode=0x09, ModRM(mod=11, reg=rbx=3, rm=rax=0)=0xD8
@@ -116,8 +120,8 @@ fn regdirect_encodes_correctly() {
         // add r12, r13, 1 — REX.W + both extended: REX(W=1,R=ext(r13)=1,X=0,B=ext(r12)=1)=0x4D,
         // opcode=0x01, ModRM(mod=11, reg=r13&7=5, rm=r12&7=4)=0xEC
         0x4D, 0x01, 0xEC,
-        // add rax, 0x11223344, 0 — opcode=0x81, ModRM(mod=11, digit=0, rm=rax=0)=0xC0, imm32 LE
-        0x81, 0xC0, 0x44, 0x33, 0x22, 0x11,
+        // add rax, 0x11223344, 0 — the accumulator form, no ModRM: opcode=0x05, imm32 LE
+        0x05, 0x44, 0x33, 0x22, 0x11,
         // or rbx, 0x11223344, 0 — ModRM(mod=11, digit=1, rm=rbx=3)=0xCB
         0x81, 0xCB, 0x44, 0x33, 0x22, 0x11,
         // and rcx, 0x11223344, 0 — ModRM(mod=11, digit=4, rm=rcx=1)=0xE1
@@ -128,13 +132,20 @@ fn regdirect_encodes_correctly() {
         0x81, 0xF6, 0x44, 0x33, 0x22, 0x11,
         // cmp rdi, 0x11223344, 0 — ModRM(mod=11, digit=7, rm=rdi=7)=0xFF
         0x81, 0xFF, 0x44, 0x33, 0x22, 0x11,
-        // sub r10, 0x5, 1 — REX.W + REX.B: REX(W=1,R=0,X=0,B=ext(r10)=1)=0x49,
-        // opcode=0x81, ModRM(mod=11, digit=5, rm=r10&7=2)=0xEA, imm32 LE
-        0x49, 0x81, 0xEA, 0x05, 0x00, 0x00, 0x00,
+        // sub r10, 0x5, 1 — REX.W + REX.B: REX(W=1,R=0,X=0,B=ext(r10)=1)=0x49;
+        // 0x5 fits a sign-extended imm8, so opcode=0x83,
+        // ModRM(mod=11, digit=5, rm=r10&7=2)=0xEA, imm8
+        0x49, 0x83, 0xEA, 0x05,
+        // cmp rdi, -1, 0 — imm8 0xFF sign-extends to -1: opcode=0x83,
+        // ModRM(mod=11, digit=7, rm=rdi=7)=0xFF, imm8
+        0x83, 0xFF, 0xFF,
         // test rax, rcx, 0 — opcode=0x85, ModRM(mod=11, reg=rcx=1, rm=rax=0)=0xC8
         0x85, 0xC8,
-        // test rax, 0xFF, 0 — opcode=0xF7, ModRM(mod=11, digit=0, rm=rax=0)=0xC0, imm32 LE
-        0xF7, 0xC0, 0xFF, 0x00, 0x00, 0x00,
+        // test rax, 0xFF, 0 — the accumulator form, no ModRM: opcode=0xA9, imm32 LE
+        0xA9, 0xFF, 0x00, 0x00, 0x00,
+        // test rbx, 0xFF, 0 — opcode=0xF7, ModRM(mod=11, digit=0, rm=rbx=3)=0xC3, imm32 LE
+        // (test has no imm8 form)
+        0xF7, 0xC3, 0xFF, 0x00, 0x00, 0x00,
     ];
 
     assert_case_encodes_to("regdirect", expected);
@@ -188,8 +199,11 @@ fn regmem_encodes_correctly() {
         // add Mem(rax, 0), rcx, 1 — w=1 forces REX.W even with no extended
         // registers: REX(W=1,R=0,X=0,B=0)=0x48, opcode=0x01, ModRM(mod=00, reg=rcx=1, rm=0)=0x08
         0x48, 0x01, 0x08,
-        // add Mem(rax, 0), 0x7F, 0 — opcode=0x81, ModRM(mod=00, digit=0, rm=0)=0x00, imm32 LE
-        0x81, 0x00, 0x7F, 0x00, 0x00, 0x00,
+        // add Mem(rax, 0), 0x7F, 0 — 0x7F fits a sign-extended imm8: opcode=0x83,
+        // ModRM(mod=00, digit=0, rm=0)=0x00, imm8
+        0x83, 0x00, 0x7F,
+        // add Mem(rax, 0), 0x80, 0 — 0x80 doesn't: opcode=0x81, ModRM=0x00, imm32 LE
+        0x81, 0x00, 0x80, 0x00, 0x00, 0x00,
         // mov Mem(rbx, 4), 0x2A, 0 — 0xC7 /0 (distinct from the register form's
         // 0xB8+reg — no register to fold into the opcode when the destination is
         // memory): ModRM(mod=01, digit=0, rm=rbx=3)=0x43, disp8=4, imm32 LE of 0x2A
@@ -255,8 +269,9 @@ fn shift_lea_stack_encodes_correctly() {
     let expected: &[u8] = &[
         // shl rax, 4, 0 — opcode=0xC1, ModRM(mod=11, digit=4 "SHL", rm=rax=0)=0xE0, imm8=4
         0xC1, 0xE0, 0x04,
-        // shr rcx, 1, 0 — ModRM(mod=11, digit=5 "SHR", rm=rcx=1)=0xE9, imm8=1
-        0xC1, 0xE9, 0x01,
+        // shr rcx, 1, 0 — a shift by one has its own opcode, 0xD1, with no count byte:
+        // ModRM(mod=11, digit=5 "SHR", rm=rcx=1)=0xE9
+        0xD1, 0xE9,
         // sar r10, 3, 1 — w=1 + extended rm: REX(W=1,R=0,X=0,B=ext(r10)=1)=0x49,
         // opcode=0xC1, ModRM(mod=11, digit=7 "SAR", rm=r10&7=2)=0xFA, imm8=3
         0x49, 0xC1, 0xFA, 0x03,

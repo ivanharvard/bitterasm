@@ -20,7 +20,7 @@ movzbl (%r8,%rdx), %edx
 ```bytes
 48 89 d8
 48 8b 44 24 08
-48 81 c0 01 00 00 00
+48 83 c0 01
 b8 02 00 00 00
 88 57 01
 41 c6 41 43 7c
@@ -123,7 +123,7 @@ Byte `index` of `value`, counting from the least significant, byte 0.
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
 | `mov rd, rs, w` | `rd: Reg`, `rs: Reg`, `w: int` | emits `Bytes<...>` | `rd = rs`. | [`std.x86_64.impl`](impl.md) |
-| `mov rd, imm, w` | `rd: Reg`, `imm: int`, `w: int` | emits `Bytes<...>` | `rd = imm`. With `w` = 1 it takes a full 64-bit `imm`. | [`std.x86_64.impl`](impl.md) |
+| `mov rd, imm, w` | `rd: Reg`, `imm: int`, `w: int` | emits `Bytes<...>` | `rd = imm`. With `w` = 1 it takes a full 64-bit `imm`, encoded as a sign-extended 32-bit one when it fits. | [`std.x86_64.impl`](impl.md) |
 | `mov dst, rs, w` | `dst: MemOperand`, `rs: Reg`, `w: int` | emits `Bytes<...>` | Stores `rs` at `dst`. | [`std.x86_64.impl`](impl.md) |
 | `mov rd, src, w` | `rd: Reg`, `src: MemOperand`, `w: int` | emits `Bytes<...>` | Loads the value at `src` into `rd`. | [`std.x86_64.impl`](impl.md) |
 | `mov dst, imm, w` | `dst: MemOperand`, `imm: int`, `w: int` | emits `Bytes<...>` | Stores `imm` at `dst`: 32 bits, sign-extended to 64 when `w` is 1. | [`std.x86_64.impl`](impl.md) |
@@ -134,7 +134,7 @@ Byte `index` of `value`, counting from the least significant, byte 0.
 | `mov dst, rs` | `dst: RipLabel`, `rs: Reg` |  | Stores `rs` at the label `dst`. | [`std.x86_64.impl`](impl.md) |
 | `mov dst, rs` | `dst: RipLabel`, `rs: Reg32` |  |  | [`std.x86_64.impl`](impl.md) |
 | `mov rd, rs` | `<R>`, `rd: R`, `rs: R` | emits `Bytes<...>` | `rd = rs`. | [`std.x86_64.impl`](impl.md) |
-| `mov rd, imm` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | `rd = imm`. A 64-bit `rd` takes a full 64-bit `imm`. | [`std.x86_64.impl`](impl.md) |
+| `mov rd, imm` | `<R>`, `rd: R`, `imm: int` | emits `Bytes<...>` | `rd = imm`. A 64-bit `rd` takes a full 64-bit `imm`, encoded as a sign-extended 32-bit one when it fits. | [`std.x86_64.impl`](impl.md) |
 | `mov rd, src` | `<R>`, `rd: R`, `src: MemOperand` | emits `Bytes<...>` | Loads the value at `src` into `rd`. | [`std.x86_64.impl`](impl.md) |
 | `mov rd, src, size` | `<R>`, `rd: R`, `src: MemOperand`, `size: OperandSize` | emits `Bytes<...>` | Loads the value at `src` into `rd`; `size` must match `rd`'s. | [`std.x86_64.impl`](impl.md) |
 | `mov dst, rs` | `<R>`, `dst: MemOperand`, `rs: R` | emits `Bytes<...>` | Stores `rs` at `dst`. | [`std.x86_64.impl`](impl.md) |

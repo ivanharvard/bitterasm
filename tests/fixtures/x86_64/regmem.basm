@@ -33,7 +33,8 @@ mov MemRipRelative(0x100), rbx, 0
 
 # --- other mnemonics wired through mem_reg_instr/mem_imm_instr ---
 add Mem(rax, 0), rcx, 1     # ALU reg,mem, w=1 (REX.W)
-add Mem(rax, 0), 0x7F, 0   # ALU imm,mem (0x81 /0)
+add Mem(rax, 0), 0x7F, 0   # ALU imm,mem, imm8 (0x83 /0)
+add Mem(rax, 0), 0x80, 0   # ALU imm,mem, imm32 (0x81 /0)
 mov Mem(rbx, 4), 0x2A, 0   # mov mem,imm (0xC7 /0, distinct from 0xB8+reg)
 test Mem(rax, 0), 0xFF, 0  # test mem,imm (0xF7 /0)
 

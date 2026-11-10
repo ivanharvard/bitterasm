@@ -113,7 +113,7 @@ fn pe64_matches_the_rust_writer_it_replaced() {
     let bytes = std::fs::read(&pe).unwrap();
     assert_eq!(bytes, std::fs::read(golden).unwrap());
 
-    // Headers padded to 0x200, then 93 bytes of code padded to 0x200 more.
+    // Headers padded to 0x200, then 90 bytes of code padded to 0x200 more.
     assert_eq!(bytes.len(), 1024);
 
     if let Some(report) = llvm_readobj(&pe, &["--file-headers", "--sections"]) {
@@ -121,7 +121,7 @@ fn pe64_matches_the_rust_writer_it_replaced() {
         // RVA 0x1000 + the 14-byte message before `_start`.
         assert!(report.contains("AddressOfEntryPoint: 0x100E"), "{report}");
         assert!(report.contains("SizeOfImage: 8192"), "{report}");
-        assert!(report.contains("VirtualSize: 0x5D"), "{report}");
+        assert!(report.contains("VirtualSize: 0x5A"), "{report}");
     }
 }
 
@@ -134,6 +134,6 @@ fn macho64_matches_the_rust_writer_it_replaced() {
     if let Some(report) = llvm_readobj(&macho, &["--file-headers", "--macho-segment"]) {
         assert!(report.contains("Format: Mach-O 64-bit x86-64"), "{report}");
         assert!(report.contains("NumOfLoadCommands: 3"), "{report}");
-        assert!(report.contains("filesize: 253"), "{report}");
+        assert!(report.contains("filesize: 250"), "{report}");
     }
 }
