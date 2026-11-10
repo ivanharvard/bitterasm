@@ -69,6 +69,24 @@ each_char
 97 98
 ```
 
+Two strings are equal when they have the same characters. Strings of the
+same length share one type, so they compare, and go to the same
+parameter, by their characters alone:
+
+```basm
+macro show(value: int) {
+    @emit value
+}
+
+show "ab" == "ab"
+show "ab" == "cd"
+show "ab" == "abc"
+```
+
+```emits
+1 0 0
+```
+
 ## Strings as bytes
 
 A string literal has no encoding until a library gives it one:

@@ -261,6 +261,12 @@ pub struct AliasResolver<'a> {
     pub(super) generated_symbols: SymbolTable,
     pub(super) generated: Vec<Statement>,
 
+    // The struct already synthesized for each shape of string or range
+    // literal (its field names, and which are `skip`), so literals of the
+    // same shape share one type: `"ab" == "ab"`, and `"ab"` and `"cd"` can
+    // go to the same parameter. See `super::generated`.
+    pub(super) generated_shapes: HashMap<Vec<(String, bool)>, SymbolId>,
+
     // Memoizes `find_macro_declaration`'s result as a cheap-to-clone `Rc`
     // instead of the `MacroDeclaration` itself (params, facets, and its
     // full body `Vec<Statement>`) -- a macro invoked N times inside a
@@ -464,6 +470,7 @@ impl<'a> AliasResolver<'a> {
             read_label_position: false,
             generated_symbols: SymbolTable::with_base(symbols.len()),
             generated: Vec::new(),
+            generated_shapes: HashMap::new(),
             macro_decl_cache: RefCell::new(FxHashMap::default()),
             struct_decl_cache: RefCell::new(FxHashMap::default()),
             enum_decl_cache: RefCell::new(FxHashMap::default()),

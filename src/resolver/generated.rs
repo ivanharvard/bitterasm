@@ -152,6 +152,60 @@ impl<'a> AliasResolver<'a> {
         Ok(())
     }
 
+    /// The private struct for a literal of this shape: one public `int`
+    /// field per `(name, skip)`, in order. A shape seen before reuses its
+    /// struct, so same-shaped literals share one type and compare by their
+    /// values. A new shape is synthesized under an unspellable name,
+    /// `{prefix}$N`, the same idiom as `loader::build_rename_map`'s
+    /// module-private renaming.
+    fn int_struct_for_shape(
+        &mut self,
+        prefix: &str,
+        shape: Vec<(String, bool)>,
+        span: Span,
+    ) -> Result<SymbolId, ResolveError> {
+        if let Some(symbol) = self.generated_shapes.get(&shape) {
+            return Ok(*symbol);
+        }
+
+        let fields = shape
+            .iter()
+            .map(|(name, is_skip)| {
+                StructBodyItem::Field(crate::types::StructField {
+                    name: vec![crate::ast::NamePart::Literal(name.clone())],
+                    ty: crate::types::TypeExpr::Named {
+                        path: vec!["int".to_string()],
+                        span,
+                    },
+                    is_pub: true,
+                    is_skip: *is_skip,
+                    default: None,
+                    doc: None,
+                    span,
+                })
+            })
+            .collect();
+
+        let name = format!("{prefix}${}", self.generated_symbols.len());
+        let decl = Statement::Struct(StructDeclaration {
+            name: vec![crate::ast::NamePart::Literal(name.clone())],
+            is_pub: false,
+            generic_params: Vec::new(),
+            facets: Vec::new(),
+            doc: None,
+            fields,
+            span,
+        });
+
+        self.register_generated(&decl)?;
+
+        let symbol = self
+            .lookup_symbol(&name)
+            .expect("register_generated just inserted this name");
+        self.generated_shapes.insert(shape, symbol);
+        Ok(symbol)
+    }
+
     /// `start..end` sugar: synthesizes a private struct (an unspellable
     /// name, same idiom as `loader::build_rename_map`'s module-private
     /// renaming — just disambiguated per-synthesis instead of per-module)
@@ -174,7 +228,6 @@ impl<'a> AliasResolver<'a> {
         let start_value = self.eval_int(start, scope)?;
         let end_value = self.eval_int(end, scope)?;
 
-        let mut struct_fields = Vec::new();
         let mut values = Vec::new();
 
         let mut i = start_value;
@@ -187,43 +240,13 @@ impl<'a> AliasResolver<'a> {
                 return Err(ResolveError::ForLoopTooLarge { span });
             }
 
-            let field_name = format!("__el{i}");
-
-            struct_fields.push(StructBodyItem::Field(crate::types::StructField {
-                name: vec![crate::ast::NamePart::Literal(field_name.clone())],
-                ty: crate::types::TypeExpr::Named {
-                    path: vec!["int".to_string()],
-                    span,
-                },
-                is_pub: true,
-                is_skip: false,
-                default: None,
-                        doc: None,
-                span,
-            }));
-
-            values.push((field_name, Value::Int(i.clone())));
+            values.push((format!("__el{i}"), Value::Int(i.clone())));
 
             i += Int::from(1);
         }
 
-        let name = format!("__range${}", self.generated_symbols.len());
-
-        let decl = Statement::Struct(StructDeclaration {
-            name: vec![crate::ast::NamePart::Literal(name.clone())],
-            is_pub: false,
-            generic_params: Vec::new(),
-            facets: Vec::new(),
-            doc: None,
-            fields: struct_fields,
-            span,
-        });
-
-        self.register_generated(&decl)?;
-
-        let symbol = self
-            .lookup_symbol(&name)
-            .expect("register_generated just inserted this name");
+        let shape = values.iter().map(|(name, _)| (name.clone(), false)).collect();
+        let symbol = self.int_struct_for_shape("__range", shape, span)?;
 
         Ok(Value::Struct {
             symbol,
@@ -243,7 +266,6 @@ impl<'a> AliasResolver<'a> {
         value: &str,
         span: Span,
     ) -> Result<Value, ResolveError> {
-        let mut struct_fields = Vec::new();
         let mut values = Vec::new();
 
         for (index, ch) in value.chars().enumerate() {
@@ -251,57 +273,14 @@ impl<'a> AliasResolver<'a> {
                 return Err(ResolveError::ForLoopTooLarge { span });
             }
 
-            let field_name = format!("__el{index}");
-
-            struct_fields.push(StructBodyItem::Field(crate::types::StructField {
-                name: vec![crate::ast::NamePart::Literal(field_name.clone())],
-                ty: crate::types::TypeExpr::Named {
-                    path: vec!["int".to_string()],
-                    span,
-                },
-                is_pub: true,
-                is_skip: false,
-                default: None,
-                        doc: None,
-                span,
-            }));
-
-            values.push((field_name, Value::Int(Int::from(ch as u32))));
+            values.push((format!("__el{index}"), Value::Int(Int::from(ch as u32))));
         }
 
         let len = values.len();
-
-        struct_fields.push(StructBodyItem::Field(crate::types::StructField {
-            name: vec![crate::ast::NamePart::Literal("len".to_string())],
-            ty: crate::types::TypeExpr::Named {
-                path: vec!["int".to_string()],
-                span,
-            },
-            is_pub: true,
-            is_skip: true,
-            default: None,
-                        doc: None,
-            span,
-        }));
         values.push(("len".to_string(), Value::Int(Int::from(len))));
 
-        let name = format!("__string${}", self.generated_symbols.len());
-
-        let decl = Statement::Struct(StructDeclaration {
-            name: vec![crate::ast::NamePart::Literal(name.clone())],
-            is_pub: false,
-            generic_params: Vec::new(),
-            facets: Vec::new(),
-            doc: None,
-            fields: struct_fields,
-            span,
-        });
-
-        self.register_generated(&decl)?;
-
-        let symbol = self
-            .lookup_symbol(&name)
-            .expect("register_generated just inserted this name");
+        let shape = values.iter().map(|(name, _)| (name.clone(), name == "len")).collect();
+        let symbol = self.int_struct_for_shape("__string", shape, span)?;
 
         Ok(Value::Struct {
             symbol,
