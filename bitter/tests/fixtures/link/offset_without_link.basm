@@ -1,0 +1,8 @@
+from std.bitter.deferred import *
+
+macro where(at: label) {
+    @emit Positioned<8> { value: offset(at) }
+}
+
+there:
+    where there

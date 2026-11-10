@@ -1,8 +1,13 @@
 #! ELF static executables, for Linux and the BSDs.
 #!
-#! Invoke one header macro first thing in the program's entry file, before
-#! any `section` statement, so its bytes start the image. This one is a
-#! complete Linux x86-64 program that exits with status 0:
+#! `elf64_link` is a link stage (`@link`): each section the program lists
+#! becomes its own segment, with the permissions its facets give it, and
+#! `.bss` takes no room in the file. See its own documentation below.
+#!
+#! The header macros below are simpler: invoke one first thing in the
+#! program's entry file, before any `section` statement, so its bytes start
+#! the image. This one is a complete Linux x86-64 program that exits with
+#! status 0:
 #!
 #! ```
 #! from std.formats.elf import *
@@ -22,16 +27,18 @@
 #! (`std.bitter.link`), so they stay correct however the program's sections
 #! and files are laid out.
 #!
-#! What this doesn't produce: section headers, dynamic linking, or separate
-#! segments per section. The single segment is readable and executable by
-#! default; pass `segment_flags` (a combination of `PF_R`, `PF_W`, `PF_X`) to
-#! change that. Every multi-byte field is little-endian, as x86-64 and
+#! A header macro maps the whole image as one segment, readable and
+#! executable by default; pass `segment_flags` (a combination of `PF_R`,
+#! `PF_W`, `PF_X`) to change that. Neither way produces section headers or
+#! dynamic linking. Every multi-byte field is little-endian, as x86-64 and
 #! RISC-V are.
 
 from std.binary import bits, bool, true
 from std.bitter.deferred import *
 from std.bitter.byte_order import LittleEndian
 from std.bitter.link import image_start, image_end
+from std.bitter.image import write_section, place_section
+from std.array import Array
 
 ## `machine` for x86-64.
 pub const EM_X86_64 = 0x3E
@@ -48,8 +55,8 @@ pub const PF_R = 4
 # =================
 # section facets
 # =================
-# What ELF says about a section, as facets on its `section` line. Nothing
-# writes ELF section headers yet, so nothing reads these fields either.
+# What ELF says about a section, as facets on its `section` line.
+# `elf64_link` reads them; nothing writes ELF section headers yet.
 
 ## A section's `elf_type`: its contents are stored in the file.
 pub const SHT_PROGBITS = 1
@@ -142,6 +149,118 @@ macro elf_ident(class: int) {
     elf_field 1, 1
     elf_field 0, 1
     elf_field 0, 8
+}
+
+# Each linked section gets its own pages, this far apart: section `i` is
+# at `load_address` plus `i + 1` times this, plus its own file offset, so
+# its address and its file offset agree modulo the page size, as ELF
+# requires.
+const SEGMENT_STRIDE = 0x1000000
+
+## A 64-bit ELF executable, as a link stage: `@link elf64_link(EM_X86_64,
+## _start, SECTIONS)`. Each of `sections` becomes its own segment, in
+## order, with the permissions its facets give it: readable, writable
+## with `write`, executable with `exec`. A `nobits` section, like `.bss`,
+## takes no room in the file and starts zeroed. Execution starts at
+## `entry`.
+##
+## ```
+## from std.array import Array
+## from std.formats.elf import *
+## from std.x86_64.nasm import *
+##
+## @link elf64_link(EM_X86_64, _start, Array<section, 2>(TEXT, BSS))
+##
+## @into TEXT
+## pub _start:
+##     mov eax, 60
+##     mov edi, [rel status]   # 0: `.bss` starts zeroed
+##     syscall
+##
+## @into BSS
+## status:
+##     resb 4
+## ```
+pub macro elf64_link<const N: int>(
+    machine: int,
+    entry: label,
+    sections: Array<section, N>,
+    load_address: int = 0x400000,
+    flags: int = 0
+) {
+    @for i in 0..N {
+        const sec = sections.__el`i`
+        const base = load_address + (i + 1) * SEGMENT_STRIDE
+        @if stored_in_file(sec) {
+            place_section sec, add(base, offset(sec.start))
+        } @else {
+            place_section sec, base
+        }
+    }
+
+    elf_ident 2
+    elf_field 2, 2                                                  # e_type: ET_EXEC
+    elf_field machine, 2                                            # e_machine
+    elf_field 1, 4                                                  # e_version
+    elf_late_field address(entry), 8                                # e_entry
+    elf_field 64, 8                                                 # e_phoff
+    elf_field 0, 8                                                  # e_shoff
+    elf_field flags, 4                                              # e_flags
+    elf_field 64, 2                                                 # e_ehsize
+    elf_field 56, 2                                                 # e_phentsize
+    elf_field N, 2                                                  # e_phnum
+    elf_field 0, 2                                                  # e_shentsize
+    elf_field 0, 2                                                  # e_shnum
+    elf_field 0, 2                                                  # e_shstrndx
+
+    @for sec in sections {
+        elf64_segment sec
+    }
+
+    @for sec in sections {
+        @if stored_in_file(sec) {
+            write_section sec
+        }
+    }
+}
+
+# Whether a section's contents go in the file: everything but `nobits`.
+macro stored_in_file(sec: section) -> int {
+    @if @hasfield sec, elf_type {
+        @return sec.elf_type != SHT_NOBITS
+    }
+    @return 1
+}
+
+# A section's permissions as `p_flags`.
+macro segment_flags_of(sec: section) -> int {
+    @return PF_R | PF_W * @hasfield sec, write | PF_X * @hasfield sec, exec
+}
+
+# One program header for a placed section. An empty section loads nothing.
+macro elf64_segment(sec: section) {
+    @if (sec.end as int) == (sec.start as int) {
+        @for _ in 0..7 {
+            elf_field 0, 8
+        }
+    } @else {
+        elf_field 1, 4                                              # p_type: PT_LOAD
+        elf_field segment_flags_of(sec), 4                          # p_flags
+        @if stored_in_file(sec) {
+            elf_late_field offset(sec.start), 8                     # p_offset
+        } @else {
+            elf_field 0, 8
+        }
+        elf_late_field address(sec.start), 8                        # p_vaddr
+        elf_late_field address(sec.start), 8                        # p_paddr
+        @if stored_in_file(sec) {
+            elf_late_field size_of(sec), 8                          # p_filesz
+        } @else {
+            elf_field 0, 8
+        }
+        elf_late_field size_of(sec), 8                              # p_memsz
+        elf_field 0x1000, 8                                         # p_align
+    }
 }
 
 ## A 64-bit ELF header and its one program header, 120 bytes. `machine` is

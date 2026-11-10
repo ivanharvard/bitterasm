@@ -64,9 +64,153 @@ pub fn pack_stream(values: &[EmittedValue]) -> Result<Vec<u8>, String> {
             continue;
         }
 
-        let packed = pack_value(value, here_index, &byte_widths)?;
+        let packed = pack_value(value, here_index, &Layout::plain(&byte_widths))?;
         let width_bytes = packed.width_bits.div_ceil(8);
         bytes.extend(to_bytes(&packed.value, width_bytes));
+    }
+
+    for n in pad_to {
+        bytes.resize(bytes.len().div_ceil(n) * n, 0);
+    }
+
+    Ok(bytes)
+}
+
+/// What resolving a `Deferred` can look up: every entry's byte width and,
+/// for a program with a link stage, where each entry went in the output
+/// file and in its space.
+pub(crate) struct Layout<'a> {
+    widths: &'a [usize],
+    offsets: Option<&'a [Option<usize>]>,
+    addresses: Option<&'a [Option<BigInt>]>,
+}
+
+impl<'a> Layout<'a> {
+    /// Entries laid out in order, with no link stage.
+    pub(crate) fn plain(widths: &'a [usize]) -> Self {
+        Layout { widths, offsets: None, addresses: None }
+    }
+
+    /// Where position `index` is in the output file. A position just past
+    /// a written entry is where that entry ends.
+    fn offset_of(&self, index: usize) -> Option<usize> {
+        let offsets = self.offsets?;
+        offsets.get(index).copied().flatten().or_else(|| {
+            let before = index.checked_sub(1)?;
+            Some(offsets.get(before).copied().flatten()? + self.widths[before])
+        })
+    }
+
+    /// Where position `index` is in its space, if its section is placed.
+    fn address_of(&self, index: usize) -> Option<BigInt> {
+        let addresses = self.addresses?;
+        addresses.get(index).cloned().flatten().or_else(|| {
+            let before = index.checked_sub(1)?;
+            Some(addresses.get(before).cloned().flatten()? + BigInt::from(self.widths[before]))
+        })
+    }
+}
+
+/// `std.bitter.image`'s `Write`/`Place`: a range of positions, and for a
+/// `Place`, its address.
+fn image_directive(value: &EmittedValue) -> Option<(&str, &[(String, EmittedValue)])> {
+    match value {
+        EmittedValue::Struct { id, fields, .. } if id == WRITE => Some(("Write", fields)),
+        EmittedValue::Struct { id, fields, .. } if id == PLACE => Some(("Place", fields)),
+        _ => None,
+    }
+}
+
+fn directive_field<'v>(fields: &'v [(String, EmittedValue)], name: &str) -> Result<&'v EmittedValue, String> {
+    fields
+        .iter()
+        .find(|(field, _)| field == name)
+        .map(|(_, value)| value)
+        .ok_or_else(|| format!("a `std.bitter.image` value is missing its `{name}` field"))
+}
+
+/// Packs a program with a link stage: the output is the entries in `link`
+/// (the link section) in order, where a `Write` puts a section's entries
+/// in and a `Place` gives a section's entries their addresses. Entries
+/// outside `link` are only written by a `Write`.
+pub fn pack_linked(values: &[EmittedValue], link: std::ops::Range<usize>) -> Result<Vec<u8>, String> {
+    let widths = entry_byte_widths(values)?;
+    let plain = Layout::plain(&widths);
+    let range = |fields: &[(String, EmittedValue)], here: usize| -> Result<(usize, usize), String> {
+        let start = resolve_deferred(directive_field(fields, "start")?, here, &plain)?;
+        let end = resolve_deferred(directive_field(fields, "end")?, here, &plain)?;
+        Ok((span_index(&start, widths.len())?, span_index(&end, widths.len())?))
+    };
+
+    // Where every written entry goes in the file.
+    let mut offsets: Vec<Option<usize>> = vec![None; values.len()];
+    let mut cursor = 0usize;
+    for index in link.clone() {
+        match image_directive(&values[index]) {
+            Some(("Write", fields)) => {
+                let (start, end) = range(fields, index)?;
+                for entry in start..end {
+                    if offsets[entry].is_some() {
+                        return Err(format!("position {entry} is written twice"));
+                    }
+                    offsets[entry] = Some(cursor);
+                    cursor += widths[entry];
+                }
+            }
+            Some(_) => {}
+            None => {
+                offsets[index] = Some(cursor);
+                cursor += widths[index];
+            }
+        }
+    }
+
+    // Where every placed entry is in its space. An address may depend on
+    // file offsets, but not on other addresses.
+    let mut addresses: Vec<Option<BigInt>> = vec![None; values.len()];
+    let with_offsets = Layout { widths: &widths, offsets: Some(&offsets), addresses: None };
+    for index in link.clone() {
+        if let Some(("Place", fields)) = image_directive(&values[index]) {
+            let (start, end) = range(fields, index)?;
+            let mut address = resolve_deferred(directive_field(fields, "address")?, index, &with_offsets)?;
+            for entry in start..end {
+                if addresses[entry].is_some() {
+                    return Err(format!("position {entry} is placed twice"));
+                }
+                addresses[entry] = Some(address.clone());
+                address += BigInt::from(widths[entry]);
+            }
+        }
+    }
+
+    let layout = Layout { widths: &widths, offsets: Some(&offsets), addresses: Some(&addresses) };
+    let mut bytes = Vec::new();
+    let mut pad_to = Vec::new();
+    let mut pack_entry = |index: usize, bytes: &mut Vec<u8>| -> Result<(), String> {
+        let value = &values[index];
+        if align_of(value)?.is_some() {
+            bytes.resize(bytes.len() + widths[index], 0);
+            return Ok(());
+        }
+        if let Some(n) = pad_image_of(value)? {
+            pad_to.push(n);
+            return Ok(());
+        }
+        let packed = pack_value(value, index, &layout)?;
+        bytes.extend(to_bytes(&packed.value, packed.width_bits.div_ceil(8)));
+        Ok(())
+    };
+    for index in link {
+        match image_directive(&values[index]) {
+            Some(("Write", fields)) => {
+                let (start, end) = range(fields, index)?;
+                for entry in start..end {
+                    pack_entry(entry, &mut bytes)?;
+                }
+            }
+            Some(_) => {}
+            None => pack_entry(index, &mut bytes)?,
+        }
     }
 
     for n in pad_to {
@@ -100,6 +244,8 @@ fn entry_byte_widths(values: &[EmittedValue]) -> Result<Vec<usize>, String> {
             Some(n) => (n - offset % n) % n,
             // Applied to the finished image, not here.
             None if pad_image_of(value)?.is_some() => 0,
+            // A link stage's own instructions, not output.
+            None if image_directive(value).is_some() => 0,
             None => structural_width_bits(value)?.div_ceil(8),
         };
         offset += width;
@@ -137,6 +283,8 @@ pub const BITS: &str = "std.binary.bits";
 pub const POSITIONED: &str = "std.bitter.deferred.Positioned";
 pub const LITTLE_ENDIAN: &str = "std.bitter.byte_order.LittleEndian";
 pub const DEFERRED: &str = "std.bitter.deferred.Deferred";
+pub const WRITE: &str = "std.bitter.image.Write";
+pub const PLACE: &str = "std.bitter.image.Place";
 pub const BIN_OP: &str = "std.bitter.deferred.BinOp";
 pub const OP: &str = "std.bitter.deferred.Op";
 pub const ALIGN: &str = "std.bitter.layout.Align";
@@ -193,7 +341,7 @@ fn unresolved_deferred_error(module: &str, symbol: &str) -> String {
 // a `Positioned<N>` can nest arbitrarily deep inside another struct's
 // fields but always means "here" relative to the *top-level* instruction
 // it was emitted as part of.
-fn pack_value(value: &EmittedValue, here_index: usize, byte_widths: &[usize]) -> Result<Packed, String> {
+fn pack_value(value: &EmittedValue, here_index: usize, byte_widths: &Layout) -> Result<Packed, String> {
     match value {
         EmittedValue::Struct { id, args, fields } if id == BITS => {
             let width_bits = bits_width(args)?;
@@ -317,7 +465,7 @@ fn pack_value(value: &EmittedValue, here_index: usize, byte_widths: &[usize]) ->
 // `Band` nodes rather than re-deriving BigInt shift/mask semantics by hand
 // — this guarantees identical behavior (negative-offset shifts included)
 // to what the resolver used to compute eagerly for `@here`-based offsets.
-fn resolve_deferred(deferred: &EmittedValue, here_index: usize, byte_widths: &[usize]) -> Result<BigInt, String> {
+fn resolve_deferred(deferred: &EmittedValue, here_index: usize, byte_widths: &Layout) -> Result<BigInt, String> {
     let EmittedValue::Enum { id, variant, payload, .. } = deferred else {
         return Err(format!("expected a `Deferred` value, found {deferred:?}"));
     };
@@ -353,6 +501,30 @@ fn resolve_deferred(deferred: &EmittedValue, here_index: usize, byte_widths: &[u
 
         "Here" => Ok(BigInt::from(here_index)),
 
+        // Where a position is in the output file, or in its space: only a
+        // program with a link stage has either.
+        "Offset" | "Address" => {
+            let Some(payload) = payload else {
+                return Err(format!("`Deferred.{variant}` is missing its payload"));
+            };
+            let position = resolve_deferred(payload, here_index, byte_widths)?;
+            let index = span_index(&position, byte_widths.widths.len())?;
+            let found = if variant == "Offset" {
+                byte_widths.offset_of(index).map(BigInt::from)
+            } else {
+                byte_widths.address_of(index)
+            };
+            found.ok_or_else(|| {
+                if byte_widths.offsets.is_none() {
+                    format!("`Deferred.{variant}` needs a link stage: a program with `@link`")
+                } else if variant == "Offset" {
+                    format!("position {index} isn't in the output: its section isn't written")
+                } else {
+                    format!("position {index} has no address: its section isn't placed")
+                }
+            })
+        }
+
         "Node" => {
             let Some(payload) = payload else {
                 return Err("`Deferred.Node` is missing its payload".to_string());
@@ -387,6 +559,15 @@ fn resolve_deferred(deferred: &EmittedValue, here_index: usize, byte_widths: &[u
                 let from = resolve_deferred(field("left")?, here_index, byte_widths)?;
                 let to = resolve_deferred(field("right")?, here_index, byte_widths)?;
                 return resolve_span(&from, &to, byte_widths);
+            }
+
+            // How many bytes lie from one position to another as emitted,
+            // wherever they're placed: a section's size.
+            if op_variant == "Size" {
+                let from = resolve_deferred(field("left")?, here_index, byte_widths)?;
+                let to = resolve_deferred(field("right")?, here_index, byte_widths)?;
+                let count = byte_widths.widths.len();
+                return Ok(stream_bytes(span_index(&from, count)?, span_index(&to, count)?, byte_widths.widths));
             }
 
             let op = match op_variant.as_str() {
@@ -432,14 +613,28 @@ fn resolve_deferred(deferred: &EmittedValue, here_index: usize, byte_widths: &[u
 // bidirectionally, the same job RISC-V's own `mul(sub(target, here()), 4)`
 // does for its fixed-width ones (see `std/bitter/deferred.basm`'s own doc
 // comment on `span` for when `here()` is and isn't a sound endpoint here).
-fn resolve_span(from: &BigInt, to: &BigInt, byte_widths: &[usize]) -> Result<BigInt, String> {
+fn resolve_span(from: &BigInt, to: &BigInt, layout: &Layout) -> Result<BigInt, String> {
+    let byte_widths = layout.widths;
     let from = span_index(from, byte_widths.len())?;
     let to = span_index(to, byte_widths.len())?;
 
+    // Two placed positions: the distance between their addresses, so a
+    // branch from one section to another is right wherever they went.
+    if let (Some(from_address), Some(to_address)) = (layout.address_of(from), layout.address_of(to)) {
+        return Ok(to_address - from_address);
+    }
+
+    Ok(stream_bytes(from, to, byte_widths))
+}
+
+// The bytes between entries `from` and `to` as they're emitted, negative if
+// `to` comes first.
+fn stream_bytes(from: usize, to: usize, byte_widths: &[usize]) -> BigInt {
+
     if from <= to {
-        Ok(BigInt::from(byte_widths[from..to].iter().sum::<usize>()))
+        BigInt::from(byte_widths[from..to].iter().sum::<usize>())
     } else {
-        Ok(-BigInt::from(byte_widths[to..from].iter().sum::<usize>()))
+        -BigInt::from(byte_widths[to..from].iter().sum::<usize>())
     }
 }
 
@@ -612,21 +807,21 @@ mod tests {
     #[test]
     fn little_endian_wrapper_rejects_a_width_mismatch() {
         let value = little_endian("16", r_type("0", "3", "2", "0", "1", "51"));
-        let error = pack_value(&value, 0, &[]).unwrap_err();
+        let error = pack_value(&value, 0, &Layout::plain(&[])).unwrap_err();
         assert!(error.contains("resolved to 32 bit(s), not 16"), "{error}");
     }
 
     #[test]
     fn little_endian_wrapper_rejects_a_non_byte_multiple_width() {
         let value = little_endian("5", bits("5", "1"));
-        let error = pack_value(&value, 0, &[]).unwrap_err();
+        let error = pack_value(&value, 0, &Layout::plain(&[])).unwrap_err();
         assert!(error.contains("isn't a whole number of bytes"), "{error}");
     }
 
     #[test]
     fn masks_a_value_wider_than_its_declared_bit_width() {
         let value = bits("4", "255");
-        let packed = pack_value(&value, 0, &[]).unwrap();
+        let packed = pack_value(&value, 0, &Layout::plain(&[])).unwrap();
         assert_eq!(packed.value, BigInt::from(0b1111));
         assert_eq!(packed.width_bits, 4);
     }
@@ -713,7 +908,7 @@ mod tests {
             args: vec![EmittedGenericArg::Const { value: "32".to_string() }],
             fields: vec![("value".to_string(), extern_label("other.basm", "target"))],
         };
-        let error = pack_value(&value, 0, &[]).unwrap_err();
+        let error = pack_value(&value, 0, &Layout::plain(&[])).unwrap_err();
         assert!(error.contains("target"), "{error}");
         assert!(error.contains("other.basm"), "{error}");
     }
@@ -778,13 +973,13 @@ mod tests {
     #[test]
     fn resolves_a_bare_here_marker_to_its_top_level_index() {
         let value = positioned("8", deferred_here());
-        assert_eq!(pack_value(&value, 5, &[]).unwrap().value, BigInt::from(5));
+        assert_eq!(pack_value(&value, 5, &Layout::plain(&[])).unwrap().value, BigInt::from(5));
     }
 
     #[test]
     fn resolves_a_bare_leaf_regardless_of_here_index() {
         let value = positioned("8", deferred_leaf("42"));
-        assert_eq!(pack_value(&value, 999, &[]).unwrap().value, BigInt::from(42));
+        assert_eq!(pack_value(&value, 999, &Layout::plain(&[])).unwrap().value, BigInt::from(42));
     }
 
     #[test]
@@ -795,7 +990,7 @@ mod tests {
         // `EmittedValue::Deferred` — this is the common case, unlike
         // `rejects_a_bare_unresolved_extern_label` above.
         let value = positioned("8", deferred_leaf_value(extern_label("other.basm", "target")));
-        let error = pack_value(&value, 0, &[]).unwrap_err();
+        let error = pack_value(&value, 0, &Layout::plain(&[])).unwrap_err();
         assert!(error.contains("target"), "{error}");
         assert!(error.contains("other.basm"), "{error}");
     }
@@ -820,7 +1015,7 @@ mod tests {
 
         // -24 >> 1 = -12; -12 & 0b1111 (two's-complement) = 0b0100, then
         // masked again to 4 bits by `pack_value` itself (a no-op here).
-        assert_eq!(pack_value(&value, 9, &[]).unwrap().value, BigInt::from(0b0100));
+        assert_eq!(pack_value(&value, 9, &Layout::plain(&[])).unwrap().value, BigInt::from(0b0100));
     }
 
     #[test]
@@ -831,13 +1026,13 @@ mod tests {
             "32",
             deferred_node("Add", deferred_node("Sub", deferred_leaf("7"), deferred_here()), deferred_leaf("4194304")),
         );
-        assert_eq!(pack_value(&value, 2, &[]).unwrap().value, BigInt::from(0x400000 + 5));
+        assert_eq!(pack_value(&value, 2, &Layout::plain(&[])).unwrap().value, BigInt::from(0x400000 + 5));
     }
 
     #[test]
     fn masks_a_resolved_deferred_value_wider_than_its_declared_width() {
         let value = positioned("4", deferred_leaf("255"));
-        let packed = pack_value(&value, 0, &[]).unwrap();
+        let packed = pack_value(&value, 0, &Layout::plain(&[])).unwrap();
         assert_eq!(packed.value, BigInt::from(0b1111));
         assert_eq!(packed.width_bits, 4);
     }
@@ -850,7 +1045,7 @@ mod tests {
             variant: "Bogus".to_string(),
             payload: None,
         };
-        let error = resolve_deferred(&bogus, 0, &[]).unwrap_err();
+        let error = resolve_deferred(&bogus, 0, &Layout::plain(&[])).unwrap_err();
         assert!(error.contains("unknown"), "{error}");
     }
 
@@ -932,7 +1127,7 @@ mod tests {
         // of `here_index` the way `Deferred.Here` resolution is.
         let offset = deferred_span("1", "3");
         let value = positioned("8", offset);
-        assert_eq!(resolve_deferred(&value_field(&value), 0, &[7, 3, 2]).unwrap(), BigInt::from(5));
+        assert_eq!(resolve_deferred(&value_field(&value), 0, &Layout::plain(&[7, 3, 2])).unwrap(), BigInt::from(5));
     }
 
     fn value_field(positioned: &EmittedValue) -> EmittedValue {

@@ -2233,6 +2233,16 @@ A string literal's UTF-8 bytes, with no terminator.
 |---|---|---|---|---|
 | `data_string(source)` | `<S>`, `source: S` | returns `Bytes<...>` |  | [`std.x86_64.data`](data.md) |
 
+### `resb`
+
+`count` zero bytes, as one value: room for variables, like NASM's
+`resb`. In a section that takes no room in the file, like ELF's `.bss`,
+a link stage leaves them out of the file.
+
+| Syntax | Parameters | Result | Description | From |
+|---|---|---|---|---|
+| `resb count` | `count: int` |  |  | [`std.x86_64.data`](data.md) |
+
 ### `db`
 
 | Syntax | Parameters | Result | Description | From |

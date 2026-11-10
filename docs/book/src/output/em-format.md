@@ -38,6 +38,11 @@ whitespace; `--pretty` indents it as below. Readers must accept either.
     the order they appear in the file.
   - `extern-labels`: some value is a `Deferred` (see below), which only a
     linker with the other file's `.em` can resolve.
+  - `link`: the program has a [link stage](../programs/link-stage.md).
+    The entries in the section named `@link` are the output: written in
+    order, with each `std.bitter.image.Write` among them replaced by the
+    entries it names, and each `std.bitter.image.Place` giving entries their
+    addresses. Entries outside `@link` are only output by a `Write`.
 - **`module`** is the compiled file's module path: its path relative to the
   deepest search root containing it, with dots (`examples.x86_64.hello`).
   A file under no search root is named relative to the working directory,

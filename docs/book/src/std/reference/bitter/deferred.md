@@ -94,6 +94,35 @@ refers to that value's position instead.
 | `span(start, end)` | `start: Deferred`, `end: label` | returns `Deferred` |  |
 | `span(start, end)` | `start: label`, `end: Deferred` | returns `Deferred` |  |
 
+### `size_of`
+
+The number of bytes in `sec`. Unlike `span(sec.start, sec.end)`, this
+doesn't depend on where `sec` and the section after it are placed: a
+section's end is also where the next one starts.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `size_of(sec)` | `sec: section` | returns `Deferred` |  |
+
+### `offset`
+
+Where `at` ends up in the output file, in bytes from its start. Only a
+program with a link stage (`@link`) lays out a file this way; its
+`std.bitter.image.write_section` lines say where each section goes.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `offset(at)` | `at: label` | returns `Deferred` |  |
+
+### `address`
+
+Where `at` ends up in its space: its section's address, from
+`std.bitter.image.place_section`, plus how far into the section it is.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `address(at)` | `at: label` | returns `Deferred` |  |
+
 ## Types
 
 ### `Op`
@@ -110,6 +139,7 @@ The operation of a `BinOp`.
 | `Shr` |  | `left >> right`. |
 | `Band` |  | `left & right`. |
 | `Span` |  | Bytes from position `left` to position `right`, as in `span`. |
+| `Size` |  | Bytes from position `left` to position `right` as they're emitted, wherever they're placed, as in `size_of`. |
 
 ### `BinOp`
 
@@ -136,6 +166,8 @@ A value `bitter` works out after laying out the image. Build one with
 | `Pos` | `int` | A position, such as a label, as a number of entries. |
 | `Here` |  | The position of the value being packed. |
 | `Node` | `BinOp` | An operation on two `Deferred` values. |
+| `Offset` | `Deferred` | Where a position ends up in the output file, in bytes from its start. Only a program with a link stage has one: see `offset`. |
+| `Address` | `Deferred` | Where a position ends up in its space, once its section is placed. See `address`. |
 
 ### `Positioned`
 

@@ -1,0 +1,6 @@
+#! A library that tries to link the program that imports it.
+
+## Does nothing.
+pub macro out() {}
+
+@link out()

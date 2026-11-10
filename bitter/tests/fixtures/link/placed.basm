@@ -1,0 +1,35 @@
+# A link stage that places `.text` at 0x10 and `.data` at 0x40, then
+# writes a header byte and both sections. The relative reference from
+# `.text` to `.data` is the distance between their addresses.
+from std.binary import bits
+from std.bitter.deferred import *
+from std.bitter.image import write_section, place_section
+
+macro db(value: int) {
+    @emit value as bits<8>
+}
+
+macro rel(target: label) {
+    @emit Positioned<8> { value: span(here(), target) }
+}
+
+macro header_and_sections(code: section, data: section, target: label) {
+    place_section code, 0x10
+    place_section data, 0x40
+    @emit Positioned<8> { value: address(target) }
+    @emit Positioned<8> { value: offset(target) }
+    write_section code
+    write_section data
+}
+
+const CODE = section .text
+const DATA = section .data
+
+@link header_and_sections(CODE, DATA, target)
+
+@into CODE
+db 1
+rel target
+@into DATA
+target:
+    db 2

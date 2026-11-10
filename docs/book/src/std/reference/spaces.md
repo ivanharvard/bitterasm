@@ -29,8 +29,8 @@ A facet is an ordinary macro whose first parameter is the space it's
 applied to, and which returns that space, usually with more fields from
 `@extend`. `stream | start(0x8000)` calls `start(stream, 0x8000)`.
 
-Nothing reads these fields yet: laying sections out in their spaces is
-still to come.
+Nothing in BitterASM gives these fields a meaning: a link stage
+(`@link`) is where an output format reads them.
 
 ## Macros
 

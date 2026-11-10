@@ -79,13 +79,6 @@ fn att_forms_disassemble_like_gnu_as() {
         return;
     };
     let ours = disassemble(&["-D", "-b", "binary", "-mi386:x86-64"], &forms_binary(&dir)).unwrap();
-
-    // Two encodings differ but mean the same: `impl` gives a 64-bit `mov`
-    // a full 64-bit immediate, and rotates by 1 with an immediate count.
-    let ours: Vec<String> = ours
-        .into_iter()
-        .map(|line| line.replace("movabs $0x5,%rax", "mov $0x5,%rax").replace("rol $0x1,%al", "rol $1,%al"))
-        .collect();
     assert_eq!(ours, gnu);
 }
 

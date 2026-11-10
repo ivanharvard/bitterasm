@@ -196,6 +196,9 @@ pub struct AliasResolver<'a> {
     /// From the first label pass, for the second: each label's offset in
     /// its section, and each section's first and past-the-end positions.
     pub(super) seeded_label_offsets: HashMap<SymbolId, Int>,
+
+    /// The module id of the file being compiled.
+    entry_module: usize,
     pub(super) seeded_section_bounds: Option<HashMap<Option<String>, (Int, Int)>>,
 
     /// The first const name each space (by `space_key`) was given, so a
@@ -473,6 +476,7 @@ impl<'a> AliasResolver<'a> {
             section_records: HashMap::new(),
             space_names: HashMap::new(),
             seeded_label_offsets: HashMap::new(),
+            entry_module,
             seeded_section_bounds: None,
             const_value_stack: Vec::new(),
             macro_call_stack: Vec::new(),
@@ -621,6 +625,11 @@ impl<'a> AliasResolver<'a> {
         self.seeded_label_offsets = offsets;
         self.seeded_section_bounds = Some(bounds);
         self
+    }
+
+    /// The module id of the file being compiled.
+    pub fn entry_module(&self) -> usize {
+        self.entry_module
     }
 
     /// Counts one `@emit`'d value toward the section it went in.

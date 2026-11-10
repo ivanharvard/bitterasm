@@ -812,6 +812,29 @@ impl<'a> AliasResolver<'a> {
         self.enter_section(value, section.span)
     }
 
+    /// `@link call(...)`: runs `call` as an invocation, once every other
+    /// top-level statement has run, with what it emits going in the
+    /// link section (`crate::emit::LINK_SECTION`).
+    pub fn expand_link(&mut self, meta: &crate::ast::MetaStatement) -> Result<super::MacroExpansion, ResolveError> {
+        let invalid = |reason: &str| ResolveError::InvalidLink { reason: reason.to_string(), span: meta.span };
+        let [Expr::Call { callee, generic_args, arguments, span }] = meta.args.as_slice() else {
+            return Err(invalid("`@link` takes one macro call, like `@link elf64_executable(EM_X86_64, _start, SECTIONS)`"));
+        };
+        let Expr::Identifier { name, .. } = callee.as_ref() else {
+            return Err(invalid("`@link` takes a call to a macro by name"));
+        };
+        if !generic_args.is_empty() || arguments.iter().any(|argument| argument.name.is_some()) {
+            return Err(invalid("`@link`'s call takes its arguments in order, with no generic arguments"));
+        }
+        let invocation = crate::ast::Invocation {
+            name: name.clone(),
+            operands: arguments.iter().map(|argument| argument.value.clone()).collect(),
+            span: *span,
+        };
+        self.set_current_section(Some(crate::emit::LINK_SECTION.to_string()));
+        self.expand_invocation(&invocation, &Scope::default())
+    }
+
     /// `@into value`: switches to a section value, evaluated in `scope` as
     /// module `module`.
     pub fn enter_into(

@@ -24,7 +24,7 @@ total:
 know; `[rel label]` takes a label and computes the displacement once the
 code is laid out.
 
-Not covered: NASM's `$`/`$$`, `equ`, `times`, `resb`, and
+Not covered: NASM's `$`/`$$`, `equ`, `times`, and
 `global`/`extern` (use `const`, `@for`, and `pub` labels instead).
 
 Re-exports [`std.x86_64.intel`](intel.md) and [`std.x86_64.data`](data.md).
@@ -2670,6 +2670,16 @@ A string literal's UTF-8 bytes, with no terminator.
 | Syntax | Parameters | Result | Description | From |
 |---|---|---|---|---|
 | `data_string(source)` | `<S>`, `source: S` | returns `Bytes<...>` |  | [`std.x86_64.data`](data.md) |
+
+### `resb`
+
+`count` zero bytes, as one value: room for variables, like NASM's
+`resb`. In a section that takes no room in the file, like ELF's `.bss`,
+a link stage leaves them out of the file.
+
+| Syntax | Parameters | Result | Description | From |
+|---|---|---|---|---|
+| `resb count` | `count: int` |  |  | [`std.x86_64.data`](data.md) |
 
 ### `db`
 

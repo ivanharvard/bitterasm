@@ -5,7 +5,7 @@
 | [`array`](array.md) | `Array<T, N>`: `N` values of type `T`, and ways to build new arrays from old ones. Every value is immutable, so each operation returns a new array. |
 | [`binary`](binary.md) | Fixed-width binary values: `bits<N>`, `signed<N>`, `bool`, and byte order. |
 | [`bitfield`](bitfield.md) | Bit ranges, written the way ISA manuals write them. `slice(x, 10, 5)` is the manual's `x[10:5]`: `hi` and `lo` are inclusive bit numbers, so a one-bit field is `(n, n)`. The shift, the mask and the result's width all come from those two numbers, so they can't disagree. |
-| [`bitter/`](bitter/index.md) | `byte_order`, `deferred`, `layout`, `link` |
+| [`bitter/`](bitter/index.md) | `byte_order`, `deferred`, `image`, `layout`, `link` |
 | [`ctypes`](ctypes.md) | C's fixed-width integer names. The signed ones are `signed<N>`, stored in two's complement; the unsigned ones are `bits<N>` that can't be negative. |
 | [`decimal`](decimal.md) | Exact non-integer numbers, for compile-time math: `Decimal`, a value scaled by a power of ten, and `Fraction`, a numerator over a denominator. Both convert to and from `int` with `as`. |
 | [`enumerated`](enumerated.md) | `Enumerated<T>`: a value paired with its position. |

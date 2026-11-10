@@ -65,6 +65,7 @@
     - [Labels](programs/labels.md)
     - [Sections](programs/sections.md)
     - [Spaces](programs/spaces.md)
+    - [Link stages](programs/link-stage.md)
     - [Linking multiple files](programs/linking.md)
     - [Executables](programs/executables.md)
 
@@ -92,6 +93,7 @@
     - [`bitter`](std/reference/bitter/index.md)
         - [`byte_order`](std/reference/bitter/byte_order.md)
         - [`deferred`](std/reference/bitter/deferred.md)
+        - [`image`](std/reference/bitter/image.md)
         - [`layout`](std/reference/bitter/layout.md)
         - [`link`](std/reference/bitter/link.md)
     - [`ctypes`](std/reference/ctypes.md)

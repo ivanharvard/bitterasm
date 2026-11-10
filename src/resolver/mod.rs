@@ -453,6 +453,12 @@ pub enum ResolveError {
         span: Span,
     },
 
+    /// A misused `@link`: `reason` says how.
+    InvalidLink {
+        reason: String,
+        span: Span,
+    },
+
     /// `l.x` for a label field other than `offset`.
     UnknownLabelField {
         field: String,
@@ -618,6 +624,7 @@ impl ResolveError {
             | Self::DuplicateRecordField { span, .. } | Self::ExtendNotRecord { span, .. }
             | Self::ExpectedSection { span, .. } | Self::SectionNameIsBinding { span, .. }
             | Self::ExpectedFacet { span, .. } | Self::UnknownLabelField { span, .. }
+            | Self::InvalidLink { span, .. }
             | Self::FacetMustReturnSubject { span, .. } | Self::ExpectedSpace { span, .. }
             | Self::SectionRedeclared { span, .. } | Self::SectionUsedBeforeDeclared { span, .. }
             | Self::UserFacetNotApplicable { span, .. } => *span,

@@ -1,0 +1,5 @@
+# A library's `@link` is part of its own program body, like its labels and
+# invocations: it only runs when the library is the program.
+from .linking_lib import out
+
+out

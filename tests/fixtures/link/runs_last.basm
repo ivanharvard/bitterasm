@@ -1,0 +1,14 @@
+# The link macro runs after everything else, so what it emits comes last,
+# even though `@link` is written first.
+macro show(value: int) {
+    @emit value
+}
+
+macro out() {
+    show 9
+}
+
+@link out()
+
+show 1
+show 2

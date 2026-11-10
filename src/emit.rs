@@ -32,10 +32,19 @@ pub mod features {
     /// Some value is a `Deferred` reference to another file's `pub` label,
     /// which only a linker can resolve.
     pub const EXTERN_LABELS: &str = "extern-labels";
+    /// The program has a link stage (`@link`): the entries in the
+    /// [`LINK_SECTION`](super::LINK_SECTION) describe the output, writing
+    /// and placing the other sections, rather than all being written in
+    /// order.
+    pub const LINK: &str = "link";
 
     /// Every feature this version of the format defines.
-    pub const ALL: &[&str] = &[SECTIONS, EXTERN_LABELS];
+    pub const ALL: &[&str] = &[SECTIONS, EXTERN_LABELS, LINK];
 }
+
+/// The section a program's `@link` macro emits into. No `section` line can
+/// name it.
+pub const LINK_SECTION: &str = "@link";
 
 /// A whole `.em` file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -65,6 +74,7 @@ impl EmFile {
         let requires = required_features(
             entries.iter().any(|entry| entry.section.is_some()),
             entries.iter().any(|entry| contains_deferred(&entry.value)),
+            entries.iter().any(|entry| entry.section.as_deref() == Some(LINK_SECTION)),
         );
 
         Self { version: EM_VERSION, requires, module, exports, entries }
@@ -120,13 +130,16 @@ impl EmFile {
 
 /// `requires` for a file that has sections and/or deferred values, in the
 /// order [`features::ALL`] lists them.
-fn required_features(has_sections: bool, has_deferred: bool) -> Vec<String> {
+fn required_features(has_sections: bool, has_deferred: bool, has_link: bool) -> Vec<String> {
     let mut requires = Vec::new();
     if has_sections {
         requires.push(features::SECTIONS.to_string());
     }
     if has_deferred {
         requires.push(features::EXTERN_LABELS.to_string());
+    }
+    if has_link {
+        requires.push(features::LINK.to_string());
     }
     requires
 }
@@ -147,6 +160,7 @@ pub fn write_em<W: Write>(
     let requires = required_features(
         sections.iter().any(Option::is_some),
         values.iter().any(value_contains_extern_label),
+        sections.iter().any(|section| section.as_deref() == Some(LINK_SECTION)),
     );
 
     write!(out, "{{\"version\":{EM_VERSION},\"requires\":")?;

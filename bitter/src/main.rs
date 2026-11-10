@@ -126,8 +126,8 @@ fn encode(path: &PathBuf, output: Option<PathBuf>) {
         entries: file.entries,
         labels: exports_as_positions(file.exports),
     };
-    let values = match link::link(vec![input]) {
-        Ok(linked) => linked.values,
+    let (values, link_range) = match link::link(vec![input]) {
+        Ok(linked) => (linked.values, linked.link),
 
         Err(error) => {
             eprintln!("failed to encode {}: {error}", path.display());
@@ -135,7 +135,11 @@ fn encode(path: &PathBuf, output: Option<PathBuf>) {
         }
     };
 
-    let bytes = match pack::pack_stream(&values) {
+    let packed = match link_range {
+        Some(range) => pack::pack_linked(&values, range),
+        None => pack::pack_stream(&values),
+    };
+    let bytes = match packed {
         Ok(bytes) => bytes,
 
         Err(error) => {
@@ -192,8 +196,8 @@ fn build(paths: &[PathBuf], output: Option<PathBuf>, print_timings: bool) {
 
     let inputs: Vec<link::LinkInput> = paths.iter().map(|path| compile_input(path, &mut timings)).collect();
 
-    let values = match link::link(inputs) {
-        Ok(linked) => linked.values,
+    let (values, link_range) = match link::link(inputs) {
+        Ok(linked) => (linked.values, linked.link),
 
         Err(error) => {
             eprintln!("failed to link: {error}");
@@ -203,7 +207,11 @@ fn build(paths: &[PathBuf], output: Option<PathBuf>, print_timings: bool) {
 
     timings.lap("link");
 
-    let bytes = match pack::pack_stream(&values) {
+    let packed = match link_range {
+        Some(range) => pack::pack_linked(&values, range),
+        None => pack::pack_stream(&values),
+    };
+    let bytes = match packed {
         Ok(bytes) => bytes,
 
         Err(error) => {

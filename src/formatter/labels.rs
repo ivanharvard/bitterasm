@@ -105,8 +105,8 @@ fn is_label(tokens: &[&Token]) -> bool {
     }
 }
 
-// `section`, an import, or a `macro`/`struct`/`enum`/`type`/`syntax`
-// declaration.
+// `section`, `@into`, `@link`, an import, or a `macro`/`struct`/`enum`/
+// `type`/`syntax` declaration.
 fn ends_label_body(tokens: &[&Token]) -> bool {
     let tokens = match tokens.first() {
         Some(token) if token.kind == TokenKind::Pub => &tokens[1..],
@@ -119,6 +119,10 @@ fn ends_label_body(tokens: &[&Token]) -> bool {
             TokenKind::Section | TokenKind::From | TokenKind::Macro | TokenKind::Struct
                 | TokenKind::Enum | TokenKind::Type
         ) => true,
+        // `@into` and `@link` switch sections, like a `section` line.
+        [at, word, ..] if at.kind == TokenKind::At => {
+            matches!(&word.kind, TokenKind::Identifier(name) if name == "into" || name == "link")
+        }
         [first, name, open, ..] => {
             matches!(&first.kind, TokenKind::Identifier(word) if word == "syntax")
                 && matches!(name.kind, TokenKind::Identifier(_))

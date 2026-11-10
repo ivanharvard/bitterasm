@@ -6,18 +6,20 @@
 # bitter build examples/x86_64/hexdump.basm -o /tmp/hexdump
 # /tmp/hexdump FILE
 
+from std.array import Array
 from std.x86_64.att import *
 from std.formats.elf import *
 
-# One segment holds the code, the strings and the buffers the program
-# writes to, so it's writable as well as readable and executable.
-elf64_executable EM_X86_64, _start, 0x400000, PF_R | PF_W | PF_X
+# Each section is its own segment: code you can run but not change,
+# strings you can only read, and buffers that start zeroed and take no room
+# in the file.
+@link elf64_link(EM_X86_64, _start, Array<section, 3>(TEXT, RODATA, BSS))
 
 const digits_text = "0123456789abcdef"
 const usage_text = "Usage: hexdump FILE\n"
 const failure_text = "hexdump: open, read, or write failed\n"
 
-section .rodata
+@into RODATA
 digits:
     db digits_text
 usage:
@@ -25,18 +27,13 @@ usage:
 failure:
     db failure_text
 
-# The buffers are zeros in the file, rather than space the loader reserves.
-section .bss
+@into BSS
 buffer:
-    @for _ in 0..16 {
-        db 0
-    }
+    resb 16
 line:
-    @for _ in 0..86 {
-        db 0
-    }
+    resb 86
 
-section .text
+@into TEXT
 pub _start:
     cmpq $2, (%rsp)
     jne .usage

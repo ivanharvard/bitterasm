@@ -379,8 +379,9 @@ fn unroll_meta(
             Ok(())
         }
 
-        // `@into` runs in order with the program's other statements.
-        "into" => {
+        // `@into` runs in order with the program's other statements, and
+        // `@link` after all of them.
+        "into" | "link" => {
             out.push(Statement::Meta(meta.clone()));
             Ok(())
         }

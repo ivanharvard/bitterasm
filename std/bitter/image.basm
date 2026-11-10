@@ -1,0 +1,97 @@
+#! What a link stage builds the output from. A program's `@link` macro
+#! runs once everything else has, and what it emits is the output file:
+#! its own values, like an executable's headers, with `write_section`
+#! putting a section's contents in, and `place_section` saying where a
+#! section is in its space.
+#!
+#! ```
+#! from std.binary import bits
+#! from std.bitter.image import write_section
+#!
+#! macro db(value: int) {
+#!     @emit value as bits<8>
+#! }
+#!
+#! # Data first, then code, whatever order the file has them in.
+#! macro data_first(code: section, data: section) {
+#!     db 0xff
+#!     write_section data
+#!     write_section code
+#! }
+#!
+#! const CODE = section .text
+#! const DATA = section .data
+#!
+#! @link data_first(CODE, DATA)
+#!
+#! @into CODE
+#! db 1
+#! @into DATA
+#! db 2
+#! ```
+#!
+#! ```bytes
+#! ff 02 01
+#! ```
+#!
+#! A section the link stage doesn't write takes no room in the file. A
+#! placed one's labels are at its address, and the distance between two
+#! placed positions is the distance between their addresses, so a branch
+#! from one section to another is right wherever they're placed.
+
+from std.bitter.deferred import Deferred
+
+# `bitter` recognizes these structs by name, the way it recognizes `bits`.
+
+## A section's contents, from `start` up to `end`, written into the
+## output here. `write_section` makes one.
+pub struct Write {
+    ## The section's first position.
+    pub start: Deferred,
+    ## Just past its last.
+    pub end: Deferred,
+}
+
+## A section placed at `address` in its space: its first value is there,
+## and the rest follow. `place_section` makes one.
+pub struct Place {
+    ## The section's first position.
+    pub start: Deferred,
+    ## Just past its last.
+    pub end: Deferred,
+    ## Where its first value goes.
+    pub address: Deferred,
+}
+
+## Writes `sec`'s contents into the output here.
+pub macro write_section(sec: section)
+    | emits Write
+{
+    @emit Write(
+        start = Deferred.Pos(sec.start as int),
+        end = Deferred.Pos(sec.end as int)
+    )
+}
+
+## Places `sec` at `address` in its space.
+pub macro place_section(sec: section, address: int)
+    | emits Place
+{
+    @emit Place(
+        start = Deferred.Pos(sec.start as int),
+        end = Deferred.Pos(sec.end as int),
+        address = Deferred.Leaf(address)
+    )
+}
+
+## Places `sec` at an address only known once the output is laid out,
+## like one that depends on where the section is in the file.
+pub macro place_section(sec: section, address: Deferred)
+    | emits Place
+{
+    @emit Place(
+        start = Deferred.Pos(sec.start as int),
+        end = Deferred.Pos(sec.end as int),
+        address = address
+    )
+}

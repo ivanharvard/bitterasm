@@ -242,8 +242,10 @@ type mismatch for `S`: expected `label<flash>`, found `label<ram>`
 That's how `std.bitter.deferred`'s `span` rejects two labels in different
 spaces: there's no distance between two different memories.
 
-## What's not done yet
+## Reading the fields
 
-Nothing reads a space's or section's fields yet except your own code.
-Sections are still laid out one after another in a single image, whatever
-space they're in.
+Nothing in BitterASM gives a space's or section's fields a meaning. Your
+own code does, and a [link stage](link-stage.md) is where an output format
+reads them: `std.formats.elf`'s `elf64_link` reads ELF's facets to give
+each section a segment with the right permissions, and to leave `nobits`
+sections out of the file.

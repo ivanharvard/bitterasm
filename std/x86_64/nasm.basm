@@ -20,7 +20,7 @@
 #! know; `[rel label]` takes a label and computes the displacement once the
 #! code is laid out.
 #!
-#! Not covered: NASM's `$`/`$$`, `equ`, `times`, `resb`, and
+#! Not covered: NASM's `$`/`$$`, `equ`, `times`, and
 #! `global`/`extern` (use `const`, `@for`, and `pub` labels instead).
 
 # `impl.basm`'s `RipLabel` section has the encoding.

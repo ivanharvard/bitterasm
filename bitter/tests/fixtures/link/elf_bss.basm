@@ -1,0 +1,22 @@
+# Exits with `.bss`'s first word plus 7: 7, since `.bss` starts zeroed.
+from std.array import Array
+from std.formats.elf import *
+from std.x86_64.nasm import *
+
+@link elf64_link(EM_X86_64, _start, Array<section, 3>(TEXT, RODATA, BSS))
+
+@into TEXT
+pub _start:
+    mov eax, 60
+    mov edi, [rel counter]
+    mov esi, [rel seven]
+    add edi, esi
+    syscall
+
+@into RODATA
+seven:
+    dd 7
+
+@into BSS
+counter:
+    resb 4

@@ -7,7 +7,7 @@ macro show(value: int) {
 const DATA = section .data
 
 section .text
-    show 1
+show 1
 a:
     show 2
     show a.offset

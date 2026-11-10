@@ -36,6 +36,16 @@ A string literal's UTF-8 bytes, with no terminator.
 |---|---|---|---|
 | `data_string(source)` | `<S>`, `source: S` | returns `Bytes<...>` |  |
 
+### `resb`
+
+`count` zero bytes, as one value: room for variables, like NASM's
+`resb`. In a section that takes no room in the file, like ELF's `.bss`,
+a link stage leaves them out of the file.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `resb count` | `count: int` |  |  |
+
 ### `db`
 
 | Syntax | Parameters | Result | Description |

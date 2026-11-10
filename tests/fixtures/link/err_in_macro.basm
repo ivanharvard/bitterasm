@@ -1,0 +1,7 @@
+macro out() {}
+
+macro inner() {
+    @link out()
+}
+
+inner

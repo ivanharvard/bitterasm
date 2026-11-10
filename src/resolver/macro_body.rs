@@ -942,6 +942,13 @@ impl<'a> AliasResolver<'a> {
                         self.enter_into(meta, &scope, module)?;
                     }
 
+                    "link" => {
+                        return Err(ResolveError::InvalidLink {
+                            reason: "`@link` goes at the top of the program's own file, not in a macro".to_string(),
+                            span: meta.span,
+                        })
+                    }
+
                     "if" => {
                         let [condition] = meta.args.as_slice() else {
                             return Err(ResolveError::Internal {

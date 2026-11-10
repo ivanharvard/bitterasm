@@ -606,8 +606,34 @@ fn walk_top_level(
     consts: &HashMap<String, eval::Int>,
     verbose: Option<&VerboseCompileContext>,
 ) -> Result<(), (resolver::ResolveError, usize)> {
+    // `@link`: run once everything else has been, into its own section.
+    let mut link: Option<(&crate::ast::MetaStatement, usize)> = None;
+
     for (index, statement) in program.statements.iter().enumerate() {
         match statement {
+            Statement::Meta(meta) if meta.name == "link" => {
+                let module = statement_modules[index];
+                if module != alias_resolver.entry_module() {
+                    return Err((
+                        resolver::ResolveError::InvalidLink {
+                            reason: "only the program's own file can `@link`, not a file it imports".to_string(),
+                            span: meta.span,
+                        },
+                        module,
+                    ));
+                }
+                if link.is_some() {
+                    return Err((
+                        resolver::ResolveError::InvalidLink {
+                            reason: "a program has one `@link`".to_string(),
+                            span: meta.span,
+                        },
+                        module,
+                    ));
+                }
+                link = Some((meta, module));
+            }
+
             Statement::Invocation(invocation) => {
                 if let Some(ctx) = verbose {
                     ctx.start(statement_modules[index], invocation.span, &invocation.name);
@@ -685,6 +711,17 @@ fn walk_top_level(
             }
 
             _ => {}
+        }
+    }
+
+    if let Some((meta, module)) = link {
+        let expansion = alias_resolver.expand_link(meta).map_err(|error| {
+            let module = alias_resolver.take_error_module().unwrap_or(module);
+            (error, module)
+        })?;
+        if let Some((emitted, generated)) = collect.as_mut() {
+            emitted.extend(expansion.emitted);
+            generated.extend(expansion.generated);
         }
     }
     Ok(())

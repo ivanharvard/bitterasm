@@ -4,9 +4,14 @@
 
 ELF static executables, for Linux and the BSDs.
 
-Invoke one header macro first thing in the program's entry file, before
-any `section` statement, so its bytes start the image. This one is a
-complete Linux x86-64 program that exits with status 0:
+`elf64_link` is a link stage (`@link`): each section the program lists
+becomes its own segment, with the permissions its facets give it, and
+`.bss` takes no room in the file. See its own documentation below.
+
+The header macros below are simpler: invoke one first thing in the
+program's entry file, before any `section` statement, so its bytes start
+the image. This one is a complete Linux x86-64 program that exits with
+status 0:
 
 ```basm
 from std.formats.elf import *
@@ -26,10 +31,10 @@ one. Its sizes and entry point come from `span` over the linked image
 (`std.bitter.link`), so they stay correct however the program's sections
 and files are laid out.
 
-What this doesn't produce: section headers, dynamic linking, or separate
-segments per section. The single segment is readable and executable by
-default; pass `segment_flags` (a combination of `PF_R`, `PF_W`, `PF_X`) to
-change that. Every multi-byte field is little-endian, as x86-64 and
+A header macro maps the whole image as one segment, readable and
+executable by default; pass `segment_flags` (a combination of `PF_R`,
+`PF_W`, `PF_X`) to change that. Neither way produces section headers or
+dynamic linking. Every multi-byte field is little-endian, as x86-64 and
 RISC-V are.
 
 ## Macros
@@ -86,6 +91,37 @@ The section holds code. Sets `exec`.
 | Syntax | Parameters | Result | Description |
 |---|---|---|---|
 | `exec(sec)` | `sec: section` | returns `section` |  |
+
+### `elf64_link`
+
+A 64-bit ELF executable, as a link stage: `@link elf64_link(EM_X86_64,
+_start, SECTIONS)`. Each of `sections` becomes its own segment, in
+order, with the permissions its facets give it: readable, writable
+with `write`, executable with `exec`. A `nobits` section, like `.bss`,
+takes no room in the file and starts zeroed. Execution starts at
+`entry`.
+
+```basm
+from std.array import Array
+from std.formats.elf import *
+from std.x86_64.nasm import *
+
+@link elf64_link(EM_X86_64, _start, Array<section, 2>(TEXT, BSS))
+
+@into TEXT
+pub _start:
+    mov eax, 60
+    mov edi, [rel status]   # 0: `.bss` starts zeroed
+    syscall
+
+@into BSS
+status:
+    resb 4
+```
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `elf64_link machine, entry, sections, load_address, flags` | `<const N: int>`, `machine: int`, `entry: label`, `sections: Array<section, N>`, `load_address: int = 0x400000`, `flags: int = 0` |  |  |
 
 ### `elf64_executable`
 

@@ -39,6 +39,14 @@ pub macro data_string<S>(source: S) -> Bytes<...> {
     }
 }
 
+## `count` zero bytes, as one value: room for variables, like NASM's
+## `resb`. In a section that takes no room in the file, like ELF's `.bss`,
+## a link stage leaves them out of the file.
+pub macro resb(count: int) {
+    @assert count >= 0, "can't reserve a negative number of bytes"
+    @emit data_int(0, count)
+}
+
 ## Bytes. Each operand is an integer, stored in one byte, or a string
 ## literal, stored as its UTF-8 bytes with no terminator (add `, 0`
 ## yourself). Up to four operands; `db "Hello", 10` is the common case.

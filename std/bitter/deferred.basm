@@ -43,6 +43,9 @@ pub enum Op {
     Band,
     ## Bytes from position `left` to position `right`, as in `span`.
     Span,
+    ## Bytes from position `left` to position `right` as they're emitted,
+    ## wherever they're placed, as in `size_of`.
+    Size,
 }
 
 ## An operation on two `Deferred` values.
@@ -72,6 +75,12 @@ pub enum Deferred {
     Here,
     ## An operation on two `Deferred` values.
     Node: BinOp,
+    ## Where a position ends up in the output file, in bytes from its
+    ## start. Only a program with a link stage has one: see `offset`.
+    Offset: Deferred,
+    ## Where a position ends up in its space, once its section is placed.
+    ## See `address`.
+    Address: Deferred,
 }
 
 ## The position of the value being packed. Use it only inside the `span`
@@ -305,6 +314,30 @@ pub macro span(
         left = Deferred.Pos(start as int),
         right = end
     ))
+}
+
+## The number of bytes in `sec`. Unlike `span(sec.start, sec.end)`, this
+## doesn't depend on where `sec` and the section after it are placed: a
+## section's end is also where the next one starts.
+pub macro size_of(sec: section) -> Deferred {
+    @return Deferred.Node(BinOp(
+        op = Op.Size,
+        left = Deferred.Pos(sec.start as int),
+        right = Deferred.Pos(sec.end as int)
+    ))
+}
+
+## Where `at` ends up in the output file, in bytes from its start. Only a
+## program with a link stage (`@link`) lays out a file this way; its
+## `std.bitter.image.write_section` lines say where each section goes.
+pub macro offset(at: label) -> Deferred {
+    @return Deferred.Offset(Deferred.Pos(at as int))
+}
+
+## Where `at` ends up in its space: its section's address, from
+## `std.bitter.image.place_section`, plus how far into the section it is.
+pub macro address(at: label) -> Deferred {
+    @return Deferred.Address(Deferred.Pos(at as int))
 }
 
 ## A `Deferred` value, packed into `width` bits once `bitter` resolves it:

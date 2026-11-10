@@ -41,13 +41,25 @@ pub struct LinkInput {
     pub labels: HashMap<String, usize>,
 }
 
-/// A linked program: the merged entry stream, section tags discarded.
+/// A linked program: the merged entry stream, section tags discarded, and
+/// where its link section is, if it has a link stage (`@link`).
 #[derive(Debug)]
 pub struct Linked {
     pub values: Vec<EmittedValue>,
+    pub link: Option<std::ops::Range<usize>>,
 }
 
 pub fn link(inputs: Vec<LinkInput>) -> Result<Linked, String> {
+    let link_section = Some(bitterasm::emit::LINK_SECTION.to_string());
+    let has_link = |input: &LinkInput| input.entries.iter().any(|entry| entry.section == link_section);
+    if inputs.len() > 1 && inputs.iter().any(has_link) {
+        return Err(
+            "a program with a link stage (`@link`) is built from one file for now; \
+             a section written from one file wouldn't include the same section from another"
+                .to_string(),
+        );
+    }
+
     // Section order = first-seen order across every input, in argument
     // order — matches "Decided scope"'s "concatenate same-named sections
     // across all inputs (order = command-line argument order)". The
@@ -88,6 +100,22 @@ pub fn link(inputs: Vec<LinkInput>) -> Result<Linked, String> {
         }
     }
 
+    let link = {
+        let mut at = 0;
+        let mut found: Option<std::ops::Range<usize>> = None;
+        for section in &section_order {
+            let count = inputs
+                .iter()
+                .map(|input| input.entries.iter().filter(|entry| &entry.section == section).count())
+                .sum::<usize>();
+            if *section == link_section {
+                found = Some(at..at + count);
+            }
+            at += count;
+        }
+        found
+    };
+
     let layout = Layout { inputs: &inputs, global_index: &global_index, merged_len: merged.len() };
 
     // One combined table of every `pub` label across every input, in
@@ -126,7 +154,7 @@ pub fn link(inputs: Vec<LinkInput>) -> Result<Linked, String> {
         values.push(value);
     }
 
-    Ok(Linked { values })
+    Ok(Linked { values, link })
 }
 
 struct Layout<'a> {
