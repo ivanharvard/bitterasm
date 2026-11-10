@@ -6,12 +6,51 @@
 use super::*;
 
 impl Parser {
+    // `struct { name: Type, ... }`, with the parser on `struct`. Fields are
+    // separated by commas or line breaks.
+    fn parse_anon_struct_type(&mut self) -> Result<TypeExpr, ParseError> {
+        let start = self.current().span.start;
+        self.expect_simple(TokenKind::Struct)?;
+        self.expect_simple(TokenKind::LBrace)?;
+        self.skip_newlines();
+
+        let mut fields = Vec::new();
+        while !self.check(&TokenKind::RBrace) {
+            if self.at_eof() {
+                return Err(ParseError::new("unterminated anonymous struct type", self.current().span));
+            }
+
+            let name = self.expect_identifier()?;
+            self.expect_simple(TokenKind::Colon)?;
+            let ty = self.parse_type_expr()?;
+            fields.push((name, ty));
+
+            let had_newline = self.check(&TokenKind::Newline);
+            self.skip_newlines();
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+                self.skip_newlines();
+            } else if !self.check(&TokenKind::RBrace) && !had_newline {
+                return Err(ParseError::new("expected ',' or '}' after a field", self.current().span));
+            }
+        }
+
+        let end = self.current().span.end;
+        self.expect_simple(TokenKind::RBrace)?;
+        Ok(TypeExpr::Struct { fields, span: Span::new(start, end) })
+    }
+
     pub(super) fn parse_type_expr(&mut self) -> Result<TypeExpr, ParseError> {
         let start = self.current().span.start;
 
         // if this is a macro type, parse it and return early
         if self.check(&TokenKind::Macro) {
             return self.parse_macro_type();
+        }
+
+        // `struct { x: int, y: int }`, an anonymous struct type
+        if self.check(&TokenKind::Struct) {
+            return self.parse_anon_struct_type();
         }
 
         // otherwise, check for a named type, which is either a single 

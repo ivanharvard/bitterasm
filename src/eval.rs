@@ -83,6 +83,7 @@ pub fn eval_in<S: IntScope + ?Sized>(expr: &Expr, scope: &S) -> Result<Int, Eval
         | Expr::Call { span, .. }
         | Expr::EnumVariant { span, .. }
         | Expr::Construct { span, .. }
+        | Expr::AnonStruct { span, .. }
         | Expr::As { span, .. }
         | Expr::Range { span, .. }
         | Expr::In { span, .. }

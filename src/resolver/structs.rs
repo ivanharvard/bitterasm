@@ -633,6 +633,11 @@ fn generic_arg_scope(
 // needs to describe more precisely (e.g. field access on a non-struct).
 pub(super) trait TypeSymbolNames {
     fn type_symbol_name(&self, symbol: SymbolId) -> String;
+
+    /// An anonymous struct's field names, if `symbol` is one.
+    fn anon_struct_field_names(&self, _symbol: SymbolId) -> Option<Vec<String>> {
+        None
+    }
 }
 
 impl TypeSymbolNames for SymbolTable {
@@ -645,6 +650,10 @@ impl TypeSymbolNames for AliasResolver<'_> {
     fn type_symbol_name(&self, symbol: SymbolId) -> String {
         self.get_symbol(symbol).name.clone()
     }
+
+    fn anon_struct_field_names(&self, symbol: SymbolId) -> Option<Vec<String>> {
+        self.anon_struct_fields(symbol).map(<[String]>::to_vec)
+    }
 }
 
 pub(super) fn describe_type(ty: &ResolvedType, symbols: &impl TypeSymbolNames) -> String {
@@ -653,6 +662,18 @@ pub(super) fn describe_type(ty: &ResolvedType, symbols: &impl TypeSymbolNames) -
         ResolvedType::Builtin(BuiltinType::Label) => "label".to_string(),
         ResolvedType::Builtin(BuiltinType::Space) => "space".to_string(),
         ResolvedType::Builtin(BuiltinType::Section) => "section".to_string(),
+        ResolvedType::Struct { symbol, args } if let Some(names) = symbols.anon_struct_field_names(*symbol) => {
+            let fields = names
+                .iter()
+                .zip(args)
+                .map(|(name, arg)| match arg {
+                    ResolvedGenericArg::Type(ty) => format!("{name}: {}", describe_type(ty, symbols)),
+                    _ => name.clone(),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            if fields.is_empty() { "struct {}".to_string() } else { format!("struct {{ {fields} }}") }
+        }
         ResolvedType::Struct { symbol, args } | ResolvedType::Enum { symbol, args } => {
             format!("{}{}", symbols.type_symbol_name(*symbol), describe_args(args, symbols))
         }

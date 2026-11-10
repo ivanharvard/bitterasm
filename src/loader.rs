@@ -1369,6 +1369,8 @@ impl Binders {
                 self.construct_items(fields);
             }
 
+            Expr::AnonStruct { fields, .. } => self.construct_items(fields),
+
             Expr::Member { object, .. } => self.expr(object),
             Expr::Call { callee, arguments, .. } => {
                 self.expr(callee);
@@ -1695,6 +1697,12 @@ fn rename_type_expr(ty: &mut TypeExpr, renames: &mut Renamer) {
                 rename_type_expr(ret, renames);
             }
         }
+
+        TypeExpr::Struct { fields, .. } => {
+            for (_, ty) in fields {
+                rename_type_expr(ty, renames);
+            }
+        }
     }
 }
 
@@ -1780,6 +1788,8 @@ fn rename_expr(expr: &mut Expr, renames: &mut Renamer) {
 
             rename_construct_items(fields, renames);
         }
+
+        Expr::AnonStruct { fields, .. } => rename_construct_items(fields, renames),
 
         Expr::As { value, ty, .. } => {
             rename_expr(value, renames);

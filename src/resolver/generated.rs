@@ -152,6 +152,126 @@ impl<'a> AliasResolver<'a> {
         Ok(())
     }
 
+    /// The type of an anonymous struct with these fields, in order:
+    /// `struct { x: int, y: int }`. Every anonymous struct with the same
+    /// field names shares one compiler-made generic struct, one type
+    /// parameter per field, so two have the same type exactly when their
+    /// fields have the same names and types.
+    pub(super) fn anon_struct_type(
+        &mut self,
+        names: Vec<String>,
+        types: Vec<super::types::ResolvedType>,
+        span: Span,
+    ) -> Result<super::types::ResolvedType, ResolveError> {
+        let symbol = self.anon_struct_symbol(names, span)?;
+        Ok(super::types::ResolvedType::Struct {
+            symbol,
+            args: types.into_iter().map(|ty| super::types::ResolvedGenericArg::Type(Box::new(ty))).collect(),
+        })
+    }
+
+    /// The field names of an anonymous struct's type, if `symbol` is one.
+    pub(super) fn anon_struct_fields(&self, symbol: SymbolId) -> Option<&[String]> {
+        self.anon_struct_names.get(&symbol).map(Vec::as_slice)
+    }
+
+    fn anon_struct_symbol(&mut self, names: Vec<String>, span: Span) -> Result<SymbolId, ResolveError> {
+        if let Some(symbol) = self.anon_struct_shapes.get(&names) {
+            return Ok(*symbol);
+        }
+
+        let generic_params = (0..names.len())
+            .map(|index| crate::types::GenericParameter::Type { name: format!("T{index}"), span })
+            .collect();
+        let fields = names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                StructBodyItem::Field(crate::types::StructField {
+                    name: vec![crate::ast::NamePart::Literal(name.clone())],
+                    ty: crate::types::TypeExpr::Named { path: vec![format!("T{index}")], span },
+                    is_pub: true,
+                    is_skip: false,
+                    default: None,
+                    doc: None,
+                    span,
+                })
+            })
+            .collect();
+
+        let name = format!("__struct${}", self.generated_symbols.len());
+        let decl = Statement::Struct(StructDeclaration {
+            name: vec![crate::ast::NamePart::Literal(name.clone())],
+            is_pub: false,
+            generic_params,
+            facets: Vec::new(),
+            doc: None,
+            fields,
+            span,
+        });
+
+        self.register_generated(&decl)?;
+
+        let symbol = self
+            .lookup_symbol(&name)
+            .expect("register_generated just inserted this name");
+        self.anon_struct_shapes.insert(names.clone(), symbol);
+        self.anon_struct_names.insert(symbol, names);
+        Ok(symbol)
+    }
+
+    /// `{ 42, 43 }` with its fields renamed to `names`, keeping their
+    /// values and types, if it's a positional anonymous struct with that
+    /// many fields. This is how a parameter or const declared as
+    /// `struct { x: int, y: int }` gives `{ 42, 43 }` its field names.
+    pub(super) fn name_positional_fields(&mut self, value: &Value, names: &[String], span: Span) -> Result<Option<Value>, ResolveError> {
+        let Value::Struct { symbol, fields, .. } = value else { return Ok(None) };
+        let Some(current) = self.anon_struct_fields(*symbol) else { return Ok(None) };
+        let positional = current.iter().enumerate().all(|(index, name)| *name == format!("__el{index}"));
+        if !positional || current.len() != names.len() || current == names {
+            return Ok(None);
+        }
+        let mut types = Vec::with_capacity(fields.len());
+        for (_, field) in fields {
+            types.push(self.value_type(field)?);
+        }
+        let renamed: Vec<(String, Value)> = names.iter().cloned().zip(fields.iter().map(|(_, field)| field.clone())).collect();
+        let super::types::ResolvedType::Struct { symbol, args } = self.anon_struct_type(names.to_vec(), types, span)? else {
+            unreachable!("anon_struct_type always gives a struct type");
+        };
+        Ok(Some(Value::Struct { symbol, args, fields: renamed, nominal: None }))
+    }
+
+    /// `{ x: 42 }` or `{ 42, 43 }`: an anonymous struct whose field types
+    /// are its values' types.
+    pub(super) fn eval_anon_struct_value(
+        &mut self,
+        items: &[crate::ast::ConstructItem],
+        span: Span,
+        scope: &Scope,
+    ) -> Result<Value, ResolveError> {
+        let fields = self.without_fold_target(|this| this.unroll_construct_items(items, scope))?;
+
+        let mut names = Vec::with_capacity(fields.len());
+        let mut types = Vec::with_capacity(fields.len());
+        for (name, value) in &fields {
+            if names.contains(name) {
+                return Err(ResolveError::DuplicateRecordField {
+                    subject: "this struct".to_string(),
+                    field: name.clone(),
+                    span,
+                });
+            }
+            names.push(name.clone());
+            types.push(self.value_type(value)?);
+        }
+
+        let super::types::ResolvedType::Struct { symbol, args } = self.anon_struct_type(names, types, span)? else {
+            unreachable!("anon_struct_type always gives a struct type");
+        };
+        Ok(Value::Struct { symbol, args, fields, nominal: None })
+    }
+
     /// The private struct for a literal of this shape: one public `int`
     /// field per `(name, skip)`, in order. A shape seen before reuses its
     /// struct, so same-shaped literals share one type and compare by their

@@ -502,6 +502,11 @@ fn substitute_type_expr(ty: &TypeExpr, substitutions: &HashMap<String, Expr>) ->
             ret: ret.as_ref().map(|ret| Box::new(substitute_type_expr(ret, substitutions))),
             span: *span,
         },
+
+        TypeExpr::Struct { fields, span } => TypeExpr::Struct {
+            fields: fields.iter().map(|(name, ty)| (name.clone(), substitute_type_expr(ty, substitutions))).collect(),
+            span: *span,
+        },
     }
 }
 
@@ -587,6 +592,12 @@ pub fn substitute_expr(expr: &Expr, substitutions: &HashMap<String, Expr>) -> Ex
                 })
                 .collect(),
             fields: substitute_construct_items(fields, substitutions),
+            span: *span,
+        },
+
+        Expr::AnonStruct { fields, positional, span } => Expr::AnonStruct {
+            fields: substitute_construct_items(fields, substitutions),
+            positional: *positional,
             span: *span,
         },
 

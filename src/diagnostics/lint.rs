@@ -340,6 +340,9 @@ fn collect_type_references(ty: &TypeExpr, names: &mut HashSet<String>) {
             params.iter().for_each(|param| collect_type_references(param, names));
             if let Some(ret) = ret { collect_type_references(ret, names); }
         }
+        TypeExpr::Struct { fields, .. } => {
+            fields.iter().for_each(|(_, ty)| collect_type_references(ty, names));
+        }
     }
 }
 
@@ -584,7 +587,7 @@ impl FoldLint<'_> {
                 self.check_statement_fold(fold);
                 self.statements(fold.body.as_deref().unwrap_or_default());
             }
-            Expr::Construct { fields, .. } => self.construct_items(fields),
+            Expr::Construct { fields, .. } | Expr::AnonStruct { fields, .. } => self.construct_items(fields),
             Expr::Call { callee, arguments, .. } => {
                 self.expr(callee);
                 arguments.iter().for_each(|argument| self.expr(&argument.value));
@@ -846,6 +849,7 @@ fn collect_expr_identifiers(expr: &Expr, names: &mut HashSet<String>) {
             }
             collect_construct_identifiers(fields, names);
         }
+        Expr::AnonStruct { fields, .. } => collect_construct_identifiers(fields, names),
         Expr::As { value, ty, .. } => {
             collect_expr_identifiers(value, names);
             collect_type_references(ty, names);

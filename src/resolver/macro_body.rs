@@ -497,6 +497,15 @@ impl<'a> AliasResolver<'a> {
                     param.default.as_ref().expect("arity check guarantees a default"), &scope,
                 )?,
             };
+            // `{ 42, 43 }` passed as `p: struct { x: int, y: int }` takes
+            // the parameter's field names.
+            let value = match &param.ty {
+                crate::types::TypeExpr::Struct { fields, .. } => {
+                    let names: Vec<String> = fields.iter().map(|(name, _)| name.clone()).collect();
+                    self.name_positional_fields(&value, &names, param.span)?.unwrap_or(value)
+                }
+                _ => value,
+            };
             let actual = self.value_type(&value)?;
 
             if generic_names.is_empty() {
@@ -627,6 +636,30 @@ impl<'a> AliasResolver<'a> {
                         span,
                     })
                 }
+            }
+            return Ok(());
+        }
+
+        // `struct { a: T, b: T }`: the same field names, with each field's
+        // type unified in turn.
+        if let TypeExpr::Struct { fields, .. } = expected {
+            let names: Vec<String> = fields.iter().map(|(name, _)| name.clone()).collect();
+            let mismatch = |this: &Self| ResolveError::TypeMismatch {
+                name: "struct".to_string(),
+                expected: crate::printer::print_type_expr(expected),
+                actual: describe_type(actual, this),
+                span,
+            };
+            let ResolvedType::Struct { symbol, args } = actual else {
+                return Err(mismatch(self));
+            };
+            if self.anon_struct_fields(*symbol) != Some(names.as_slice()) {
+                return Err(mismatch(self));
+            }
+            let args = args.clone();
+            for ((_, field_ty), arg) in fields.iter().zip(&args) {
+                let ResolvedGenericArg::Type(arg) = arg else { return Err(mismatch(self)) };
+                self.unify_type_expr(field_ty, arg, generic_names, scope, span)?;
             }
             return Ok(());
         }
@@ -1488,6 +1521,12 @@ impl<'a> AliasResolver<'a> {
                     })
                     .collect::<Result<_, ResolveError>>()?,
                 fields: self.splice_construct_items(fields, scope)?,
+                span: *span,
+            }),
+
+            Expr::AnonStruct { fields, positional, span } => Ok(Expr::AnonStruct {
+                fields: self.splice_construct_items(fields, scope)?,
+                positional: *positional,
                 span: *span,
             }),
 

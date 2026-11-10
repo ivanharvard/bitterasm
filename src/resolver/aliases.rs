@@ -74,6 +74,10 @@ fn substitute_type(ty: &TypeExpr, substitutions: &HashMap<String, TypeArgument>)
             args: args.iter().map(|arg| substitute_argument(arg, substitutions)).collect(),
             span: *span,
         },
+        TypeExpr::Struct { fields, span } => TypeExpr::Struct {
+            fields: fields.iter().map(|(name, ty)| (name.clone(), substitute_type(ty, substitutions))).collect(),
+            span: *span,
+        },
         TypeExpr::Macro { params, ret, span } => TypeExpr::Macro {
             params: params.iter().map(|param| substitute_type(param, substitutions)).collect(),
             ret: ret.as_ref().map(|ret| Box::new(substitute_type(ret, substitutions))),
@@ -266,6 +270,12 @@ pub struct AliasResolver<'a> {
     // same shape share one type: `"ab" == "ab"`, and `"ab"` and `"cd"` can
     // go to the same parameter. See `super::generated`.
     pub(super) generated_shapes: HashMap<Vec<(String, bool)>, SymbolId>,
+
+    // The generic struct behind every anonymous struct with these field
+    // names, in order, and the reverse. `struct { x: int }` is that struct
+    // applied to `<int>`; see `super::generated::anon_struct_type`.
+    pub(super) anon_struct_shapes: HashMap<Vec<String>, SymbolId>,
+    pub(super) anon_struct_names: HashMap<SymbolId, Vec<String>>,
 
     // Memoizes `find_macro_declaration`'s result as a cheap-to-clone `Rc`
     // instead of the `MacroDeclaration` itself (params, facets, and its
@@ -471,6 +481,8 @@ impl<'a> AliasResolver<'a> {
             generated_symbols: SymbolTable::with_base(symbols.len()),
             generated: Vec::new(),
             generated_shapes: HashMap::new(),
+            anon_struct_shapes: HashMap::new(),
+            anon_struct_names: HashMap::new(),
             macro_decl_cache: RefCell::new(FxHashMap::default()),
             struct_decl_cache: RefCell::new(FxHashMap::default()),
             enum_decl_cache: RefCell::new(FxHashMap::default()),
@@ -847,6 +859,23 @@ impl<'a> AliasResolver<'a> {
             TypeExpr::Macro { params, ret, .. } => {
                 self.resolve_macro_type(params, ret.as_deref())
             },
+
+            TypeExpr::Struct { fields, span } => {
+                let mut names = Vec::new();
+                let mut types = Vec::new();
+                for (name, field_ty) in fields {
+                    if names.contains(name) {
+                        return Err(ResolveError::DuplicateRecordField {
+                            subject: "this struct".to_string(),
+                            field: name.clone(),
+                            span: *span,
+                        });
+                    }
+                    names.push(name.clone());
+                    types.push(self.resolve_type_expr(field_ty)?);
+                }
+                self.anon_struct_type(names, types, *span)
+            }
         }
     }
 

@@ -41,6 +41,14 @@ pub enum TypeExpr {
         ret: Option<Box<TypeExpr>>,
         span: Span,
     },
+
+    // An anonymous struct, e.g. `struct { x: int, y: int }`. Two of them
+    // are the same type when their fields have the same names and types,
+    // in the same order.
+    Struct {
+        fields: Vec<(String, TypeExpr)>,
+        span: Span,
+    },
 }
 
 impl TypeExpr {
@@ -48,7 +56,8 @@ impl TypeExpr {
         match self {
             TypeExpr::Named { span, .. }
             | TypeExpr::Apply { span, .. }
-            | TypeExpr::Macro { span, .. } => *span,
+            | TypeExpr::Macro { span, .. }
+            | TypeExpr::Struct { span, .. } => *span,
         }
     }
 
@@ -74,7 +83,7 @@ impl TypeExpr {
         match self {
             TypeExpr::Named { path, .. } => path.last().map(String::as_str),
             TypeExpr::Apply { base, .. } => base.name(),
-            TypeExpr::Macro { .. } => None,
+            TypeExpr::Macro { .. } | TypeExpr::Struct { .. } => None,
         }
     }
 }

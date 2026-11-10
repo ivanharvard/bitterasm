@@ -112,6 +112,72 @@ pub struct RType {
 A 32-bit instruction is just a struct whose fields add up to 32 bits. See
 [Packing bytes with `bitter`](../output/bitter.md).
 
+## Anonymous structs
+
+A struct doesn't need a declaration. Braces make one on the spot, with its
+fields by name or by position:
+
+```basm
+macro show(value: int) {
+    @emit value
+}
+
+const point = { x: 1, y: 2 }
+const pair = { 3, 4 }
+
+show point.y
+show pair.__el0
+```
+
+```emits
+2 3
+```
+
+Fields given by position are named `__el0`, `__el1`, ..., like a string's
+characters. Its type is written `struct { ... }`:
+
+```basm
+macro show(value: int) {
+    @emit value
+}
+
+macro sum(p: struct { x: int, y: int }) -> int {
+    @return p.x + p.y
+}
+
+const origin: struct { x: int, y: int } = { 0, 0 }
+
+show sum({ x: 1, y: 2 })
+show sum({ 3, 4 })
+show sum(origin)
+```
+
+```emits
+3 7 0
+```
+
+Values given by position take their names from the type they're declared
+as, a parameter's or a `const`'s, in order. An anonymous struct can also be
+converted with `as`: `{ 3, 4 } as struct { x: int, y: int }`.
+
+Two anonymous structs have the same type when their fields have the same
+names and types, in the same order. A declared struct is always its own
+type, even if another has the same fields, so `{ x: 1, y: 2 }` isn't a
+`Point`, and `==` between anonymous structs compares their fields:
+
+```basm
+macro show(value: int) {
+    @emit value
+}
+
+show { x: 1, y: 2 } == { x: 1, y: 2 }
+show { x: 1, y: 2 } == { x: 1, y: 3 }
+```
+
+```emits
+1 0
+```
+
 ## Generating fields
 
 A struct's fields can be generated with [`@for`](../meta/for.md) and

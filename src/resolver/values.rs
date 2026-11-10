@@ -475,6 +475,7 @@ impl<'a> AliasResolver<'a> {
             // identity. `std.strings.utf8.string_from_struct` can explicitly pack
             // it into UTF-8 bytes when that representation is wanted.
             Expr::String { value, span } => self.eval_string_value(value, *span),
+            Expr::AnonStruct { fields, span, .. } => self.eval_anon_struct_value(fields, *span, scope),
 
             // Transparent here too — `@emit`'s argument is already always
             // evaluated, so a splice around it changes nothing.
@@ -1420,6 +1421,13 @@ impl<'a> AliasResolver<'a> {
                 },
                 span: *span,
             }),
+            TypeExpr::Struct { fields, span } => Ok(TypeExpr::Struct {
+                fields: fields
+                    .iter()
+                    .map(|(name, field_ty)| Ok((name.clone(), self.materialize_type_const_args(field_ty, scope)?)))
+                    .collect::<Result<_, ResolveError>>()?,
+                span: *span,
+            }),
         }
     }
 
@@ -1461,7 +1469,7 @@ impl<'a> AliasResolver<'a> {
     // field's *value* commonly depends directly on the loop variable
     // (`__el\`i\`: i * 2`), so there's no scope left to resolve it in once
     // unrolling is done.
-    fn unroll_construct_items(
+    pub(super) fn unroll_construct_items(
         &mut self,
         items: &[ConstructItem],
         scope: &Scope,
@@ -1618,6 +1626,37 @@ impl<'a> AliasResolver<'a> {
                     if value_symbol == symbol && value_args == args =>
                 {
                     Ok(value)
+                }
+
+                // One anonymous struct to another: `{ 42 }` takes the
+                // target's field names in order, and `{ x: 42 }` keeps its
+                // own, which must match. Each field converts to its type.
+                Value::Struct { symbol: value_symbol, fields, .. }
+                    if self.anon_struct_fields(*symbol).is_some()
+                        && self.anon_struct_fields(*value_symbol).is_some_and(|names| {
+                            let target = self.anon_struct_fields(*symbol).unwrap_or_default();
+                            names.len() == target.len()
+                                && (names == target
+                                    || names.iter().enumerate().all(|(index, name)| *name == format!("__el{index}")))
+                        }) =>
+                {
+                    let names = self.anon_struct_fields(*symbol).unwrap_or_default().to_vec();
+                    let values: Vec<Value> = fields.iter().map(|(_, value)| value.clone()).collect();
+                    let mut converted = Vec::with_capacity(names.len());
+                    for ((name, value), arg) in names.into_iter().zip(values).zip(args) {
+                        let ResolvedGenericArg::Type(field_ty) = arg else {
+                            unreachable!("an anonymous struct's arguments are its field types");
+                        };
+                        converted.push((name, self.convert_to_inner(value, field_ty, span, allow_explicit)?));
+                    }
+                    Ok(Value::Struct { symbol: *symbol, args: args.clone(), fields: converted, nominal: None })
+                }
+
+                // Two anonymous structs whose fields don't line up.
+                Value::Struct { symbol: value_symbol, .. }
+                    if self.anon_struct_fields(*symbol).is_some() && self.anon_struct_fields(*value_symbol).is_some() =>
+                {
+                    Err(ResolveError::CannotCoerce { type_name: describe_type(target, self), span })
                 }
 
                 _ => {

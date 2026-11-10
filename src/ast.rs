@@ -247,6 +247,15 @@ pub enum Expr {
         span: Span,
     },
 
+    /// An anonymous struct, `{ x: 42 }`, or by position, `{ 42, 43 }`. A
+    /// positional one's fields are named `__el0`, `__el1`, ... as they're
+    /// parsed; `positional` only remembers how it was written.
+    AnonStruct {
+        fields: Vec<ConstructItem>,
+        positional: bool,
+        span: Span,
+    },
+
     /// `expr as Type` — the only way to produce a value of a nominal
     /// (invariant-bearing) `type` alias: checks every invariant along
     /// `Type`'s alias chain, auto-wrapping `expr`'s value into a
@@ -371,6 +380,7 @@ impl Expr {
             | Expr::Call { span, .. }
             | Expr::EnumVariant { span, .. }
             | Expr::Construct { span, .. }
+            | Expr::AnonStruct { span, .. }
             | Expr::As { span, .. }
             | Expr::Unary { span, .. }
             | Expr::Binary { span, .. }

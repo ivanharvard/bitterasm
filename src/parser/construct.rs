@@ -30,6 +30,91 @@ impl Parser {
         })
     }
 
+    // An anonymous struct, with the parser on its `{`: fields by name,
+    // written like a construction's (`{ x: 42, @for ... }`), or values by
+    // position (`{ 42, 43 }`), which are named `__el0`, `__el1`, ....
+    pub(super) fn parse_anon_struct(&mut self) -> Result<Expr, ParseError> {
+        let start = self.current().span.start;
+
+        // Inside the braces a construction is allowed again, as inside
+        // parentheses in an `@if` header.
+        let outer_restriction = self.restrict_brace_construction;
+        self.restrict_brace_construction = false;
+        let result = if self.anon_struct_is_named() {
+            self.parse_construct_body_items().map(|(fields, end)| Expr::AnonStruct {
+                fields,
+                positional: false,
+                span: Span::new(start, end),
+            })
+        } else {
+            self.parse_positional_anon_struct(start)
+        };
+        self.restrict_brace_construction = outer_restriction;
+        result
+    }
+
+    // Whether the anonymous struct starting at the current `{` names its
+    // fields: it's empty, starts with `@for`/`@if`, or its first item is
+    // `name:` (with any splices in the name, as in `` __el`i`: ``).
+    fn anon_struct_is_named(&self) -> bool {
+        let mut index = self.pos + 1;
+        while self.tokens.get(index).is_some_and(|token| token.kind == TokenKind::Newline) {
+            index += 1;
+        }
+        match self.tokens.get(index).map(|token| &token.kind) {
+            Some(TokenKind::RBrace | TokenKind::At) => true,
+            Some(kind) if kind.word_text().is_some() => {
+                let mut index = index + 1;
+                let mut in_splice = false;
+                while let Some(token) = self.tokens.get(index) {
+                    match &token.kind {
+                        TokenKind::Backtick => in_splice = !in_splice,
+                        TokenKind::Colon if !in_splice => return true,
+                        TokenKind::Newline | TokenKind::Eof => return false,
+                        _ if in_splice => {}
+                        kind if kind.word_text().is_some() => {}
+                        _ => return false,
+                    }
+                    index += 1;
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    fn parse_positional_anon_struct(&mut self, start: usize) -> Result<Expr, ParseError> {
+        self.expect_simple(TokenKind::LBrace)?;
+        self.skip_newlines();
+
+        let mut fields = Vec::new();
+        while !self.check(&TokenKind::RBrace) {
+            if self.at_eof() {
+                return Err(ParseError::new("unterminated anonymous struct", self.current().span));
+            }
+
+            let value = self.parse_expr()?;
+            let span = value.span();
+            fields.push(ConstructItem::Field {
+                name: vec![crate::ast::NamePart::Literal(format!("__el{}", fields.len()))],
+                value,
+                span,
+            });
+
+            self.skip_newlines();
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+                self.skip_newlines();
+            } else if !self.check(&TokenKind::RBrace) {
+                return Err(ParseError::new("expected ',' or '}' after a value", self.current().span));
+            }
+        }
+
+        let end = self.current().span.end;
+        self.expect_simple(TokenKind::RBrace)?;
+        Ok(Expr::AnonStruct { fields, positional: true, span: Span::new(start, end) })
+    }
+
     // Parses `{ item, item, ... }`, given the opening `{` hasn't been
     // consumed yet — the body of a brace-literal construction, or of a
     // construction body's own `@for`/`@if`. A generative item (`@for`/`@if`)

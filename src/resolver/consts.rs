@@ -240,6 +240,8 @@ pub(super) fn referenced_identifiers(expr: &crate::ast::Expr) -> Vec<String> {
                 push_construct_item_exprs(fields, &mut stack);
             }
 
+            Expr::AnonStruct { fields, .. } => push_construct_item_exprs(fields, &mut stack),
+
             Expr::As { value, ty, .. } => {
                 stack.push(value);
 
@@ -429,7 +431,12 @@ fn is_int_shaped_inner(program: &Program, expr: &Expr, visiting: &mut HashSet<St
         // to the general `Value` evaluator rather than guessing.
         _ => !matches!(
             expr,
-            Expr::Member { .. } | Expr::Call { .. } | Expr::Construct { .. } | Expr::As { .. } | Expr::String { .. }
+            Expr::Member { .. }
+                | Expr::Call { .. }
+                | Expr::Construct { .. }
+                | Expr::AnonStruct { .. }
+                | Expr::As { .. }
+                | Expr::String { .. }
         ),
     }
 }

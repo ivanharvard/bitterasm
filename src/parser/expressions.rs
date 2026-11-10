@@ -391,6 +391,9 @@ impl Parser {
                 })
             }
 
+            // `{ x: 42 }` or `{ 42, 43 }`: an anonymous struct.
+            TokenKind::LBrace => self.parse_anon_struct(),
+
             // ============
             // paranthesized expressions
             // ============
@@ -805,6 +808,7 @@ fn set_expr_span(expr: &mut Expr, new_span: Span) {
         | Expr::Call { span, .. }
         | Expr::EnumVariant { span, .. }
         | Expr::Construct { span, .. }
+        | Expr::AnonStruct { span, .. }
         | Expr::As { span, .. }
         | Expr::Unary { span, .. }
         | Expr::Binary { span, .. }

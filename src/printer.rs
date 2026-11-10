@@ -482,6 +482,15 @@ pub fn print_type_expr(ty: &TypeExpr) -> String {
                 None => format!("macro({params})"),
             }
         }
+
+        TypeExpr::Struct { fields, .. } => {
+            let fields = fields
+                .iter()
+                .map(|(name, ty)| format!("{name}: {}", print_type_expr(ty)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            if fields.is_empty() { "struct {}".to_string() } else { format!("struct {{ {fields} }}") }
+        }
     }
 }
 
@@ -569,6 +578,22 @@ pub fn print_expr(expr: &Expr) -> String {
             let body = fields.iter().map(print_construct_item).collect::<Vec<_>>().join(", ");
 
             format!("{}{generics} {{ {body} }}", print_expr(callee))
+        }
+
+        Expr::AnonStruct { fields, positional, .. } => {
+            let body = if *positional {
+                fields
+                    .iter()
+                    .map(|item| match item {
+                        ConstructItem::Field { value, .. } => print_expr(value),
+                        other => print_construct_item(other),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            } else {
+                fields.iter().map(print_construct_item).collect::<Vec<_>>().join(", ")
+            };
+            if body.is_empty() { "{}".to_string() } else { format!("{{ {body} }}") }
         }
 
         Expr::Range { start, end, inclusive, .. } => {
