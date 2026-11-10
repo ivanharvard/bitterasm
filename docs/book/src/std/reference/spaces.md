@@ -10,9 +10,9 @@ default one, and gains fields from its facets:
 from std.binary import bits
 from std.spaces import start, unit
 
-space flash = stream
+const flash: space = stream
     | unit<bits<16>>
-    | start 0x8000
+    | start(0x8000)
 
 macro show(value: int) {
     @emit value
@@ -27,7 +27,7 @@ show flash.start
 
 A facet is an ordinary macro whose first parameter is the space it's
 applied to, and which returns that space, usually with more fields from
-`@extend`. `| start 0x8000` calls `start(flash, 0x8000)`.
+`@extend`. `stream | start(0x8000)` calls `start(stream, 0x8000)`.
 
 Nothing reads these fields yet: laying sections out in their spaces is
 still to come.

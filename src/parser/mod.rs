@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::ast::{
-    BinaryOp, CallArgument, ConstDeclaration, ConstKind, Expr, ExtendField, ExtendValue, ImportItems, ImportStatement,
+    BinaryOp, CallArgument, ConstDeclaration, Expr, ExtendField, ExtendValue, ImportItems, ImportStatement,
     Invocation, Label, MacroDeclaration, MacroParameter, MetaStatement, ModulePath,
     NamePart, Program, Section, Statement, SyntaxOverrideStatement, UnaryOp, TypeAliasDeclaration,
 };
@@ -237,6 +237,10 @@ struct Parser {
     // x: 1 }).y { ... }` still allows construction there.
     pub(super) restrict_brace_construction: bool,
 
+    /// True while parsing a const's value, where a line starting with `|`
+    /// continues it: `const flash: space = stream\n    | start(0x8000)`.
+    pub(super) pipe_continues_line: bool,
+
     /// True while parsing a splice's contents (`` `...` `` or a spliced
     /// name's `` `...` `` piece), where an identifier followed by a
     /// backtick is that splice closing, not a spliced name starting.
@@ -262,6 +266,7 @@ impl Parser {
             block_depth: 0,
             restrict_closing_ops: false,
             restrict_brace_construction: false,
+            pipe_continues_line: false,
             in_splice: false,
             pending_docs: Vec::new(),
             stray_docs: Vec::new(),

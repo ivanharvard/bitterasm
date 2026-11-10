@@ -1174,9 +1174,6 @@ impl Binders {
             Statement::Const(decl) => {
                 self.nested(&decl.name, top);
                 self.expr(&decl.value);
-                if let crate::ast::ConstKind::Space { facets } = &decl.kind {
-                    facets.iter().for_each(|facet| self.expr(facet));
-                }
             }
 
             Statement::Macro(decl) => {
@@ -1414,10 +1411,6 @@ fn rename_statement(statement: &mut Statement, renames: &mut Renamer) {
             }
 
             rename_expr(&mut decl.value, renames);
-
-            if let crate::ast::ConstKind::Space { facets } = &mut decl.kind {
-                facets.iter_mut().for_each(|facet| rename_expr(facet, renames));
-            }
         }
 
         // `in flash | progbits` names this module's spaces and macros.

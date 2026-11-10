@@ -202,26 +202,30 @@ fn parses_a_section_declaration_with_its_space_and_facets() {
 }
 
 #[test]
-fn parses_a_space_declaration_as_a_pipeline_of_facet_calls() {
+fn a_space_const_continues_onto_lines_starting_with_a_pipe() {
     let source = "macro unit<S>(sp: space) -> space {\n    @return sp\n}\n\n\
-                  space flash = stream | unit<bits<16>>\n    | start 0x8000, 2\n";
+                  const flash: space = stream | unit<bits<16>>\n    | start(0x8000, 2)\nnop\n";
     let program = parse(lex(source).unwrap()).unwrap();
 
     let Statement::Const(declaration) = &program.statements[1] else {
-        panic!("expected a space declaration");
+        panic!("expected a const");
     };
-    let crate::ast::ConstKind::Space { facets } = &declaration.kind else {
-        panic!("expected a space, got {:?}", declaration.kind);
+    // `(stream | unit<bits<16>>) | start(0x8000, 2)`
+    let Expr::Binary { left, op: BinaryOp::BitOr, right, .. } = &declaration.value else {
+        panic!("expected `|`, got {:?}", declaration.value);
     };
-    assert!(matches!(&declaration.value, Expr::Identifier { name, .. } if name == "stream"));
+    assert!(matches!(right.as_ref(), Expr::Call { arguments, .. } if arguments.len() == 2));
+    let Expr::Binary { right: unit, .. } = left.as_ref() else {
+        panic!("expected `stream | unit<bits<16>>`, got {left:?}");
+    };
+    assert!(matches!(unit.as_ref(), Expr::Call { generic_args, arguments, .. } if generic_args.len() == 1 && arguments.is_empty()));
+    assert!(matches!(&program.statements[2], Statement::Invocation(_)));
+}
 
-    let [Expr::Call { generic_args, arguments: no_arguments, .. }, Expr::Call { arguments, .. }] = facets.as_slice()
-    else {
-        panic!("expected two facet calls, got {facets:?}");
-    };
-    assert_eq!(generic_args.len(), 1);
-    assert!(no_arguments.is_empty());
-    assert_eq!(arguments.len(), 2);
+#[test]
+fn the_old_space_declaration_points_to_const() {
+    let error = parse(lex("space flash = stream\n").unwrap()).unwrap_err();
+    assert!(error.to_string().contains("write `const flash: space = ...`"), "{error}");
 }
 
 #[test]

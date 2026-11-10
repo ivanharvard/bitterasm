@@ -152,9 +152,12 @@ impl Record {
         self.fields.iter().find(|(field, _)| field == name).map(|(_, value)| value)
     }
 
-    /// How a message names it: `space flash`, `section .text`.
+    /// How a message names it: `a space`, `section .text`.
     pub fn describe(&self) -> String {
-        format!("{} `{}`", self.kind.name(), crate::loader::demangle(&self.identity))
+        match self.kind {
+            RecordKind::Space => "a space".to_string(),
+            RecordKind::Section => format!("section `{}`", crate::loader::demangle(&self.identity)),
+        }
     }
 }
 
@@ -272,6 +275,32 @@ impl<'a> AliasResolver<'a> {
             Expr::Binary { left, op: BinaryOp::NotEqual, right, .. } => {
                 Ok(Value::Int(Int::from(self.eval_value(left, scope)? != self.eval_value(right, scope)?)))
             }
+            // `stream | start(0x8000)`: `|` after a space or section applies
+            // a facet to it. Between numbers it's a bitwise or.
+            Expr::Binary { left, op: BinaryOp::BitOr, right, span } => match self.eval_value(left, scope)? {
+                Value::Record(record) => {
+                    let facet = match right.as_ref() {
+                        Expr::Call { .. } => right.as_ref().clone(),
+                        Expr::Identifier { span, .. } => Expr::Call {
+                            callee: right.clone(),
+                            generic_args: Vec::new(),
+                            arguments: Vec::new(),
+                            span: *span,
+                        },
+                        other => {
+                            return Err(ResolveError::ExpectedFacet { found: crate::printer::print_expr(other), span: other.span() })
+                        }
+                    };
+                    self.apply_facets(Value::Record(record), std::slice::from_ref(&facet), scope)
+                }
+                Value::Int(l) => {
+                    let r = self.eval_int_expr(right, scope)?;
+                    eval::apply_binary(BinaryOp::BitOr, l, r, *span)
+                        .map(Value::Int)
+                        .map_err(|error| into_value_error(error, scope))
+                }
+                _ => self.eval_int_expr(expr, scope).map(Value::Int),
+            },
             Expr::Binary { left, op: BinaryOp::And, right, .. } => {
                 if !self.eval_truthy(left, scope)? {
                     return Ok(Value::Int(Int::from(0)));
@@ -655,6 +684,28 @@ impl<'a> AliasResolver<'a> {
         }
     }
 
+    /// What tells a space apart: its fields, by name, so two spaces with
+    /// the same fields are the same space, however they were built.
+    /// `stream` has none.
+    pub(super) fn space_key(&self, record: &Record) -> String {
+        let mut fields: Vec<String> = record
+            .fields
+            .iter()
+            .map(|(name, field)| {
+                let value = match field {
+                    RecordField::Type(ty) => describe_type(ty, self),
+                    RecordField::Value(Value::Int(value)) => value.to_string(),
+                    RecordField::Value(Value::Record(inner)) if inner.kind == RecordKind::Space => self.space_key(inner),
+                    RecordField::Value(Value::Record(inner)) => inner.describe(),
+                    RecordField::Value(other) => format!("{other:?}"),
+                };
+                format!("{name}: {value}")
+            })
+            .collect();
+        fields.sort();
+        if fields.is_empty() { "stream".to_string() } else { format!("stream {{ {} }}", fields.join(", ")) }
+    }
+
     /// `section .text in flash | progbits`, as a value: a section record
     /// named `.text`, in its space (the default `stream` without `in`),
     /// then each facet applied in turn, evaluated in `scope`.
@@ -834,7 +885,11 @@ impl<'a> AliasResolver<'a> {
             let Value::Record(record) = &subject else {
                 unreachable!("only a space or section has facets applied");
             };
-            let (kind, identity, described) = (record.kind, record.identity.clone(), record.describe());
+            let (kind, identity, given) = (record.kind, record.identity.clone(), record.fields.clone());
+            let described = match kind {
+                RecordKind::Space => "space".to_string(),
+                RecordKind::Section => record.describe(),
+            };
 
             let mut facet_scope = scope.clone();
             facet_scope.insert(SUBJECT.to_string(), subject);
@@ -847,7 +902,15 @@ impl<'a> AliasResolver<'a> {
 
             let returned = self.call_macro_for_value(name, generic_args, &with_subject, *span, &facet_scope)?;
             subject = match returned {
-                Some(Value::Record(record)) if record.kind == kind && record.identity == identity => Value::Record(record),
+                // Its subject, perhaps with more fields: every field it was
+                // given is still there, unchanged.
+                Some(Value::Record(record))
+                    if record.kind == kind
+                        && record.identity == identity
+                        && given.iter().all(|field| record.fields.contains(field)) =>
+                {
+                    Value::Record(record)
+                }
                 _ => {
                     return Err(ResolveError::FacetMustReturnSubject {
                         facet: crate::loader::demangle(name),
@@ -2116,21 +2179,29 @@ impl<'a> AliasResolver<'a> {
                 let ty = declaration.ty.clone();
                 let value = this.eval_value(&value, &Scope::default())?;
 
-                // `space flash = stream | ...`: a new space, starting with
-                // `stream`'s fields, then each facet in turn.
-                if let crate::ast::ConstKind::Space { facets } = &declaration.kind {
-                    let Value::Record(mut record) = value else {
-                        let ty = this.value_type(&value)?;
+                // `const flash: space = stream | ...`: a space is told apart
+                // by its fields, but a message names it after the first
+                // const that holds it.
+                let declares_space = matches!(
+                    &ty,
+                    Some(TypeExpr::Named { path, .. }) if path.len() == 1 && path[0] == "space"
+                );
+                match &value {
+                    Value::Record(record) if record.kind == RecordKind::Space => {
+                        let key = this.space_key(record);
+                        this.space_names.entry(key).or_insert_with(|| crate::loader::demangle(name));
+                    }
+                    Value::Record(record) if declares_space => {
+                        return Err(ResolveError::ExpectedSpace { found: record.describe(), span: declaration.value.span() });
+                    }
+                    other if declares_space => {
+                        let ty = this.value_type(other)?;
                         return Err(ResolveError::ExpectedSpace {
                             found: format!("`{}`", describe_type(&ty, this)),
                             span: declaration.value.span(),
                         });
-                    };
-                    if record.kind != RecordKind::Space {
-                        return Err(ResolveError::ExpectedSpace { found: record.describe(), span: declaration.value.span() });
                     }
-                    record.identity = name.to_string();
-                    return this.apply_facets(Value::Record(record), facets, &Scope::default());
+                    _ => {}
                 }
 
                 match ty {

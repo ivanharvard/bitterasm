@@ -1,5 +1,5 @@
 macro nothing(_sp: space) {
 }
 
-space flash = stream
+const flash: space = stream
     | nothing

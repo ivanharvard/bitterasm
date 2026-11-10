@@ -1,5 +1,5 @@
 from std.spaces import start
 
-space flash = stream
-    | start 1
-    | start 2
+const flash: space = stream
+    | start(1)
+    | start(2)

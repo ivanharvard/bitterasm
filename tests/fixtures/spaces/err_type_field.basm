@@ -5,7 +5,7 @@ macro show(value: int) {
     @emit value
 }
 
-space flash = stream
+const flash: space = stream
     | unit<bits<16>>
 
 show flash.unit

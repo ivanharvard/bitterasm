@@ -578,22 +578,8 @@ pub struct ConstDeclaration {
     /// Optional explicit annotation
     pub ty: Option<TypeExpr>,
     pub value: Expr,
-    /// `const` or `space`.
-    pub kind: ConstKind,
     pub span: Span,
     pub doc: Option<Doc>,
-}
-
-/// What a [`ConstDeclaration`] declares.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ConstKind {
-    Const,
-
-    /// `space flash = stream | unit<bits<16>> | start 0x8000`: a new space
-    /// built from `value`, then passed through each facet in order. Each
-    /// facet is a call to a macro, written without its first argument (the
-    /// space it's applied to).
-    Space { facets: Vec<Expr> },
 }
 
 /// An enum declaration. A variant may be payload-free (`None`) or carry one

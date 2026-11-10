@@ -619,7 +619,7 @@ impl<'a> AliasResolver<'a> {
                     {
                         return Err(ResolveError::TypeMismatch {
                             name: name.clone(),
-                            expected: format!("label<{}>", crate::loader::demangle(bound)),
+                            expected: format!("label<{}>", self.space_names.get(bound).cloned().unwrap_or_else(|| bound.clone())),
                             actual: describe_type(actual, self),
                             span,
                         });
@@ -1408,12 +1408,6 @@ impl<'a> AliasResolver<'a> {
             is_pub: decl.is_pub,
             ty: decl.ty.clone(),
             value: self.splice_expr(&decl.value, scope)?,
-            kind: match &decl.kind {
-                crate::ast::ConstKind::Const => crate::ast::ConstKind::Const,
-                crate::ast::ConstKind::Space { facets } => crate::ast::ConstKind::Space {
-                    facets: facets.iter().map(|facet| self.splice_expr(facet, scope)).collect::<Result<_, _>>()?,
-                },
-            },
             doc: decl.doc.clone(),
             span: decl.span,
         })

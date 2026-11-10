@@ -14,13 +14,13 @@ macro tagged(sec: section) -> section {
     @return @extend sec { tagged: bool = true }
 }
 
-space flash = stream
+const flash: space = stream
     | unit<bits<16>>
-    | start 0x8000
-    | size 1024
+    | start(0x8000)
+    | size(1024)
 
 # Derived from `flash`: its fields, plus one more.
-space boot = flash | start_offset 16
+const boot: space = flash | start_offset(16)
 
 macro start_offset(sp: space, offset: int) -> space {
     @return @extend sp { offset: int = offset }

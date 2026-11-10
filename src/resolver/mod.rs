@@ -453,6 +453,12 @@ pub enum ResolveError {
         span: Span,
     },
 
+    /// `space | x` where `x` isn't a facet: a name, or a call.
+    ExpectedFacet {
+        found: String,
+        span: Span,
+    },
+
     /// `@into` of something that isn't a section.
     ExpectedSection {
         found: String,
@@ -605,6 +611,7 @@ impl ResolveError {
             | Self::UnknownRecordField { span, .. } | Self::RecordFieldIsType { span, .. }
             | Self::DuplicateRecordField { span, .. } | Self::ExtendNotRecord { span, .. }
             | Self::ExpectedSection { span, .. } | Self::SectionNameIsBinding { span, .. }
+            | Self::ExpectedFacet { span, .. }
             | Self::FacetMustReturnSubject { span, .. } | Self::ExpectedSpace { span, .. }
             | Self::SectionRedeclared { span, .. } | Self::SectionUsedBeforeDeclared { span, .. }
             | Self::UserFacetNotApplicable { span, .. } => *span,

@@ -1,7 +1,7 @@
 #! Sections for the import tests.
 
 ## The space `.vectors` goes in.
-pub space rom = stream
+pub const rom: space = stream
 
 ## A section in `rom`.
 pub const VECTORS = section .vectors in rom

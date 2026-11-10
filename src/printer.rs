@@ -79,19 +79,11 @@ pub fn print_statement(statement: &Statement, indent: usize) -> String {
                 None => String::new(),
             };
 
-            match &decl.kind {
-                crate::ast::ConstKind::Const => format!(
-                    "{pad}{pub_kw}const {name}{ty} = {value}",
-                    name = print_spliced_name(&decl.name),
-                    value = print_expr(&decl.value),
-                ),
-                crate::ast::ConstKind::Space { facets } => format!(
-                    "{pad}{pub_kw}space {name} = {value}{facets}",
-                    name = print_spliced_name(&decl.name),
-                    value = print_expr(&decl.value),
-                    facets = print_applied_facets(facets, false),
-                ),
-            }
+            format!(
+                "{pad}{pub_kw}const {name}{ty} = {value}",
+                name = print_spliced_name(&decl.name),
+                value = print_expr(&decl.value),
+            )
         }
 
         Statement::Label(label) => {

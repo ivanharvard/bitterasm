@@ -638,6 +638,11 @@ pub(super) trait TypeSymbolNames {
     fn anon_struct_field_names(&self, _symbol: SymbolId) -> Option<Vec<String>> {
         None
     }
+
+    /// The const name a space (by its key) was first given.
+    fn space_name(&self, _key: &str) -> Option<String> {
+        None
+    }
 }
 
 impl TypeSymbolNames for SymbolTable {
@@ -653,6 +658,10 @@ impl TypeSymbolNames for AliasResolver<'_> {
 
     fn anon_struct_field_names(&self, symbol: SymbolId) -> Option<Vec<String>> {
         self.anon_struct_fields(symbol).map(<[String]>::to_vec)
+    }
+
+    fn space_name(&self, key: &str) -> Option<String> {
+        self.space_names.get(key).cloned()
     }
 }
 
@@ -678,8 +687,8 @@ pub(super) fn describe_type(ty: &ResolvedType, symbols: &impl TypeSymbolNames) -
             format!("{}{}", symbols.type_symbol_name(*symbol), describe_args(args, symbols))
         }
         ResolvedType::TypeParameter { name } => name.clone(),
-        ResolvedType::LabelIn(space) => format!("label<{}>", crate::loader::demangle(space)),
-        ResolvedType::Space(Some(space)) => crate::loader::demangle(space),
+        ResolvedType::LabelIn(space) => format!("label<{}>", symbols.space_name(space).unwrap_or_else(|| space.clone())),
+        ResolvedType::Space(Some(space)) => symbols.space_name(space).unwrap_or_else(|| space.clone()),
         ResolvedType::Space(None) => "a space not known yet".to_string(),
 
         // The alias's own name reads better in a diagnostic than its

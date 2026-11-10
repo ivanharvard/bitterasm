@@ -247,9 +247,6 @@ fn collect_program_statement_references(statement: &Statement, names: &mut HashS
         Statement::Const(declaration) => {
             if let Some(ty) = &declaration.ty { collect_type_references(ty, names); }
             collect_expr_identifiers(&declaration.value, names);
-            if let crate::ast::ConstKind::Space { facets } = &declaration.kind {
-                facets.iter().for_each(|facet| collect_expr_identifiers(facet, names));
-            }
         }
         Statement::Invocation(invocation) => {
             names.insert(invocation.name.clone());

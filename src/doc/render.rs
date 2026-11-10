@@ -77,7 +77,7 @@ pub(super) fn page(module: &Module, links: &Links) -> String {
         .filter(|item| matches!(item.kind, ItemKind::Struct(_) | ItemKind::Enum(_) | ItemKind::Alias(_)))
         .collect();
     let is_space = |item: &&Item| {
-        matches!(&item.kind, ItemKind::Const(declaration) if matches!(declaration.kind, crate::ast::ConstKind::Space { .. }))
+        matches!(&item.kind, ItemKind::Const(declaration) if matches!(&declaration.ty, Some(crate::types::TypeExpr::Named { path, .. }) if path.len() == 1 && path[0] == "space"))
     };
     // `pub const TEXT = section .text | exec`: a section, by its constant.
     let is_section = |item: &&Item| {
@@ -131,15 +131,13 @@ pub(super) fn page(module: &Module, links: &Links) -> String {
     }
 
     if !spaces.is_empty() {
-        out.push_str("## Spaces\n\n| Space | Built from | Facets | Description |\n|---|---|---|---|\n");
+        out.push_str("## Spaces\n\n| Space | Value | Description |\n|---|---|---|\n");
         for item in spaces {
             let ItemKind::Const(declaration) = &item.kind else { continue };
-            let crate::ast::ConstKind::Space { facets } = &declaration.kind else { continue };
             out.push_str(&format!(
-                "| {} | {} | {} | {} |\n",
+                "| {} | {} | {} |\n",
                 cell(&code(&item.name)),
                 cell(&code(&print_expr(&declaration.value))),
-                cell(&facet_list(facets)),
                 summary(declaration.doc.as_ref()),
             ));
         }

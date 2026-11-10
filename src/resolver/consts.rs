@@ -63,8 +63,12 @@ impl<'a> ConstEvaluator<'a> {
 
             let declaration = find_const_declaration(self.program, &name, self.symbols)?;
 
-            if matches!(declaration.kind, crate::ast::ConstKind::Space { .. })
-                || !is_int_shaped(self.program, &declaration.value)
+            // `const flash: space = stream` is a space, not a number.
+            let compile_time_typed = matches!(
+                &declaration.ty,
+                Some(crate::types::TypeExpr::Named { path, .. }) if matches!(path.as_slice(), [name] if name == "space" || name == "section")
+            );
+            if compile_time_typed || !is_int_shaped(self.program, &declaration.value)
             {
                 // Not every const is meant to hold an Int (e.g. a struct
                 // value like `const r0: Reg64 = Reg64(0)`) — skip it here

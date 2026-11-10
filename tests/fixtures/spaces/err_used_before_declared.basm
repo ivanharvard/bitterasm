@@ -1,6 +1,6 @@
 from std.spaces import start
 
-space flash = stream | start 0x100
+const flash: space = stream | start(0x100)
 
 section .x
 section .x in flash

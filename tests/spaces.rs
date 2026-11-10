@@ -20,17 +20,22 @@ fn a_space_can_come_from_another_module() {
 }
 
 #[test]
+fn spaces_with_the_same_fields_are_the_same_space() {
+    assert_eq!(compile_ints("tests/fixtures/spaces/same_fields.basm"), vec![1, 0]);
+}
+
+#[test]
 fn a_facet_must_return_what_it_was_given() {
     let stderr = error("wrong_subject");
-    assert!(stderr.contains("facet `swap` must return the space `flash` it was given"), "{stderr}");
+    assert!(stderr.contains("facet `swap` must return the space it was given"), "{stderr}");
     let stderr = error("no_return");
-    assert!(stderr.contains("facet `nothing` must return the space `flash` it was given"), "{stderr}");
+    assert!(stderr.contains("facet `nothing` must return the space it was given"), "{stderr}");
 }
 
 #[test]
 fn a_field_is_added_once() {
     let stderr = error("duplicate_field");
-    assert!(stderr.contains("space `flash` already has a field `size`"), "{stderr}");
+    assert!(stderr.contains("a space already has a field `size`"), "{stderr}");
 }
 
 #[test]
@@ -48,7 +53,7 @@ fn a_space_cant_be_emitted() {
 #[test]
 fn a_type_field_isnt_a_value() {
     let stderr = error("type_field");
-    assert!(stderr.contains("space `flash`'s field `unit` holds a type, not a value"), "{stderr}");
+    assert!(stderr.contains("a space's field `unit` holds a type, not a value"), "{stderr}");
 }
 
 #[test]

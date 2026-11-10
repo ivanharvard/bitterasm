@@ -238,12 +238,6 @@ fn substitute_statement(statement: &Statement, substitutions: &HashMap<String, E
             is_pub: decl.is_pub,
             ty: decl.ty.as_ref().map(|ty| substitute_type_expr(ty, substitutions)),
             value: substitute_expr(&decl.value, substitutions),
-            kind: match &decl.kind {
-                crate::ast::ConstKind::Const => crate::ast::ConstKind::Const,
-                crate::ast::ConstKind::Space { facets } => crate::ast::ConstKind::Space {
-                    facets: facets.iter().map(|facet| substitute_expr(facet, substitutions)).collect(),
-                },
-            },
             doc: decl.doc.clone(),
             span: decl.span,
         }),

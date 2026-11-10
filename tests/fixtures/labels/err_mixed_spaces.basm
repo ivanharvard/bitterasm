@@ -1,8 +1,9 @@
 macro same<S>(_a: label<S>, _b: label<S>) {
     @emit 0
 }
-space flash = stream
-space ram = stream
+# Two spaces are told apart by their fields, so each gets one.
+const flash: space = @extend stream { bank: int = 0 }
+const ram: space = @extend stream { bank: int = 1 }
 section .text in flash
 a:
     same a, b

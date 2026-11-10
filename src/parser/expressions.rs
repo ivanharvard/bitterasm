@@ -173,11 +173,12 @@ impl Parser {
                         continue;
                     }
 
+                    // `unit<bits<16>>` alone, as a facet: a call whose
+                    // subject is the value it's applied to.
                     if !self.check(&TokenKind::LBrace) {
-                        return Err(ParseError::new(
-                            "expected `{` or `(` after generic arguments, to construct the struct",
-                            self.current().span,
-                        ));
+                        let span = Span::new(start, self.previous().span.end);
+                        left = Expr::Call { callee: Box::new(left), generic_args, arguments: Vec::new(), span };
+                        continue;
                     }
 
                     left = self.finish_construct(left, generic_args)?;
@@ -299,6 +300,17 @@ impl Parser {
             // ============
             // binary ops
             // ============
+
+            // In a const's value, a line starting with `|` continues it.
+            if self.pipe_continues_line && stop.is_none() && self.check(&TokenKind::Newline) {
+                let mut next = self.pos;
+                while self.tokens.get(next).is_some_and(|token| token.kind == TokenKind::Newline) {
+                    next += 1;
+                }
+                if self.tokens.get(next).is_some_and(|token| token.kind == TokenKind::Pipe) {
+                    self.pos = next;
+                }
+            }
 
             let Some((left_bp, right_bp, op)) =
                 self.current_binary_operator()

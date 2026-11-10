@@ -84,9 +84,7 @@ impl Parser {
                         self.current().span,
                     )),
 
-                    TokenKind::Identifier(_) if self.at_space_declaration() => Ok(Statement::Const(
-                        self.parse_space_declaration(true)?
-                    )),
+                    TokenKind::Identifier(_) if self.at_space_declaration() => Err(self.old_space_declaration()),
 
                     TokenKind::Identifier(_) if self.check_next(&TokenKind::Colon) => {
                         Ok(Statement::Label(
@@ -113,7 +111,7 @@ impl Parser {
                 if name == "syntax" && self.at_syntax_override_start() {
                     Ok(Statement::SyntaxOverride(self.parse_syntax_override()?))
                 } else if self.at_space_declaration() {
-                    Ok(Statement::Const(self.parse_space_declaration(false)?))
+                    Err(self.old_space_declaration())
                 } else if self.check_next(&TokenKind::Colon) {
                     Ok(Statement::Label(
                         self.parse_label(false)?
@@ -403,7 +401,13 @@ impl Parser {
 
         self.expect_simple(TokenKind::Equal)?;
 
-        let value = self.parse_expr()?;
+        // A line starting with `|` continues the value, so a space's
+        // facets can go one per line.
+        let outer = self.pipe_continues_line;
+        self.pipe_continues_line = true;
+        let value = self.parse_expr();
+        self.pipe_continues_line = outer;
+        let value = value?;
 
         if !self.at_statement_end() {
             return Err(ParseError::new(
@@ -422,50 +426,24 @@ impl Parser {
             is_pub,
             ty,
             value,
-            kind: ConstKind::Const,
             doc: None,
             span: Span::new(start, end),
         })
     }
 
-    // `space name = value`, then its facets: `| unit<bits<16>>`, each on
-    // its own line or after the value. `space` is only a keyword here, so
-    // it stays usable as an ordinary name everywhere else.
-    fn parse_space_declaration(&mut self, is_pub: bool) -> Result<ConstDeclaration, ParseError> {
-        let start = if is_pub { self.previous().span.start } else { self.current().span.start };
-
-        self.advance(); // `space`
-
-        let (name, _) = self.parse_spliced_name()?;
-
-        self.expect_simple(TokenKind::Equal)?;
-
-        // Stops at `|`, so `space flash = stream | unit<bits<16>>` is the
-        // value followed by a facet, not a bitwise or.
-        let value = self.parse_expr_bp_until(0, Some(&TokenKind::Pipe))?;
-        let facets = self.parse_applied_facets()?;
-
-        if !self.at_statement_end() {
-            return Err(ParseError::new(
-                format!("unexpected token after space declaration: {:?}", self.current().kind),
-                self.current().span,
-            ));
-        }
-
-        let end = self.statement_end()?;
-
-        Ok(ConstDeclaration {
-            name,
-            is_pub,
-            ty: None,
-            value,
-            kind: ConstKind::Space { facets },
-            doc: None,
-            span: Span::new(start, end),
-        })
+    // `space flash = ...`, the old way to declare a space: it's an
+    // ordinary const now, `const flash: space = ...`.
+    fn old_space_declaration(&self) -> ParseError {
+        let name = match self.tokens.get(self.pos + 1).map(|token| &token.kind) {
+            Some(TokenKind::Identifier(name)) => name.clone(),
+            _ => "flash".to_string(),
+        };
+        ParseError::new(
+            format!("a space is an ordinary const now: write `const {name}: space = ...`"),
+            self.current().span,
+        )
     }
 
-    // `space name =` at the start of a statement.
     pub(super) fn at_space_declaration(&self) -> bool {
         matches!(&self.current().kind, TokenKind::Identifier(word) if word == "space")
             && matches!(self.tokens.get(self.pos + 1).map(|token| &token.kind), Some(TokenKind::Identifier(_)))
@@ -475,10 +453,6 @@ impl Parser {
     // Facets applied to a space or section: `| name`, `| name<T>` or
     // `| name arg, ...`, each a call to the macro `name` with the subject
     // left out. A facet may continue on the next line.
-    pub(super) fn parse_applied_facets(&mut self) -> Result<Vec<Expr>, ParseError> {
-        self.parse_applied_facets_with(false)
-    }
-
     // `in_expression`: a facet's arguments go in parentheses, as in
     // `section .text | unit(16)`, rather than `| unit 16`.
     fn parse_applied_facets_with(&mut self, in_expression: bool) -> Result<Vec<Expr>, ParseError> {

@@ -11,22 +11,30 @@ it and read its fields, but never emit it.
 ## `stream` and `space`
 
 Every space is built from `stream`, the default space, the same way every
-type is built from `int`. A `space` declaration makes a new one:
+type is built from `int`. A space is a value of type `space`, so a `const`
+holds one:
 
 ```basm,ignore
-space name = stream
-space name = stream | facet | facet ...
+const name: space = stream
+const name: space = stream | facet | facet ...
 ```
 
 A space starts out with the fields of the space it's built from, and gains
 more from its **facets**. `stream` itself has none.
 
+A space is its fields, the way an anonymous struct is: two spaces with the
+same fields are the same space, whatever they're called. A space that has
+to be told apart from another gets a field that says how, like a different
+`start` address.
+
 ## Facets are macros
 
 A facet is an ordinary macro whose first parameter is the space it's
 applied to, and which returns that space, usually with more fields.
-`| start 0x8000` calls `start(flash, 0x8000)`. Facets apply in the order
-they're written, on the declaration's line or on lines of their own.
+`|` after a space applies a facet: `stream | start(0x8000)` calls
+`start(stream, 0x8000)`. Facets apply in the order they're written, on the
+`const`'s line or on lines of their own that start with `|`. Between two
+numbers, `|` is still a bitwise or.
 
 ```basm
 macro start(sp: space, address: int) -> space {
@@ -41,9 +49,9 @@ macro show(value: int) {
     @emit value
 }
 
-space flash = stream
-    | start 0x8000
-    | size 1024
+const flash: space = stream
+    | start(0x8000)
+    | size(1024)
 
 show flash.start
 show flash.size
@@ -56,19 +64,26 @@ show flash.size
 `std.spaces` provides `start`, and `unit`, which sets how wide one box of
 the space is.
 
-A facet has to return the space it was given. Returning a different one is
-an error, so a facet can add to a space but never swap it out:
+A facet has to return the space it was given, with every field it had.
+It can add fields, but dropping or changing one is an error, so a facet
+can never swap a space out:
 
 ```basm,fail
+macro start(sp: space, address: int) -> space {
+    @return @extend sp { start: int = address }
+}
+
 macro swap(_sp: space) -> space {
     @return stream
 }
 
-space flash = stream | swap
+const flash: space = stream
+    | start(0x8000)
+    | swap
 ```
 
 ```error
-facet `swap` must return the space `flash` it was given
+facet `swap` must return the space it was given
 ```
 
 A facet can also be called like any other macro, with the space written
@@ -87,13 +102,13 @@ macro size(sp: space, boxes: int) -> space {
     @return @extend sp { size: int = boxes }
 }
 
-space flash = stream
-    | size 1
-    | size 2
+const flash: space = stream
+    | size(1)
+    | size(2)
 ```
 
 ```error
-space `flash` already has a field `size`
+a space already has a field `size`
 ```
 
 A field can also hold a type, written `name: type = T`. That's how
@@ -125,7 +140,7 @@ macro show(value: int) {
     @emit value
 }
 
-space flash = stream | start 0x8000
+const flash: space = stream | start(0x8000)
 
 show @hasfield flash, start
 show @hasfield stream, start
@@ -165,7 +180,7 @@ macro high(sec: section) -> section {
     @return sec
 }
 
-space ram = stream | start 0x100
+const ram: space = stream | start(0x100)
 
 section .vectors in ram
     | high
@@ -210,8 +225,8 @@ the same space:
 macro distance<S>(_from: label<S>, _to: label<S>) {
 }
 
-space flash = stream
-space ram = stream
+const flash: space = @extend stream { bank: int = 0 }
+const ram: space = @extend stream { bank: int = 1 }
 
 section .text in flash
 start:

@@ -1,6 +1,12 @@
+macro tag(sp: space) -> space {
+    @return @extend sp { tag: int = 1 }
+}
+
+# Drops the `tag` it was given.
 macro swap(sp: space) -> space {
     @return stream
 }
 
-space flash = stream
+const flash: space = stream
+    | tag
     | swap

@@ -193,6 +193,10 @@ pub struct AliasResolver<'a> {
     /// Each declared section, by name.
     pub(super) section_records: HashMap<String, SectionRecord>,
 
+    /// The first const name each space (by `space_key`) was given, so a
+    /// message can say `label<flash>`.
+    pub(super) space_names: HashMap<String, String>,
+
     // Shared by statement invocations and expression-position macro calls.
     // Repeated symbols are allowed because terminating recursion is useful
     // for compile-time algorithms; `macro_body` enforces a finite depth.
@@ -458,6 +462,7 @@ impl<'a> AliasResolver<'a> {
             explicit_macro_generics: None,
             running_struct_facets: std::collections::HashSet::new(),
             section_records: HashMap::new(),
+            space_names: HashMap::new(),
             const_value_stack: Vec::new(),
             macro_call_stack: Vec::new(),
             pending_tail_call: None,
@@ -563,7 +568,7 @@ impl<'a> AliasResolver<'a> {
         let declared = section.and_then(|name| self.section_records.get(name));
         match declared.map(|record| &record.value) {
             Some(super::values::Value::Record(record)) => match record.field("space") {
-                Some(super::values::RecordField::Value(super::values::Value::Record(space))) => space.identity.clone(),
+                Some(super::values::RecordField::Value(super::values::Value::Record(space))) => self.space_key(space),
                 _ => "stream".to_string(),
             },
             _ => "stream".to_string(),
@@ -912,7 +917,7 @@ impl<'a> AliasResolver<'a> {
         };
         match value {
             super::values::Value::Record(record) if record.kind == super::values::RecordKind::Space => {
-                Ok(ResolvedType::LabelIn(record.identity))
+                Ok(ResolvedType::LabelIn(self.space_key(&record)))
             }
             _ => Err(ResolveError::ExpectedSpace { found: format!("`{}`", crate::loader::demangle(name)), span: name_span }),
         }
