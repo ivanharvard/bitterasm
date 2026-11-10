@@ -160,3 +160,49 @@ pub macro appended<T, const N: int>(
         __el`N`: value,
     }
 }
+
+## Iterates over `arr`'s elements in order until it finds the first instance of
+## `value`, then returns its index. If `value` isn't found, returns `-1`. If
+## `arr` is empty, errors at compile time.
+pub macro find<T>(arr: Array<T, ...>, value: T) -> int
+{
+    @assert arr.len > 0, "find() can't be called on an empty array"
+    @for i in 0..arr.len {
+        @if arr.__el`i` == value {
+            @return i
+        }
+    }
+    @return -1
+}
+
+## Returns `1` if `value` is in `arr`, otherwise returns `0` or errors at
+## compile time if `arr` is empty.
+pub macro contains<T>(arr: Array<T, ...>, value: T) -> int {
+    @return find(arr, value) != -1
+}
+
+## A copy of `arr` with the first instance of `value` removed. If `value`
+## isn't found, returns a copy of `arr`.
+pub macro remove<T, const N: int>(
+    arr: Array<T, N>,
+    value: T
+) -> Array<T, ...> {
+    @if N == 0 {
+        @return arr
+    }
+
+    const idx = find(arr, value)
+    @if idx == -1 {
+        @return arr
+    }
+    @return Array<T, N - 1> {
+        @for i in 0..N {
+            @if i < idx {
+                __el`i`: arr.__el`i`,
+            }
+            @if i > idx {
+                __el`i - 1`: arr.__el`i`,
+            }
+        }
+    }
+}

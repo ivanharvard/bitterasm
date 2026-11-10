@@ -118,6 +118,34 @@ A copy of `arr` with `value` added at the end.
 |---|---|---|---|
 | `appended(arr, value)` | `<T, const N: int>`, `arr: Array<T, N>`, `value: T` | returns `Array<T, (N + 1)>` |  |
 
+### `find`
+
+Iterates over `arr`'s elements in order until it finds the first instance of
+`value`, then returns its index. If `value` isn't found, returns `-1`. If
+`arr` is empty, errors at compile time.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `find(arr, value)` | `<T>`, `arr: Array<T, ...>`, `value: T` | returns `int` |  |
+
+### `contains`
+
+Returns `1` if `value` is in `arr`, otherwise returns `0` or errors at
+compile time if `arr` is empty.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `contains(arr, value)` | `<T>`, `arr: Array<T, ...>`, `value: T` | returns `int` |  |
+
+### `remove`
+
+A copy of `arr` with the first instance of `value` removed. If `value`
+isn't found, returns a copy of `arr`.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `remove(arr, value)` | `<T, const N: int>`, `arr: Array<T, N>`, `value: T` | returns `Array<T, ...>` |  |
+
 ## Types
 
 ### `Array`
