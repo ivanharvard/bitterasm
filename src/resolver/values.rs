@@ -164,9 +164,10 @@ impl Record {
 /// Which label a `Value::Label` is.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LabelValue {
-    /// A label in this file: how many values come before it, and the space
-    /// its section is in (`None` while it isn't placed yet).
-    Local(Int, Option<String>),
+    /// A label in this file: how many values come before it, the space its
+    /// section is in, and how many values come before it in its own
+    /// section, `l.offset` (each `None` while it isn't placed yet).
+    Local(Int, Option<String>, Option<Int>),
     /// A `pub` label imported from another file — see `Value::ExternLabel`.
     Extern { module: String, name: String },
 }
@@ -430,10 +431,27 @@ impl<'a> AliasResolver<'a> {
                         field: member,
                         span: *span,
                     }),
+                    // `sec.start` and `sec.end`: labels at a section's first
+                    // value and just past its last.
+                    None if record.kind == RecordKind::Section && (member == "start" || member == "end") => {
+                        Ok(self.section_bound(&record, member == "end"))
+                    }
                     None => Err(ResolveError::UnknownRecordField { subject: record.describe(), field: member, span: *span }),
                 },
 
-                Value::Int(_) | Value::Enum { .. } | Value::Macro(_) | Value::ExternLabel { .. } | Value::Label(_) => {
+                // `l.offset`: how many values come before the label in its
+                // own section.
+                Value::Label(LabelValue::Local(_, _, offset)) if member == "offset" => match offset {
+                    Some(offset) => Ok(Value::Int(offset)),
+                    None => {
+                        self.used_forward_label_placeholder = true;
+                        Ok(Value::Int(Int::from(0)))
+                    }
+                },
+
+                Value::Label(_) => Err(ResolveError::UnknownLabelField { field: member, span: *span }),
+
+                Value::Int(_) | Value::Enum { .. } | Value::Macro(_) | Value::ExternLabel { .. } => {
                     Err(ResolveError::ExpectedStructValue { span: *span })
                 }
                 }
@@ -681,6 +699,37 @@ impl<'a> AliasResolver<'a> {
                     Err(ResolveError::NonIntOperand { found: describe_type(&ty, self), hint: None, span: other.span() })
                 }
             },
+        }
+    }
+
+    /// A label at the start of the section `record`, or just past its end.
+    /// Where sections end up is only known once every value is placed, so
+    /// the first pass gives a placeholder and asks for a second.
+    fn section_bound(&mut self, record: &Record, end: bool) -> Value {
+        let name = Some(record.identity.clone());
+        let space = self.space_key_of_section(record);
+        match self.seeded_section_bounds.as_ref() {
+            Some(bounds) => {
+                let total = bounds.values().map(|(_, end)| end.clone()).max().unwrap_or_default();
+                let (start, finish) = bounds.get(&name).cloned().unwrap_or((total.clone(), total));
+                let size = finish.clone() - start.clone();
+                if end {
+                    Value::Label(LabelValue::Local(finish, Some(space), Some(size)))
+                } else {
+                    Value::Label(LabelValue::Local(start, Some(space), Some(Int::from(0))))
+                }
+            }
+            None => {
+                self.used_forward_label_placeholder = true;
+                Value::Label(LabelValue::Local(Int::from(0), Some(space), None))
+            }
+        }
+    }
+
+    fn space_key_of_section(&self, record: &Record) -> String {
+        match record.field("space") {
+            Some(RecordField::Value(Value::Record(space))) => self.space_key(space),
+            _ => "stream".to_string(),
         }
     }
 
@@ -1816,7 +1865,7 @@ impl<'a> AliasResolver<'a> {
                 // coercion.
                 Value::Int(_) | Value::ExternLabel { .. } => Ok(value),
                 // `label as int`: its position, for `std.bitter.deferred`.
-                Value::Label(LabelValue::Local(position, _)) => Ok(Value::Int(position)),
+                Value::Label(LabelValue::Local(position, ..)) => Ok(Value::Int(position)),
                 Value::Label(LabelValue::Extern { module, name }) => Ok(Value::ExternLabel { module, name }),
                 Value::Struct { .. } | Value::Enum { .. } | Value::Macro(_) | Value::Record(_) => {
                     Err(ResolveError::ExpectedIntValue { span })
@@ -1840,9 +1889,9 @@ impl<'a> AliasResolver<'a> {
             },
 
             ResolvedType::LabelIn(space) => match &value {
-                Value::Label(LabelValue::Local(_, Some(actual))) if actual == space => Ok(value),
+                Value::Label(LabelValue::Local(_, Some(actual), _)) if actual == space => Ok(value),
                 // Not placed yet, or in another file: taken on trust.
-                Value::Label(LabelValue::Local(_, None) | LabelValue::Extern { .. }) => Ok(value),
+                Value::Label(LabelValue::Local(_, None, _) | LabelValue::Extern { .. }) => Ok(value),
                 _ => Err(ResolveError::CannotCoerce {
                     type_name: describe_type(target, self),
                     span,
@@ -2267,7 +2316,14 @@ impl<'a> AliasResolver<'a> {
     pub(super) fn resolve_label_value(&mut self, id: SymbolId, span: Span) -> Result<Value, ResolveError> {
         self.read_label_position = true;
         match self.label_positions.get(&id) {
-            Some(position) => Ok(Value::Label(LabelValue::Local(position.clone(), self.label_spaces.get(&id).cloned()))),
+            Some(position) => {
+                let offset = self
+                    .label_slots
+                    .get(&id)
+                    .map(|(_, index)| index.clone())
+                    .or_else(|| self.seeded_label_offsets.get(&id).cloned());
+                Ok(Value::Label(LabelValue::Local(position.clone(), self.label_spaces.get(&id).cloned(), offset)))
+            }
 
             None => match self.label_mode {
                 // Position-discovery pass: this label's own `foo:` line
@@ -2280,7 +2336,7 @@ impl<'a> AliasResolver<'a> {
                 // the module doc on why that invariant holds today).
                 LabelMode::Tolerant => {
                     self.used_forward_label_placeholder = true;
-                    Ok(Value::Label(LabelValue::Local(Int::from(0), None)))
+                    Ok(Value::Label(LabelValue::Local(Int::from(0), None, None)))
                 }
 
                 // The real pass: every top-level label's position was
@@ -2398,7 +2454,7 @@ impl<'a> AliasResolver<'a> {
             // linker fills in, so it types as one.
             Value::ExternLabel { .. } => ResolvedType::Builtin(BuiltinType::Int),
 
-            Value::Label(LabelValue::Local(_, Some(space))) => ResolvedType::LabelIn(space.clone()),
+            Value::Label(LabelValue::Local(_, Some(space), _)) => ResolvedType::LabelIn(space.clone()),
             // Not placed yet, or in another file: its space isn't known.
             Value::Label(_) => ResolvedType::Builtin(BuiltinType::Label),
 

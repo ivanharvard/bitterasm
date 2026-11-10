@@ -52,6 +52,7 @@ pub fn resolve_error(error: ResolveError, source: Option<SourceId>) -> Diagnosti
         ExpectedSpace { found, span } => (format!("expected a space, found {found}"), span),
         SectionRedeclared { name, span } => (format!("section `{name}` already has a different space or facets; a bare `section {name}` switches to it as it is"), span),
         ExpectedSection { found, span } => (format!("expected a section, found {found}"), span),
+        UnknownLabelField { field, span } => (format!("a label has no field `{field}`; its field is `offset`, its position in its section"), span),
         ExpectedFacet { found, span } => (format!("expected a facet after `|`, like `progbits` or `start(0x8000)`, found `{found}`"), span),
         SectionNameIsBinding { name, span } => (format!("`section {name}` names a section `{name}`, not the `{name}` here; to switch to its value, write `@into {name}`"), span),
         UserFacetNotApplicable { facet, span } => (format!("`{facet}` isn't a built-in facet, and only a struct, space or section takes a user-defined one"), span),

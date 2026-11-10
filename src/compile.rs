@@ -505,6 +505,7 @@ fn resolve_and_expand(
     // notion of labels yet.
     let label_positions = discovery.grouped_label_positions();
     let label_spaces = discovery.label_spaces().clone();
+    let layout = discovery.final_layout();
     drop(discovery);
 
     // Reported once, outside the per-invocation lines above: this second
@@ -524,7 +525,8 @@ fn resolve_and_expand(
         entry_module,
     )
     .with_module_scopes(origins.scopes().to_vec())
-    .with_label_spaces(label_spaces);
+    .with_label_spaces(label_spaces)
+    .with_final_layout(layout);
 
     resolve_structs_and_aliases(&mut alias_resolver).map_err(|error| {
         CompileError::Resolve(error, alias_resolver.take_error_module().map(|module| origins.path(module).to_path_buf()))

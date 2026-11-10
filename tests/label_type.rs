@@ -19,6 +19,13 @@ fn a_labels_position_counts_the_output_grouped_by_section() {
 }
 
 #[test]
+fn a_label_knows_its_offset_and_a_section_its_ends() {
+    // `.text`: 1, 2, a.offset, b.offset, c.offset, `.data`'s size, where
+    // `.data` starts; then `.data`: 3, 4.
+    assert_eq!(compile_ints("tests/fixtures/labels/offsets.basm"), vec![1, 2, 1, 0, 2, 2, 7, 3, 4]);
+}
+
+#[test]
 fn a_label_cant_be_emitted() {
     let stderr = error("emit");
     assert!(stderr.contains("can't `@emit` a value of type `label<stream>`"), "{stderr}");

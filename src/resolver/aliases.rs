@@ -193,6 +193,11 @@ pub struct AliasResolver<'a> {
     /// Each declared section, by name.
     pub(super) section_records: HashMap<String, SectionRecord>,
 
+    /// From the first label pass, for the second: each label's offset in
+    /// its section, and each section's first and past-the-end positions.
+    pub(super) seeded_label_offsets: HashMap<SymbolId, Int>,
+    pub(super) seeded_section_bounds: Option<HashMap<Option<String>, (Int, Int)>>,
+
     /// The first const name each space (by `space_key`) was given, so a
     /// message can say `label<flash>`.
     pub(super) space_names: HashMap<String, String>,
@@ -362,6 +367,10 @@ pub(super) struct SectionRecord {
     pub value: super::values::Value,
 }
 
+/// Each label's offset in its section, and each section's first and
+/// past-the-end positions: see `AliasResolver::final_layout`.
+pub type Layout = (HashMap<SymbolId, Int>, HashMap<Option<String>, (Int, Int)>);
+
 /// One struct's cached instantiations, by generic arguments.
 pub(super) type StructFieldsByArgs = Vec<(Vec<ResolvedGenericArg>, NamedFields)>;
 
@@ -463,6 +472,8 @@ impl<'a> AliasResolver<'a> {
             running_struct_facets: std::collections::HashSet::new(),
             section_records: HashMap::new(),
             space_names: HashMap::new(),
+            seeded_label_offsets: HashMap::new(),
+            seeded_section_bounds: None,
             const_value_stack: Vec::new(),
             macro_call_stack: Vec::new(),
             pending_tail_call: None,
@@ -584,6 +595,31 @@ impl<'a> AliasResolver<'a> {
     /// so a label read before it's placed still knows its space.
     pub fn with_label_spaces(mut self, spaces: HashMap<SymbolId, String>) -> Self {
         self.label_spaces = spaces;
+        self
+    }
+
+    /// Each label's offset in its section, and each section's bounds, once
+    /// this pass is done: what `l.offset`, `sec.start` and `sec.end` read
+    /// in the next one.
+    pub fn final_layout(&self) -> Layout {
+        let offsets = self.label_slots.iter().map(|(id, (_, index))| (*id, index.clone())).collect();
+        let mut bounds = HashMap::new();
+        let mut offset = Int::from(0);
+        for section in &self.section_order {
+            let size = self.section_sizes[section].clone();
+            bounds.insert(section.clone(), (offset.clone(), offset.clone() + size.clone()));
+            offset += size;
+        }
+        (offsets, bounds)
+    }
+
+    /// Seeds the second pass with `final_layout` from the first.
+    pub fn with_final_layout(
+        mut self,
+        (offsets, bounds): Layout,
+    ) -> Self {
+        self.seeded_label_offsets = offsets;
+        self.seeded_section_bounds = Some(bounds);
         self
     }
 

@@ -1,0 +1,23 @@
+# `l.offset` is a label's position in its own section; `sec.start` and
+# `sec.end` are labels at a section's ends.
+macro show(value: int) {
+    @emit value
+}
+
+const DATA = section .data
+
+section .text
+    show 1
+a:
+    show 2
+    show a.offset
+    show b.offset           # read before `b` is placed
+    show c.offset           # at the very end of `.data`
+    show (DATA.end as int) - (DATA.start as int)
+    show DATA.start as int
+
+@into DATA
+b:
+    show 3
+    show 4
+c:

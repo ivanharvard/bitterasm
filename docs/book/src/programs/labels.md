@@ -52,6 +52,36 @@ end:
 
 A label can be used before it appears in the file, like `end` above.
 
+`l.offset` counts from the start of the label's own section instead, so it
+doesn't change however the sections are laid out. A section value's
+`start` and `end` are labels too, at its first value and just past its
+last:
+
+```basm
+macro show(value: int) {
+    @emit value
+}
+
+const DATA = section .data
+
+section .text
+    show 1
+@into DATA
+    show 2
+inside:
+    show 3
+section .text
+    show inside.offset
+    show (DATA.end as int) - (DATA.start as int)
+```
+
+```emits
+1 1 2 2 3
+```
+
+`.text` comes first, holding `1` and the two numbers `show`n at the end,
+then `.data`, holding `2` and `3`.
+
 A label is in the [space](spaces.md) of its section, and its full type
 says which: `label<flash>`. A bare `label` takes a label in any space.
 
