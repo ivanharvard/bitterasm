@@ -2,7 +2,7 @@
 
 Words starting with `@` are **meta keywords**. They control what a macro
 does while the compiler runs it: emit values, return, check conditions,
-branch and loop. There are eleven:
+branch and loop. There are twelve:
 
 | Keyword | Does | Page |
 |---|---|---|
@@ -15,6 +15,7 @@ branch and loop. There are eleven:
 | `@for x in source { }` | Runs the body once per element | [`@for`](for.md) |
 | `@fold acc = init @for x in source { }` | A `@for` that carries values between iterations | [`@fold` and `@next`](fold.md) |
 | `@next value` | Moves a `@fold` to its next iteration | [`@fold` and `@next`](fold.md) |
+| `@into section` | Switches to a section value | [Sections](../programs/sections.md#sections-are-values) |
 | `@extend subject { ... }` | A space or section with more fields | [Spaces](../programs/spaces.md#extend) |
 | `@hasfield subject, name` | Whether `subject` has a field `name` | [Spaces](../programs/spaces.md#hasfield) |
 
@@ -29,6 +30,7 @@ instruction, which is a macro some architecture package provides.
 | `@emit`, `@return`, `@assert`, `@error` | ✓ | | | |
 | `@if`, `@for`, `@fold`/`@next` | ✓ | ✓ | ✓ | ✓ |
 | `@match` | ✓ | ✓ | | |
+| `@into` | ✓ | ✓ | | |
 
 `@emit`, `@return` and `@assert` only mean something while a macro runs:
 

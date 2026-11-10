@@ -641,16 +641,18 @@ fn walk_top_level(
             }
 
             Statement::Section(section) => {
-                if section.declares() {
-                    alias_resolver.declare_section(section, &Scope::default(), statement_modules[index]).map_err(|error| {
-                        let module = alias_resolver.take_error_module().unwrap_or(statement_modules[index]);
-                        (error, module)
-                    })?;
-                }
-                // Another file's `pub section`: declared, not switched to.
-                if !section.imported {
-                    alias_resolver.set_current_section(Some(section.name.clone()));
-                }
+                alias_resolver.enter_section_statement(section, &Scope::default(), statement_modules[index]).map_err(|error| {
+                    let module = alias_resolver.take_error_module().unwrap_or(statement_modules[index]);
+                    (error, module)
+                })?;
+            }
+
+            // `@into TEXT`: switch to a section value.
+            Statement::Meta(meta) if meta.name == "into" => {
+                alias_resolver.enter_into(meta, &Scope::default(), statement_modules[index]).map_err(|error| {
+                    let module = alias_resolver.take_error_module().unwrap_or(statement_modules[index]);
+                    (error, module)
+                })?;
             }
 
             // A top-level `@for` of invocations, kept as a loop by

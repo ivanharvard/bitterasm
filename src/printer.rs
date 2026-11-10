@@ -89,7 +89,7 @@ pub fn print_statement(statement: &Statement, indent: usize) -> String {
                     "{pad}{pub_kw}space {name} = {value}{facets}",
                     name = print_spliced_name(&decl.name),
                     value = print_expr(&decl.value),
-                    facets = print_applied_facets(facets),
+                    facets = print_applied_facets(facets, false),
                 ),
             }
         }
@@ -113,11 +113,10 @@ pub fn print_statement(statement: &Statement, indent: usize) -> String {
         ),
 
         Statement::Section(section) => format!(
-            "{pad}{pub_kw}section {name}{space}{facets}",
-            pub_kw = if section.is_pub { "pub " } else { "" },
+            "{pad}section {name}{space}{facets}",
             name = section.name,
             space = section.space.as_ref().map(|space| format!(" in {}", print_expr(space))).unwrap_or_default(),
-            facets = print_applied_facets(&section.facets),
+            facets = print_applied_facets(&section.facets, false),
         ),
 
         Statement::Invocation(invocation) => {
@@ -349,7 +348,7 @@ fn print_facet(facet: &Facet) -> String {
             format!("{} {{ {} }}", facet.name, print_pattern_tokens(tokens))
         }
 
-        FacetPayload::Applied(call) => print_applied_facets(std::slice::from_ref(call)).trim_start_matches(" | ").to_string(),
+        FacetPayload::Applied(call) => print_applied_facets(std::slice::from_ref(call), false).trim_start_matches(" | ").to_string(),
     }
 }
 
@@ -580,6 +579,12 @@ pub fn print_expr(expr: &Expr) -> String {
             format!("{}{generics} {{ {body} }}", print_expr(callee))
         }
 
+        Expr::SectionLiteral { name, space, facets, .. } => format!(
+            "section {name}{}{}",
+            space.as_ref().map(|space| format!(" in {}", print_expr(space))).unwrap_or_default(),
+            print_applied_facets(facets, true),
+        ),
+
         Expr::AnonStruct { fields, positional, .. } => {
             let body = if *positional {
                 fields
@@ -625,13 +630,19 @@ pub fn print_expr(expr: &Expr) -> String {
 
 /// ` | unit<bits<16>> | start 0x8000`: a space's or section's facets, each
 /// a call written without its first argument.
-fn print_applied_facets(facets: &[Expr]) -> String {
+// `in_expression`: in a section literal, a facet's arguments go in
+// parentheses.
+fn print_applied_facets(facets: &[Expr], in_expression: bool) -> String {
     facets
         .iter()
         .map(|facet| match facet {
             Expr::Call { callee, generic_args, arguments, .. } => {
                 let arguments = arguments.iter().map(|argument| print_expr(&argument.value)).collect::<Vec<_>>();
-                let arguments = if arguments.is_empty() { String::new() } else { format!(" {}", arguments.join(", ")) };
+                let arguments = match (arguments.is_empty(), in_expression) {
+                    (true, _) => String::new(),
+                    (false, true) => format!("({})", arguments.join(", ")),
+                    (false, false) => format!(" {}", arguments.join(", ")),
+                };
                 format!(" | {}{}{arguments}", print_expr(callee), print_generic_arguments(generic_args))
             }
             other => format!(" | {}", print_expr(other)),

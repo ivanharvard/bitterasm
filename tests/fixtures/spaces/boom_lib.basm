@@ -1,0 +1,9 @@
+#! A section whose facet fails, for the import tests.
+
+## Fails when anything evaluates it.
+pub const BOOM = section .boom
+    | fails
+
+macro fails(_sec: section) -> section {
+    @error "this section's facet ran"
+}

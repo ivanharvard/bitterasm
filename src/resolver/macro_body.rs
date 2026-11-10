@@ -937,6 +937,11 @@ impl<'a> AliasResolver<'a> {
 
                     "error" => return Err(super::metas::error::raise(&meta.args, meta.span)),
 
+                    "into" => {
+                        let module = self.current_module;
+                        self.enter_into(meta, &scope, module)?;
+                    }
+
                     "if" => {
                         let [condition] = meta.args.as_slice() else {
                             return Err(ResolveError::Internal {
@@ -1211,12 +1216,8 @@ impl<'a> AliasResolver<'a> {
                 // `docs/sections-and-linking/PROGRESS.md`.
                 Statement::Section(section) => {
                     // Its space and facets may use this macro's arguments.
-                    if section.declares() {
-                        let module = self.current_module;
-                        self.declare_section(section, &scope, module)?;
-                    }
-                    self.used_sections.insert(section.name.clone());
-                    self.current_section = Some(section.name.clone());
+                    let module = self.current_module;
+                    self.enter_section_statement(section, &scope, module)?;
                 }
 
                 Statement::Import(import) => {
@@ -1527,6 +1528,16 @@ impl<'a> AliasResolver<'a> {
             Expr::AnonStruct { fields, positional, span } => Ok(Expr::AnonStruct {
                 fields: self.splice_construct_items(fields, scope)?,
                 positional: *positional,
+                span: *span,
+            }),
+
+            Expr::SectionLiteral { name, space, facets, span } => Ok(Expr::SectionLiteral {
+                name: name.clone(),
+                space: match space {
+                    Some(space) => Some(Box::new(self.splice_expr(space, scope)?)),
+                    None => None,
+                },
+                facets: facets.iter().map(|facet| self.splice_expr(facet, scope)).collect::<Result<_, _>>()?,
                 span: *span,
             }),
 

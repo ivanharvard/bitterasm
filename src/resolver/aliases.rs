@@ -352,12 +352,9 @@ pub struct AliasResolver<'a> {
 /// `is_skip` and default — see `instantiate_struct_fields_named`.
 pub(super) type NamedFields = Rc<Vec<NamedField>>;
 
-/// A declared section: where it was declared (module and the `section`
-/// line's span), whether it came from another file's `pub section`, and its
-/// value (a `Value::Record`).
+/// The value a section was entered with that gave it a space or facets (a
+/// `Value::Record`). A bare `section .text` doesn't record one.
 pub(super) struct SectionRecord {
-    pub declared_at: (usize, Span),
-    pub imported: bool,
     pub value: super::values::Value,
 }
 

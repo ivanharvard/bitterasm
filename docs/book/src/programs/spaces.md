@@ -146,9 +146,10 @@ section .text in flash
     | alloc
 ```
 
-This declares the section. Later `section .text` lines only switch to it,
-and declaring it a second time is an error. Without `in`, a section goes
-in `stream`.
+A bare `section .text`, with no space or facets, only switches to the
+section. A section has one space and one set of facets, so entering it
+again with different ones is an error. Without `in`, a section goes in
+`stream`.
 
 A section's facets work the same way, taking and returning a `section`.
 Its space is its `space` field, so a facet can check where its section
@@ -174,28 +175,28 @@ section .vectors in ram
 this section has to be in high memory
 ```
 
-A `section` line inside a macro declares the section too, and its space
-and facets can use the macro's arguments. Running the same line again is
-fine as long as it gives the same section; giving a different one is an
-error.
+A `section` line inside a macro can use the macro's arguments in its space
+and facets. Running the same line again is fine as long as it gives the
+same section; giving a different one is an error.
 
-A section has to be declared before anything switches to it: a plain
-`section .x` followed later by `section .x in flash` is an error.
+The first time a section gets its space or facets has to come before
+anything goes in it: a bare `section .x` followed later by
+`section .x in flash` is an error.
 
-## Importing sections
+## Sections from a library
 
-A `pub section` can be imported, by its dotted name or with `*`:
+A [section is a value](sections.md#sections-are-values), so a library
+shares one as a const, and a program switches to it with `@into`:
 
 ```basm,ignore
-from std.formats.elf import .text, .data
+from std.formats.elf import TEXT
+
+@into TEXT
 ```
 
-An imported section is declared, but not switched to. A file's own
-declaration of the same section replaces the imported one, as long as
-nothing has switched to it yet.
-
-`std.formats.elf` declares `.text`, `.rodata`, `.data` and `.bss` with
-ELF's section facets, `progbits`, `nobits`, `alloc`, `write` and `exec`.
+`std.formats.elf` has `TEXT`, `RODATA`, `DATA` and `BSS`, the sections
+`.text`, `.rodata`, `.data` and `.bss` with ELF's section facets,
+`progbits`, `nobits`, `alloc`, `write` and `exec`.
 
 ## Labels in a space
 

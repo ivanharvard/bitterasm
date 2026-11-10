@@ -42,10 +42,12 @@ The section's contents are stored in the file: code and data. Sets
 ```basm
 from std.formats.elf import progbits, alloc, exec
 
-section .text
+const CODE = section .text
     | progbits
     | alloc
     | exec
+
+@into CODE
 ```
 
 | Syntax | Parameters | Result | Description |
@@ -118,9 +120,9 @@ RV32. The parameters mean what they do for `elf64_executable`.
 
 ## Sections
 
-| Section | Space | Facets | Description |
-|---|---|---|---|
-| `.text` | `stream` | `progbits`, `alloc`, `exec` | Code: stored in the file, in memory while running, and executable. |
-| `.rodata` | `stream` | `progbits`, `alloc` | Constants: stored in the file and in memory while running. |
-| `.data` | `stream` | `progbits`, `alloc`, `write` | Variables with starting values: stored in the file, and writable. |
-| `.bss` | `stream` | `nobits`, `alloc`, `write` | Variables that start at zero: no room in the file, and writable. |
+| Constant | Section | Space | Facets | Description |
+|---|---|---|---|---|
+| `TEXT` | `.text` | `stream` | `progbits`, `alloc`, `exec` | Code: stored in the file, in memory while running, and executable. |
+| `RODATA` | `.rodata` | `stream` | `progbits`, `alloc` | Constants: stored in the file and in memory while running. |
+| `DATA` | `.data` | `stream` | `progbits`, `alloc`, `write` | Variables with starting values: stored in the file, and writable. |
+| `BSS` | `.bss` | `stream` | `nobits`, `alloc`, `write` | Variables that start at zero: no room in the file, and writable. |

@@ -394,6 +394,18 @@ impl Parser {
             // `{ x: 42 }` or `{ 42, 43 }`: an anonymous struct.
             TokenKind::LBrace => self.parse_anon_struct(),
 
+            // `section .text | progbits`: a section, as a value.
+            TokenKind::Section => {
+                let start = token.span.start;
+                let (name, space, facets) = self.parse_section_parts(true)?;
+                Ok(Expr::SectionLiteral {
+                    name,
+                    space: space.map(Box::new),
+                    facets,
+                    span: Span::new(start, self.previous().span.end),
+                })
+            }
+
             // ============
             // paranthesized expressions
             // ============
@@ -809,6 +821,7 @@ fn set_expr_span(expr: &mut Expr, new_span: Span) {
         | Expr::EnumVariant { span, .. }
         | Expr::Construct { span, .. }
         | Expr::AnonStruct { span, .. }
+        | Expr::SectionLiteral { span, .. }
         | Expr::As { span, .. }
         | Expr::Unary { span, .. }
         | Expr::Binary { span, .. }

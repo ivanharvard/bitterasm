@@ -601,6 +601,13 @@ pub fn substitute_expr(expr: &Expr, substitutions: &HashMap<String, Expr>) -> Ex
             span: *span,
         },
 
+        Expr::SectionLiteral { name, space, facets, span } => Expr::SectionLiteral {
+            name: name.clone(),
+            space: space.as_ref().map(|space| Box::new(substitute_expr(space, substitutions))),
+            facets: facets.iter().map(|facet| substitute_expr(facet, substitutions)).collect(),
+            span: *span,
+        },
+
         Expr::As { value, ty, span } => Expr::As {
             value: Box::new(substitute_expr(value, substitutions)),
             ty: substitute_type_expr(ty, substitutions),

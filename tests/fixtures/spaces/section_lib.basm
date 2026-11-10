@@ -4,17 +4,9 @@
 pub space rom = stream
 
 ## A section in `rom`.
-pub section .vectors in rom
-    | tagged 3
-
-## Fails when anything imports it.
-pub section .boom
-    | fails
+pub const VECTORS = section .vectors in rom
+    | tagged(3)
 
 macro tagged(sec: section, value: int) -> section {
     @return @extend sec { tag: int = value }
-}
-
-macro fails(_sec: section) -> section {
-    @error "this section's facet ran"
 }

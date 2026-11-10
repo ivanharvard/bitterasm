@@ -242,6 +242,13 @@ pub(super) fn referenced_identifiers(expr: &crate::ast::Expr) -> Vec<String> {
 
             Expr::AnonStruct { fields, .. } => push_construct_item_exprs(fields, &mut stack),
 
+            Expr::SectionLiteral { space, facets, .. } => {
+                if let Some(space) = space {
+                    stack.push(space);
+                }
+                stack.extend(facets);
+            }
+
             Expr::As { value, ty, .. } => {
                 stack.push(value);
 
@@ -435,6 +442,7 @@ fn is_int_shaped_inner(program: &Program, expr: &Expr, visiting: &mut HashSet<St
                 | Expr::Call { .. }
                 | Expr::Construct { .. }
                 | Expr::AnonStruct { .. }
+                | Expr::SectionLiteral { .. }
                 | Expr::As { .. }
                 | Expr::String { .. }
         ),

@@ -1,7 +1,6 @@
-# Sections imported by name and with `*`. A label in the imported
-# `.vectors` is in its space, `rom`.
-from .section_lib import rom, .vectors
-from std.formats.elf import *
+# A section imported as a const. A label in `.vectors` is in its space,
+# `rom`. A bare `section .text` needs nothing imported.
+from .section_lib import rom, VECTORS
 
 macro show(value: int) {
     @emit value
@@ -11,7 +10,7 @@ macro in_rom(at: label<rom>) {
     @emit at as int
 }
 
-section .vectors
+@into VECTORS
 reset:
     show 1
 section .text

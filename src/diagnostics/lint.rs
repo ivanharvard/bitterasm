@@ -228,9 +228,7 @@ pub fn lint_program_with(
 fn collect_program_statement_references(statement: &Statement, names: &mut HashSet<String>) {
     match statement {
         Statement::Import(_) | Statement::Label(_) | Statement::ExternLabel(_) => {}
-        // A `section .text` line uses an imported `.text`.
         Statement::Section(section) => {
-            names.insert(section.name.clone());
             if let Some(space) = &section.space { collect_expr_identifiers(space, names); }
             section.facets.iter().for_each(|facet| collect_expr_identifiers(facet, names));
         }
@@ -374,12 +372,6 @@ fn lint_missing_docs(program: &Program, source: SourceId, config: &LintConfig, d
             Statement::Label(label) => {
                 if label.is_pub && label.doc.is_none() {
                     emit_lint(missing_docs("label", &label.name, label.span, source), level, diagnostics);
-                }
-                continue;
-            }
-            Statement::Section(section) => {
-                if section.is_pub && section.doc.is_none() {
-                    emit_lint(missing_docs("section", &section.name, section.span, source), level, diagnostics);
                 }
                 continue;
             }
@@ -760,10 +752,8 @@ fn collect_statement_identifiers(statement: &Statement, names: &mut HashSet<Stri
         Statement::Enum(value) => collect_name_splice_identifiers(&value.name, names),
         Statement::TypeAlias(value) => collect_name_splice_identifiers(&value.name, names),
         Statement::Macro(value) => collect_name_splice_identifiers(&value.name, names),
-        // A macro's `section` line can use its parameters and an imported
-        // section.
+        // A macro's `section` line can use its parameters.
         Statement::Section(section) => {
-            names.insert(section.name.clone());
             if let Some(space) = &section.space { collect_expr_identifiers(space, names); }
             section.facets.iter().for_each(|facet| collect_expr_identifiers(facet, names));
         }
@@ -850,6 +840,10 @@ fn collect_expr_identifiers(expr: &Expr, names: &mut HashSet<String>) {
             collect_construct_identifiers(fields, names);
         }
         Expr::AnonStruct { fields, .. } => collect_construct_identifiers(fields, names),
+        Expr::SectionLiteral { space, facets, .. } => {
+            if let Some(space) = space { collect_expr_identifiers(space, names); }
+            facets.iter().for_each(|facet| collect_expr_identifiers(facet, names));
+        }
         Expr::As { value, ty, .. } => {
             collect_expr_identifiers(value, names);
             collect_type_references(ty, names);

@@ -155,22 +155,14 @@ pub struct Section {
     /// `| progbits`-style facets, each a call to a macro written without
     /// its first argument (the section it's applied to).
     pub facets: Vec<Expr>,
-    /// `pub section .text ...`: other files can import it, by name
-    /// (`from x import .text`) or with `*`.
-    pub is_pub: bool,
-    /// Spliced in by the loader from another file's `pub section`: it
-    /// declares the section, but doesn't switch to it.
-    pub imported: bool,
     pub span: Span,
-    /// A `pub section`'s `##` doc comment.
-    pub doc: Option<Doc>,
 }
 
 impl Section {
-    /// Whether this line declares the section (giving its space or facets,
-    /// or exporting it) rather than only switching to it.
+    /// Whether this line gives the section a space or facets, rather than
+    /// only switching to it by name.
     pub fn declares(&self) -> bool {
-        self.is_pub || self.space.is_some() || !self.facets.is_empty()
+        self.space.is_some() || !self.facets.is_empty()
     }
 }
 
@@ -244,6 +236,15 @@ pub enum Expr {
         callee: Box<Expr>,
         generic_args: Vec<TypeArgument>,
         fields: Vec<ConstructItem>,
+        span: Span,
+    },
+
+    /// `section .text in flash | progbits`, as a value: the section named
+    /// `.text`, in a space, with facets. A `section` line switches to one.
+    SectionLiteral {
+        name: String,
+        space: Option<Box<Expr>>,
+        facets: Vec<Expr>,
         span: Span,
     },
 
@@ -381,6 +382,7 @@ impl Expr {
             | Expr::EnumVariant { span, .. }
             | Expr::Construct { span, .. }
             | Expr::AnonStruct { span, .. }
+            | Expr::SectionLiteral { span, .. }
             | Expr::As { span, .. }
             | Expr::Unary { span, .. }
             | Expr::Binary { span, .. }

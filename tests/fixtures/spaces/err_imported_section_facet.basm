@@ -1,4 +1,4 @@
-# Importing a section runs its facets.
-from .section_lib import .boom
+# Entering an imported section runs its facets.
+from .boom_lib import BOOM
 
-section .boom
+@into BOOM

@@ -139,6 +139,15 @@ impl Record {
         Record { kind: RecordKind::Space, identity: "stream".to_string(), fields: Vec::new() }
     }
 
+    /// `section NAME` with no space or facets.
+    pub fn bare_section(name: &str) -> Self {
+        Record {
+            kind: RecordKind::Section,
+            identity: name.to_string(),
+            fields: vec![("space".to_string(), RecordField::Value(Value::Record(Box::new(Record::stream()))))],
+        }
+    }
+
     pub fn field(&self, name: &str) -> Option<&RecordField> {
         self.fields.iter().find(|(field, _)| field == name).map(|(_, value)| value)
     }
@@ -476,6 +485,9 @@ impl<'a> AliasResolver<'a> {
             // it into UTF-8 bytes when that representation is wanted.
             Expr::String { value, span } => self.eval_string_value(value, *span),
             Expr::AnonStruct { fields, span, .. } => self.eval_anon_struct_value(fields, *span, scope),
+            Expr::SectionLiteral { name, space, facets, .. } => {
+                self.eval_section_literal(name, space.as_deref(), facets, scope)
+            }
 
             // Transparent here too — `@emit`'s argument is already always
             // evaluated, so a splice around it changes nothing.
@@ -643,71 +655,119 @@ impl<'a> AliasResolver<'a> {
         }
     }
 
-    /// `section .text in flash | progbits`: works out the section's value —
-    /// its space (the default `stream` without `in`), then its facets,
-    /// evaluated in `scope` as module `module` — and records it.
-    ///
-    /// A section is declared once: later `section .text` lines only switch
-    /// to it. The same line running again (a macro called twice) is no
-    /// conflict unless it gives a different value. A declaration imported
-    /// from another file's `pub section` gives way to this file's own, as
-    /// long as nothing has used the section yet.
-    pub fn declare_section(
+    /// `section .text in flash | progbits`, as a value: a section record
+    /// named `.text`, in its space (the default `stream` without `in`),
+    /// then each facet applied in turn, evaluated in `scope`.
+    pub(super) fn eval_section_literal(
+        &mut self,
+        name: &str,
+        space: Option<&Expr>,
+        facets: &[Expr],
+        scope: &Scope,
+    ) -> Result<Value, ResolveError> {
+        let space = match space {
+            Some(expr) => match self.eval_value(expr, scope)? {
+                Value::Record(record) if record.kind == RecordKind::Space => *record,
+                Value::Record(record) => {
+                    return Err(ResolveError::ExpectedSpace { found: record.describe(), span: expr.span() })
+                }
+                other => {
+                    let ty = self.value_type(&other)?;
+                    return Err(ResolveError::ExpectedSpace {
+                        found: format!("`{}`", describe_type(&ty, self)),
+                        span: expr.span(),
+                    });
+                }
+            },
+            None => Record::stream(),
+        };
+
+        let record = Record {
+            kind: RecordKind::Section,
+            identity: name.to_string(),
+            fields: vec![("space".to_string(), RecordField::Value(Value::Record(Box::new(space))))],
+        };
+        self.apply_facets(Value::Record(Box::new(record)), facets, scope)
+    }
+
+    /// A `section` line: switches to the section it names, with its space
+    /// and facets, evaluated in `scope` as module `module`. In a macro, a
+    /// name that's also a parameter or const is a mistake for `@into`.
+    pub fn enter_section_statement(
         &mut self,
         section: &crate::ast::Section,
         scope: &Scope,
         module: usize,
     ) -> Result<(), ResolveError> {
-        let declared_at = (module, section.span);
-        let redeclared = || ResolveError::SectionRedeclared { name: section.name.clone(), span: section.span };
-        let mut same_line = false;
-        match self.section_records.get(&section.name) {
-            Some(existing) if existing.declared_at == declared_at => same_line = true,
-            Some(existing) if existing.imported && !section.imported => {
-                if self.used_sections.contains(&section.name) {
-                    return Err(ResolveError::SectionUsedBeforeDeclared { name: section.name.clone(), span: section.span });
-                }
-            }
-            Some(_) => return Err(redeclared()),
-            None if !section.imported && self.used_sections.contains(&section.name) => {
-                return Err(ResolveError::SectionUsedBeforeDeclared { name: section.name.clone(), span: section.span });
-            }
-            None => {}
+        let names_const = !section.name.starts_with('.')
+            && self.with_module(module, |this| this.scoped_name(&section.name)).is_some_and(|internal| {
+                self.lookup_symbol(&internal).is_some_and(|id| self.get_symbol(id).kind == SymbolKind::Const)
+            });
+        if scope.contains_key(&section.name) || names_const {
+            return Err(ResolveError::SectionNameIsBinding { name: section.name.clone(), span: section.span });
         }
-
         let value = self.with_module(module, |this| {
-            let space = match &section.space {
-                Some(expr) => match this.eval_value(expr, scope)? {
-                    Value::Record(record) if record.kind == RecordKind::Space => *record,
-                    Value::Record(record) => {
-                        return Err(ResolveError::ExpectedSpace { found: record.describe(), span: expr.span() })
-                    }
-                    other => {
-                        let ty = this.value_type(&other)?;
-                        return Err(ResolveError::ExpectedSpace {
-                            found: format!("`{}`", describe_type(&ty, this)),
-                            span: expr.span(),
-                        });
-                    }
-                },
-                None => Record::stream(),
-            };
-
-            let record = Record {
-                kind: RecordKind::Section,
-                identity: section.name.clone(),
-                fields: vec![("space".to_string(), RecordField::Value(Value::Record(Box::new(space))))],
-            };
-            this.apply_facets(Value::Record(Box::new(record)), &section.facets, scope)
+            this.eval_section_literal(&section.name, section.space.as_ref(), &section.facets, scope)
         })?;
+        self.enter_section(value, section.span)
+    }
 
-        if same_line && self.section_records[&section.name].value != value {
-            return Err(redeclared());
+    /// `@into value`: switches to a section value, evaluated in `scope` as
+    /// module `module`.
+    pub fn enter_into(
+        &mut self,
+        meta: &crate::ast::MetaStatement,
+        scope: &Scope,
+        module: usize,
+    ) -> Result<(), ResolveError> {
+        let [target] = meta.args.as_slice() else {
+            return Err(ResolveError::InvalidArgumentCount {
+                name: "@into".to_string(),
+                expected: 1,
+                actual: meta.args.len(),
+                span: meta.span,
+            });
+        };
+        let value = self.with_module(module, |this| this.eval_value(target, scope))?;
+        self.enter_section(value, target.span())
+    }
+
+    /// Switches to the section `value`, a section literal's value. A
+    /// section has one space and set of facets: entering it with different
+    /// ones than before is an error. A bare `section .text`, with neither,
+    /// only switches to it, and the first one that gives them has to come
+    /// before anything has been put in the section.
+    pub(super) fn enter_section(&mut self, value: Value, span: Span) -> Result<(), ResolveError> {
+        let record = match &value {
+            Value::Record(record) if record.kind == RecordKind::Section => record,
+            other => {
+                let found = match other {
+                    Value::Record(record) => record.describe(),
+                    other => {
+                        let ty = self.value_type(other)?;
+                        format!("`{}`", describe_type(&ty, self))
+                    }
+                };
+                return Err(ResolveError::ExpectedSection { found, span });
+            }
+        };
+        let name = record.identity.clone();
+        let bare = **record == Record::bare_section(&name);
+
+        match self.section_records.get(&name) {
+            Some(existing) if bare || existing.value == value => {}
+            Some(_) => return Err(ResolveError::SectionRedeclared { name, span }),
+            None if bare => {}
+            None if self.used_sections.contains(&name) => {
+                return Err(ResolveError::SectionUsedBeforeDeclared { name, span });
+            }
+            None => {
+                self.section_records.insert(name.clone(), super::aliases::SectionRecord { value });
+            }
         }
-        self.section_records.insert(
-            section.name.clone(),
-            super::aliases::SectionRecord { declared_at, imported: section.imported, value },
-        );
+
+        self.used_sections.insert(name.clone());
+        self.current_section = Some(name);
         Ok(())
     }
 

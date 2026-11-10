@@ -7,7 +7,7 @@ A section is a named region of the output, such as code or read-only data.
 ```basm,ignore
 section name
 section name in space | facet ...
-pub section name in space | facet ...
+@into value
 ```
 
 Everything emitted after a `section` statement belongs to that section, until
@@ -15,8 +15,43 @@ the next `section` statement. A name can be reopened any number of times.
 
 The name means nothing to the compiler, or to `bitter`: `.text`, `.rodata`
 and `code` are all just names. What a section *is* comes from the second
-form, which declares the [space](spaces.md) it goes in and its facets, once.
-A `pub` one can be [imported](spaces.md#importing-sections).
+form, which gives the [space](spaces.md) it goes in and its facets.
+
+## Sections are values
+
+Written where a value goes, `section name in space | facet ...` is a
+section, the way `"abc"` is a string: a `const` can hold it, and a macro
+can take one. `@into` switches to a section value:
+
+```basm
+from std.binary import bits
+
+macro db(value: int) {
+    @emit value as bits<8>
+}
+
+const DATA = section .data
+
+section .text
+    db 1
+@into DATA
+    db 0xaa
+```
+
+```bytes
+01 aa
+```
+
+A `section` line is shorthand for `@into` on the section it names, so
+inside a macro, `section s` is a section named `s`, not the parameter `s`:
+switching to a parameter is `@into s`. In a section value, a facet's
+arguments go in parentheses, `section .text | tagged(3)`.
+
+A library shares a section as a const, like any other value:
+
+```basm,ignore
+pub const TEXT = section .text | progbits | alloc | exec
+```
 
 ## Sections are grouped
 

@@ -63,10 +63,12 @@ pub const SHT_NOBITS = 8
 ## ```
 ## from std.formats.elf import progbits, alloc, exec
 ##
-## section .text
+## const CODE = section .text
 ##     | progbits
 ##     | alloc
 ##     | exec
+##
+## @into CODE
 ## ```
 pub macro progbits(sec: section) -> section {
     @return @extend sec { elf_type: int = SHT_PROGBITS }
@@ -94,24 +96,24 @@ pub macro exec(sec: section) -> section {
 }
 
 ## Code: stored in the file, in memory while running, and executable.
-pub section .text
+pub const TEXT = section .text
     | progbits
     | alloc
     | exec
 
 ## Constants: stored in the file and in memory while running.
-pub section .rodata
+pub const RODATA = section .rodata
     | progbits
     | alloc
 
 ## Variables with starting values: stored in the file, and writable.
-pub section .data
+pub const DATA = section .data
     | progbits
     | alloc
     | write
 
 ## Variables that start at zero: no room in the file, and writable.
-pub section .bss
+pub const BSS = section .bss
     | nobits
     | alloc
     | write

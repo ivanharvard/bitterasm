@@ -1,0 +1,5 @@
+macro switch_to(s: section) {
+    section s
+}
+
+switch_to section .text

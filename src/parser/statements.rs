@@ -46,7 +46,7 @@ impl Parser {
 
             TokenKind::Section => {
                 Ok(Statement::Section(
-                    self.parse_section(false)?
+                    self.parse_section()?
                 ))
             }
 
@@ -78,8 +78,10 @@ impl Parser {
                         self.parse_from_import(true)?
                     )),
 
-                    TokenKind::Section => Ok(Statement::Section(
-                        self.parse_section(true)?
+                    TokenKind::Section => Err(ParseError::new(
+                        "a section can't be `pub`; export a const that holds it instead, like \
+                         `pub const TEXT = section .text | exec`",
+                        self.current().span,
                     )),
 
                     TokenKind::Identifier(_) if self.at_space_declaration() => Ok(Statement::Const(
@@ -273,9 +275,30 @@ impl Parser {
     // `.rela.text`). Stored as a single literal string, dots included; no
     // further character restrictions beyond what an identifier already
     // allows.
-    fn parse_section(&mut self, is_pub: bool) -> Result<Section, ParseError> {
-        let start = if is_pub { self.previous().span.start } else { self.current().span.start };
+    fn parse_section(&mut self) -> Result<Section, ParseError> {
+        let start = self.current().span.start;
 
+        let (name, space, facets) = self.parse_section_parts(false)?;
+
+        if !self.at_statement_end() {
+            return Err(ParseError::new(
+                format!("unexpected token after section name: {:?}", self.current().kind),
+                self.current().span,
+            ));
+        }
+
+        let end = self.statement_end()?;
+
+        Ok(Section { name, space, facets, span: Span::new(start, end) })
+    }
+
+    // `section NAME [in SPACE] [| facet ...]`, with the parser on
+    // `section`. Inside an expression, a facet's arguments need
+    // parentheses, so a `,` or `)` after it ends the section.
+    pub(super) fn parse_section_parts(
+        &mut self,
+        in_expression: bool,
+    ) -> Result<(String, Option<Expr>, Vec<Expr>), ParseError> {
         self.expect_simple(TokenKind::Section)?;
 
         let mut name = String::new();
@@ -302,26 +325,9 @@ impl Parser {
         } else {
             None
         };
-        let facets = self.parse_applied_facets()?;
+        let facets = self.parse_applied_facets_with(in_expression)?;
 
-        if !self.at_statement_end() {
-            return Err(ParseError::new(
-                format!("unexpected token after section name: {:?}", self.current().kind),
-                self.current().span,
-            ));
-        }
-
-        let end = self.statement_end()?;
-
-        Ok(Section {
-            name,
-            space,
-            facets,
-            is_pub,
-            imported: false,
-            span: Span::new(start, end),
-            doc: None,
-        })
+        Ok((name, space, facets))
     }
 
     // =============
@@ -470,6 +476,12 @@ impl Parser {
     // `| name arg, ...`, each a call to the macro `name` with the subject
     // left out. A facet may continue on the next line.
     pub(super) fn parse_applied_facets(&mut self) -> Result<Vec<Expr>, ParseError> {
+        self.parse_applied_facets_with(false)
+    }
+
+    // `in_expression`: a facet's arguments go in parentheses, as in
+    // `section .text | unit(16)`, rather than `| unit 16`.
+    fn parse_applied_facets_with(&mut self, in_expression: bool) -> Result<Vec<Expr>, ParseError> {
         let mut facets = Vec::new();
 
         loop {
@@ -494,7 +506,23 @@ impl Parser {
             // Like a built-in facet's expression, each argument stops at
             // the next `|`; parentheses allow a bitwise or inside one.
             let mut arguments = Vec::new();
-            if !self.at_statement_end() && !self.check(&TokenKind::Pipe) {
+            if in_expression {
+                if self.check(&TokenKind::LParen) {
+                    self.advance();
+                    self.skip_newlines();
+                    while !self.check(&TokenKind::RParen) {
+                        let value = self.parse_expr()?;
+                        arguments.push(CallArgument { name: None, span: value.span(), value });
+                        self.skip_newlines();
+                        if !self.check(&TokenKind::Comma) {
+                            break;
+                        }
+                        self.advance();
+                        self.skip_newlines();
+                    }
+                    self.expect_simple(TokenKind::RParen)?;
+                }
+            } else if !self.at_statement_end() && !self.check(&TokenKind::Pipe) {
                 loop {
                     let value = self.parse_expr_bp_until(0, Some(&TokenKind::Pipe))?;
                     arguments.push(CallArgument { name: None, span: value.span(), value });

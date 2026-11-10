@@ -379,6 +379,12 @@ fn unroll_meta(
             Ok(())
         }
 
+        // `@into` runs in order with the program's other statements.
+        "into" => {
+            out.push(Statement::Meta(meta.clone()));
+            Ok(())
+        }
+
         // `@emit`, `@return`, `@assert` and `@error` only mean something
         // while a macro runs.
         "emit" | "return" | "assert" | "error" => Err(ResolveError::MetaOutsideMacro {

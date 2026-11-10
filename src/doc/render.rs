@@ -79,15 +79,18 @@ pub(super) fn page(module: &Module, links: &Links) -> String {
     let is_space = |item: &&Item| {
         matches!(&item.kind, ItemKind::Const(declaration) if matches!(declaration.kind, crate::ast::ConstKind::Space { .. }))
     };
+    // `pub const TEXT = section .text | exec`: a section, by its constant.
+    let is_section = |item: &&Item| {
+        matches!(&item.kind, ItemKind::Const(declaration) if matches!(declaration.value, crate::ast::Expr::SectionLiteral { .. }))
+    };
     let consts: Vec<&Item> = module
         .items
         .iter()
         .filter(own)
-        .filter(|item| matches!(item.kind, ItemKind::Const(_)) && !is_space(item))
+        .filter(|item| matches!(item.kind, ItemKind::Const(_)) && !is_space(item) && !is_section(item))
         .collect();
     let spaces: Vec<&Item> = module.items.iter().filter(own).filter(is_space).collect();
-    let sections: Vec<&Item> =
-        module.items.iter().filter(own).filter(|item| matches!(item.kind, ItemKind::Section(_))).collect();
+    let sections: Vec<&Item> = module.items.iter().filter(own).filter(is_section).collect();
     let labels: Vec<&Item> = module.items.iter().filter(own).filter(|item| matches!(item.kind, ItemKind::Label(_))).collect();
 
     if !macros.is_empty() {
@@ -144,16 +147,18 @@ pub(super) fn page(module: &Module, links: &Links) -> String {
     }
 
     if !sections.is_empty() {
-        out.push_str("## Sections\n\n| Section | Space | Facets | Description |\n|---|---|---|---|\n");
+        out.push_str("## Sections\n\n| Constant | Section | Space | Facets | Description |\n|---|---|---|---|---|\n");
         for item in sections {
-            let ItemKind::Section(section) = &item.kind else { continue };
-            let space = section.space.as_ref().map_or_else(|| "stream".to_string(), print_expr);
+            let ItemKind::Const(declaration) = &item.kind else { continue };
+            let crate::ast::Expr::SectionLiteral { name, space, facets, .. } = &declaration.value else { continue };
+            let space = space.as_deref().map_or_else(|| "stream".to_string(), print_expr);
             out.push_str(&format!(
-                "| {} | {} | {} | {} |\n",
+                "| {} | {} | {} | {} | {} |\n",
                 cell(&code(&item.name)),
+                cell(&code(name)),
                 cell(&code(&space)),
-                cell(&facet_list(&section.facets)),
-                summary(section.doc.as_ref()),
+                cell(&facet_list(facets)),
+                summary(declaration.doc.as_ref()),
             ));
         }
         out.push('\n');

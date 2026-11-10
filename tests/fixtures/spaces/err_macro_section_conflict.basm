@@ -1,7 +1,9 @@
+from std.spaces import start
+
 macro code_in(sp: space) {
     section .text in sp
 }
-space flash = stream
-space ram = stream
+space flash = stream | start 0x100
+space ram = stream | start 0x200
 code_in flash
 code_in ram

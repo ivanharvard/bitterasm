@@ -52,9 +52,9 @@ fn a_type_field_isnt_a_value() {
 }
 
 #[test]
-fn a_section_is_declared_once() {
+fn a_section_has_one_space_and_set_of_facets() {
     let stderr = error("redeclared");
-    assert!(stderr.contains("section `.text` is already declared"), "{stderr}");
+    assert!(stderr.contains("section `.text` already has a different space or facets"), "{stderr}");
 }
 
 #[test]
@@ -76,25 +76,34 @@ fn a_macro_can_declare_a_section_from_its_arguments() {
     // Called twice with the same space: the same declaration, no conflict.
     assert_eq!(compile_ints("tests/fixtures/spaces/macro_sections.basm"), vec![1, 1]);
     let stderr = error("macro_section_conflict");
-    assert!(stderr.contains("section `.text` is already declared"), "{stderr}");
+    assert!(stderr.contains("section `.text` already has a different space or facets"), "{stderr}");
 }
 
 #[test]
-fn sections_are_imported_with_their_space_and_facets() {
+fn a_section_is_imported_as_a_const() {
     assert_eq!(compile_ints("tests/fixtures/spaces/imported_sections.basm"), vec![1, 2, 0]);
     let stderr = error("imported_section_facet");
     assert!(stderr.contains("this section's facet ran"), "{stderr}");
 }
 
 #[test]
-fn a_files_own_section_replaces_an_imported_one() {
-    assert_eq!(compile_ints("tests/fixtures/spaces/local_replaces_import.basm"), vec![1]);
+fn a_section_gets_its_space_where_it_is_first_entered() {
+    let stderr = error("used_before_declared");
+    assert!(stderr.contains("section `.x` gets its space or facets after it's already been used"), "{stderr}");
 }
 
 #[test]
-fn a_section_is_declared_before_it_is_used() {
-    let stderr = error("used_before_declared");
-    assert!(stderr.contains("section `.x` is declared after it's already been used"), "{stderr}");
+fn into_switches_to_a_section_value() {
+    // Grouped by section: `.text` (1, 3), then `.data` (2, 4).
+    assert_eq!(compile_ints("tests/fixtures/spaces/into_param.basm"), vec![1, 3, 2, 4]);
+    let stderr = error("into_not_section");
+    assert!(stderr.contains("expected a section, found `int`"), "{stderr}");
+}
+
+#[test]
+fn a_section_line_names_a_section_not_a_parameter() {
+    let stderr = error("section_name_is_param");
+    assert!(stderr.contains("to switch to its value, write `@into s`"), "{stderr}");
 }
 
 // ---- struct facets ----

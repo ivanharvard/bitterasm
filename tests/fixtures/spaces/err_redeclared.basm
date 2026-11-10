@@ -1,2 +1,7 @@
-section .text in stream
-section .text in stream
+from std.spaces import start
+
+space flash = stream | start 0x100
+space ram = stream | start 0x200
+
+section .text in flash
+section .text in ram

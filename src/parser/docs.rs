@@ -71,8 +71,6 @@ impl Parser {
             Statement::Macro(declaration) => &mut declaration.doc,
             Statement::Label(label) => &mut label.doc,
             Statement::SyntaxOverride(override_statement) => &mut override_statement.doc,
-            // Only a `pub section` is documented: the others just switch.
-            Statement::Section(section) if section.is_pub => &mut section.doc,
             Statement::Import(_)
             | Statement::ExternLabel(_)
             | Statement::Section(_)

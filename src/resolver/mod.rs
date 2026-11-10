@@ -453,6 +453,18 @@ pub enum ResolveError {
         span: Span,
     },
 
+    /// `@into` of something that isn't a section.
+    ExpectedSection {
+        found: String,
+        span: Span,
+    },
+
+    /// `section s` in a macro whose parameter or const is named `s`.
+    SectionNameIsBinding {
+        name: String,
+        span: Span,
+    },
+
     /// `@extend` of a field the space or section already has.
     DuplicateRecordField {
         subject: String,
@@ -592,6 +604,7 @@ impl ResolveError {
             | Self::ComputedNameNotAllowed { span } | Self::TopLevelForRequiresRange { span }
             | Self::UnknownRecordField { span, .. } | Self::RecordFieldIsType { span, .. }
             | Self::DuplicateRecordField { span, .. } | Self::ExtendNotRecord { span, .. }
+            | Self::ExpectedSection { span, .. } | Self::SectionNameIsBinding { span, .. }
             | Self::FacetMustReturnSubject { span, .. } | Self::ExpectedSpace { span, .. }
             | Self::SectionRedeclared { span, .. } | Self::SectionUsedBeforeDeclared { span, .. }
             | Self::UserFacetNotApplicable { span, .. } => *span,

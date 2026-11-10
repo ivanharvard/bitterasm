@@ -1,0 +1,18 @@
+# `@into` switches to a section passed in, and `section .data` back by name.
+macro show(value: int) {
+    @emit value
+}
+
+macro put_in(s: section, value: int) {
+    @into s
+    show value
+}
+
+const DATA = section .data
+
+section .text
+show 1
+put_in DATA, 2
+show 3
+section .data
+show 4
