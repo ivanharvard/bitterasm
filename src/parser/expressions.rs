@@ -132,7 +132,10 @@ impl Parser {
                 // arguments — mirrors how type position already knows a
                 // name's generic signature before committing to parsing
                 // `<...>` as arguments.
-                if self.check(&TokenKind::Less) && self.generic_signatures.contains_key(&name) {
+                if self.check(&TokenKind::Less)
+                    && self.generic_signatures.contains_key(&name)
+                    && self.looks_like_generic_args()
+                {
                     let binding_power = 100;
 
                     if binding_power < min_bp {

@@ -1983,3 +1983,43 @@ fn documents_declarations_inside_blocks() {
     let Statement::Const(r) = &meta.body.as_ref().unwrap()[0] else { panic!("expected a const") };
     assert_eq!(doc_text(&r.doc), Some("Register `i`."));
 }
+
+#[test]
+fn a_local_name_shadows_a_generic_macro_in_a_comparison() {
+    // `index` is a generic macro, but inside `check` it's a parameter, so
+    // `index < n` compares instead of passing generic arguments.
+    let source = r#"
+macro index<T>(value: T) -> int {
+    @return 0
+}
+
+macro check(index: int, n: int) {
+    @assert index < n, "out of range"
+}
+
+const picked = index<int>(5)
+"#;
+
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    let Statement::Macro(check) = &program.statements[1] else {
+        panic!("expected macro `check`");
+    };
+    let Statement::Meta(assert) = &check.body[0] else {
+        panic!("expected `@assert`");
+    };
+    assert!(
+        matches!(&assert.args[0], Expr::Binary { op: BinaryOp::Less, .. }),
+        "expected a comparison, got {:?}",
+        assert.args[0]
+    );
+
+    let Statement::Const(picked) = &program.statements[2] else {
+        panic!("expected const `picked`");
+    };
+    assert!(
+        matches!(&picked.value, Expr::Call { generic_args, .. } if generic_args.len() == 1),
+        "expected a call with generic arguments, got {:?}",
+        picked.value
+    );
+}

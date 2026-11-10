@@ -577,6 +577,71 @@ impl Parser {
         }
     }
 
+    /// Whether the `<` at the current token opens generic arguments rather
+    /// than a comparison. A name with a generic signature can still be an
+    /// ordinary value, like a parameter `index` while a generic macro
+    /// `index` exists, so `index < arr.len` is a comparison. Generic
+    /// arguments hold only names, numbers, `,`, `.`, `...` and arithmetic,
+    /// and their closing `>` is followed by what can follow a generic name:
+    /// a call, a construction, a variant, or the end of a facet or argument.
+    pub(super) fn looks_like_generic_args(&self) -> bool {
+        let mut depth = 0i32;
+        let mut in_splice = false;
+        for (offset, token) in self.tokens[self.pos..].iter().enumerate() {
+            let kind = &token.kind;
+            if in_splice {
+                match kind {
+                    TokenKind::Backtick => in_splice = false,
+                    TokenKind::Newline | TokenKind::Eof => return false,
+                    _ => {}
+                }
+                continue;
+            }
+            match kind {
+                TokenKind::Less => depth += 1,
+                TokenKind::Greater | TokenKind::ShiftRight => {
+                    depth -= if *kind == TokenKind::ShiftRight { 2 } else { 1 };
+                    if depth < 0 {
+                        return false;
+                    }
+                    if depth == 0 {
+                        let next = self.tokens.get(self.pos + offset + 1).map(|token| &token.kind);
+                        return matches!(
+                            next,
+                            None | Some(
+                                TokenKind::LParen
+                                    | TokenKind::LBrace
+                                    | TokenKind::Dot
+                                    | TokenKind::Pipe
+                                    | TokenKind::Newline
+                                    | TokenKind::Eof
+                                    | TokenKind::RParen
+                                    | TokenKind::RBracket
+                                    | TokenKind::RBrace
+                                    | TokenKind::Comma
+                            )
+                        );
+                    }
+                }
+                TokenKind::Backtick => in_splice = true,
+                TokenKind::Integer(_)
+                | TokenKind::Comma
+                | TokenKind::Dot
+                | TokenKind::Ellipsis
+                | TokenKind::Plus
+                | TokenKind::Minus
+                | TokenKind::Star
+                | TokenKind::Slash
+                | TokenKind::Percent
+                | TokenKind::LParen
+                | TokenKind::RParen => {}
+                _ if kind.word_text().is_some() => {}
+                _ => return false,
+            }
+        }
+        false
+    }
+
     // `>>` lexes as one `ShiftRight` token, so closing two nested generic
     // lists at once (e.g. `Param<Reg<64>>`) needs it split back into two
     // `Greater` tokens.
