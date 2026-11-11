@@ -48,6 +48,12 @@ See [Executables](../programs/executables.md).
 | `std.formats.pe` | `pe64_executable` |
 | `std.formats.macho` | `macho64_executable` |
 
+## Operating systems
+
+| Module | Provides |
+|---|---|
+| `std.linux.x86_64` | Linux's x86-64 system call numbers (`SYS_write`, ...), errno values, and the flags of the common calls (`O_RDONLY`, `PROT_READ`, `SIGINT`, ...), generated from the kernel's headers |
+
 ## Architectures
 
 Each architecture has an `impl` module with its registers, instruction

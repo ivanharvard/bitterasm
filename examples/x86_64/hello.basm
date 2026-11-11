@@ -7,6 +7,7 @@
 
 from std.x86_64.nasm import *
 from std.formats.elf import *
+from std.linux.x86_64 import SYS_write, SYS_exit, STDOUT_FILENO
 
 elf64_executable EM_X86_64, _start
 
@@ -18,12 +19,12 @@ msg:
 
 section .text
 pub _start:
-    mov eax, 1          # sys_write
-    mov edi, 1          # stdout
+    mov eax, SYS_write
+    mov edi, STDOUT_FILENO
     lea rsi, [rel msg]  # buffer
     mov edx, text.len   # length
     syscall
 
-    mov eax, 60         # sys_exit
+    mov eax, SYS_exit
     xor edi, edi        # status 0
     syscall

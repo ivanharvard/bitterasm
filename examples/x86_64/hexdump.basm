@@ -9,16 +9,38 @@
 from std.array import Array
 from std.x86_64.att import *
 from std.formats.elf import *
+from std.linux.x86_64 import SYS_write, SYS_open, SYS_close, SYS_exit
+from std.linux.x86_64 import STDOUT_FILENO, STDERR_FILENO, EINTR
 
 # Each section is its own segment: code you can run but not change,
 # strings you can only read, and buffers that start zeroed and take no room
 # in the file.
 @link elf64_link(EM_X86_64, _start, Array<section, 3>(TEXT, RODATA, BSS))
 
-const digits_text = "0123456789abcdef"
-const usage_text = "Usage: hexdump FILE\n"
+const digits_text  = "0123456789abcdef"
+const usage_text   = "Usage: hexdump FILE\n"
 const failure_text = "hexdump: open, read, or write failed\n"
 
+# There are two ways to switch into a section in BitterASM. The first is
+# `@into <an expression that evaluates to a section>`. The second is
+# `section <name>`, which is closer to NASM and may feel more familiar.
+# `@into` is more flexible, since a macro can take the section as a
+# parameter, and it catches a misspelled name at compile time: `@into RODTA`
+# is an unknown name. We use it here, since `std.formats.elf` defines these
+# sections as constants.
+#
+# `section .rodata` switches to the same section, because sections are
+# matched by name, and the link stage takes the facets from the `RODATA`
+# passed to `@link`. But a misspelling like `section .rodta` compiles: it
+# starts a new section, which `bitter` only reports at link time, as values
+# the link stage never writes. Mixing the two forms has one ordering rule,
+# checked at compile time: a bare `section .rodata` can't come before
+# `@into RODATA`, since a section's facets must be given where it's first
+# entered.
+#
+# As such, an equivalent way to write this program is to replace `@into RODATA` 
+# with `section .rodata`, `@into BSS` with `section .bss`, 
+# and `@into TEXT` with `section .text`. 
 @into RODATA
 digits:
     db digits_text
@@ -37,7 +59,7 @@ line:
 pub _start:
     cmpq $2, (%rsp)
     jne .usage
-    mov $2, %eax                 # open(argv[1], O_RDONLY, 0)
+    mov $SYS_open, %eax          # open(argv[1], O_RDONLY, 0)
     mov 16(%rsp), %rdi
     xor %esi, %esi
     xor %edx, %edx
@@ -50,14 +72,14 @@ pub _start:
 .new_row:
     xor %r14d, %r14d             # bytes collected for this row
 .read:
-    xor %eax, %eax               # read(fd, buffer + count, 16 - count)
+    xor %eax, %eax               # SYS_read, 0: read(fd, buffer + count, 16 - count)
     mov %r12, %rdi
     lea buffer(%rip), %rsi
     add %r14, %rsi
     mov $16, %edx
     sub %r14, %rdx
     syscall
-    cmp $-4, %rax                # retry EINTR
+    cmp $-EINTR, %rax            # retry EINTR
     je .read
     test %rax, %rax
     js .error
@@ -127,10 +149,10 @@ pub _start:
     lea line(%rip), %rsi
     mov $86, %edx
 .write:
-    mov $1, %eax                # write(stdout, cursor, remaining)
-    mov $1, %edi
+    mov $SYS_write, %eax        # write(stdout, cursor, remaining)
+    mov $STDOUT_FILENO, %edi
     syscall
-    cmp $-4, %rax
+    cmp $-EINTR, %rax
     je .write
     test %rax, %rax
     jle .error
@@ -141,7 +163,7 @@ pub _start:
     jmp .new_row
 
 .done:
-    mov $3, %eax                # close(fd)
+    mov $SYS_close, %eax        # close(fd)
     mov %r12, %rdi
     syscall
     xor %edi, %edi              # success
@@ -154,10 +176,10 @@ pub _start:
     lea failure(%rip), %rsi
     mov $failure_text.len, %edx
 .report:
-    mov $1, %eax
-    mov $2, %edi                # stderr
+    mov $SYS_write, %eax
+    mov $STDERR_FILENO, %edi
     syscall
     mov $1, %edi                # failure
 .exit:
-    mov $60, %eax
+    mov $SYS_exit, %eax
     syscall

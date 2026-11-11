@@ -108,6 +108,8 @@
         - [`macho`](std/reference/formats/macho.md)
         - [`pe`](std/reference/formats/pe.md)
     - [`iter`](std/reference/iter.md)
+    - [`linux`](std/reference/linux/index.md)
+        - [`x86_64`](std/reference/linux/x86_64.md)
     - [`list`](std/reference/list.md)
     - [`math`](std/reference/math.md)
     - [`option`](std/reference/option.md)
