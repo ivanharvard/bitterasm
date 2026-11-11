@@ -3,6 +3,7 @@
 | Name | Summary |
 |---|---|
 | [`array`](array.md) | `Array<T, N>`: `N` values of type `T`, and ways to build new arrays from old ones. Every value is immutable, so each operation returns a new array. |
+| [`avr/`](avr/index.md) | `atmega328p`, `impl`, `native` |
 | [`binary`](binary.md) | Fixed-width binary values: `bits<N>`, `signed<N>`, `bool`, and byte order. |
 | [`bitfield`](bitfield.md) | Bit ranges, written the way ISA manuals write them. `slice(x, 10, 5)` is the manual's `x[10:5]`: `hi` and `lo` are inclusive bit numbers, so a one-bit field is `(n, n)`. The shift, the mask and the result's width all come from those two numbers, so they can't disagree. |
 | [`bitter/`](bitter/index.md) | `byte_order`, `deferred`, `image`, `layout`, `link` |

@@ -59,6 +59,7 @@ BitterASM is an early-stage project: a Rust compiler (lexer, parser, resolver, f
 <!-- coverage:start -->
 | Architecture | Reference set | Operand forms covered |
 |---|---|---|
+| AVR | ATmega328P (avr5) | 131 of 131 (100%) |
 | PDP-10 | KA10 | 11 of 366 (3%) |
 | RISC-V | RV32I | 40 of 40 (100%) |
 | WebAssembly | WebAssembly 1.0 | 23 of 172 (13%) |

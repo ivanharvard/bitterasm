@@ -1,0 +1,41 @@
+# Blinks the LED on an Arduino Uno: pin 13, which is port B bit 5 of its
+# ATmega328P, about twice a second at the Uno's 16 MHz.
+#
+# bitterasm compile examples/avr/blink.basm -o blink.em
+# bitter encode blink.em -o blink.bin
+# avrdude -p m328p -c arduino -P /dev/ttyACM0 -U flash:w:blink.bin:r
+
+from std.avr.native import *
+from std.avr.atmega328p import *
+
+# The chip starts running at flash address 0. With no interrupts used, the
+# program can start right there instead of after a vector table.
+ldi r16, hi8(RAMEND)
+out SPH, r16
+ldi r16, lo8(RAMEND)
+out SPL, r16
+
+sbi DDRB, 5
+
+loop:
+    # Writing a 1 to a PINB bit toggles that pin.
+    sbi PINB, 5
+    rcall wait
+    rjmp loop
+
+# About 3.3 million cycles, a fifth of a second at 16 MHz: the inner loop
+# takes 3 cycles a turn, run 255 times for each of 255 * 17 middle turns.
+wait:
+    ldi r18, 17
+outer:
+    ldi r19, 255
+middle:
+    ldi r20, 255
+inner:
+    dec r20
+    brne inner
+    dec r19
+    brne middle
+    dec r18
+    brne outer
+    ret

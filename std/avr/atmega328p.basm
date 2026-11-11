@@ -1,0 +1,218 @@
+#! The ATmega328P, the chip on an Arduino Uno: its I/O registers, memory
+#! sizes and interrupt vectors, named the way its datasheet and avr-libc
+#! name them.
+#!
+#! ```
+#! from std.avr.native import *
+#! from std.avr.atmega328p import *
+#!
+#! sbi DDRB, 5
+#! sbi PORTB, 5
+#! ```
+#!
+#! ```bytes
+#! 25 9a
+#! 2d 9a
+#! ```
+#!
+#! Registers below 0x40 are in I/O space, for `in_`, `out`, and, below
+#! 0x20, `sbi`, `cbi`, `sbic` and `sbis`. The ones above are only in data
+#! memory, for `lds` and `sts`. An I/O register is also in data memory, at
+#! its I/O address plus `IO_OFFSET`.
+
+# =================
+# memory
+# =================
+
+## The last byte address of flash. Flash holds 16 KiB words.
+pub const FLASHEND = 0x7FFF
+## The first byte of SRAM, after the registers and I/O.
+pub const RAMSTART = 0x0100
+## The last byte of SRAM, where the stack starts.
+pub const RAMEND = 0x08FF
+## The last byte address of EEPROM.
+pub const E2END = 0x03FF
+## Where I/O space starts in data memory: I/O address `a` is data address
+## `a + IO_OFFSET`.
+pub const IO_OFFSET = 0x20
+
+# =================
+# I/O space
+# =================
+
+## Port B input pins. Writing a 1 to a bit toggles that pin's output.
+pub const PINB = 0x03
+## Port B direction: 1 for output.
+pub const DDRB = 0x04
+## Port B output.
+pub const PORTB = 0x05
+## Port C input pins.
+pub const PINC = 0x06
+## Port C direction.
+pub const DDRC = 0x07
+## Port C output.
+pub const PORTC = 0x08
+## Port D input pins.
+pub const PIND = 0x09
+## Port D direction.
+pub const DDRD = 0x0A
+## Port D output.
+pub const PORTD = 0x0B
+## Timer 0 interrupt flags.
+pub const TIFR0 = 0x15
+## Timer 1 interrupt flags.
+pub const TIFR1 = 0x16
+## Timer 2 interrupt flags.
+pub const TIFR2 = 0x17
+## Pin change interrupt flags.
+pub const PCIFR = 0x1B
+## External interrupt flags.
+pub const EIFR = 0x1C
+## External interrupt mask.
+pub const EIMSK = 0x1D
+## General purpose I/O register 0.
+pub const GPIOR0 = 0x1E
+## EEPROM control.
+pub const EECR = 0x1F
+## EEPROM data.
+pub const EEDR = 0x20
+## EEPROM address, low byte.
+pub const EEARL = 0x21
+## EEPROM address, high byte.
+pub const EEARH = 0x22
+## General timer control.
+pub const GTCCR = 0x23
+## Timer 0 control A.
+pub const TCCR0A = 0x24
+## Timer 0 control B.
+pub const TCCR0B = 0x25
+## Timer 0 counter.
+pub const TCNT0 = 0x26
+## Timer 0 output compare A.
+pub const OCR0A = 0x27
+## Timer 0 output compare B.
+pub const OCR0B = 0x28
+## General purpose I/O register 1.
+pub const GPIOR1 = 0x2A
+## General purpose I/O register 2.
+pub const GPIOR2 = 0x2B
+## SPI control.
+pub const SPCR = 0x2C
+## SPI status.
+pub const SPSR = 0x2D
+## SPI data.
+pub const SPDR = 0x2E
+## Analog comparator control and status.
+pub const ACSR = 0x30
+## Sleep mode control.
+pub const SMCR = 0x33
+## MCU status: what caused the last reset.
+pub const MCUSR = 0x34
+## MCU control.
+pub const MCUCR = 0x35
+## Self-programming control and status.
+pub const SPMCSR = 0x37
+## Stack pointer, low byte.
+pub const SPL = 0x3D
+## Stack pointer, high byte.
+pub const SPH = 0x3E
+## The status register.
+pub const SREG = 0x3F
+
+# =================
+# data memory only
+# =================
+
+## Watchdog timer control.
+pub const WDTCSR = 0x60
+## Clock prescaler.
+pub const CLKPR = 0x61
+## Power reduction.
+pub const PRR = 0x64
+## Timer 0 interrupt mask.
+pub const TIMSK0 = 0x6E
+## Timer 1 interrupt mask.
+pub const TIMSK1 = 0x6F
+## Timer 2 interrupt mask.
+pub const TIMSK2 = 0x70
+## ADC result, low byte.
+pub const ADCL = 0x78
+## ADC result, high byte.
+pub const ADCH = 0x79
+## ADC control and status A.
+pub const ADCSRA = 0x7A
+## ADC input and reference.
+pub const ADMUX = 0x7C
+## USART 0 control and status A.
+pub const UCSR0A = 0xC0
+## USART 0 control and status B.
+pub const UCSR0B = 0xC1
+## USART 0 control and status C.
+pub const UCSR0C = 0xC2
+## USART 0 baud rate, low byte.
+pub const UBRR0L = 0xC4
+## USART 0 baud rate, high byte.
+pub const UBRR0H = 0xC5
+## USART 0 data.
+pub const UDR0 = 0xC6
+
+# =================
+# interrupt vectors
+# =================
+# Flash starts with one vector per interrupt, each two words: room for a
+# `jmp` to its handler. Vector `n` is at byte address `4 * n`.
+
+## How many vectors there are.
+pub const VECTORS = 26
+## Reset.
+pub const RESET_VECTOR = 0
+## External interrupt 0.
+pub const INT0_VECTOR = 1
+## External interrupt 1.
+pub const INT1_VECTOR = 2
+## Pin change interrupt 0.
+pub const PCINT0_VECTOR = 3
+## Pin change interrupt 1.
+pub const PCINT1_VECTOR = 4
+## Pin change interrupt 2.
+pub const PCINT2_VECTOR = 5
+## Watchdog timeout.
+pub const WDT_VECTOR = 6
+## Timer 2 compare match A.
+pub const TIMER2_COMPA_VECTOR = 7
+## Timer 2 compare match B.
+pub const TIMER2_COMPB_VECTOR = 8
+## Timer 2 overflow.
+pub const TIMER2_OVF_VECTOR = 9
+## Timer 1 capture.
+pub const TIMER1_CAPT_VECTOR = 10
+## Timer 1 compare match A.
+pub const TIMER1_COMPA_VECTOR = 11
+## Timer 1 compare match B.
+pub const TIMER1_COMPB_VECTOR = 12
+## Timer 1 overflow.
+pub const TIMER1_OVF_VECTOR = 13
+## Timer 0 compare match A.
+pub const TIMER0_COMPA_VECTOR = 14
+## Timer 0 compare match B.
+pub const TIMER0_COMPB_VECTOR = 15
+## Timer 0 overflow.
+pub const TIMER0_OVF_VECTOR = 16
+## SPI transfer complete.
+pub const SPI_STC_VECTOR = 17
+## USART receive complete.
+pub const USART_RX_VECTOR = 18
+## USART data register empty.
+pub const USART_UDRE_VECTOR = 19
+## USART transmit complete.
+pub const USART_TX_VECTOR = 20
+## ADC conversion complete.
+pub const ADC_VECTOR = 21
+## EEPROM ready.
+pub const EE_READY_VECTOR = 22
+## Analog comparator.
+pub const ANALOG_COMP_VECTOR = 23
+## Two-wire serial interface.
+pub const TWI_VECTOR = 24
+## Self-programming ready.
+pub const SPM_READY_VECTOR = 25

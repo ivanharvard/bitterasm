@@ -1,0 +1,1007 @@
+#! AVR: the 8-bit microcontrollers of the ATmega and ATtiny families. Their
+#! 32 registers, and every instruction of the ATmega328P (the `avr5`
+#! family), each emitted as one or two little-endian 16-bit words.
+#!
+#! Coverage: 131 of 131 operand forms (100%), through `std.avr.native`.
+#!
+#! Import `std.avr.native` for the standard assembly syntax, which spells
+#! pointer operands `X+`, `-Y` and `Z+5`. Here every instruction takes its
+#! operands in order, and those are names: `ld r16, X_INC`,
+#! `ldd r16, Y, 5`.
+#!
+#! ```
+#! from std.avr.impl import *
+#!
+#!     ldi r16, 10
+#! loop:
+#!     dec r16
+#!     brne loop
+#! ```
+#!
+#! ```bytes
+#! 0a e0
+#! 0a 95
+#! f1 f7
+#! ```
+#!
+#! Flash holds 16-bit words, and every program address an instruction
+#! takes is a word address: a branch's distance, a `jmp`'s target, `pm(l)`
+#! for `ijmp`. Data memory is addressed in bytes. Branch and jump targets
+#! are labels; `bitter` works out the distance once the program is laid
+#! out. A label's address is its byte offset from the start of the output,
+#! which is where it is in flash when the output is written to flash from
+#! address 0.
+#!
+#! Immediates are plain `int`s. One that doesn't fit its field is a compile
+#! error, except that a negative 8-bit immediate becomes its two's
+#! complement, as in `subi r16, -1`. A branch whose target is out of range
+#! isn't caught: its distance wraps.
+
+from std.binary import *
+from std.bitfield import *
+from std.bitter.deferred import *
+from std.bitter.byte_order import *
+
+# =================
+# registers
+# =================
+
+## A register number, 0 to 31.
+pub type Reg = bits<5>
+
+@for i in 0..32 {
+    ## A general-purpose register.
+    pub const r`i` = Reg(i)
+}
+
+## A pointer register pair as an `ld` or `st` operand: `X`, `Y` or `Z`,
+## used as it is, incremented after, or decremented before.
+pub struct Pointer {
+    # The `ld` word for this operand with `rd` = r0. `st` sets bit 9.
+    load: int,
+    # 26, 28 or 30: the pair's low register, `XL`, `YL` or `ZL`.
+    pub base: int,
+    # 0 as it is, 1 incremented after, -1 decremented before.
+    pub step: int,
+}
+
+## `X`, the pair r27:r26.
+pub const X = Pointer(load = 0x900C, base = 26, step = 0)
+## `X+`: `X`, incremented after the access.
+pub const X_INC = Pointer(load = 0x900D, base = 26, step = 1)
+## `-X`: `X`, decremented before the access.
+pub const X_DEC = Pointer(load = 0x900E, base = 26, step = -1)
+## `Y`, the pair r29:r28.
+pub const Y = Pointer(load = 0x8008, base = 28, step = 0)
+## `Y+`: `Y`, incremented after the access.
+pub const Y_INC = Pointer(load = 0x9009, base = 28, step = 1)
+## `-Y`: `Y`, decremented before the access.
+pub const Y_DEC = Pointer(load = 0x900A, base = 28, step = -1)
+## `Z`, the pair r31:r30.
+pub const Z = Pointer(load = 0x8000, base = 30, step = 0)
+## `Z+`: `Z`, incremented after the access.
+pub const Z_INC = Pointer(load = 0x9001, base = 30, step = 1)
+## `-Z`: `Z`, decremented before the access.
+pub const Z_DEC = Pointer(load = 0x9002, base = 30, step = -1)
+
+## `p` incremented after the access: `X` becomes `X+`.
+pub macro incremented(p: Pointer) -> Pointer {
+    @assert p.step == 0, "only a plain `X`, `Y` or `Z` can be incremented"
+    @if p.base == 26 {
+        @return X_INC
+    }
+    @if p.base == 28 {
+        @return Y_INC
+    }
+    @return Z_INC
+}
+
+## `p` decremented before the access: `X` becomes `-X`.
+pub macro decremented(p: Pointer) -> Pointer {
+    @assert p.step == 0, "only a plain `X`, `Y` or `Z` can be decremented"
+    @if p.base == 26 {
+        @return X_DEC
+    }
+    @if p.base == 28 {
+        @return Y_DEC
+    }
+    @return Z_DEC
+}
+
+# =================
+# status flags
+# =================
+# Bit numbers in SREG, for `brbs`, `brbc`, `bset` and `bclr`.
+
+## Carry.
+pub const FLAG_C = 0
+## Zero.
+pub const FLAG_Z = 1
+## Negative.
+pub const FLAG_N = 2
+## Two's complement overflow.
+pub const FLAG_V = 3
+## Sign: `N` xor `V`.
+pub const FLAG_S = 4
+## Half carry.
+pub const FLAG_H = 5
+## The bit `bst` stores and `bld` loads.
+pub const FLAG_T = 6
+## Interrupts enabled.
+pub const FLAG_I = 7
+
+# =================
+# addresses
+# =================
+
+## Where `l` is in flash, in bytes: its offset from the start of the
+## output.
+pub macro flash_address(l: label) -> Deferred {
+    @return span(Deferred.Pos(0), l)
+}
+
+## `l`'s word address in flash, what `ijmp` and `icall` jump to.
+pub macro pm(l: label) -> Deferred {
+    @return shr(flash_address(l), 1)
+}
+
+## The low byte of `x`.
+pub macro lo8(x: int) -> int {
+    @return x & 0xFF
+}
+
+## The low byte of `l`'s byte address in flash, for loading `Z` before
+## `lpm`.
+pub macro lo8(l: label) -> Deferred {
+    @return band(flash_address(l), 0xFF)
+}
+
+## The low byte of a value `bitter` works out later.
+pub macro lo8(x: Deferred) -> Deferred {
+    @return band(x, 0xFF)
+}
+
+## The second byte of `x`.
+pub macro hi8(x: int) -> int {
+    @return (x >> 8) & 0xFF
+}
+
+## The second byte of `l`'s byte address in flash.
+pub macro hi8(l: label) -> Deferred {
+    @return band(shr(flash_address(l), 8), 0xFF)
+}
+
+## The second byte of a value `bitter` works out later.
+pub macro hi8(x: Deferred) -> Deferred {
+    @return band(shr(x, 8), 0xFF)
+}
+
+## The low byte of `l`'s word address, for loading `Z` before `ijmp`.
+pub macro pm_lo8(l: label) -> Deferred {
+    @return lo8(pm(l))
+}
+
+## The second byte of `l`'s word address.
+pub macro pm_hi8(l: label) -> Deferred {
+    @return hi8(pm(l))
+}
+
+# =================
+# words and formats
+# =================
+
+## One instruction word, least significant byte first, as flash stores it.
+pub type Word = LittleEndian<bits<16>, 16>
+
+## A 32-bit instruction: two words, each least significant byte first.
+pub struct LongWord {
+    first: Word,
+    second: Word,
+}
+
+## `rjmp` and `rcall`: a 12-bit distance in words.
+pub struct RelWord {
+    op: bits<4>,
+    k: Positioned<12>,
+}
+
+## A conditional branch: a 7-bit distance in words, and an SREG bit.
+pub struct BranchWord {
+    op: bits<6>,
+    k: Positioned<7>,
+    s: bits<3>,
+}
+
+## An instruction with an 8-bit immediate that may be worked out later,
+## like `ldi r30, lo8(table)`.
+pub struct ImmWord {
+    op: bits<4>,
+    k_hi: Positioned<4>,
+    d: bits<4>,
+    k_lo: Positioned<4>,
+}
+
+## `jmp` and `call` to a label: a 22-bit word address split across two
+## words.
+pub struct JumpWords {
+    first: LittleEndian<JumpHigh, 16>,
+    second: LittleEndian<Positioned<16>, 16>,
+}
+
+## The first word of `JumpWords`.
+pub struct JumpHigh {
+    op: bits<7>,
+    k_21_17: Positioned<5>,
+    op2: bits<3>,
+    k_16: Positioned<1>,
+}
+
+macro word(w: int) -> Word {
+    @return Word { value: w as bits<16> }
+}
+
+macro long(first: int, second: int) -> LongWord {
+    @return LongWord(first = word(first), second = word(second))
+}
+
+macro any_reg(r: Reg) -> int {
+    @return r.value
+}
+
+macro upper_reg(r: Reg) -> int {
+    @assert r.value >= 16, "this instruction takes r16 to r31"
+    @return r.value - 16
+}
+
+macro imm8(k: int) -> int {
+    @assert k >= -128 && k <= 255, "an 8-bit immediate is -128 to 255"
+    @return k & 0xFF
+}
+
+macro bit_number(b: int) -> int {
+    @assert b >= 0 && b <= 7, "a bit number is 0 to 7"
+    @return b
+}
+
+macro io_low(a: int) -> int {
+    @assert a >= 0 && a <= 31, "this instruction takes I/O address 0 to 31"
+    @return a
+}
+
+# `in` and `out` split their 6-bit I/O address around the register.
+macro io_bits(a: int) -> int {
+    @assert a >= 0 && a <= 63, "an I/O address is 0 to 63"
+    @return place(a >> 4, 10, 9) | place(a, 3, 0)
+}
+
+macro data_address(k: int) -> int {
+    @assert k >= 0 && k <= 0xFFFF, "a data address is 0 to 0xFFFF"
+    @return k
+}
+
+# `d rrrr` with `r`'s top bit at bit 9: ADD, MOV, CP and the rest.
+macro two_regs(op: int, rd: Reg, rr: Reg) -> Word {
+    const r = place(rr.value >> 4, 9, 9) | place(rr.value, 3, 0)
+    @return word(op | r | place(rd.value, 8, 4))
+}
+
+macro one_reg(op: int, rd: Reg) -> Word {
+    @return word(op | place(rd.value, 8, 4))
+}
+
+macro reg_imm(op: int, rd: Reg, k: int) -> Word {
+    const value = imm8(k)
+    const k_bits = place(value >> 4, 11, 8) | place(value, 3, 0)
+    @return word(op | k_bits | place(upper_reg(rd), 7, 4))
+}
+
+macro reg_imm(op: int, rd: Reg, k: Deferred) -> LittleEndian<ImmWord, 16> {
+    @return LittleEndian<ImmWord, 16> { value: ImmWord(
+        op = bits<4>(op >> 12),
+        k_hi = field(k, 7, 4),
+        d = bits<4>(upper_reg(rd)),
+        k_lo = field(k, 3, 0)
+    ) }
+}
+
+# The distance from the next instruction word to `target`, in words.
+# `here()` is the instruction being emitted, and the next word is 2 bytes
+# past its start.
+macro words_to(target: label) -> Deferred {
+    @return shr(sub(span(here(), target), 2), 1)
+}
+
+macro relative(op: int, target: label) -> LittleEndian<RelWord, 16> {
+    @return LittleEndian<RelWord, 16> { value: RelWord(
+        op = bits<4>(op),
+        k = field(words_to(target), 11, 0)
+    ) }
+}
+
+macro branch(op: int, s: int, target: label) -> LittleEndian<BranchWord, 16> {
+    @return LittleEndian<BranchWord, 16> { value: BranchWord(
+        op = bits<6>(op),
+        k = field(words_to(target), 6, 0),
+        s = bits<3>(bit_number(s))
+    ) }
+}
+
+macro long_jump(c: int, k: Deferred) -> JumpWords {
+    @return JumpWords(
+        first = LittleEndian<JumpHigh, 16> { value: JumpHigh(
+            op = bits<7>(0b1001010),
+            k_21_17 = field(k, 21, 17),
+            op2 = bits<3>(0b110 | c),
+            k_16 = field(k, 16, 16)
+        ) },
+        second = LittleEndian<Positioned<16>, 16> { value: field(k, 15, 0) }
+    )
+}
+
+# =================
+# arithmetic and logic
+# =================
+
+## `rd += rr`.
+pub macro add(rd: Reg, rr: Reg) {
+    @emit two_regs(0x0C00, rd, rr)
+}
+
+## `rd += rr + C`.
+pub macro adc(rd: Reg, rr: Reg) {
+    @emit two_regs(0x1C00, rd, rr)
+}
+
+## `rd -= rr`.
+pub macro sub(rd: Reg, rr: Reg) {
+    @emit two_regs(0x1800, rd, rr)
+}
+
+## `rd -= rr + C`.
+pub macro sbc(rd: Reg, rr: Reg) {
+    @emit two_regs(0x0800, rd, rr)
+}
+
+## `rd &= rr`.
+pub macro and(rd: Reg, rr: Reg) {
+    @emit two_regs(0x2000, rd, rr)
+}
+
+## `rd |= rr`.
+pub macro or(rd: Reg, rr: Reg) {
+    @emit two_regs(0x2800, rd, rr)
+}
+
+## `rd ^= rr`.
+pub macro eor(rd: Reg, rr: Reg) {
+    @emit two_regs(0x2400, rd, rr)
+}
+
+## `rd -= k`, for r16 to r31.
+pub macro subi(rd: Reg, k: int) {
+    @emit reg_imm(0x5000, rd, k)
+}
+
+## `rd -= k`, with `k` worked out later, like `lo8(-table)`.
+pub macro subi(rd: Reg, k: Deferred) {
+    @emit reg_imm(0x5000, rd, k)
+}
+
+## `rd -= k + C`, for r16 to r31.
+pub macro sbci(rd: Reg, k: int) {
+    @emit reg_imm(0x4000, rd, k)
+}
+
+## `rd -= k + C`, with `k` worked out later.
+pub macro sbci(rd: Reg, k: Deferred) {
+    @emit reg_imm(0x4000, rd, k)
+}
+
+## `rd &= k`, for r16 to r31.
+pub macro andi(rd: Reg, k: int) {
+    @emit reg_imm(0x7000, rd, k)
+}
+
+## `rd |= k`, for r16 to r31.
+pub macro ori(rd: Reg, k: int) {
+    @emit reg_imm(0x6000, rd, k)
+}
+
+## Sets the bits of `k` in `rd`: `ori`.
+pub macro sbr(rd: Reg, k: int) {
+    ori rd, k
+}
+
+## Clears the bits of `k` in `rd`: `andi` with `k`'s complement.
+pub macro cbr(rd: Reg, k: int) {
+    andi rd, ~imm8(k) & 0xFF
+}
+
+## Adds `k`, 0 to 63, to a register pair: r24, r26, r28 or r30 and the
+## one above it.
+pub macro adiw(rd: Reg, k: int) {
+    @emit word_imm(0x9600, rd, k)
+}
+
+## Subtracts `k`, 0 to 63, from a register pair: r24, r26, r28 or r30 and
+## the one above it.
+pub macro sbiw(rd: Reg, k: int) {
+    @emit word_imm(0x9700, rd, k)
+}
+
+macro word_imm(op: int, rd: Reg, k: int) -> Word {
+    const pair = rd.value >= 24 && rd.value % 2 == 0
+    @assert pair, "this instruction takes r24, r26, r28 or r30"
+    @assert k >= 0 && k <= 63, "this immediate is 0 to 63"
+    const k_bits = place(k >> 4, 7, 6) | place(k, 3, 0)
+    @return word(op | k_bits | place((rd.value - 24) >> 1, 5, 4))
+}
+
+## `rd = ~rd`.
+pub macro com(rd: Reg) {
+    @emit one_reg(0x9400, rd)
+}
+
+## `rd = -rd`.
+pub macro neg(rd: Reg) {
+    @emit one_reg(0x9401, rd)
+}
+
+## `rd += 1`.
+pub macro inc(rd: Reg) {
+    @emit one_reg(0x9403, rd)
+}
+
+## `rd -= 1`.
+pub macro dec(rd: Reg) {
+    @emit one_reg(0x940A, rd)
+}
+
+## Sets the flags from `rd`: `and rd, rd`.
+pub macro tst(rd: Reg) {
+    and rd, rd
+}
+
+## `rd = 0`: `eor rd, rd`.
+pub macro clr(rd: Reg) {
+    eor rd, rd
+}
+
+## `rd = 0xFF`, for r16 to r31: `ldi rd, 0xFF`.
+pub macro ser(rd: Reg) {
+    ldi rd, 0xFF
+}
+
+## `r1:r0 = rd * rr`, unsigned.
+pub macro mul(rd: Reg, rr: Reg) {
+    @emit two_regs(0x9C00, rd, rr)
+}
+
+## `r1:r0 = rd * rr`, signed, for r16 to r31.
+pub macro muls(rd: Reg, rr: Reg) {
+    @emit word(0x0200 | place(upper_reg(rd), 7, 4) | place(upper_reg(rr), 3, 0))
+}
+
+macro mul_low(op: int, rd: Reg, rr: Reg) -> Word {
+    const low = rd.value >= 16 && rd.value <= 23 && rr.value >= 16 && rr.value <= 23
+    @assert low, "this instruction takes r16 to r23"
+    @return word(op | place(rd.value - 16, 6, 4) | place(rr.value - 16, 2, 0))
+}
+
+## `r1:r0 = rd * rr`, `rd` signed and `rr` unsigned, for r16 to r23.
+pub macro mulsu(rd: Reg, rr: Reg) {
+    @emit mul_low(0x0300, rd, rr)
+}
+
+## Fractional unsigned multiply, for r16 to r23.
+pub macro fmul(rd: Reg, rr: Reg) {
+    @emit mul_low(0x0308, rd, rr)
+}
+
+## Fractional signed multiply, for r16 to r23.
+pub macro fmuls(rd: Reg, rr: Reg) {
+    @emit mul_low(0x0380, rd, rr)
+}
+
+## Fractional multiply, `rd` signed and `rr` unsigned, for r16 to r23.
+pub macro fmulsu(rd: Reg, rr: Reg) {
+    @emit mul_low(0x0388, rd, rr)
+}
+
+# =================
+# shifts and bits
+# =================
+
+## Shifts `rd` left one bit: `add rd, rd`.
+pub macro lsl(rd: Reg) {
+    add rd, rd
+}
+
+## Shifts `rd` right one bit.
+pub macro lsr(rd: Reg) {
+    @emit one_reg(0x9406, rd)
+}
+
+## Rotates `rd` left through carry: `adc rd, rd`.
+pub macro rol(rd: Reg) {
+    adc rd, rd
+}
+
+## Rotates `rd` right through carry.
+pub macro ror(rd: Reg) {
+    @emit one_reg(0x9407, rd)
+}
+
+## Shifts `rd` right one bit, keeping its sign.
+pub macro asr(rd: Reg) {
+    @emit one_reg(0x9405, rd)
+}
+
+## Swaps `rd`'s two nibbles.
+pub macro swap(rd: Reg) {
+    @emit one_reg(0x9402, rd)
+}
+
+## Sets SREG bit `s`.
+pub macro bset(s: int) {
+    @emit word(0x9408 | place(bit_number(s), 6, 4))
+}
+
+## Clears SREG bit `s`.
+pub macro bclr(s: int) {
+    @emit word(0x9488 | place(bit_number(s), 6, 4))
+}
+
+## Stores bit `b` of `rd` in the `T` flag.
+pub macro bst(rd: Reg, b: int) {
+    @emit word(0xFA00 | place(rd.value, 8, 4) | bit_number(b))
+}
+
+## Loads the `T` flag into bit `b` of `rd`.
+pub macro bld(rd: Reg, b: int) {
+    @emit word(0xF800 | place(rd.value, 8, 4) | bit_number(b))
+}
+
+## Sets bit `b` of I/O register `a`, 0 to 31.
+pub macro sbi(a: int, b: int) {
+    @emit word(0x9A00 | place(io_low(a), 7, 3) | bit_number(b))
+}
+
+## Clears bit `b` of I/O register `a`, 0 to 31.
+pub macro cbi(a: int, b: int) {
+    @emit word(0x9800 | place(io_low(a), 7, 3) | bit_number(b))
+}
+
+## Sets carry.
+pub macro sec() {
+    bset FLAG_C
+}
+
+## Clears carry.
+pub macro clc() {
+    bclr FLAG_C
+}
+
+## Sets the zero flag.
+pub macro sez() {
+    bset FLAG_Z
+}
+
+## Clears the zero flag.
+pub macro clz() {
+    bclr FLAG_Z
+}
+
+## Sets the negative flag.
+pub macro sen() {
+    bset FLAG_N
+}
+
+## Clears the negative flag.
+pub macro cln() {
+    bclr FLAG_N
+}
+
+## Sets the overflow flag.
+pub macro sev() {
+    bset FLAG_V
+}
+
+## Clears the overflow flag.
+pub macro clv() {
+    bclr FLAG_V
+}
+
+## Sets the sign flag.
+pub macro ses() {
+    bset FLAG_S
+}
+
+## Clears the sign flag.
+pub macro cls() {
+    bclr FLAG_S
+}
+
+## Sets the half carry flag.
+pub macro seh() {
+    bset FLAG_H
+}
+
+## Clears the half carry flag.
+pub macro clh() {
+    bclr FLAG_H
+}
+
+## Sets the `T` flag.
+pub macro set() {
+    bset FLAG_T
+}
+
+## Clears the `T` flag.
+pub macro clt() {
+    bclr FLAG_T
+}
+
+## Enables interrupts.
+pub macro sei() {
+    bset FLAG_I
+}
+
+## Disables interrupts.
+pub macro cli() {
+    bclr FLAG_I
+}
+
+# =================
+# jumps and branches
+# =================
+
+## Jumps to `target`, up to 2048 words away.
+pub macro rjmp(target: label) {
+    @emit relative(0xC, target)
+}
+
+## Calls `target`, up to 2048 words away.
+pub macro rcall(target: label) {
+    @emit relative(0xD, target)
+}
+
+## Jumps to `target`, anywhere in flash.
+pub macro jmp(target: label) {
+    @emit long_jump(0, pm(target))
+}
+
+## Jumps to byte address `address` in flash, which must be even.
+pub macro jmp(address: int) {
+    @emit long_jump(0, Deferred.Leaf(flash_word(address)))
+}
+
+## Calls `target`, anywhere in flash.
+pub macro call(target: label) {
+    @emit long_jump(1, pm(target))
+}
+
+## Calls byte address `address` in flash, which must be even.
+pub macro call(address: int) {
+    @emit long_jump(1, Deferred.Leaf(flash_word(address)))
+}
+
+macro flash_word(address: int) -> int {
+    @assert address >= 0 && address % 2 == 0, "a flash address is even"
+    @return address >> 1
+}
+
+## Jumps to the word address in `Z`.
+pub macro ijmp() {
+    @emit word(0x9409)
+}
+
+## Calls the word address in `Z`.
+pub macro icall() {
+    @emit word(0x9509)
+}
+
+## Returns from a call.
+pub macro ret() {
+    @emit word(0x9508)
+}
+
+## Returns from an interrupt, enabling interrupts.
+pub macro reti() {
+    @emit word(0x9518)
+}
+
+## Branches to `target`, up to 64 words away, if SREG bit `s` is set.
+pub macro brbs(s: int, target: label) {
+    @emit branch(0b111100, s, target)
+}
+
+## Branches to `target`, up to 64 words away, if SREG bit `s` is clear.
+pub macro brbc(s: int, target: label) {
+    @emit branch(0b111101, s, target)
+}
+
+## Branches if equal: `Z` set.
+pub macro breq(target: label) {
+    brbs FLAG_Z, target
+}
+
+## Branches if not equal: `Z` clear.
+pub macro brne(target: label) {
+    brbc FLAG_Z, target
+}
+
+## Branches if carry is set.
+pub macro brcs(target: label) {
+    brbs FLAG_C, target
+}
+
+## Branches if carry is clear.
+pub macro brcc(target: label) {
+    brbc FLAG_C, target
+}
+
+## Branches if lower, unsigned: carry set.
+pub macro brlo(target: label) {
+    brbs FLAG_C, target
+}
+
+## Branches if the same or higher, unsigned: carry clear.
+pub macro brsh(target: label) {
+    brbc FLAG_C, target
+}
+
+## Branches if negative.
+pub macro brmi(target: label) {
+    brbs FLAG_N, target
+}
+
+## Branches if not negative.
+pub macro brpl(target: label) {
+    brbc FLAG_N, target
+}
+
+## Branches if less than, signed: `S` set.
+pub macro brlt(target: label) {
+    brbs FLAG_S, target
+}
+
+## Branches if greater or equal, signed: `S` clear.
+pub macro brge(target: label) {
+    brbc FLAG_S, target
+}
+
+## Branches if half carry is set.
+pub macro brhs(target: label) {
+    brbs FLAG_H, target
+}
+
+## Branches if half carry is clear.
+pub macro brhc(target: label) {
+    brbc FLAG_H, target
+}
+
+## Branches if the `T` flag is set.
+pub macro brts(target: label) {
+    brbs FLAG_T, target
+}
+
+## Branches if the `T` flag is clear.
+pub macro brtc(target: label) {
+    brbc FLAG_T, target
+}
+
+## Branches if overflow is set.
+pub macro brvs(target: label) {
+    brbs FLAG_V, target
+}
+
+## Branches if overflow is clear.
+pub macro brvc(target: label) {
+    brbc FLAG_V, target
+}
+
+## Branches if interrupts are enabled.
+pub macro brie(target: label) {
+    brbs FLAG_I, target
+}
+
+## Branches if interrupts are disabled.
+pub macro brid(target: label) {
+    brbc FLAG_I, target
+}
+
+# =================
+# compares and skips
+# =================
+
+## Compares `rd` with `rr`.
+pub macro cp(rd: Reg, rr: Reg) {
+    @emit two_regs(0x1400, rd, rr)
+}
+
+## Compares `rd` with `rr` and carry.
+pub macro cpc(rd: Reg, rr: Reg) {
+    @emit two_regs(0x0400, rd, rr)
+}
+
+## Compares `rd` with `k`, for r16 to r31.
+pub macro cpi(rd: Reg, k: int) {
+    @emit reg_imm(0x3000, rd, k)
+}
+
+## Compares `rd` with `k` worked out later.
+pub macro cpi(rd: Reg, k: Deferred) {
+    @emit reg_imm(0x3000, rd, k)
+}
+
+## Skips the next instruction if `rd` equals `rr`.
+pub macro cpse(rd: Reg, rr: Reg) {
+    @emit two_regs(0x1000, rd, rr)
+}
+
+## Skips the next instruction if bit `b` of `rr` is clear.
+pub macro sbrc(rr: Reg, b: int) {
+    @emit word(0xFC00 | place(rr.value, 8, 4) | bit_number(b))
+}
+
+## Skips the next instruction if bit `b` of `rr` is set.
+pub macro sbrs(rr: Reg, b: int) {
+    @emit word(0xFE00 | place(rr.value, 8, 4) | bit_number(b))
+}
+
+## Skips the next instruction if bit `b` of I/O register `a`, 0 to 31, is
+## clear.
+pub macro sbic(a: int, b: int) {
+    @emit word(0x9900 | place(io_low(a), 7, 3) | bit_number(b))
+}
+
+## Skips the next instruction if bit `b` of I/O register `a`, 0 to 31, is
+## set.
+pub macro sbis(a: int, b: int) {
+    @emit word(0x9B00 | place(io_low(a), 7, 3) | bit_number(b))
+}
+
+# =================
+# moves, loads and stores
+# =================
+
+## `rd = rr`.
+pub macro mov(rd: Reg, rr: Reg) {
+    @emit two_regs(0x2C00, rd, rr)
+}
+
+## Copies the pair starting at `rr` to the pair starting at `rd`. Both
+## are even.
+pub macro movw(rd: Reg, rr: Reg) {
+    @assert rd.value % 2 == 0 && rr.value % 2 == 0, "`movw` takes even registers"
+    @emit word(0x0100 | place(rd.value >> 1, 7, 4) | place(rr.value >> 1, 3, 0))
+}
+
+## `rd = k`, for r16 to r31.
+pub macro ldi(rd: Reg, k: int) {
+    @emit reg_imm(0xE000, rd, k)
+}
+
+## `rd = k`, with `k` worked out later: `ldi r30, lo8(table)`.
+pub macro ldi(rd: Reg, k: Deferred) {
+    @emit reg_imm(0xE000, rd, k)
+}
+
+## Loads `rd` from the data address in `p`: `X`, `Y`, `Z`, or one of them
+## incremented after or decremented before.
+pub macro ld(rd: Reg, p: Pointer) {
+    @emit word(p.load | place(rd.value, 8, 4))
+}
+
+## Loads `rd` from `q` bytes, 0 to 63, past the address in `Y` or `Z`.
+pub macro ldd(rd: Reg, p: Pointer, q: int) {
+    @emit displaced(0x8000, rd, p, q)
+}
+
+## Stores `rr` at the data address in `p`.
+pub macro st(p: Pointer, rr: Reg) {
+    @emit word(p.load | 0x0200 | place(rr.value, 8, 4))
+}
+
+## Stores `rr` `q` bytes, 0 to 63, past the address in `Y` or `Z`.
+pub macro std(p: Pointer, q: int, rr: Reg) {
+    @emit displaced(0x8200, rr, p, q)
+}
+
+macro displaced(op: int, r: Reg, p: Pointer, q: int) -> Word {
+    @assert p.step == 0 && p.base != 26, "a displacement takes `Y` or `Z`"
+    @assert q >= 0 && q <= 63, "a displacement is 0 to 63"
+    const y = (p.base == 28) as int
+    const q_high = place(q >> 5, 13, 13) | place(q >> 3, 11, 10)
+    const q_bits = q_high | place(q, 2, 0)
+    @return word(op | q_bits | place(r.value, 8, 4) | place(y, 3, 3))
+}
+
+## Loads `rd` from data address `k`.
+pub macro lds(rd: Reg, k: int) {
+    @emit long(0x9000 | place(rd.value, 8, 4), data_address(k))
+}
+
+## Stores `rr` at data address `k`.
+pub macro sts(k: int, rr: Reg) {
+    @emit long(0x9200 | place(rr.value, 8, 4), data_address(k))
+}
+
+## Loads r0 from the flash byte address in `Z`.
+pub macro lpm() {
+    @emit word(0x95C8)
+}
+
+## Loads `rd` from the flash byte address in `p`: `Z`, or `Z` incremented
+## after.
+pub macro lpm(rd: Reg, p: Pointer) {
+    @assert p.base == 30 && p.step >= 0, "`lpm` takes `Z` or `Z+`"
+    @emit word(0x9004 | p.step | place(rd.value, 8, 4))
+}
+
+## Writes flash from r1:r0 at the address in `Z`, under the rules of the
+## chip's self-programming mode.
+pub macro spm() {
+    @emit word(0x95E8)
+}
+
+## Reads I/O register `a`, 0 to 63, into `rd`.
+pub macro in_(rd: Reg, a: int) {
+    @emit word(0xB000 | io_bits(a) | place(rd.value, 8, 4))
+}
+
+## Writes `rr` to I/O register `a`, 0 to 63.
+pub macro out(a: int, rr: Reg) {
+    @emit word(0xB800 | io_bits(a) | place(rr.value, 8, 4))
+}
+
+## Pushes `rr` onto the stack.
+pub macro push(rr: Reg) {
+    @emit one_reg(0x920F, rr)
+}
+
+## Pops the stack into `rd`.
+pub macro pop(rd: Reg) {
+    @emit one_reg(0x900F, rd)
+}
+
+# =================
+# control
+# =================
+
+## Does nothing for one cycle.
+pub macro nop() {
+    @emit word(0x0000)
+}
+
+## Enters the sleep mode set in the chip's control register.
+pub macro sleep() {
+    @emit word(0x9588)
+}
+
+## Resets the watchdog timer.
+pub macro wdr() {
+    @emit word(0x95A8)
+}
+
+## Stops for an on-chip debugger.
+pub macro break() {
+    @emit word(0x9598)
+}
+
+# =================
+# data
+# =================
+
+## One byte of data in flash.
+pub macro db(value: int) {
+    @assert value >= -128 && value <= 255, "a byte is -128 to 255"
+    @emit (value & 0xFF) as bits<8>
+}
+
+## One 16-bit word of data in flash, least significant byte first.
+pub macro dw(value: int) {
+    @assert value >= -32768 && value <= 0xFFFF, "a word is -32768 to 0xFFFF"
+    @emit word(value & 0xFFFF)
+}

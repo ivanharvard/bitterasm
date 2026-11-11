@@ -1,0 +1,76 @@
+#! AVR in its standard assembly syntax, the one GNU `as` and Atmel's
+#! assembler read: `ld r16, X+`, `st -Y, r0`, `ldd r16, Z+5`,
+#! `in r16, 0x3f`.
+#!
+#! ```
+#! from std.avr.native import *
+#!
+#! ld r16, X+
+#! st -Y, r16
+#! ldd r17, Z+5
+#! in r18, 0x3f
+#! ```
+#!
+#! ```bytes
+#! 0d 91
+#! 0a 93
+#! 15 81
+#! 2f b7
+#! ```
+#!
+#! The instructions themselves, and their registers, come from
+#! `std.avr.impl`, where `in` is spelled `in_`, since `in` is a keyword.
+
+pub from .impl import *
+
+# Most instructions read the same in both: `add r16, r17` is the default
+# call syntax. What's added here are the pointer operands that aren't
+# expressions, and `in`.
+
+# =================
+# pointer operands
+# =================
+# `-X`, `-Y` and `-Z` are operand patterns: each starts with `-`, so it's
+# tried wherever an operand starts with one, and needs the pointer's name
+# after it, so `-1` is still minus one.
+
+## `-X`: `X`, decremented before the access.
+pub macro pre_decrement_x() -> Pointer
+    | syntax { -X } { @return X_DEC }
+
+## `-Y`: `Y`, decremented before the access.
+pub macro pre_decrement_y() -> Pointer
+    | syntax { -Y } { @return Y_DEC }
+
+## `-Z`: `Z`, decremented before the access.
+pub macro pre_decrement_z() -> Pointer
+    | syntax { -Z } { @return Z_DEC }
+
+# `X+` can't be an operand pattern, since it starts with a name, and an
+# operand pattern can't. The instructions that take one spell it in their
+# own patterns instead.
+
+## `ld rd, X+`: loads, then increments the pointer.
+pub macro ld_incremented(rd: Reg, p: Pointer)
+    | syntax { ld $rd$, $p$+ } { ld rd, incremented(p) }
+
+## `st X+, rr`: stores, then increments the pointer.
+pub macro st_incremented(p: Pointer, rr: Reg)
+    | syntax { st $p$+, $rr$ } { st incremented(p), rr }
+
+## `lpm rd, Z+`: loads from flash, then increments `Z`.
+pub macro lpm_incremented(rd: Reg, p: Pointer)
+    | syntax { lpm $rd$, $p$+ } { lpm rd, incremented(p) }
+
+syntax ldd(rd, p, q) = { ldd $rd$, $p$+$q$ }
+syntax std(p, q, rr) = { std $p$+$q$, $rr$ }
+
+# =================
+# `in`
+# =================
+# `in` is a keyword, but one that never starts a statement, so a pattern
+# can start with it.
+
+## `in rd, a`: reads I/O register `a`, 0 to 63, into `rd`.
+pub macro in_native(rd: Reg, a: int)
+    | syntax { in $rd$, $a$ } { in_ rd, a }

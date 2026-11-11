@@ -59,6 +59,10 @@ r1 <- 7
 107
 ```
 
+An unanchored pattern can also start with the keyword `in`, which never
+starts a statement on its own. That's how `std.avr.native` reads AVR's
+`in r16, 0x3f`.
+
 A statement must start with a name, so `r1 <- 7` works where `1 <- 7`
 wouldn't.
 

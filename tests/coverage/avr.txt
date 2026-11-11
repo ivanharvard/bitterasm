@@ -1,0 +1,143 @@
+# AVR coverage: the instruction set of the ATmega328P, the `avr5` family
+# (AVR Instruction Set Manual, and the ATmega328P datasheet's instruction
+# set summary). Each pointer form of `ld`, `st` and `lpm` is its own form.
+name: AVR
+reference: ATmega328P (avr5)
+dialect: std.avr.native
+#
+# One line per operand form: `x` if it's covered, then the form, then a
+# sample of it in the dialect's syntax. A form is covered when its sample
+# compiles. `tests/coverage.rs` checks every marker; after changing what's
+# supported, run `make coverage` to update them and the coverage tables.
+
+x | add rd, rr     | add r16, r17
+x | adc rd, rr     | adc r16, r17
+x | adiw rd, k     | adiw r24, 1
+x | sub rd, rr     | sub r16, r17
+x | subi rd, k     | subi r16, 1
+x | sbc rd, rr     | sbc r16, r17
+x | sbci rd, k     | sbci r16, 1
+x | sbiw rd, k     | sbiw r24, 1
+x | and rd, rr     | and r16, r17
+x | andi rd, k     | andi r16, 1
+x | or rd, rr      | or r16, r17
+x | ori rd, k      | ori r16, 1
+x | eor rd, rr     | eor r16, r17
+x | com rd         | com r16
+x | neg rd         | neg r16
+x | sbr rd, k      | sbr r16, 1
+x | cbr rd, k      | cbr r16, 1
+x | inc rd         | inc r16
+x | dec rd         | dec r16
+x | tst rd         | tst r16
+x | clr rd         | clr r16
+x | ser rd         | ser r16
+x | mul rd, rr     | mul r16, r17
+x | muls rd, rr    | muls r16, r17
+x | mulsu rd, rr   | mulsu r16, r17
+x | fmul rd, rr    | fmul r16, r17
+x | fmuls rd, rr   | fmuls r16, r17
+x | fmulsu rd, rr  | fmulsu r16, r17
+x | rjmp target    | rjmp target
+x | ijmp           | ijmp
+x | jmp target     | jmp target
+x | rcall target   | rcall target
+x | icall          | icall
+x | call target    | call target
+x | ret            | ret
+x | reti           | reti
+x | cpse rd, rr    | cpse r16, r17
+x | cp rd, rr      | cp r16, r17
+x | cpc rd, rr     | cpc r16, r17
+x | cpi rd, k      | cpi r16, 1
+x | sbrc rr, b     | sbrc r16, 1
+x | sbrs rr, b     | sbrs r16, 1
+x | sbic a, b      | sbic 0x05, 1
+x | sbis a, b      | sbis 0x05, 1
+x | brbs s, target | brbs 1, target
+x | brbc s, target | brbc 1, target
+x | breq target    | breq target
+x | brne target    | brne target
+x | brcs target    | brcs target
+x | brcc target    | brcc target
+x | brsh target    | brsh target
+x | brlo target    | brlo target
+x | brmi target    | brmi target
+x | brpl target    | brpl target
+x | brge target    | brge target
+x | brlt target    | brlt target
+x | brhs target    | brhs target
+x | brhc target    | brhc target
+x | brts target    | brts target
+x | brtc target    | brtc target
+x | brvs target    | brvs target
+x | brvc target    | brvc target
+x | brie target    | brie target
+x | brid target    | brid target
+x | mov rd, rr     | mov r16, r17
+x | movw rd, rr    | movw r16, r18
+x | ldi rd, k      | ldi r16, 1
+x | lds rd, k      | lds r16, 0x100
+x | ld rd, X       | ld r16, X
+x | ld rd, X+      | ld r16, X+
+x | ld rd, -X      | ld r16, -X
+x | ld rd, Y       | ld r16, Y
+x | ld rd, Y+      | ld r16, Y+
+x | ld rd, -Y      | ld r16, -Y
+x | ldd rd, Y+q    | ldd r16, Y+1
+x | ld rd, Z       | ld r16, Z
+x | ld rd, Z+      | ld r16, Z+
+x | ld rd, -Z      | ld r16, -Z
+x | ldd rd, Z+q    | ldd r16, Z+1
+x | sts k, rr      | sts 0x100, r16
+x | st X, rr       | st X, r16
+x | st X+, rr      | st X+, r16
+x | st -X, rr      | st -X, r16
+x | st Y, rr       | st Y, r16
+x | st Y+, rr      | st Y+, r16
+x | st -Y, rr      | st -Y, r16
+x | std Y+q, rr    | std Y+1, r16
+x | st Z, rr       | st Z, r16
+x | st Z+, rr      | st Z+, r16
+x | st -Z, rr      | st -Z, r16
+x | std Z+q, rr    | std Z+1, r16
+x | lpm            | lpm
+x | lpm rd, Z      | lpm r16, Z
+x | lpm rd, Z+     | lpm r16, Z+
+x | spm            | spm
+x | in rd, a       | in r16, 0x3f
+x | out a, rr      | out 0x3f, r16
+x | push rr        | push r16
+x | pop rd         | pop r16
+x | sbi a, b       | sbi 0x05, 1
+x | cbi a, b       | cbi 0x05, 1
+x | lsl rd         | lsl r16
+x | lsr rd         | lsr r16
+x | rol rd         | rol r16
+x | ror rd         | ror r16
+x | asr rd         | asr r16
+x | swap rd        | swap r16
+x | bset s         | bset 1
+x | bclr s         | bclr 1
+x | bst rr, b      | bst r16, 1
+x | bld rd, b      | bld r16, 1
+x | sec            | sec
+x | clc            | clc
+x | sen            | sen
+x | cln            | cln
+x | sez            | sez
+x | clz            | clz
+x | sei            | sei
+x | cli            | cli
+x | ses            | ses
+x | cls            | cls
+x | sev            | sev
+x | clv            | clv
+x | set            | set
+x | clt            | clt
+x | seh            | seh
+x | clh            | clh
+x | break          | break
+x | nop            | nop
+x | sleep          | sleep
+x | wdr            | wdr

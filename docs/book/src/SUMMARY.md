@@ -88,6 +88,10 @@
 - [std reference](std/reference/index.md)
     <!-- bitterasm doc: begin -->
     - [`array`](std/reference/array.md)
+    - [`avr`](std/reference/avr/index.md)
+        - [`atmega328p`](std/reference/avr/atmega328p.md)
+        - [`impl`](std/reference/avr/impl.md)
+        - [`native`](std/reference/avr/native.md)
     - [`binary`](std/reference/binary.md)
     - [`bitfield`](std/reference/bitfield.md)
     - [`bitter`](std/reference/bitter/index.md)
