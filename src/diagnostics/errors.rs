@@ -12,22 +12,30 @@ pub fn lex_error(error: LexError, source: SourceId) -> Diagnostic {
     Diagnostic::error(error.message).primary(source, error.span, "invalid token starts here")
 }
 
-pub fn load_error(error: LoadError, sources: &mut SourceMap) -> Diagnostic {
+/// The diagnostics for a loader error: one per parse error for a file that
+/// failed to parse, otherwise one.
+pub fn load_errors(error: LoadError, sources: &mut SourceMap) -> Vec<Diagnostic> {
     match error {
-        LoadError::Lex { path, message, span } | LoadError::Parse { path, message, span } => {
-            let mut diagnostic = Diagnostic::error(message);
-            match std::fs::read_to_string(&path) {
-                Ok(text) => diagnostic = diagnostic.primary(sources.add(&path, text), span, "while loading this module"),
-                Err(_) => diagnostic.notes.push(format!("in {}", path.display())),
-            }
-            diagnostic
-        }
+        LoadError::Lex { path, message, span } => vec![located(&path, message, span, "invalid token starts here", sources)],
+        LoadError::Parse { path, errors } => errors
+            .into_iter()
+            .map(|error| located(&path, error.message, error.span, "could not parse this", sources))
+            .collect(),
         LoadError::Resolve { path, error } => {
             let source = std::fs::read_to_string(&path).ok().map(|text| sources.add(&path, text));
-            resolve_error(*error, source)
+            vec![resolve_error(*error, source)]
         }
-        other => Diagnostic::error(other.to_string()),
+        other => vec![Diagnostic::error(other.to_string())],
     }
+}
+
+fn located(path: &std::path::Path, message: String, span: crate::token::Span, label: &str, sources: &mut SourceMap) -> Diagnostic {
+    let mut diagnostic = Diagnostic::error(message);
+    match std::fs::read_to_string(path) {
+        Ok(text) => diagnostic = diagnostic.primary(sources.add(path, text), span, label),
+        Err(_) => diagnostic.notes.push(format!("in {}", path.display())),
+    }
+    diagnostic
 }
 
 pub fn resolve_error(error: ResolveError, source: Option<SourceId>) -> Diagnostic {

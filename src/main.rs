@@ -640,14 +640,15 @@ fn expand(
         }
     };
 
-    let program = match parser::parse(tokens) {
-        Ok(program) => program,
+    let program = match parser::parse_recovering(tokens) {
+        (program, errors) if errors.is_empty() => program,
 
-        Err(error) => {
+        (_, errors) => {
             let mut sources = SourceMap::default();
             let source_id = sources.add(path, source.clone());
+            let diagnostics: Vec<_> = errors.into_iter().map(|error| diagnostics::parse_error(error, source_id)).collect();
             eprint!("{}", diagnostics::render(
-                &[diagnostics::parse_error(error, source_id)],
+                &diagnostics,
                 &sources,
                 RenderOptions { format: DiagnosticFormat::Terminal, color: std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none() },
             ));
@@ -664,9 +665,9 @@ fn expand(
         Err(error) => {
             let mut sources = SourceMap::default();
             sources.add(path, source.clone());
-            let diagnostic = diagnostics::load_error(error, &mut sources);
+            let diagnostics = diagnostics::load_errors(error, &mut sources);
             eprint!("{}", diagnostics::render(
-                &[diagnostic],
+                &diagnostics,
                 &sources,
                 RenderOptions { format: DiagnosticFormat::Terminal, color: std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none() },
             ));

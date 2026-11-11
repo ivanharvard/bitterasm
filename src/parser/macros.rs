@@ -355,15 +355,26 @@ impl Parser {
             }
 
             let doc_lines = self.take_doc_lines();
-            let mut statement = match self.parse_statement() {
-                Ok(statement) => statement,
-                Err(error) => {
-                    self.block_depth -= 1;
-                    return Err(error);
+            let statement_start = self.pos;
+            match self.parse_statement() {
+                Ok(mut statement) => {
+                    self.attach_doc(&mut statement, doc_lines);
+                    body.push(statement);
                 }
-            };
-            self.attach_doc(&mut statement, doc_lines);
-            body.push(statement);
+                // Record the error and go on to the block's next
+                // statement, unless this is a try that may be thrown away,
+                // or the block looks unclosed (see `recovery_point`).
+                Err(error) => match self.recovery_point(statement_start, true) {
+                    Some(resume) if self.speculating == 0 => {
+                        self.errors.push(error);
+                        self.pos = resume.max(statement_start + 1);
+                    }
+                    _ => {
+                        self.block_depth -= 1;
+                        return Err(error);
+                    }
+                },
+            }
             self.skip_newlines();
         }
 

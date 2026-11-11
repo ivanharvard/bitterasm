@@ -60,7 +60,27 @@ mod tests;
 /// assert_eq!(program.statements.len(), 1);
 /// ```
 pub fn parse(tokens: Vec<Token>) -> Result<Program, ParseError> {
-    parse_seeded(tokens, Vec::new(), &ParserSeed::default()).map(|(program, _)| program)
+    let (program, mut errors) = parse_recovering(tokens);
+    if errors.is_empty() { Ok(program) } else { Err(errors.swap_remove(0)) }
+}
+
+/// Like [`parse`], but doesn't stop at the first error: a statement that
+/// fails to parse is reported and skipped, and parsing picks up at the next
+/// one. Returns every statement that did parse, and every error in source
+/// order. An editor uses it to keep working on the rest of a broken file.
+///
+/// ```
+/// use bitterasm::lexer::lex;
+/// use bitterasm::parser::parse_recovering;
+///
+/// let tokens = lex("const x = )\nconst y = 2\nconst z = (\n").unwrap();
+/// let (program, errors) = parse_recovering(tokens);
+/// assert_eq!(program.statements.len(), 1);
+/// assert_eq!(errors.len(), 2);
+/// ```
+pub fn parse_recovering(tokens: Vec<Token>) -> (Program, Vec<ParseError>) {
+    let (program, _, errors) = parse_seeded(tokens, Vec::new(), &ParserSeed::default());
+    (program, errors)
 }
 
 /// What the same-file prepass discovers, threaded across files the same
@@ -107,12 +127,13 @@ pub(crate) struct ParserSeed {
 /// they document. Returns
 /// everything visible by the end of the file (seed plus whatever this file
 /// declared itself), so callers can pass it on to files that import *this*
-/// one in turn.
+/// one in turn. Parsing recovers from errors the way [`parse_recovering`]
+/// does, so the program holds every statement that parsed.
 pub(crate) fn parse_seeded(
     tokens: Vec<Token>,
     docs: Vec<DocComment>,
     seed: &ParserSeed,
-) -> Result<(Program, ParserSeed), ParseError> {
+) -> (Program, ParserSeed, Vec<ParseError>) {
     // dummy pass to collect signatures
     let mut prepass = Parser::new(tokens.clone());
     prepass.generic_signatures.extend(seed.generic_signatures.clone());
@@ -128,9 +149,9 @@ pub(crate) fn parse_seeded(
     parser.syntax_overrides = prepass.syntax_overrides;
     parser.unanchored_syntaxes = prepass.unanchored_syntaxes;
 
-    let program = parser.parse_program()?;
+    let program = parser.parse_program();
 
-    Ok((
+    (
         program,
         ParserSeed {
             generic_signatures: parser.generic_signatures,
@@ -139,10 +160,11 @@ pub(crate) fn parse_seeded(
             local_syntax_overrides: parser.local_syntax_overrides,
             unanchored_syntaxes: parser.unanchored_syntaxes,
         },
-    ))
+        parser.errors,
+    )
 }
 
-// Parses `tokens` leniently (ignoring errors past the first) purely to
+// Parses `tokens` leniently (ignoring its errors) purely to
 // discover which modules it imports, without needing to know anything about
 // those modules' contents first. Import statements don't depend on any
 // generic signature, so this succeeds even when later statements in the
@@ -250,6 +272,15 @@ struct Parser {
     // ones that turned out to document nothing. See `docs.rs`.
     pending_docs: Vec<DocComment>,
     stray_docs: Vec<DocComment>,
+
+    /// Every statement that failed to parse, in source order. See
+    /// `recover`.
+    errors: Vec<ParseError>,
+
+    /// Above 0 while trying a custom syntax pattern that may not match.
+    /// A failed try is thrown away, so a block inside it mustn't record
+    /// its errors and carry on; it passes them up instead.
+    pub(super) speculating: usize,
 }
 
 impl Parser {
@@ -270,6 +301,8 @@ impl Parser {
             in_splice: false,
             pending_docs: Vec::new(),
             stray_docs: Vec::new(),
+            errors: Vec::new(),
+            speculating: 0,
         }
     }
 
@@ -353,7 +386,7 @@ impl Parser {
     // program
     // ===============
 
-    fn parse_program(&mut self) -> Result<Program, ParseError> {
+    fn parse_program(&mut self) -> Program {
         let start = self.current().span.start;
 
         let mut statements = Vec::new();
@@ -363,20 +396,91 @@ impl Parser {
 
         while !self.at_eof() {
             let doc_lines = self.take_doc_lines();
-            let mut statement = self.parse_statement()?;
-            self.attach_doc(&mut statement, doc_lines);
-            statements.push(statement);
+            let statement_start = self.pos;
+            match self.parse_statement() {
+                Ok(mut statement) => {
+                    self.attach_doc(&mut statement, doc_lines);
+                    statements.push(statement);
+                }
+                Err(error) => {
+                    self.errors.push(error);
+                    // At top level there's no block to be missing its `}`.
+                    let resume = self.recovery_point(statement_start, false).unwrap_or(self.pos);
+                    self.pos = resume.max(statement_start + 1).min(self.tokens.len() - 1);
+                }
+            }
             self.skip_newlines();
         }
 
         let end = self.current().span.end;
 
-        Ok(Program {
+        Program {
             statements,
             span: Span::new(start, end),
             doc,
             stray_docs: self.finish_docs(),
-        })
+        }
+    }
+
+    // =============
+    // recovery
+    // =============
+
+    /// Where to pick up after the statement starting at token
+    /// `statement_start` failed to parse at the current token. Scans from
+    /// the statement's start, keeping a stack of open brackets, for:
+    ///
+    /// - a newline with no bracket open, at or past the error: the
+    ///   statement ends there, so parsing resumes after it;
+    /// - in a block, a `}` with no `{` open: it closes the block, so
+    ///   parsing resumes at it, leaving it for the block. Any `(` or `[`
+    ///   still open was never closed;
+    /// - with a bracket left open, a line starting at column 0: a bracket
+    ///   was never closed, and that line most likely starts the next
+    ///   top-level statement. At top level parsing resumes there; in a
+    ///   block, `None` says the block itself is unclosed, so it passes the
+    ///   error up instead of reading the rest of the file as its body;
+    /// - the end of the file.
+    fn recovery_point(&self, statement_start: usize, in_block: bool) -> Option<usize> {
+        let error_pos = self.pos;
+        let mut open: Vec<TokenKind> = Vec::new();
+
+        for index in statement_start..self.tokens.len() {
+            let token = &self.tokens[index];
+            let opener = match token.kind {
+                TokenKind::RParen => Some(TokenKind::LParen),
+                TokenKind::RBrace => Some(TokenKind::LBrace),
+                TokenKind::RBracket => Some(TokenKind::LBracket),
+                _ => None,
+            };
+
+            let at_line_start = index > error_pos
+                && self.tokens[index - 1].kind == TokenKind::Newline
+                && self.tokens[index - 1].span.end == token.span.start;
+            if !open.is_empty() && at_line_start && opener.is_none() && token.kind != TokenKind::Pipe {
+                return (!in_block).then_some(index);
+            }
+
+            match &token.kind {
+                TokenKind::Eof => return Some(index),
+                TokenKind::LParen | TokenKind::LBrace | TokenKind::LBracket => open.push(token.kind.clone()),
+                TokenKind::Newline if open.is_empty() && index >= error_pos => return Some(index + 1),
+                _ => {}
+            }
+
+            // A closer closes its own kind of bracket, and any opened after
+            // it that were never closed. One with nothing to close is the
+            // block's `}`, or at top level a stray closer, skipped over.
+            if let Some(opener) = opener {
+                match open.iter().rposition(|kind| *kind == opener) {
+                    Some(at) => open.truncate(at),
+                    None if in_block && opener == TokenKind::LBrace && index >= error_pos => return Some(index),
+                    None => {}
+                }
+            }
+        }
+
+        Some(self.tokens.len() - 1)
     }
 
     // =============

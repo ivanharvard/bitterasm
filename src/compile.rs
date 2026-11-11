@@ -183,9 +183,21 @@ pub fn analyze(
 
     // The loader supplies the entry module after seeding it with imported
     // generic signatures and syntax patterns but before flattening imports,
-    // so every span here still belongs to the source file we render.
-    match loader::load_entry_program(path) {
-        Ok(program) => {
+    // so every span here still belongs to the source file we render. It
+    // loads leniently so a broken file reports every parse error, in every
+    // file it imports, before compiling stops. Another load error that
+    // comes with them likely only follows from them, so they're shown
+    // alone.
+    match loader::load_entry_program_lenient(path) {
+        (_, parse_errors) if !parse_errors.is_empty() => {
+            let diagnostics: Vec<_> = parse_errors
+                .into_iter()
+                .flat_map(|error| diagnostics::load_errors(error, &mut diagnostic_run.sources))
+                .collect();
+            emit_diagnostics(&diagnostics, &diagnostic_run);
+            return Err(Failed);
+        }
+        (Ok(program), _) => {
             let warnings = diagnostics::lint_program_with(
                 &program,
                 diagnostic_run.source_id,
@@ -196,9 +208,9 @@ pub fn analyze(
                 return Err(Failed);
             }
         }
-        Err(error) => {
-            let diagnostic = diagnostics::load_error(error, &mut diagnostic_run.sources);
-            emit_diagnostics(&[diagnostic], &diagnostic_run);
+        (Err(error), _) => {
+            let diagnostics = diagnostics::load_errors(error, &mut diagnostic_run.sources);
+            emit_diagnostics(&diagnostics, &diagnostic_run);
             return Err(Failed);
         }
     }
@@ -213,8 +225,8 @@ pub fn analyze(
     let expansion = match resolve_and_expand(path, verbose, timings) {
         Ok(expansion) => expansion,
         Err(CompileError::Load(error)) => {
-            let diagnostic = diagnostics::load_error(error, &mut diagnostic_run.sources);
-            emit_diagnostics(&[diagnostic], &diagnostic_run);
+            let diagnostics = diagnostics::load_errors(error, &mut diagnostic_run.sources);
+            emit_diagnostics(&diagnostics, &diagnostic_run);
             return Err(Failed);
         }
         Err(CompileError::Resolve(error, file)) => {

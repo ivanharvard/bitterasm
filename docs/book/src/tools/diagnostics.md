@@ -13,6 +13,11 @@ error: shift amount must be 0 to 31
   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error occurs here
 ```
 
+A statement that fails to parse doesn't hide the ones after it: parsing
+skips to the next statement and goes on, so you see every parse error, in
+the file and the files it imports, at once. Compiling stops after them.
+Any later error, like an unknown name, stops at the first one.
+
 `--diagnostic-format` picks the output: `terminal` (the default), `plain`, or
 `json` for editors and build tools. `--color auto|always|never` controls
 color; `auto` also respects the `NO_COLOR` environment variable.

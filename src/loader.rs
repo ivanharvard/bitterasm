@@ -24,7 +24,7 @@ use crate::ast::{
 };
 use crate::eval::Int;
 use crate::lexer;
-use crate::parser::{self, ParserSeed};
+use crate::parser::{self, ParseError, ParserSeed};
 use crate::resolver::{self, ResolveError};
 use crate::token::{DocComment, Span};
 use crate::types::{GenericParameter, StructBodyItem, TypeArgument, TypeExpr};
@@ -40,10 +40,11 @@ pub enum LoadError {
         message: String,
         span: Span,
     },
+    /// Every statement in `path` that failed to parse, in source order;
+    /// never empty.
     Parse {
         path: PathBuf,
-        message: String,
-        span: Span,
+        errors: Vec<ParseError>,
     },
     ModuleNotFound {
         importer: PathBuf,
@@ -92,8 +93,12 @@ impl fmt::Display for LoadError {
                 write!(f, "{}: {message}", path.display())
             }
 
-            LoadError::Parse { path, message, .. } => {
-                write!(f, "{}: {message}", path.display())
+            LoadError::Parse { path, errors } => {
+                write!(f, "{}: {}", path.display(), errors[0].message)?;
+                if errors.len() > 1 {
+                    write!(f, " (and {} more parse errors)", errors.len() - 1)?;
+                }
+                Ok(())
             }
 
             LoadError::ModuleNotFound { importer, module, searched } => {
@@ -204,6 +209,12 @@ struct LoadState {
     cache: HashMap<PathBuf, LoadedModule>,
     stack: Vec<PathBuf>,
 
+    // When set, a file with parse errors still loads, with the statements
+    // that parsed, and its errors go in `parse_errors`. See
+    // `load_program_with_modules_lenient`.
+    lenient: bool,
+    parse_errors: Vec<LoadError>,
+
     // Every loaded module's top-level integer constants, by internal name:
     // what a later module's top-level `@for` bounds can read through its
     // imports.
@@ -278,10 +289,31 @@ impl ModuleOrigins {
 /// care about module attribution (formatting, `expand`, every existing
 /// test) should keep using [`load_program`].
 pub fn load_program_with_modules(entry: &Path) -> Result<(Program, ModuleOrigins), LoadError> {
+    let mut state = LoadState::default();
+    flatten(entry, &mut state)
+}
+
+/// Like [`load_program_with_modules`], but a file that fails to parse still
+/// loads, with every statement that did parse. Its errors come back
+/// alongside, each a [`LoadError::Parse`], for every file in the import
+/// graph. An editor uses it to keep understanding the rest of a program
+/// while one part is broken.
+///
+/// Any other error still stops loading, and the parse errors found until
+/// then come back with it. That error may only follow from them, such as
+/// an import of a name whose declaration didn't parse.
+pub fn load_program_with_modules_lenient(
+    entry: &Path,
+) -> (Result<(Program, ModuleOrigins), LoadError>, Vec<LoadError>) {
+    let mut state = LoadState { lenient: true, ..LoadState::default() };
+    let result = flatten(entry, &mut state);
+    (result, state.parse_errors)
+}
+
+fn flatten(entry: &Path, state: &mut LoadState) -> Result<(Program, ModuleOrigins), LoadError> {
     let entry_path = canonicalize(entry)?;
 
-    let mut state = LoadState::default();
-    load_module(&entry_path, &mut state)?;
+    load_module(&entry_path, state)?;
     let cache = &state.cache;
 
     // The entry file's own imports get spliced into its statement list; it
@@ -358,9 +390,21 @@ pub fn load_program_with_modules(entry: &Path) -> Result<(Program, ModuleOrigins
 /// diagnostics: every span belongs to `entry`, while ordinary compilation
 /// continues to use [`load_program`]'s flattened program.
 pub fn load_entry_program(entry: &Path) -> Result<Program, LoadError> {
-    let entry_path = canonicalize(entry)?;
     let mut state = LoadState::default();
-    load_module(&entry_path, &mut state)?;
+    entry_program(entry, &mut state)
+}
+
+/// [`load_entry_program`], loading leniently the way
+/// [`load_program_with_modules_lenient`] does.
+pub fn load_entry_program_lenient(entry: &Path) -> (Result<Program, LoadError>, Vec<LoadError>) {
+    let mut state = LoadState { lenient: true, ..LoadState::default() };
+    let result = entry_program(entry, &mut state);
+    (result, state.parse_errors)
+}
+
+fn entry_program(entry: &Path, state: &mut LoadState) -> Result<Program, LoadError> {
+    let entry_path = canonicalize(entry)?;
+    load_module(&entry_path, state)?;
     let entry_module = &state.cache[&entry_path];
     Ok(Program {
         statements: entry_module.source_statements.clone(),
@@ -389,10 +433,11 @@ pub fn load_unrolled_entry_program(entry: &Path) -> Result<Program, LoadError> {
 
 /// Returns every source file in an entry's import graph. The order is
 /// deterministic by canonical path and is intended for diagnostics, whose
-/// resolver spans must be matched back to the module they came from.
+/// resolver spans must be matched back to the module they came from. A
+/// file that fails to parse doesn't stop it: its imports are still found.
 pub fn load_sources(entry: &Path) -> Result<Vec<(PathBuf, String)>, LoadError> {
     let entry_path = canonicalize(entry)?;
-    let mut state = LoadState::default();
+    let mut state = LoadState { lenient: true, ..LoadState::default() };
     load_module(&entry_path, &mut state)?;
     let mut paths: Vec<_> = state.cache.into_keys().collect();
     paths.sort();
@@ -461,13 +506,14 @@ fn load_module(path: &Path, state: &mut LoadState) -> Result<(), LoadError> {
         }
     }
 
-    let (program, mut seed) = parser::parse_seeded(tokens, docs, &seed).map_err(|error| {
-        LoadError::Parse {
-            path: path.to_path_buf(),
-            message: error.message,
-            span: error.span,
+    let (program, mut seed, errors) = parser::parse_seeded(tokens, docs, &seed);
+    if !errors.is_empty() {
+        let error = LoadError::Parse { path: path.to_path_buf(), errors };
+        if !state.lenient {
+            return Err(error);
         }
-    })?;
+        state.parse_errors.push(error);
+    }
 
     for name in &conflicted_overrides {
         if !seed.local_syntax_overrides.contains(name) {
@@ -2656,17 +2702,12 @@ mod tests {
     }
 
     #[test]
-    fn custom_syntax_call_site_must_follow_its_declaration_in_the_same_file() {
+    fn custom_syntax_call_site_may_come_before_its_declaration_in_the_same_file() {
         let dir = scratch_dir("custom_syntax_ordering");
 
-        // A pattern whose separator (`:`) genuinely can't parse as any kind
-        // of default-expression continuation, so a same-file, out-of-order
-        // call site hard-fails during the prepass rather than "accidentally"
-        // still working because the misinterpreted default parse happens to
-        // consume the same tokens anyway (which does happen for some
-        // separators, e.g. `<-`, since `<` and unary `-` are both valid
-        // default-expression continuations even though they're wrong here —
-        // this test specifically needs one that isn't).
+        // A pattern whose separator (`:`) can't continue a default
+        // expression, so the out-of-order call fails in the parser's first
+        // pass, before that pass has seen `mov`'s syntax.
         fs::write(
             dir.join("after.basm"),
             "macro mov(dst: int, value: int) | syntax { mov $dst$: $value$ } {\n}\n\nmov r1: 7\n",
@@ -2682,14 +2723,11 @@ mod tests {
         )
         .unwrap();
 
-        let result = load_program(&dir.join("before.basm"));
-
-        assert!(
-            result.is_err(),
-            "a custom-syntax call site before its own declaration is a known v1 \
-             limitation — document it explicitly (this test) rather than relying \
-             on it silently working or silently failing"
-        );
+        // The parser's first pass, which collects every declaration's
+        // syntax before the real parse, recovers past the call it can't yet
+        // read, so the real parse knows `mov`'s syntax from the start.
+        load_program(&dir.join("before.basm"))
+            .expect("a custom-syntax call site before its own declaration should load");
 
         fs::remove_dir_all(&dir).ok();
     }

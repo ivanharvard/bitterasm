@@ -1846,7 +1846,9 @@ fn fold_and_for_print_back_to_parseable_source() {
 
 fn parse_with_docs(source: &str) -> Program {
     let (tokens, docs) = crate::lexer::lex_with_docs(source).unwrap();
-    parse_seeded(tokens, docs, &ParserSeed::default()).unwrap().0
+    let (program, _, errors) = parse_seeded(tokens, docs, &ParserSeed::default());
+    assert!(errors.is_empty(), "{errors:?}");
+    program
 }
 
 fn doc_text(doc: &Option<crate::ast::Doc>) -> Option<&str> {
@@ -2026,4 +2028,97 @@ const picked = index<int>(5)
         "expected a call with generic arguments, got {:?}",
         picked.value
     );
+}
+
+// ================
+// error recovery
+// ================
+
+/// The literal names of the top-level declarations `source` parses to,
+/// and its errors' messages.
+fn recover(source: &str) -> (Vec<String>, Vec<String>) {
+    let (program, errors) = parse_recovering(lex(source).unwrap());
+    let names = program
+        .statements
+        .iter()
+        .filter_map(|statement| match statement {
+            Statement::Const(declaration) => literal_name(&declaration.name),
+            Statement::Macro(declaration) => literal_name(&declaration.name),
+            _ => None,
+        })
+        .collect();
+    (names, errors.into_iter().map(|error| error.message).collect())
+}
+
+#[test]
+fn a_broken_statement_is_reported_and_the_next_one_still_parses() {
+    let (names, errors) = recover("const a = )\nconst b = 2\nconst c = 1 +\nconst d = 4\n");
+
+    assert_eq!(names, ["b", "d"]);
+    assert_eq!(errors.len(), 2);
+}
+
+#[test]
+fn parse_still_returns_the_first_error() {
+    let error = parse(lex("const a = 1\nconst b = )\nconst c = (\n").unwrap()).unwrap_err();
+
+    assert_eq!(error.span.start, "const a = 1\nconst b = ".len());
+}
+
+#[test]
+fn a_broken_statement_spanning_lines_is_skipped_whole() {
+    // The newline inside the parentheses doesn't end the statement.
+    let (names, errors) = recover("const a = (1 +\n    2 2)\nconst b = 3\n");
+
+    assert_eq!(names, ["b"]);
+    assert_eq!(errors.len(), 1);
+}
+
+#[test]
+fn a_broken_statement_in_a_macro_body_keeps_the_macro() {
+    // The unclosed `(` runs to the `}`, which still closes the body.
+    let source = "macro show(x: int) {\n    @emit x +\n    @emit x\n    @emit (x\n}\nconst after = 1\n";
+    let (program, errors) = parse_recovering(lex(source).unwrap());
+
+    assert_eq!(errors.len(), 2);
+    let Statement::Macro(declaration) = &program.statements[0] else {
+        panic!("expected the macro");
+    };
+    assert_eq!(declaration.body.len(), 1);
+    assert_eq!(program.statements.len(), 2);
+}
+
+#[test]
+fn a_broken_last_statement_in_a_block_leaves_the_closing_brace_to_it() {
+    let (names, errors) = recover("macro m() {\n    @emit (1 }\nconst after = 1\n");
+
+    assert_eq!(names, ["m", "after"]);
+    assert_eq!(errors.len(), 1);
+}
+
+#[test]
+fn an_unclosed_bracket_resumes_at_the_next_line_starting_at_column_0() {
+    let (names, errors) = recover("macro m() {\n    @emit (1\n    @if 1 {\n\nconst after = 1\n");
+
+    assert_eq!(names, ["after"]);
+    assert_eq!(errors.len(), 1);
+}
+
+#[test]
+fn a_stray_closer_at_top_level_is_skipped() {
+    let (names, errors) = recover(")\nconst a = 1\n}\nconst b = 2\n");
+
+    assert_eq!(names, ["a", "b"]);
+    assert_eq!(errors.len(), 2);
+}
+
+#[test]
+fn a_broken_file_still_seeds_generic_signatures_declared_after_the_error() {
+    // The first pass recovers too, so it sees `Reg`'s const parameter and
+    // `Reg<64>` reads as generic arguments, not a comparison.
+    let source = "const broken = )\nconst r = Reg<64>(1)\nstruct Reg<const N: int> {\n    pub id: int,\n}\n";
+    let (names, errors) = recover(source);
+
+    assert_eq!(names, ["r"]);
+    assert_eq!(errors.len(), 1);
 }

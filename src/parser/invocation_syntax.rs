@@ -41,7 +41,10 @@ impl Parser {
 
         for (name, pattern) in candidates {
             self.pos = start_pos;
-            match self.parse_invocation_via_syntax(name, pattern) {
+            self.speculating += 1;
+            let attempt = self.parse_invocation_via_syntax(name, pattern);
+            self.speculating -= 1;
+            match attempt {
                 Ok(invocation) => {
                     let end_pos = self.pos;
                     let specificity = literal_token_count(pattern);
@@ -161,7 +164,10 @@ impl Parser {
 
         for (name, pattern) in &candidates {
             self.pos = start_pos;
-            if let Ok(operands) = self.match_syntax_pattern(name, pattern) {
+            self.speculating += 1;
+            let attempt = self.match_syntax_pattern(name, pattern);
+            self.speculating -= 1;
+            if let Ok(operands) = attempt {
                 let specificity = literal_token_count(pattern);
                 if !matches.iter().any(|(known, args, _, _)| known == name && args == &operands) {
                     matches.push((name.clone(), operands, self.pos, specificity));
@@ -242,7 +248,10 @@ impl Parser {
             self.pos = start_pos;
             let Some(PatternSegment::Capture(first)) = pattern.segments.first() else { continue };
             let captured = HashMap::from([(first.clone(), left.clone())]);
-            if let Ok(operands) = self.match_syntax_segments(name, pattern, 1, captured) {
+            self.speculating += 1;
+            let attempt = self.match_syntax_segments(name, pattern, 1, captured);
+            self.speculating -= 1;
+            if let Ok(operands) = attempt {
                 let specificity = literal_token_count(pattern);
                 if !matches.iter().any(|(known, args, _, _)| known == name && args == &operands) {
                     matches.push((name.clone(), operands, self.pos, specificity));
