@@ -104,6 +104,7 @@
         - [`macho`](std/reference/formats/macho.md)
         - [`pe`](std/reference/formats/pe.md)
     - [`iter`](std/reference/iter.md)
+    - [`list`](std/reference/list.md)
     - [`math`](std/reference/math.md)
     - [`option`](std/reference/option.md)
     - [`pdp10`](std/reference/pdp10/index.md)

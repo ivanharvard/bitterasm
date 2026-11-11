@@ -1,0 +1,101 @@
+#! Linked lists: a `List<T>` is either empty (`Nil`) or a value followed
+#! by the rest of the list (`Cons`). Every value is immutable, so each
+#! operation returns a new list.
+#!
+#! ```
+#! from std.list import *
+#!
+#! macro show_all<T>(xs: List<T>) {
+#!     @match xs {
+#!         Nil => {}
+#!         Cons(node) => {
+#!             @emit node.head
+#!             show_all node.tail
+#!         }
+#!     }
+#! }
+#!
+#! macro show(value: int) {
+#!     @emit value
+#! }
+#!
+#! struct Point {
+#!     pub x: int,
+#!     pub y: int,
+#! }
+#!
+#! const xs = list(1, list(2, list(3, nil<int>())))
+#!
+#! show_all xs
+#! show_all reversed(xs)
+#! show_all struct_as_list<Point, int>(Point(4, 5))
+#! show length(xs)
+#! ```
+#!
+#! ```emits
+#! 1 2 3
+#! 3 2 1
+#! 4 5
+#! 3
+#! ```
+#!
+#! An empty list still has an element type, so `nil` takes it as a generic
+#! argument: `nil<int>()`.
+
+## A list's first value and the rest of the list.
+pub struct Node<T> {
+    ## The first value.
+    pub head: T,
+    ## Everything after it.
+    pub tail: List<T>,
+}
+
+## Either empty, or a value followed by the rest of the list.
+pub enum List<T> {
+    ## The empty list.
+    Nil,
+    ## A value followed by the rest of the list.
+    Cons: Node<T>,
+}
+
+## The list `head` followed by `tail`.
+pub macro list<T>(head: T, tail: List<T>) -> List<T> {
+    @return List<T>.Cons(Node<T> { head: head, tail: tail })
+}
+
+## The empty list of `T`s.
+pub macro nil<T>() -> List<T> {
+    @return List<T>.Nil
+}
+
+## How many values `xs` holds.
+pub macro length<T>(xs: List<T>) -> int {
+    @match xs {
+        Nil => { @return 0 }
+        Cons(node) => { @return 1 + length(node.tail) }
+    }
+}
+
+## `xs` in reverse order.
+pub macro reversed<T>(xs: List<T>) -> List<T> {
+    @return reversed_onto(xs, nil<T>())
+}
+
+# `xs` reversed, followed by `done`.
+macro reversed_onto<T>(xs: List<T>, done: List<T>) -> List<T> {
+    @match xs {
+        Nil => { @return done }
+        Cons(node) => {
+            @return reversed_onto(node.tail, list(node.head, done))
+        }
+    }
+}
+
+## The `pub` fields of `s`, a struct of type `S`, as a list in order. Every
+## one must be a `T`. Both types are named: `struct_as_list<Point, int>(p)`.
+pub macro struct_as_list<S, T>(s: S) -> List<T> {
+    const backwards = @fold xs = nil<T>() @for field in s {
+        @next list(field, xs)
+    }
+    @return reversed(backwards)
+}

@@ -11,6 +11,7 @@
 | [`enumerated`](enumerated.md) | `Enumerated<T>`: a value paired with its position. |
 | [`formats/`](formats/index.md) | `elf`, `macho`, `pe` |
 | [`iter`](iter.md) | Stepped ranges of integers, for `@for`. |
+| [`list`](list.md) | Linked lists: a `List<T>` is either empty (`Nil`) or a value followed by the rest of the list (`Cons`). Every value is immutable, so each operation returns a new list. |
 | [`math`](math.md) | Integer math, and fixed-point math on `Decimal` and `Fraction`, all evaluated at compile time. |
 | [`option`](option.md) | `Option<T>`: a value that may be missing. |
 | [`pdp10/`](pdp10/index.md) | `impl`, `tops10` |
