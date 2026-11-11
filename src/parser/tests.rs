@@ -2122,3 +2122,22 @@ fn a_broken_file_still_seeds_generic_signatures_declared_after_the_error() {
     assert_eq!(names, ["r"]);
     assert_eq!(errors.len(), 1);
 }
+
+#[test]
+fn a_syntax_pattern_can_start_with_in() {
+    let source = "macro read(rd: int, a: int) | syntax { in $rd$, $a$ } {\n}\nin 1, 2\n";
+    let program = parse(lex(source).unwrap()).unwrap();
+
+    let Statement::Invocation(invocation) = &program.statements[1] else {
+        panic!("expected `in 1, 2` to call `read`");
+    };
+    assert_eq!(invocation.name, "read");
+    assert_eq!(invocation.operands.len(), 2);
+}
+
+#[test]
+fn a_statement_starting_with_in_needs_a_pattern() {
+    let error = parse(lex("in 1, 2\n").unwrap()).unwrap_err();
+
+    assert!(error.message.contains("expected statement"), "{}", error.message);
+}

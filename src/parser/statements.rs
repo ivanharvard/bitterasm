@@ -133,10 +133,42 @@ impl Parser {
                 ))
             }
 
+            TokenKind::In => self.parse_keyword_invocation(),
+
             other => Err(ParseError::new(
                 format!("expected statement, found {other:?}"),
                 self.current().span,
             )),
+        }
+    }
+
+    /// A statement starting with `in`, which only means something after
+    /// `@for x` or a section's name, and so is free to start a custom
+    /// syntax pattern: AVR's `in r16, 0x3f`. Only a pattern starting with
+    /// it can match.
+    fn parse_keyword_invocation(&mut self) -> Result<Statement, ParseError> {
+        let keyword = self.current().kind.clone();
+        let candidates: Vec<(String, SyntaxPattern)> = self
+            .unanchored_syntaxes
+            .iter()
+            .filter(|(_, pattern)| {
+                !crate::facets::syntax::is_operand_pattern(pattern)
+                    && matches!(
+                        pattern.segments.first(),
+                        Some(crate::facets::syntax::PatternSegment::Literal(tokens)) if tokens.first() == Some(&keyword)
+                    )
+            })
+            .cloned()
+            .collect();
+
+        let unexpected = ParseError::new(format!("expected statement, found {keyword:?}"), self.current().span);
+        if candidates.is_empty() {
+            return Err(unexpected);
+        }
+
+        match self.parse_invocation_via_syntax_candidates(&candidates)? {
+            SyntaxMatch::Matched(invocation) => Ok(Statement::Invocation(invocation)),
+            SyntaxMatch::NoMatch { best_error } => Err(best_error.unwrap_or(unexpected)),
         }
     }
 
