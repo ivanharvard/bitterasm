@@ -13,13 +13,14 @@ directory.
 | `std.bitfield` | Bit-range helpers for encoders: `mask`, `bit`, `slice`, `field`, `truncate`, `place` |
 | `std.ctypes` | C-style integer types: signed `int8_t` ... `int64_t` and unsigned `uint8_t` ... `uint64_t` |
 | `std.unsigned` | `uint`, a non-negative `int` |
-| `std.array` | `Array<T, N>` and `get`, `updated`, `reversed`, `popped`, `appended`, `first`, `last`, `mapped`, `enumerate`, `array_from_struct` |
+| `std.array` | `Array<T, N>` and `get`, `updated`, `reversed`, `popped`, `appended`, `concatenated`, `filled`, `first`, `last`, `mapped`, `enumerate`, `find`, `contains`, `remove`, `sum`, `any`, `all`, `sorted`, `array_from_struct` |
 | `std.strings.packed` | The base for packed strings: raw `String`, `unit_at`, `byte_at`, `validate_codepoint` |
 | `std.strings.ascii` | `AsciiString`, with validation and case conversion |
 | `std.strings.utf8` | `Utf8String`, and `string_from_struct` to encode a literal as UTF-8 |
 | `std.strings.utf16` | `Utf16String`, and `utf16_from_struct` to encode a literal as UTF-16 |
 | `std.strings.cstring` | `nul_terminated`, for C strings in any of those encodings |
-| `std.option` | `Option<T>` |
+| `std.option` | `Option<T>`, and `is_some`, `is_none`, `unwrap`, `unwrap_or`, `mapped` |
+| `std.list` | `List<T>`, a linked list, and `list`, `nil`, `length`, `get`, `reversed`, `concatenated`, `mapped`, `struct_as_list` |
 | `std.enumerated` | `Enumerated<T>`, an index with a value |
 | `std.iter` | `Range` and `range(start, stop, step)` for stepped ranges |
 | `std.decimal` | `Decimal` and `Fraction`, with conversions between them and `int` |

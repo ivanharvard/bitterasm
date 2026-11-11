@@ -206,3 +206,78 @@ pub macro remove<T, const N: int>(
         }
     }
 }
+
+## `N` copies of `value`. Name both types: `filled<int, 4>(0)`.
+pub macro filled<T, const N: int>(value: T) -> Array<T, N> {
+    @return Array<T, N> {
+        @for i in 0..N {
+            __el`i`: value,
+        }
+    }
+}
+
+## `a`'s elements, then `b`'s.
+pub macro concatenated<T, const M: int, const N: int>(
+    a: Array<T, M>,
+    b: Array<T, N>
+) -> Array<T, M + N> {
+    @return Array<T, M + N> {
+        @for i in 0..M {
+            __el`i`: a.__el`i`,
+        }
+        @for i in 0..N {
+            __el`M + i`: b.__el`i`,
+        }
+    }
+}
+
+## The sum of `arr`'s elements, 0 for an empty array.
+pub macro sum(arr: Array<int, ...>) -> int {
+    @return @fold total = 0 @for value in arr {
+        @next total + value
+    }
+}
+
+## `1` if `f` of any element is nonzero, otherwise `0`.
+pub macro any<T>(arr: Array<T, ...>, f: macro(T) -> int) -> int {
+    @for value in arr {
+        @if f(value) {
+            @return 1
+        }
+    }
+    @return 0
+}
+
+## `1` if `f` of every element is nonzero, otherwise `0`. An empty array
+## gives `1`.
+pub macro all<T>(arr: Array<T, ...>, f: macro(T) -> int) -> int {
+    @for value in arr {
+        @if !f(value) {
+            @return 0
+        }
+    }
+    @return 1
+}
+
+## A copy of `arr` with its elements in increasing order. Equal elements
+## keep their order.
+pub macro sorted(arr: Array<int, ...>) -> Array<int, ...> {
+    @return Array<int, arr.len> {
+        @for i in 0..arr.len {
+            __el`rank(arr, i)`: arr.__el`i`,
+        }
+    }
+}
+
+# Where element `i` goes in `sorted(arr)`: how many elements come before
+# it, either smaller or equal and earlier.
+macro rank(arr: Array<int, ...>, i: int) -> int {
+    const value = arr.__el`i`
+    @return @fold before = 0 @for j in 0..arr.len {
+        const other = arr.__el`j`
+        @if other < value || (other == value && j < i) {
+            @next before + 1
+        }
+        @next before
+    }
+}

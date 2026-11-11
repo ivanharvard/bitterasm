@@ -80,6 +80,32 @@ How many values `xs` holds.
 |---|---|---|---|
 | `reversed(xs)` | `<T>`, `xs: List<T>` | returns `List<T>` |  |
 
+### `get`
+
+The value at `index`, counting from 0. An index outside the list is a
+compile error.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `get(xs, index)` | `<T>`, `xs: List<T>`, `index: int` | returns `T` |  |
+
+### `concatenated`
+
+`xs`'s values, then `ys`'s.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `concatenated(xs, ys)` | `<T>`, `xs: List<T>`, `ys: List<T>` | returns `List<T>` |  |
+
+### `mapped`
+
+A new list holding `f` of each value, in order. `f` is any macro that
+takes a `T` and returns a `U`.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `mapped(xs, f)` | `<T, U>`, `xs: List<T>`, `f: macro(T) -> U` | returns `List<U>` |  |
+
 ### `struct_as_list`
 
 The `pub` fields of `s`, a struct of type `S`, as a list in order. Every

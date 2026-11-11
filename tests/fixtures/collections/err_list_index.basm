@@ -1,0 +1,5 @@
+from std.list import *
+macro show(v: int) {
+    @emit v
+}
+show get(list(1, nil<int>()), 1)

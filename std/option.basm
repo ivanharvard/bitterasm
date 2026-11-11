@@ -7,3 +7,40 @@ pub enum Option<T> {
     ## No value.
     None
 }
+
+## `1` if `o` holds a value, otherwise `0`.
+pub macro is_some<T>(o: Option<T>) -> int {
+    @match o {
+        Some(_value) => { @return 1 }
+        None => { @return 0 }
+    }
+}
+
+## `1` if `o` is `None`, otherwise `0`.
+pub macro is_none<T>(o: Option<T>) -> int {
+    @return !is_some(o)
+}
+
+## The value in `o`. `None` is a compile error.
+pub macro unwrap<T>(o: Option<T>) -> T {
+    @match o {
+        Some(value) => { @return value }
+        None => { @error "unwrap of `None`" }
+    }
+}
+
+## The value in `o`, or `default` if it's `None`.
+pub macro unwrap_or<T>(o: Option<T>, default: T) -> T {
+    @match o {
+        Some(value) => { @return value }
+        None => { @return default }
+    }
+}
+
+## `f` of the value in `o`, or `None`.
+pub macro mapped<T, U>(o: Option<T>, f: macro(T) -> U) -> Option<U> {
+    @match o {
+        Some(value) => { @return Option<U>.Some(f(value)) }
+        None => { @return Option<U>.None }
+    }
+}

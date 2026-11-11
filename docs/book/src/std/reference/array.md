@@ -146,6 +146,56 @@ isn't found, returns a copy of `arr`.
 |---|---|---|---|
 | `remove(arr, value)` | `<T, const N: int>`, `arr: Array<T, N>`, `value: T` | returns `Array<T, ...>` |  |
 
+### `filled`
+
+`N` copies of `value`. Name both types: `filled<int, 4>(0)`.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `filled(value)` | `<T, const N: int>`, `value: T` | returns `Array<T, N>` |  |
+
+### `concatenated`
+
+`a`'s elements, then `b`'s.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `concatenated(a, b)` | `<T, const M: int, const N: int>`, `a: Array<T, M>`, `b: Array<T, N>` | returns `Array<T, (M + N)>` |  |
+
+### `sum`
+
+The sum of `arr`'s elements, 0 for an empty array.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `sum(arr)` | `arr: Array<int, ...>` | returns `int` |  |
+
+### `any`
+
+`1` if `f` of any element is nonzero, otherwise `0`.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `any(arr, f)` | `<T>`, `arr: Array<T, ...>`, `f: macro(T) -> int` | returns `int` |  |
+
+### `all`
+
+`1` if `f` of every element is nonzero, otherwise `0`. An empty array
+gives `1`.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `all(arr, f)` | `<T>`, `arr: Array<T, ...>`, `f: macro(T) -> int` | returns `int` |  |
+
+### `sorted`
+
+A copy of `arr` with its elements in increasing order. Equal elements
+keep their order.
+
+| Syntax | Parameters | Result | Description |
+|---|---|---|---|
+| `sorted(arr)` | `arr: Array<int, ...>` | returns `Array<int, ...>` |  |
+
 ## Types
 
 ### `Array`

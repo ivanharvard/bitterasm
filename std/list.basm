@@ -91,6 +91,38 @@ macro reversed_onto<T>(xs: List<T>, done: List<T>) -> List<T> {
     }
 }
 
+## The value at `index`, counting from 0. An index outside the list is a
+## compile error.
+pub macro get<T>(xs: List<T>, index: int) -> T {
+    @assert index >= 0, "a list index can't be negative"
+    @match xs {
+        Nil => { @error "list index past the end" }
+        Cons(node) => {
+            @if index == 0 {
+                @return node.head
+            }
+            @return get(node.tail, index - 1)
+        }
+    }
+}
+
+## `xs`'s values, then `ys`'s.
+pub macro concatenated<T>(xs: List<T>, ys: List<T>) -> List<T> {
+    @match xs {
+        Nil => { @return ys }
+        Cons(node) => { @return list(node.head, concatenated(node.tail, ys)) }
+    }
+}
+
+## A new list holding `f` of each value, in order. `f` is any macro that
+## takes a `T` and returns a `U`.
+pub macro mapped<T, U>(xs: List<T>, f: macro(T) -> U) -> List<U> {
+    @match xs {
+        Nil => { @return nil<U>() }
+        Cons(node) => { @return list(f(node.head), mapped(node.tail, f)) }
+    }
+}
+
 ## The `pub` fields of `s`, a struct of type `S`, as a list in order. Every
 ## one must be a `T`. Both types are named: `struct_as_list<Point, int>(p)`.
 pub macro struct_as_list<S, T>(s: S) -> List<T> {

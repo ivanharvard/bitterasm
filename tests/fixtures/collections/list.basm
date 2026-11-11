@@ -1,0 +1,26 @@
+from std.list import *
+
+macro show_all<T>(xs: List<T>) {
+    @match xs {
+        Nil => {}
+        Cons(node) => {
+            @emit node.head
+            show_all node.tail
+        }
+    }
+}
+
+macro show(v: int) {
+    @emit v
+}
+
+macro double(x: int) -> int {
+    @return x * 2
+}
+
+const xs = list(1, list(2, list(3, nil<int>())))
+show get(xs, 0)
+show get(xs, 2)
+show_all concatenated(xs, list(4, nil<int>()))
+show_all concatenated(nil<int>(), xs)
+show_all mapped(xs, double)

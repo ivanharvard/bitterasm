@@ -1,0 +1,21 @@
+from std.option import *
+from std.array import *
+
+macro show(v: int) {
+    @emit v
+}
+
+macro double(x: int) -> int {
+    @return x * 2
+}
+
+const full = Option<int>.Some(21)
+const empty = Option<int>.None
+show is_some(full)
+show is_some(empty)
+show is_none(empty)
+show unwrap(full)
+show unwrap_or(empty, 5)
+show unwrap(mapped(full, double))
+show is_some(mapped(empty, double))
+show sum(mapped(Array<int, 2>(1, 2), double))

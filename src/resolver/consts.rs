@@ -444,6 +444,7 @@ fn is_int_shaped_inner(program: &Program, expr: &Expr, visiting: &mut HashSet<St
             expr,
             Expr::Member { .. }
                 | Expr::Call { .. }
+                | Expr::EnumVariant { .. }
                 | Expr::Construct { .. }
                 | Expr::AnonStruct { .. }
                 | Expr::SectionLiteral { .. }
@@ -486,6 +487,17 @@ mod tests {
         // `ConstEvaluator` try (and fail) to fold it as an Int. Neither
         // `r0` nor `zero` is Int-shaped, so both should just be absent
         // from the result, not blow up the whole evaluation.
+        let resolved = ConstEvaluator::new(&program, &symbols).evaluate_all().unwrap();
+
+        assert!(resolved.is_empty());
+    }
+
+    #[test]
+    fn generic_enum_valued_const_is_skipped_not_rejected() {
+        let source = "enum E<T> {\n    A: T,\n    B,\n}\nconst a = E<int>.A(3)\nconst b = E<int>.B\n";
+        let program = parser::parse(lexer::lex(source).unwrap()).unwrap();
+        let symbols = collect_symbols(&program, &vec![0; program.statements.len()]).unwrap();
+
         let resolved = ConstEvaluator::new(&program, &symbols).evaluate_all().unwrap();
 
         assert!(resolved.is_empty());
