@@ -1,5 +1,8 @@
 # Auto detect text files and perform LF normalization
 * text=auto
 
-# Intel HEX goldens end lines in CR LF, exactly as objcopy writes them.
+# Byte-exact test files: never convert their line endings. Intel HEX
+# goldens end lines in CR LF, exactly as objcopy writes them.
 tests/fixtures/embed/*.hex binary
+tests/fixtures/**/*.bin binary
+tests/avr/cases/*.golden binary

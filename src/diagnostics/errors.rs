@@ -16,11 +16,18 @@ pub fn lex_error(error: LexError, source: SourceId) -> Diagnostic {
 /// failed to parse, otherwise one.
 pub fn load_errors(error: LoadError, sources: &mut SourceMap) -> Vec<Diagnostic> {
     match error {
-        LoadError::Lex { path, message, span } => vec![located(&path, message, span, "invalid token starts here", sources)],
-        LoadError::Parse { path, errors } => errors
-            .into_iter()
-            .map(|error| located(&path, error.message, error.span, "could not parse this", sources))
-            .collect(),
+        LoadError::Lex { path, message, span } => {
+            let source = read_source(&path, sources);
+            vec![located(&path, source, message, span, "invalid token starts here")]
+        }
+        // Read once for all of a file's errors, however many it has.
+        LoadError::Parse { path, errors } => {
+            let source = read_source(&path, sources);
+            errors
+                .into_iter()
+                .map(|error| located(&path, source, error.message, error.span, "could not parse this"))
+                .collect()
+        }
         LoadError::Resolve { path, error } => {
             let source = std::fs::read_to_string(&path).ok().map(|text| sources.add(&path, text));
             vec![resolve_error(*error, source)]
@@ -29,13 +36,26 @@ pub fn load_errors(error: LoadError, sources: &mut SourceMap) -> Vec<Diagnostic>
     }
 }
 
-fn located(path: &std::path::Path, message: String, span: crate::token::Span, label: &str, sources: &mut SourceMap) -> Diagnostic {
-    let mut diagnostic = Diagnostic::error(message);
-    match std::fs::read_to_string(path) {
-        Ok(text) => diagnostic = diagnostic.primary(sources.add(path, text), span, label),
-        Err(_) => diagnostic.notes.push(format!("in {}", path.display())),
+fn read_source(path: &std::path::Path, sources: &mut SourceMap) -> Option<SourceId> {
+    std::fs::read_to_string(path).ok().map(|text| sources.add(path, text))
+}
+
+fn located(
+    path: &std::path::Path,
+    source: Option<SourceId>,
+    message: String,
+    span: crate::token::Span,
+    label: &str,
+) -> Diagnostic {
+    let diagnostic = Diagnostic::error(message);
+    match source {
+        Some(source) => diagnostic.primary(source, span, label),
+        None => {
+            let mut diagnostic = diagnostic;
+            diagnostic.notes.push(format!("in {}", path.display()));
+            diagnostic
+        }
     }
-    diagnostic
 }
 
 pub fn resolve_error(error: ResolveError, source: Option<SourceId>) -> Diagnostic {
@@ -77,6 +97,7 @@ pub fn resolve_error(error: ResolveError, source: Option<SourceId>) -> Diagnosti
         NonIntOperand { found, hint: Some(hint), span } => (format!("expected an integer here, found `{found}`: {hint}"), span),
         ExpectedStructValue { span } => ("expected a struct value".into(), span),
         EmbedFailed { path, reason, span } => (format!("can't embed `{path}`: {reason}"), span),
+        EmbedTooLarge { path, size, limit, span } => (format!("can't embed `{path}`: it holds {size} units, and an `@embed` holds at most {limit}"), span),
         ExpectedValueExpression { span } => ("expected a value expression".into(), span),
         UnsupportedMacroStatement { kind, span } => (format!("unsupported `{kind}` statement in macro body"), span),
         Fold { message, span } => (message.clone(), span),

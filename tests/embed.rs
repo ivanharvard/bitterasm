@@ -50,3 +50,23 @@ fn ihex_starts_a_new_block_at_64_kib() {
     // record it adds from the entry point.
     assert_eq!(common::encode(&fixture("ihex_shifted.basm")), file("shifted.hex"));
 }
+
+#[test]
+fn a_file_past_the_limit_is_a_compile_error() {
+    // Written here rather than kept as a fixture: it's a megabyte.
+    let dir = std::env::temp_dir().join(format!("bitterasm-embed-limit-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("huge.bin"), vec![0u8; 1_000_001]).unwrap();
+    let source = dir.join("huge.basm");
+    std::fs::write(&source, "macro show(v: int) {\n    @emit v\n}\n\nshow (@embed \"huge.bin\").len\n").unwrap();
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_bitterasm"))
+        .args(["check", &source.display().to_string()])
+        .output()
+        .unwrap();
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(error.contains("holds 1000001 units") && error.contains("at most 1000000"), "{error}");
+
+    std::fs::remove_dir_all(&dir).ok();
+}

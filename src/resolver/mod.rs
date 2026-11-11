@@ -266,6 +266,14 @@ pub enum ResolveError {
         span: Span,
     },
 
+    // `@embed`'s file has more units than a struct can have fields.
+    EmbedTooLarge {
+        path: String,
+        size: u64,
+        limit: u64,
+        span: Span,
+    },
+
     // Like `ExpectedConstantExpression`, but for `@emit`/`@return`'s more
     // general notion of "value" (which also allows struct construction and
     // field access) rather than a pure `Int` expression.
@@ -611,7 +619,7 @@ impl ResolveError {
             | Self::ExpectedStructCallee { span, .. } | Self::ExpectedIntValue { span }
             | Self::NonIntOperand { span, .. } | Self::MetaOutsideMacro { span, .. }
             | Self::ExpectedStructValue { span } | Self::ExpectedValueExpression { span }
-            | Self::EmbedFailed { span, .. }
+            | Self::EmbedFailed { span, .. } | Self::EmbedTooLarge { span, .. }
             | Self::UnsupportedMacroStatement { span, .. } | Self::UnsupportedSpliceValue { span }
             | Self::Fold { span, .. }
             | Self::UnsupportedCallExpression { span } | Self::UnknownMacro { span, .. }

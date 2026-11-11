@@ -27,6 +27,7 @@ HEADERS = {
     "fcntl.h": "asm-generic/fcntl.h",
     "linux_fcntl.h": "linux/fcntl.h",
     "mman-common.h": "asm-generic/mman-common.h",
+    "generic_mman.h": "asm-generic/mman.h",
     "mman.h": "linux/mman.h",
     "x86_mman.h": "x86_64-linux-gnu/asm/mman.h",
     "signal.h": "x86_64-linux-gnu/asm/signal.h",
@@ -87,6 +88,11 @@ DESCRIPTIONS = {
     "MAP_PRIVATE": "Keep changes private, copied on write",
     "MAP_SHARED_VALIDATE": "`MAP_SHARED`, failing on flags the kernel doesn't know",
     "MAP_32BIT": "Map in the first 2 GiB of the address space",
+    "MAP_GROWSDOWN": "The mapping is a stack that grows down",
+    "MAP_DENYWRITE": "Ignored; once made writes to the mapped file fail",
+    "MAP_EXECUTABLE": "Ignored; once marked the mapping as executable code",
+    "MAP_LOCKED": "Lock the pages in memory, as `mlock` does",
+    "MAP_NORESERVE": "Don't reserve swap space for the mapping",
     "SIGHUP": "Hangup: the terminal closed, or reload configuration",
     "SIGINT": "Interrupt from the keyboard, Ctrl-C",
     "SIGQUIT": "Quit from the keyboard, Ctrl-\\",
@@ -280,7 +286,7 @@ def main() -> None:
         emit(name, number, comment, "")
 
     out += section("memory mapping", ["For `mmap`, `mprotect` and `munmap`."])
-    for header in ["mman-common.h", "mman.h", "x86_mman.h"]:
+    for header in ["mman-common.h", "generic_mman.h", "mman.h", "x86_mman.h"]:
         for name, value, comment in headers[header]:
             if re.fullmatch(r"(PROT|MAP)_[A-Z0-9_]+", name) and not name.startswith("MAP_HUGE_"):
                 emit(name, value, comment, f"`{name}`")

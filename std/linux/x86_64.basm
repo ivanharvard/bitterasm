@@ -1169,6 +1169,16 @@ pub const MAP_FIXED_NOREPLACE = 0x100000
 pub const MAP_UNINITIALIZED = 0x4000000
 ## No effect: mapping a file is the default.
 pub const MAP_FILE = 0
+## The mapping is a stack that grows down.
+pub const MAP_GROWSDOWN = 256
+## Ignored; once made writes to the mapped file fail.
+pub const MAP_DENYWRITE = 0x800
+## Ignored; once marked the mapping as executable code.
+pub const MAP_EXECUTABLE = 0x1000
+## Lock the pages in memory, as `mlock` does.
+pub const MAP_LOCKED = 0x2000
+## Don't reserve swap space for the mapping.
+pub const MAP_NORESERVE = 0x4000
 ## Share changes with other mappings of the same file.
 pub const MAP_SHARED = 1
 ## Keep changes private, copied on write.

@@ -283,6 +283,10 @@ pub struct AliasResolver<'a> {
     // go to the same parameter. See `super::generated`.
     pub(super) generated_shapes: HashMap<Vec<(String, bool)>, SymbolId>,
 
+    /// Each `@embed`'s value, by path: a file named twice is read once,
+    /// and its fields are shared between the two.
+    pub(super) embeds: HashMap<String, super::values::Value>,
+
     // The generic struct behind every anonymous struct with these field
     // names, in order, and the reverse. `struct { x: int }` is that struct
     // applied to `<int>`; see `super::generated::anon_struct_type`.
@@ -498,6 +502,7 @@ impl<'a> AliasResolver<'a> {
             generated_symbols: SymbolTable::with_base(symbols.len()),
             generated: Vec::new(),
             generated_shapes: HashMap::new(),
+            embeds: HashMap::new(),
             anon_struct_shapes: HashMap::new(),
             anon_struct_names: HashMap::new(),
             macro_decl_cache: RefCell::new(FxHashMap::default()),

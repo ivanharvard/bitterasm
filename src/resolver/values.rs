@@ -31,7 +31,7 @@ use super::ResolveError;
 pub type Scope = crate::fxhash::FxHashMap<String, Value>;
 
 /// A struct value's fields, in declaration order.
-pub type StructFields = std::sync::Arc<Vec<(String, Value)>>;
+pub type StructFields = std::rc::Rc<Vec<(String, Value)>>;
 
 /// Where the field `name` is in `items`. A generated element field
 /// `__elN` is almost always at position N, as in a string or an `@embed`,
@@ -2706,7 +2706,7 @@ mod tests {
             Value::Struct {
                 symbol: reg_id,
                 args: vec![],
-                fields: std::sync::Arc::new(vec![
+                fields: std::rc::Rc::new(vec![
                     ("id".to_string(), Value::Int(Int::from(0))),
                     ("width".to_string(), Value::Int(Int::from(2))),
                 ]),
@@ -2735,7 +2735,7 @@ mod tests {
             Value::Struct {
                 symbol: reg_id,
                 args: vec![],
-                fields: std::sync::Arc::new(vec![
+                fields: std::rc::Rc::new(vec![
                     ("id".to_string(), Value::Int(Int::from(0))),
                     ("width".to_string(), Value::Int(Int::from(2))),
                 ]),
@@ -2760,7 +2760,7 @@ mod tests {
             Value::Struct {
                 symbol: reg_id,
                 args: vec![],
-                fields: std::sync::Arc::new(vec![
+                fields: std::rc::Rc::new(vec![
                     ("id".to_string(), Value::Int(Int::from(7))),
                     ("width".to_string(), Value::Int(Int::from(2))),
                 ]),
@@ -2930,7 +2930,7 @@ mod tests {
         let mixed = Value::Struct {
             symbol: mixed_symbol,
             args: vec![],
-            fields: std::sync::Arc::new(vec![
+            fields: std::rc::Rc::new(vec![
                 ("a".to_string(), Value::Int(Int::from(1))),
                 ("b".to_string(), Value::Int(Int::from(2))),
                 ("len".to_string(), Value::Int(Int::from(99))),
@@ -3004,7 +3004,7 @@ mod tests {
             Value::Struct {
                 symbol: reg_id,
                 args: vec![],
-                fields: std::sync::Arc::new(vec![
+                fields: std::rc::Rc::new(vec![
                     ("id".to_string(), Value::Int(Int::from(0))),
                     ("width".to_string(), Value::Int(Int::from(2))),
                 ]),
@@ -3033,7 +3033,7 @@ mod tests {
             Value::Struct {
                 symbol: reg_id,
                 args: vec![],
-                fields: std::sync::Arc::new(vec![
+                fields: std::rc::Rc::new(vec![
                     ("id".to_string(), Value::Int(Int::from(3))),
                     ("width".to_string(), Value::Int(Int::from(8))),
                 ]),
@@ -3104,7 +3104,7 @@ mod tests {
                     ResolvedGenericArg::Type(Box::new(ResolvedType::Builtin(BuiltinType::Int))),
                     ResolvedGenericArg::Const(Int::from(3)),
                 ],
-                fields: std::sync::Arc::new(vec![
+                fields: std::rc::Rc::new(vec![
                     ("__el0".to_string(), Value::Int(Int::from(0))),
                     ("__el1".to_string(), Value::Int(Int::from(2))),
                     ("__el2".to_string(), Value::Int(Int::from(4))),
@@ -3135,7 +3135,7 @@ mod tests {
 
         assert_eq!(
             fields,
-            std::sync::Arc::new(vec![
+            std::rc::Rc::new(vec![
                 ("__el0".to_string(), Value::Int(Int::from(0))),
                 ("__el1".to_string(), Value::Int(Int::from(9))),
                 ("__el2".to_string(), Value::Int(Int::from(0))),
@@ -3208,7 +3208,7 @@ mod tests {
 
         assert_eq!(
             fields,
-            std::sync::Arc::new(vec![
+            std::rc::Rc::new(vec![
                 ("__el0".to_string(), Value::Int(Int::from(65))),
                 ("len".to_string(), Value::Int(Int::from(1))),
             ])
@@ -3232,7 +3232,7 @@ mod tests {
 
         assert_eq!(
             fields,
-            std::sync::Arc::new(vec![
+            std::rc::Rc::new(vec![
                 ("__el0".to_string(), Value::Int(Int::from(65))),
                 ("__el1".to_string(), Value::Int(Int::from(66))),
                 ("len".to_string(), Value::Int(Int::from(2))),
@@ -3280,7 +3280,7 @@ mod tests {
             Value::Struct {
                 symbol: bits_id,
                 args: vec![ResolvedGenericArg::Const(Int::from(8))],
-                fields: std::sync::Arc::new(vec![("value".to_string(), Value::Int(Int::from(50)))]),
+                fields: std::rc::Rc::new(vec![("value".to_string(), Value::Int(Int::from(50)))]),
                 nominal: Some(Box::new(ubyte)),
             }
         );
@@ -3392,7 +3392,7 @@ const converted = original as Sized<derived_len, Order.Second>
         let untagged = Value::Struct {
             symbol: bits_id,
             args: vec![ResolvedGenericArg::Const(Int::from(8))],
-            fields: std::sync::Arc::new(vec![("value".to_string(), Value::Int(Int::from(50)))]),
+            fields: std::rc::Rc::new(vec![("value".to_string(), Value::Int(Int::from(50)))]),
             nominal: None,
         };
 
@@ -3426,7 +3426,7 @@ const converted = original as Sized<derived_len, Order.Second>
             Value::Struct {
                 symbol: bits_id,
                 args: vec![ResolvedGenericArg::Const(Int::from(8))],
-                fields: std::sync::Arc::new(vec![("value".to_string(), Value::Int(Int::from(5)))]),
+                fields: std::rc::Rc::new(vec![("value".to_string(), Value::Int(Int::from(5)))]),
                 nominal: Some(Box::new(ubyte)),
             }
         );
@@ -3452,7 +3452,7 @@ const converted = original as Sized<derived_len, Order.Second>
             vec![Value::Struct {
                 symbol: bits_id,
                 args: vec![ResolvedGenericArg::Const(Int::from(8))],
-                fields: std::sync::Arc::new(vec![("value".to_string(), Value::Int(Int::from(5)))]),
+                fields: std::rc::Rc::new(vec![("value".to_string(), Value::Int(Int::from(5)))]),
                 nominal: Some(Box::new(ubyte)),
             }]
         );

@@ -1885,7 +1885,7 @@ mod tests {
         let cartesian = Value::Struct {
             symbol: cartesian_symbol,
             args: vec![],
-            fields: std::sync::Arc::new(vec![
+            fields: std::rc::Rc::new(vec![
                 ("x".to_string(), Value::Int(Int::from(2))),
                 ("y".to_string(), Value::Int(Int::from(3))),
             ]),
@@ -1987,7 +1987,7 @@ mod tests {
                 emitted: vec![Value::Struct {
                     symbol: bits_id,
                     args: vec![ResolvedGenericArg::Const(Int::from(8))],
-                    fields: std::sync::Arc::new(vec![("value".to_string(), Value::Int(Int::from(3)))]),
+                    fields: std::rc::Rc::new(vec![("value".to_string(), Value::Int(Int::from(3)))]),
                     nominal: None,
                 }],
                 generated: vec![],
@@ -2173,7 +2173,7 @@ mod tests {
         let argument = Value::Struct {
             symbol: wrapper_symbol,
             args: vec![],
-            fields: std::sync::Arc::new(vec![("value".to_string(), Value::Int(Int::from(1)))]),
+            fields: std::rc::Rc::new(vec![("value".to_string(), Value::Int(Int::from(1)))]),
             nominal: None,
         };
 
@@ -3042,7 +3042,7 @@ mod tests {
         let arg = Value::Struct {
             symbol: mixed_symbol,
             args: vec![],
-            fields: std::sync::Arc::new(vec![
+            fields: std::rc::Rc::new(vec![
                 ("a".to_string(), Value::Int(Int::from(1))),
                 ("b".to_string(), Value::Int(Int::from(2))),
                 ("c".to_string(), Value::Int(Int::from(3))),
@@ -3079,7 +3079,7 @@ mod tests {
         let arg = Value::Struct {
             symbol: mixed_symbol,
             args: vec![],
-            fields: std::sync::Arc::new(vec![
+            fields: std::rc::Rc::new(vec![
                 ("a".to_string(), Value::Int(Int::from(1))),
                 ("b".to_string(), Value::Int(Int::from(2))),
                 ("len".to_string(), Value::Int(Int::from(99))),

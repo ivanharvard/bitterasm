@@ -376,24 +376,26 @@ impl<'a> AliasResolver<'a> {
         })
     }
 
-    /// `"text"` sugar: synthesizes a private struct with one public `int`
-    /// field per Unicode scalar value, plus a public `skip len` field for
-    /// indexed std-library conversions. The iterable surface stays just
-    /// the characters, matching `std.array.Array`'s own hidden length
-    /// bookkeeping.
     /// `@embed "path"`'s value: the file's units, numbered, in a struct
     /// shaped like a string's. What they mean is up to the program. On the
     /// machines this compiler runs on a file is stored as bytes, so each
     /// unit is a byte.
     pub(super) fn eval_embed(&mut self, path: &str, span: Span) -> Result<Value, ResolveError> {
-        let contents = std::fs::read(path).map_err(|error| ResolveError::EmbedFailed {
+        if let Some(value) = self.embeds.get(path) {
+            return Ok(value.clone());
+        }
+
+        let failed = |error: std::io::Error| ResolveError::EmbedFailed {
             path: path.to_string(),
             reason: error.to_string(),
             span,
-        })?;
-        if contents.len() as u64 > MAX_FOR_ITERATIONS {
-            return Err(ResolveError::ForLoopTooLarge { span });
+        };
+        // Checked before reading, so a huge file isn't read only to fail.
+        let size = std::fs::metadata(path).map_err(failed)?.len();
+        if size > MAX_FOR_ITERATIONS {
+            return Err(ResolveError::EmbedTooLarge { path: path.to_string(), size, limit: MAX_FOR_ITERATIONS, span });
         }
+        let contents = std::fs::read(path).map_err(failed)?;
 
         let mut values: Vec<(String, Value)> = contents
             .iter()
@@ -405,9 +407,16 @@ impl<'a> AliasResolver<'a> {
         let shape = values.iter().map(|(name, _)| (name.clone(), name == "len")).collect();
         let symbol = self.int_struct_for_shape("__embed", shape, span)?;
 
-        Ok(Value::Struct { symbol, args: Vec::new(), fields: values.into(), nominal: None })
+        let value = Value::Struct { symbol, args: Vec::new(), fields: values.into(), nominal: None };
+        self.embeds.insert(path.to_string(), value.clone());
+        Ok(value)
     }
 
+    /// `"text"` sugar: synthesizes a private struct with one public `int`
+    /// field per Unicode scalar value, plus a public `skip len` field for
+    /// indexed std-library conversions. The iterable surface stays just
+    /// the characters, matching `std.array.Array`'s own hidden length
+    /// bookkeeping.
     pub(super) fn eval_string_value(
         &mut self,
         value: &str,
@@ -474,11 +483,12 @@ impl<'a> AliasResolver<'a> {
 
         let iterable_flags = self.struct_field_iterable_flags(symbol, &args)?;
 
-        Ok(std::sync::Arc::unwrap_or_clone(fields)
-            .into_iter()
+        // Only the kept fields are copied, not the whole shared list.
+        Ok(fields
+            .iter()
             .zip(iterable_flags)
             .filter(|(_, is_iterable)| *is_iterable)
-            .map(|(field, _)| field)
+            .map(|(field, _)| field.clone())
             .collect())
     }
 

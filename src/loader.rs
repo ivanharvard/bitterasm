@@ -506,7 +506,8 @@ fn load_module(path: &Path, state: &mut LoadState) -> Result<(), LoadError> {
         }
     }
 
-    let (program, mut seed, errors) = parser::parse_seeded(tokens, docs, &seed);
+    let (mut program, mut seed, errors) = parser::parse_seeded(tokens, docs, &seed);
+    resolve_embed_paths(&mut program.statements, path);
     if !errors.is_empty() {
         let error = LoadError::Parse { path: path.to_path_buf(), errors };
         if !state.lenient {
@@ -606,7 +607,6 @@ fn load_module(path: &Path, state: &mut LoadState) -> Result<(), LoadError> {
 
     for mut statement in unrolled.clone() {
         let mut renamer = Renamer::new(&scope, &statement);
-        renamer.dir = path.parent();
         name_declaration(&mut statement, module_id);
         rename_statement(&mut statement, &mut renamer);
 
@@ -1693,6 +1693,19 @@ fn rename_type_expr(ty: &mut TypeExpr, renames: &mut Renamer) {
     }
 }
 
+/// Makes every `@embed` path in `statements` start from `path`'s directory,
+/// before any view of the module is taken: unrolled, documented, linted or
+/// compiled, an `@embed` reads the same file. A renamer with nothing in
+/// scope renames nothing, so this walk changes only the paths.
+fn resolve_embed_paths(statements: &mut [Statement], path: &Path) {
+    let scope = HashMap::new();
+    for statement in statements {
+        let mut renamer = Renamer::new(&scope, statement);
+        renamer.dir = path.parent();
+        rename_statement(statement, &mut renamer);
+    }
+}
+
 fn rename_expr(expr: &mut Expr, renames: &mut Renamer) {
     match expr {
         Expr::Identifier { name, .. } => {
@@ -2429,7 +2442,7 @@ mod tests {
         let arg = crate::resolver::Value::Struct {
             symbol: foo_symbol,
             args: vec![],
-            fields: std::sync::Arc::new(vec![("x".to_string(), crate::resolver::Value::Int(crate::eval::Int::from(1)))]),
+            fields: std::rc::Rc::new(vec![("x".to_string(), crate::resolver::Value::Int(crate::eval::Int::from(1)))]),
             nominal: None,
         };
 
@@ -2493,7 +2506,7 @@ mod tests {
         let arg = crate::resolver::Value::Struct {
             symbol: foo_symbol,
             args: vec![],
-            fields: std::sync::Arc::new(vec![("x".to_string(), crate::resolver::Value::Int(crate::eval::Int::from(1)))]),
+            fields: std::rc::Rc::new(vec![("x".to_string(), crate::resolver::Value::Int(crate::eval::Int::from(1)))]),
             nominal: None,
         };
 
