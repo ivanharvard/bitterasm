@@ -3,3 +3,5 @@ target/
 *.em
 __pycache__/
 docs/book/book/
+examples/avr/blink.bin
+.vscode

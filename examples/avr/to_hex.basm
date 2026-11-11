@@ -1,0 +1,11 @@
+# Writes blink.bin as Intel HEX, for programmers that want a .hex file.
+# Build blink.bin beside this file first:
+#
+# bitterasm compile examples/avr/blink.basm -o blink.em
+# bitter encode blink.em -o examples/avr/blink.bin
+# bitterasm compile examples/avr/to_hex.basm -o blink_hex.em
+# bitter encode blink_hex.em -o blink.hex
+
+from std.formats.ihex import ihex
+
+ihex @embed "blink.bin", 0

@@ -1,0 +1,124 @@
+#! Intel HEX: an image as lines of text, the format microcontroller
+#! programmers like avrdude read. Each line is a record: `:`, its length,
+#! address and type, up to 16 data bytes, and a checksum, all in hex.
+#!
+#! A program's bytes are only known once `bitter` has packed them, so a
+#! HEX file takes two builds: one makes the image, and a second program
+#! embeds it and writes it out as text:
+#!
+#! ```text
+#! bitterasm compile blink.basm -o blink.em && bitter encode blink.em -o blink.bin
+#! bitterasm compile to_hex.basm -o blink_hex.em && bitter encode blink_hex.em -o blink.hex
+#! ```
+#!
+#! where `to_hex.basm` is
+#!
+#! ```text
+#! from std.formats.ihex import ihex
+#!
+#! ihex @embed "blink.bin", 0
+#! ```
+#!
+#! `examples/avr/to_hex.basm` is that program.
+#!
+#! This writes what GNU `objcopy -O ihex` does for a raw image: lines end
+#! in CR LF, a record never crosses a 64 KiB boundary, and an extended
+#! address record starts each 64 KiB past the first. It writes no start
+#! address record, which only says where an x86 program starts running.
+
+from std.binary import bits
+from std.math import min
+
+## Writes `raw`, from `@embed`, as Intel HEX, its first byte at `address`.
+## Every unit must be a byte, 0 to 255.
+pub macro ihex<S>(raw: S, address: int) {
+    @assert address >= 0, "an Intel HEX address can't be negative"
+    @assert address + raw.len <= 0x100000000, "Intel HEX addresses stop at 4 GiB"
+
+    # `end` is where the record being written stops, `sum` its checksum
+    # so far, and `block` the 64 KiB block the last address record set.
+    @fold end = 0, sum = 0, block = 0 @for i in 0..raw.len {
+        const at = address + i
+        const unit = raw.__el`i`
+        @assert unit >= 0 && unit <= 255, "an Intel HEX image holds bytes, 0 to 255"
+
+        @if i == end {
+            @if at >> 16 != block {
+                block_record at >> 16
+            }
+            const length = min(16, min(raw.len - i, 0x10000 - (at & 0xFFFF)))
+            const offset = at & 0xFFFF
+            char ':'
+            hex_byte length
+            hex_byte offset >> 8
+            hex_byte offset & 0xFF
+            hex_byte 0
+            hex_byte unit
+            const total = length + (offset >> 8) + (offset & 0xFF) + unit
+            @if length == 1 {
+                finish_record total
+            }
+            @next end = i + length, sum = total, block = at >> 16
+        }
+
+        hex_byte unit
+        @if i == end - 1 {
+            finish_record sum + unit
+        }
+        @next sum = sum + unit
+    }
+
+    # The end-of-file record.
+    char ':'
+    hex_byte 0
+    hex_byte 0
+    hex_byte 0
+    hex_byte 1
+    finish_record 1
+}
+
+# Says which 64 KiB block the records after it are in. Below 1 MiB that's
+# an extended segment address, a 16-byte paragraph number, as `objcopy`
+# writes; above it, an extended linear address.
+macro block_record(block: int) {
+    @if block < 0x10 {
+        address_record 2, block << 12
+    } @else {
+        address_record 4, block
+    }
+}
+
+macro address_record(kind: int, value: int) {
+    char ':'
+    hex_byte 2
+    hex_byte 0
+    hex_byte 0
+    hex_byte kind
+    hex_byte value >> 8
+    hex_byte value & 0xFF
+    finish_record 2 + kind + (value >> 8) + (value & 0xFF)
+}
+
+# A record's checksum makes all its bytes add up to 0, modulo 256.
+macro finish_record(sum: int) {
+    hex_byte (0x100 - (sum & 0xFF)) & 0xFF
+    char '\r'
+    char '\n'
+}
+
+macro hex_byte(value: int) {
+    hex_digit value >> 4
+    hex_digit value & 0xF
+}
+
+macro hex_digit(value: int) {
+    @if value < 10 {
+        char '0' + value
+    } @else {
+        char 'A' + value - 10
+    }
+}
+
+macro char(c: int) {
+    @emit bits<8>(c)
+}

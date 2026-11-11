@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Intel HEX goldens end lines in CR LF, exactly as objcopy writes them.
+tests/fixtures/embed/*.hex binary

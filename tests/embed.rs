@@ -37,3 +37,16 @@ fn a_missing_embed_file_is_a_compile_error() {
 fn emit_bytes_pastes_a_file_untouched() {
     assert_eq!(common::encode(&fixture("paste.basm")), file("data.bin"));
 }
+
+#[test]
+fn ihex_writes_what_objcopy_does() {
+    // Both golden files are `avr-objcopy -I binary -O ihex`'s output.
+    assert_eq!(common::encode(&fixture("ihex_blink.basm")), file("blink.hex"));
+}
+
+#[test]
+fn ihex_starts_a_new_block_at_64_kib() {
+    // `objcopy --change-addresses 0xfff8`, without the x86 start address
+    // record it adds from the entry point.
+    assert_eq!(common::encode(&fixture("ihex_shifted.basm")), file("shifted.hex"));
+}

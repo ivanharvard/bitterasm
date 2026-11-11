@@ -107,6 +107,7 @@
     - [`enumerated`](std/reference/enumerated.md)
     - [`formats`](std/reference/formats/index.md)
         - [`elf`](std/reference/formats/elf.md)
+        - [`ihex`](std/reference/formats/ihex.md)
         - [`macho`](std/reference/formats/macho.md)
         - [`pe`](std/reference/formats/pe.md)
     - [`iter`](std/reference/iter.md)

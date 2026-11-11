@@ -1,0 +1,4 @@
+# At 0xfff8, the image crosses into the second 64 KiB.
+from std.formats.ihex import ihex
+
+ihex @embed "blink.bin", 0xfff8

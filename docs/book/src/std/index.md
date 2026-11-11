@@ -48,6 +48,7 @@ See [Executables](../programs/executables.md).
 | `std.formats.elf` | `elf64_executable`, `elf32_executable` |
 | `std.formats.pe` | `pe64_executable` |
 | `std.formats.macho` | `macho64_executable` |
+| `std.formats.ihex` | `ihex`, an image as Intel HEX text, for microcontroller programmers |
 
 ## Operating systems
 

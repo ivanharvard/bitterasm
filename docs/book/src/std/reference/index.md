@@ -11,7 +11,7 @@
 | [`decimal`](decimal.md) | Exact non-integer numbers, for compile-time math: `Decimal`, a value scaled by a power of ten, and `Fraction`, a numerator over a denominator. Both convert to and from `int` with `as`. |
 | [`embed`](embed.md) | Reading what `@embed` gives. `@embed "file"` is the file's contents as numbered units, in a struct shaped like a string's: `__el0`, `__el1`, ..., and `len`. It says nothing about what the units are. These macros are for a program that knows its file holds bytes. |
 | [`enumerated`](enumerated.md) | `Enumerated<T>`: a value paired with its position. |
-| [`formats/`](formats/index.md) | `elf`, `macho`, `pe` |
+| [`formats/`](formats/index.md) | `elf`, `ihex`, `macho`, `pe` |
 | [`iter`](iter.md) | Stepped ranges of integers, for `@for`. |
 | [`linux/`](linux/index.md) | `x86_64` |
 | [`list`](list.md) | Linked lists: a `List<T>` is either empty (`Nil`) or a value followed by the rest of the list (`Cons`). Every value is immutable, so each operation returns a new list. |

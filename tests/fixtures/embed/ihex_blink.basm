@@ -1,0 +1,3 @@
+from std.formats.ihex import ihex
+
+ihex @embed "blink.bin", 0
