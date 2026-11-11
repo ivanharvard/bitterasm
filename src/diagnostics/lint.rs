@@ -792,6 +792,7 @@ fn collect_expr_identifiers(expr: &Expr, names: &mut HashSet<String>) {
             }
         }
         Expr::HasField { subject, .. } => collect_expr_identifiers(subject, names),
+        Expr::Embed { .. } => {}
         Expr::Identifier { name, .. } => { names.insert(name.clone()); }
         Expr::SplicedIdentifier { name, .. } => {
             if let Some(literal) = crate::ast::literal_spliced_name(name) { names.insert(literal); }

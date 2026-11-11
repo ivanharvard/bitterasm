@@ -232,14 +232,14 @@ impl<'a> AliasResolver<'a> {
             return Ok(None);
         }
         let mut types = Vec::with_capacity(fields.len());
-        for (_, field) in fields {
+        for (_, field) in fields.iter() {
             types.push(self.value_type(field)?);
         }
         let renamed: Vec<(String, Value)> = names.iter().cloned().zip(fields.iter().map(|(_, field)| field.clone())).collect();
         let super::types::ResolvedType::Struct { symbol, args } = self.anon_struct_type(names.to_vec(), types, span)? else {
             unreachable!("anon_struct_type always gives a struct type");
         };
-        Ok(Some(Value::Struct { symbol, args, fields: renamed, nominal: None }))
+        Ok(Some(Value::Struct { symbol, args, fields: renamed.into(), nominal: None }))
     }
 
     /// `{ x: 42 }` or `{ 42, 43 }`: an anonymous struct whose field types
@@ -269,7 +269,7 @@ impl<'a> AliasResolver<'a> {
         let super::types::ResolvedType::Struct { symbol, args } = self.anon_struct_type(names, types, span)? else {
             unreachable!("anon_struct_type always gives a struct type");
         };
-        Ok(Value::Struct { symbol, args, fields, nominal: None })
+        Ok(Value::Struct { symbol, args, fields: fields.into(), nominal: None })
     }
 
     /// The private struct for a literal of this shape: one public `int`
@@ -371,7 +371,7 @@ impl<'a> AliasResolver<'a> {
         Ok(Value::Struct {
             symbol,
             args: Vec::new(),
-            fields: values,
+            fields: values.into(),
             nominal: None,
         })
     }
@@ -381,6 +381,33 @@ impl<'a> AliasResolver<'a> {
     /// indexed std-library conversions. The iterable surface stays just
     /// the characters, matching `std.array.Array`'s own hidden length
     /// bookkeeping.
+    /// `@embed "path"`'s value: the file's units, numbered, in a struct
+    /// shaped like a string's. What they mean is up to the program. On the
+    /// machines this compiler runs on a file is stored as bytes, so each
+    /// unit is a byte.
+    pub(super) fn eval_embed(&mut self, path: &str, span: Span) -> Result<Value, ResolveError> {
+        let contents = std::fs::read(path).map_err(|error| ResolveError::EmbedFailed {
+            path: path.to_string(),
+            reason: error.to_string(),
+            span,
+        })?;
+        if contents.len() as u64 > MAX_FOR_ITERATIONS {
+            return Err(ResolveError::ForLoopTooLarge { span });
+        }
+
+        let mut values: Vec<(String, Value)> = contents
+            .iter()
+            .enumerate()
+            .map(|(index, unit)| (format!("__el{index}"), Value::Int(Int::from(*unit))))
+            .collect();
+        values.push(("len".to_string(), Value::Int(Int::from(contents.len()))));
+
+        let shape = values.iter().map(|(name, _)| (name.clone(), name == "len")).collect();
+        let symbol = self.int_struct_for_shape("__embed", shape, span)?;
+
+        Ok(Value::Struct { symbol, args: Vec::new(), fields: values.into(), nominal: None })
+    }
+
     pub(super) fn eval_string_value(
         &mut self,
         value: &str,
@@ -405,7 +432,7 @@ impl<'a> AliasResolver<'a> {
         Ok(Value::Struct {
             symbol,
             args: Vec::new(),
-            fields: values,
+            fields: values.into(),
             nominal: None,
         })
     }
@@ -447,7 +474,7 @@ impl<'a> AliasResolver<'a> {
 
         let iterable_flags = self.struct_field_iterable_flags(symbol, &args)?;
 
-        Ok(fields
+        Ok(std::sync::Arc::unwrap_or_clone(fields)
             .into_iter()
             .zip(iterable_flags)
             .filter(|(_, is_iterable)| *is_iterable)

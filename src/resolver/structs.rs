@@ -265,7 +265,7 @@ impl<'a> AliasResolver<'a> {
             Value::Struct {
                 symbol,
                 args: args.to_vec(),
-                fields: fields.to_vec(),
+                fields: fields.to_vec().into(),
                 nominal: None,
             },
         );

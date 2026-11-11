@@ -587,7 +587,7 @@ mod tests {
             Value::Struct {
                 symbol: bits,
                 args: vec![ResolvedGenericArg::Const(Int::from(8))],
-                fields: vec![("value".to_string(), Value::Int(Int::from(3)))],
+                fields: std::sync::Arc::new(vec![("value".to_string(), Value::Int(Int::from(3)))]),
                 nominal: None,
             },
         ];

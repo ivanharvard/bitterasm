@@ -9,6 +9,7 @@
 | [`bitter/`](bitter/index.md) | `byte_order`, `deferred`, `image`, `layout`, `link` |
 | [`ctypes`](ctypes.md) | C's fixed-width integer names. The signed ones are `signed<N>`, stored in two's complement; the unsigned ones are `bits<N>` that can't be negative. |
 | [`decimal`](decimal.md) | Exact non-integer numbers, for compile-time math: `Decimal`, a value scaled by a power of ten, and `Fraction`, a numerator over a denominator. Both convert to and from `int` with `as`. |
+| [`embed`](embed.md) | Reading what `@embed` gives. `@embed "file"` is the file's contents as numbered units, in a struct shaped like a string's: `__el0`, `__el1`, ..., and `len`. It says nothing about what the units are. These macros are for a program that knows its file holds bytes. |
 | [`enumerated`](enumerated.md) | `Enumerated<T>`: a value paired with its position. |
 | [`formats/`](formats/index.md) | `elf`, `macho`, `pe` |
 | [`iter`](iter.md) | Stepped ranges of integers, for `@for`. |

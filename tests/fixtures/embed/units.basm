@@ -1,0 +1,15 @@
+macro show(v: int) {
+    @emit v
+}
+
+macro show_all<S>(units: S) {
+    @for unit in units {
+        @emit unit
+    }
+}
+
+# Five bytes: `A`, `é` as UTF-8's two bytes, 0 and 255.
+const raw = @embed "data.bin"
+show raw.len
+show_all raw
+show raw.__el1

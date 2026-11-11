@@ -1,0 +1,8 @@
+from .lib.embedder import inner_len, inner_first
+
+macro show(v: int) {
+    @emit v
+}
+
+show inner_len()
+show inner_first()

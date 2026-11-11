@@ -65,3 +65,42 @@ pub fn compile_error(fixture: &str) -> String {
     assert!(!output.status.success(), "bitterasm compile unexpectedly succeeded for {fixture}");
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
+
+/// The `bitter` binary, built on demand. It's a separate package, so Cargo
+/// doesn't build it for this one's tests; it lands next to `bitterasm`.
+pub fn bitter_bin() -> std::path::PathBuf {
+    static BUILD_ONCE: std::sync::Once = std::sync::Once::new();
+
+    let bitterasm = std::path::PathBuf::from(env!("CARGO_BIN_EXE_bitterasm"));
+    let bitter = bitterasm.with_file_name(if cfg!(windows) { "bitter.exe" } else { "bitter" });
+
+    BUILD_ONCE.call_once(|| {
+        let status = Command::new("cargo")
+            .args(["build", "--package", "bitter", "--quiet"])
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .status()
+            .expect("cargo build --package bitter should run");
+        assert!(status.success(), "failed to build the `bitter` binary");
+    });
+
+    bitter
+}
+
+/// Compiles `fixture`, which must succeed, and packs it with
+/// `bitter encode`, returning the bytes.
+pub fn encode(fixture: &str) -> Vec<u8> {
+    let (output, em) = compile(fixture);
+    assert!(output.status.success(), "bitterasm compile failed for {fixture}:\n{}", String::from_utf8_lossy(&output.stderr));
+
+    let bin = em.with_extension("bin");
+    let encoded = Command::new(bitter_bin())
+        .args(["encode", &em.display().to_string(), "-o", &bin.display().to_string()])
+        .output()
+        .expect("bitter encode should run");
+    assert!(encoded.status.success(), "bitter encode failed for {fixture}:\n{}", String::from_utf8_lossy(&encoded.stderr));
+
+    let bytes = std::fs::read(&bin).expect("bitter should write its output");
+    let _ = std::fs::remove_file(&em);
+    let _ = std::fs::remove_file(&bin);
+    bytes
+}

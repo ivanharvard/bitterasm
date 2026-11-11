@@ -361,7 +361,7 @@ impl<'a> AliasResolver<'a> {
                         .unwrap_or_default();
                     after_scope.insert(
                         "result".to_string(),
-                        Value::Struct { symbol, args: Vec::new(), fields, nominal: None },
+                        Value::Struct { symbol, args: Vec::new(), fields: fields.into(), nominal: None },
                     );
 
                     for hook in after_hooks {
@@ -1590,6 +1590,8 @@ impl<'a> AliasResolver<'a> {
                 field: field.clone(),
                 span: *span,
             }),
+
+            Expr::Embed { .. } => Ok(expr.clone()),
         }
     }
 
@@ -1883,10 +1885,10 @@ mod tests {
         let cartesian = Value::Struct {
             symbol: cartesian_symbol,
             args: vec![],
-            fields: vec![
+            fields: std::sync::Arc::new(vec![
                 ("x".to_string(), Value::Int(Int::from(2))),
                 ("y".to_string(), Value::Int(Int::from(3))),
-            ],
+            ]),
             nominal: None,
         };
         let convert = find_macro(&program, "convert_cartesian");
@@ -1985,7 +1987,7 @@ mod tests {
                 emitted: vec![Value::Struct {
                     symbol: bits_id,
                     args: vec![ResolvedGenericArg::Const(Int::from(8))],
-                    fields: vec![("value".to_string(), Value::Int(Int::from(3)))],
+                    fields: std::sync::Arc::new(vec![("value".to_string(), Value::Int(Int::from(3)))]),
                     nominal: None,
                 }],
                 generated: vec![],
@@ -2171,7 +2173,7 @@ mod tests {
         let argument = Value::Struct {
             symbol: wrapper_symbol,
             args: vec![],
-            fields: vec![("value".to_string(), Value::Int(Int::from(1)))],
+            fields: std::sync::Arc::new(vec![("value".to_string(), Value::Int(Int::from(1)))]),
             nominal: None,
         };
 
@@ -3040,11 +3042,11 @@ mod tests {
         let arg = Value::Struct {
             symbol: mixed_symbol,
             args: vec![],
-            fields: vec![
+            fields: std::sync::Arc::new(vec![
                 ("a".to_string(), Value::Int(Int::from(1))),
                 ("b".to_string(), Value::Int(Int::from(2))),
                 ("c".to_string(), Value::Int(Int::from(3))),
-            ],
+            ]),
             nominal: None,
         };
 
@@ -3077,12 +3079,12 @@ mod tests {
         let arg = Value::Struct {
             symbol: mixed_symbol,
             args: vec![],
-            fields: vec![
+            fields: std::sync::Arc::new(vec![
                 ("a".to_string(), Value::Int(Int::from(1))),
                 ("b".to_string(), Value::Int(Int::from(2))),
                 ("len".to_string(), Value::Int(Int::from(99))),
                 ("c".to_string(), Value::Int(Int::from(3))),
-            ],
+            ]),
             nominal: None,
         };
 

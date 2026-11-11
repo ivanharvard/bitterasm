@@ -1,0 +1,38 @@
+#! Reading what `@embed` gives. `@embed "file"` is the file's contents as
+#! numbered units, in a struct shaped like a string's: `__el0`, `__el1`,
+#! ..., and `len`. It says nothing about what the units are. These macros
+#! are for a program that knows its file holds bytes.
+#!
+#! ```text
+#! from std.embed import emit_bytes
+#!
+#! # Pastes `logo.bin`, beside this file, into the output here, untouched.
+#! emit_bytes @embed "logo.bin"
+#! ```
+#!
+#! A unit that doesn't fit in a byte, 0 to 255, is a compile error.
+
+from std.array import Array
+from std.binary import bits
+
+## The units of `raw`, from `@embed`, as bytes.
+pub macro as_bytes<S>(raw: S) -> Array<bits<8>, ...> {
+    @return Array<bits<8>, raw.len> {
+        @for i in 0..raw.len {
+            __el`i`: byte(raw.__el`i`),
+        }
+    }
+}
+
+## Emits each unit of `raw`, from `@embed`, as a byte: the file, pasted
+## into the output.
+pub macro emit_bytes<S>(raw: S) {
+    @for unit in raw {
+        @emit byte(unit)
+    }
+}
+
+macro byte(unit: int) -> bits<8> {
+    @assert unit >= 0 && unit <= 255, "an embedded unit doesn't fit in a byte"
+    @return bits<8>(unit)
+}

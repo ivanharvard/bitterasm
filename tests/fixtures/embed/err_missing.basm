@@ -1,0 +1,5 @@
+macro show(v: int) {
+    @emit v
+}
+
+show (@embed "no_such_file.bin").len

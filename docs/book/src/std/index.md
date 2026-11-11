@@ -24,6 +24,7 @@ directory.
 | `std.enumerated` | `Enumerated<T>`, an index with a value |
 | `std.iter` | `Range` and `range(start, stop, step)` for stepped ranges |
 | `std.decimal` | `Decimal` and `Fraction`, with conversions between them and `int` |
+| `std.embed` | `emit_bytes` and `as_bytes`, for a file `@embed` read that holds bytes |
 | `std.math` | Integer math (`pow`, `gcd`, `isqrt`, `popcount`, ...) and fixed-point math over `Decimal` (`sqrt`, `ln`, `sin`, `atan2`, ...) |
 
 ## For `bitter`

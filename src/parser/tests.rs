@@ -2141,3 +2141,20 @@ fn a_statement_starting_with_in_needs_a_pattern() {
 
     assert!(error.message.contains("expected statement"), "{}", error.message);
 }
+
+#[test]
+fn embed_takes_a_string_path() {
+    let program = parse(lex("const raw = @embed \"image.bin\"\n").unwrap()).unwrap();
+
+    let Statement::Const(declaration) = &program.statements[0] else {
+        panic!("expected a const");
+    };
+    assert!(matches!(&declaration.value, Expr::Embed { path, .. } if path == "image.bin"));
+}
+
+#[test]
+fn embed_without_a_string_is_an_error() {
+    let error = parse(lex("const raw = @embed image\n").unwrap()).unwrap_err();
+
+    assert!(error.message.contains("`@embed` takes a file's path"), "{}", error.message);
+}

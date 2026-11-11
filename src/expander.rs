@@ -657,6 +657,8 @@ pub fn substitute_expr(expr: &Expr, substitutions: &HashMap<String, Expr>) -> Ex
             field: field.clone(),
             span: *span,
         },
+
+        Expr::Embed { .. } => expr.clone(),
     }
 }
 

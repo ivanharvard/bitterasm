@@ -617,6 +617,7 @@ pub fn print_expr(expr: &Expr) -> String {
         }
 
         Expr::HasField { subject, field, .. } => format!("@hasfield {}, {field}", print_expr(subject)),
+        Expr::Embed { path, .. } => format!("@embed {path:?}"),
     }
 }
 

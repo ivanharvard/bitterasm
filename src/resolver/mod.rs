@@ -259,6 +259,13 @@ pub enum ResolveError {
         span: Span,
     },
 
+    // `@embed`'s file couldn't be read.
+    EmbedFailed {
+        path: String,
+        reason: String,
+        span: Span,
+    },
+
     // Like `ExpectedConstantExpression`, but for `@emit`/`@return`'s more
     // general notion of "value" (which also allows struct construction and
     // field access) rather than a pure `Int` expression.
@@ -604,6 +611,7 @@ impl ResolveError {
             | Self::ExpectedStructCallee { span, .. } | Self::ExpectedIntValue { span }
             | Self::NonIntOperand { span, .. } | Self::MetaOutsideMacro { span, .. }
             | Self::ExpectedStructValue { span } | Self::ExpectedValueExpression { span }
+            | Self::EmbedFailed { span, .. }
             | Self::UnsupportedMacroStatement { span, .. } | Self::UnsupportedSpliceValue { span }
             | Self::Fold { span, .. }
             | Self::UnsupportedCallExpression { span } | Self::UnknownMacro { span, .. }

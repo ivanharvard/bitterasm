@@ -2,7 +2,7 @@
 
 Words starting with `@` are **meta keywords**. They control what a macro
 does while the compiler runs it: emit values, return, check conditions,
-branch and loop. There are thirteen:
+branch and loop. There are fourteen:
 
 | Keyword | Does | Page |
 |---|---|---|
@@ -19,6 +19,7 @@ branch and loop. There are thirteen:
 | `@link call(...)` | Runs a macro last, to lay out the output | [Link stages](../programs/link-stage.md) |
 | `@extend subject { ... }` | A space or section with more fields | [Spaces](../programs/spaces.md#extend) |
 | `@hasfield subject, name` | Whether `subject` has a field `name` | [Spaces](../programs/spaces.md#hasfield) |
+| `@embed "path"` | A file's contents, as numbered units | [`@embed`](embed.md) |
 
 Nothing a meta keyword does survives into the output except what it emits.
 There's no `@if` at run time on the target machine; that would be an

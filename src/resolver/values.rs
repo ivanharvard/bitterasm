@@ -30,6 +30,22 @@ use super::ResolveError;
 /// in a body, a struct's fields while its invariant runs.
 pub type Scope = crate::fxhash::FxHashMap<String, Value>;
 
+/// A struct value's fields, in declaration order.
+pub type StructFields = std::sync::Arc<Vec<(String, Value)>>;
+
+/// Where the field `name` is in `items`. A generated element field
+/// `__elN` is almost always at position N, as in a string or an `@embed`,
+/// so that's checked first: reading every element of a large one stays
+/// linear overall.
+pub(super) fn position_by_name<T>(items: &[T], name: &str, name_of: impl Fn(&T) -> &String) -> Option<usize> {
+    if let Some(index) = name.strip_prefix("__el").and_then(|n| n.parse::<usize>().ok())
+        && items.get(index).is_some_and(|item| name_of(item) == name)
+    {
+        return Some(index);
+    }
+    items.iter().position(|item| name_of(item) == name)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Int(Int),
@@ -54,7 +70,10 @@ pub enum Value {
     Struct {
         symbol: SymbolId,
         args: Vec<ResolvedGenericArg>,
-        fields: Vec<(String, Value)>,
+        /// Shared, so copying a struct value, as every scope copy does,
+        /// doesn't copy its fields. An `@embed` of a large file is one
+        /// struct with a field per unit.
+        fields: StructFields,
 
         /// The outermost nominal (invariant-bearing) `type` alias this
         /// value was produced *as*, if any — set only by `as`
@@ -400,9 +419,8 @@ impl<'a> AliasResolver<'a> {
                     // ever privacy-sensitive to begin with.
                     let is_private = self.get_symbol(symbol).kind == SymbolKind::Struct && {
                         let declared = self.instantiate_struct_fields_named(symbol, &args)?;
-                        declared
-                            .iter()
-                            .any(|(declared_name, _, is_pub, ..)| *declared_name == member && !is_pub)
+                        position_by_name(&declared, &member, |field| &field.0)
+                            .is_some_and(|index| !declared[index].2)
                     };
 
                     if is_private && self.symbol_module(symbol) != self.current_module {
@@ -413,10 +431,8 @@ impl<'a> AliasResolver<'a> {
                         });
                     }
 
-                    fields
-                        .into_iter()
-                        .find(|(name, _)| name == &member)
-                        .map(|(_, value)| value)
+                    position_by_name(&fields, &member, |field| &field.0)
+                        .map(|index| fields[index].1.clone())
                         .ok_or_else(|| ResolveError::UnknownField {
                             type_name: self.get_symbol(symbol).name.clone(),
                             field: member,
@@ -568,6 +584,8 @@ impl<'a> AliasResolver<'a> {
                 }
                 _ => Err(ResolveError::ExpectedStructValue { span: *span }),
             },
+
+            Expr::Embed { path, span } => self.eval_embed(path, *span),
 
             // A fold inside a larger expression: only its value is kept.
             Expr::Fold { fold, span } => {
@@ -1375,7 +1393,7 @@ impl<'a> AliasResolver<'a> {
         // than `as`) doesn't tag the result — see the comment where its
         // callee gets resolved, above. `nominal: None` here is that
         // decision made concrete, not an oversight.
-        Ok(Value::Struct { symbol, args, fields, nominal: None })
+        Ok(Value::Struct { symbol, args, fields: fields.into(), nominal: None })
     }
 
     /// `Array<u8, N> { field: value, ... }` — the brace-literal counterpart
@@ -1506,7 +1524,7 @@ impl<'a> AliasResolver<'a> {
         self.check_struct_invariants(symbol, &args, &result_fields, span)?;
 
         // See the identical comment in `eval_call_value` — not tagged.
-        Ok(Value::Struct { symbol, args, fields: result_fields, nominal: None })
+        Ok(Value::Struct { symbol, args, fields: result_fields.into(), nominal: None })
     }
 
     // Resolves a brace-literal construction's already-parsed generic
@@ -1844,7 +1862,7 @@ impl<'a> AliasResolver<'a> {
                         };
                         converted.push((name, self.convert_to_inner(value, field_ty, span, allow_explicit)?));
                     }
-                    Ok(Value::Struct { symbol: *symbol, args: args.clone(), fields: converted, nominal: None })
+                    Ok(Value::Struct { symbol: *symbol, args: args.clone(), fields: converted.into(), nominal: None })
                 }
 
                 // Two anonymous structs whose fields don't line up.
@@ -1869,7 +1887,7 @@ impl<'a> AliasResolver<'a> {
 
                     self.check_struct_invariants(*symbol, args, &fields, span)?;
 
-                    Ok(Value::Struct { symbol: *symbol, args: args.clone(), fields, nominal: None })
+                    Ok(Value::Struct { symbol: *symbol, args: args.clone(), fields: fields.into(), nominal: None })
                 }
             },
 
@@ -2075,7 +2093,7 @@ impl<'a> AliasResolver<'a> {
                 }
                 _ => None,
             })
-            .collect();
+            .collect::<Vec<_>>().into();
 
         Ok(Some(Value::Struct {
             symbol,
@@ -2688,10 +2706,10 @@ mod tests {
             Value::Struct {
                 symbol: reg_id,
                 args: vec![],
-                fields: vec![
+                fields: std::sync::Arc::new(vec![
                     ("id".to_string(), Value::Int(Int::from(0))),
                     ("width".to_string(), Value::Int(Int::from(2))),
-                ],
+                ]),
                 nominal: None,
             }
         );
@@ -2717,10 +2735,10 @@ mod tests {
             Value::Struct {
                 symbol: reg_id,
                 args: vec![],
-                fields: vec![
+                fields: std::sync::Arc::new(vec![
                     ("id".to_string(), Value::Int(Int::from(0))),
                     ("width".to_string(), Value::Int(Int::from(2))),
-                ],
+                ]),
                 nominal: None,
             }
         );
@@ -2742,10 +2760,10 @@ mod tests {
             Value::Struct {
                 symbol: reg_id,
                 args: vec![],
-                fields: vec![
+                fields: std::sync::Arc::new(vec![
                     ("id".to_string(), Value::Int(Int::from(7))),
                     ("width".to_string(), Value::Int(Int::from(2))),
-                ],
+                ]),
                 nominal: None,
             },
         );
@@ -2912,12 +2930,12 @@ mod tests {
         let mixed = Value::Struct {
             symbol: mixed_symbol,
             args: vec![],
-            fields: vec![
+            fields: std::sync::Arc::new(vec![
                 ("a".to_string(), Value::Int(Int::from(1))),
                 ("b".to_string(), Value::Int(Int::from(2))),
                 ("len".to_string(), Value::Int(Int::from(99))),
                 ("c".to_string(), Value::Int(Int::from(3))),
-            ],
+            ]),
             nominal: None,
         };
 
@@ -2986,10 +3004,10 @@ mod tests {
             Value::Struct {
                 symbol: reg_id,
                 args: vec![],
-                fields: vec![
+                fields: std::sync::Arc::new(vec![
                     ("id".to_string(), Value::Int(Int::from(0))),
                     ("width".to_string(), Value::Int(Int::from(2))),
-                ],
+                ]),
                 nominal: None,
             }
         );
@@ -3015,10 +3033,10 @@ mod tests {
             Value::Struct {
                 symbol: reg_id,
                 args: vec![],
-                fields: vec![
+                fields: std::sync::Arc::new(vec![
                     ("id".to_string(), Value::Int(Int::from(3))),
                     ("width".to_string(), Value::Int(Int::from(8))),
-                ],
+                ]),
                 nominal: None,
             }
         );
@@ -3086,11 +3104,11 @@ mod tests {
                     ResolvedGenericArg::Type(Box::new(ResolvedType::Builtin(BuiltinType::Int))),
                     ResolvedGenericArg::Const(Int::from(3)),
                 ],
-                fields: vec![
+                fields: std::sync::Arc::new(vec![
                     ("__el0".to_string(), Value::Int(Int::from(0))),
                     ("__el1".to_string(), Value::Int(Int::from(2))),
                     ("__el2".to_string(), Value::Int(Int::from(4))),
-                ],
+                ]),
                 nominal: None,
             }
         );
@@ -3117,11 +3135,11 @@ mod tests {
 
         assert_eq!(
             fields,
-            vec![
+            std::sync::Arc::new(vec![
                 ("__el0".to_string(), Value::Int(Int::from(0))),
                 ("__el1".to_string(), Value::Int(Int::from(9))),
                 ("__el2".to_string(), Value::Int(Int::from(0))),
-            ]
+            ])
         );
     }
 
@@ -3190,10 +3208,10 @@ mod tests {
 
         assert_eq!(
             fields,
-            vec![
+            std::sync::Arc::new(vec![
                 ("__el0".to_string(), Value::Int(Int::from(65))),
                 ("len".to_string(), Value::Int(Int::from(1))),
-            ]
+            ])
         );
     }
 
@@ -3214,11 +3232,11 @@ mod tests {
 
         assert_eq!(
             fields,
-            vec![
+            std::sync::Arc::new(vec![
                 ("__el0".to_string(), Value::Int(Int::from(65))),
                 ("__el1".to_string(), Value::Int(Int::from(66))),
                 ("len".to_string(), Value::Int(Int::from(2))),
-            ]
+            ])
         );
     }
 
@@ -3262,7 +3280,7 @@ mod tests {
             Value::Struct {
                 symbol: bits_id,
                 args: vec![ResolvedGenericArg::Const(Int::from(8))],
-                fields: vec![("value".to_string(), Value::Int(Int::from(50)))],
+                fields: std::sync::Arc::new(vec![("value".to_string(), Value::Int(Int::from(50)))]),
                 nominal: Some(Box::new(ubyte)),
             }
         );
@@ -3374,7 +3392,7 @@ const converted = original as Sized<derived_len, Order.Second>
         let untagged = Value::Struct {
             symbol: bits_id,
             args: vec![ResolvedGenericArg::Const(Int::from(8))],
-            fields: vec![("value".to_string(), Value::Int(Int::from(50)))],
+            fields: std::sync::Arc::new(vec![("value".to_string(), Value::Int(Int::from(50)))]),
             nominal: None,
         };
 
@@ -3408,7 +3426,7 @@ const converted = original as Sized<derived_len, Order.Second>
             Value::Struct {
                 symbol: bits_id,
                 args: vec![ResolvedGenericArg::Const(Int::from(8))],
-                fields: vec![("value".to_string(), Value::Int(Int::from(5)))],
+                fields: std::sync::Arc::new(vec![("value".to_string(), Value::Int(Int::from(5)))]),
                 nominal: Some(Box::new(ubyte)),
             }
         );
@@ -3434,7 +3452,7 @@ const converted = original as Sized<derived_len, Order.Second>
             vec![Value::Struct {
                 symbol: bits_id,
                 args: vec![ResolvedGenericArg::Const(Int::from(8))],
-                fields: vec![("value".to_string(), Value::Int(Int::from(5)))],
+                fields: std::sync::Arc::new(vec![("value".to_string(), Value::Int(Int::from(5)))]),
                 nominal: Some(Box::new(ubyte)),
             }]
         );

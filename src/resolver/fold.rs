@@ -175,7 +175,7 @@ impl<'a> AliasResolver<'a> {
             .map(|(_, value)| Ok(ResolvedGenericArg::Type(Box::new(self.value_type(value)?))))
             .collect::<Result<Vec<_>, ResolveError>>()?;
 
-        Ok(Value::Struct { symbol, args, fields: accumulators, nominal: None })
+        Ok(Value::Struct { symbol, args, fields: accumulators.into(), nominal: None })
     }
 
     /// Evaluates `@next`'s values in the current iteration's scope and

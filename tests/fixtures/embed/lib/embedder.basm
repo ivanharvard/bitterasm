@@ -1,0 +1,9 @@
+## `inner.bin`, beside this file, wherever the caller is.
+pub macro inner_len() -> int {
+    @return (@embed "inner.bin").len
+}
+
+## `inner.bin`'s first unit.
+pub macro inner_first() -> int {
+    @return (@embed "inner.bin").__el0
+}

@@ -576,6 +576,28 @@ impl Parser {
             }
 
             // ============
+            // `@embed "path"`
+            // ============
+
+            TokenKind::At
+                if matches!(
+                    self.tokens.get(self.pos + 1).map(|next| &next.kind),
+                    Some(TokenKind::Identifier(name)) if name == "embed"
+                ) =>
+            {
+                let start = token.span.start;
+                self.advance(); // `@`
+                self.advance(); // `embed`
+
+                let TokenKind::String(path) = self.current().kind.clone() else {
+                    return Err(ParseError::new("`@embed` takes a file's path as a string: `@embed \"image.bin\"`", self.current().span));
+                };
+                self.advance();
+
+                Ok(Expr::Embed { path, span: Span::new(start, self.previous().span.end) })
+            }
+
+            // ============
             // `expr` — evaluate and splice
             // ============
 
@@ -842,7 +864,8 @@ fn set_expr_span(expr: &mut Expr, new_span: Span) {
         | Expr::In { span, .. }
         | Expr::Fold { span, .. }
         | Expr::Extend { span, .. }
-        | Expr::HasField { span, .. } => {
+        | Expr::HasField { span, .. }
+        | Expr::Embed { span, .. } => {
             *span = new_span;
         }
     }

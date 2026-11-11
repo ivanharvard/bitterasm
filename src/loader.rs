@@ -606,6 +606,7 @@ fn load_module(path: &Path, state: &mut LoadState) -> Result<(), LoadError> {
 
     for mut statement in unrolled.clone() {
         let mut renamer = Renamer::new(&scope, &statement);
+        renamer.dir = path.parent();
         name_declaration(&mut statement, module_id);
         rename_statement(&mut statement, &mut renamer);
 
@@ -1128,13 +1129,16 @@ struct Renamer<'a> {
 
     // The first ambiguous name referenced, if any.
     ambiguous: Option<(String, Vec<Binding>)>,
+
+    // The directory of the file being loaded, for `@embed` paths.
+    dir: Option<&'a Path>,
 }
 
 impl<'a> Renamer<'a> {
     fn new(scope: &'a HashMap<String, Binding>, statement: &Statement) -> Self {
         let mut binders = Binders::default();
         binders.statement(statement, true);
-        Self { scope, values: binders.values, types: binders.types, ambiguous: None }
+        Self { scope, values: binders.values, types: binders.types, ambiguous: None, dir: None }
     }
 
     /// The internal name for a reference in value position.
@@ -1384,7 +1388,7 @@ impl Binders {
             Expr::HasField { subject, .. } => self.expr(subject),
 
             Expr::Identifier { .. } | Expr::SplicedIdentifier { .. } | Expr::Integer { .. }
-            | Expr::String { .. } | Expr::EnumVariant { payload: None, .. } => {}
+            | Expr::String { .. } | Expr::EnumVariant { payload: None, .. } | Expr::Embed { .. } => {}
         }
     }
 
@@ -1812,6 +1816,14 @@ fn rename_expr(expr: &mut Expr, renames: &mut Renamer) {
         }
 
         Expr::HasField { subject, .. } => rename_expr(subject, renames),
+
+        // A relative path starts from the file the `@embed` is written in,
+        // wherever its macro ends up being called.
+        Expr::Embed { path, .. } => {
+            if let Some(dir) = renames.dir {
+                *path = dir.join(&*path).display().to_string();
+            }
+        }
     }
 }
 
@@ -2417,7 +2429,7 @@ mod tests {
         let arg = crate::resolver::Value::Struct {
             symbol: foo_symbol,
             args: vec![],
-            fields: vec![("x".to_string(), crate::resolver::Value::Int(crate::eval::Int::from(1)))],
+            fields: std::sync::Arc::new(vec![("x".to_string(), crate::resolver::Value::Int(crate::eval::Int::from(1)))]),
             nominal: None,
         };
 
@@ -2481,7 +2493,7 @@ mod tests {
         let arg = crate::resolver::Value::Struct {
             symbol: foo_symbol,
             args: vec![],
-            fields: vec![("x".to_string(), crate::resolver::Value::Int(crate::eval::Int::from(1)))],
+            fields: std::sync::Arc::new(vec![("x".to_string(), crate::resolver::Value::Int(crate::eval::Int::from(1)))]),
             nominal: None,
         };
 

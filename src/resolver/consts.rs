@@ -285,6 +285,7 @@ pub(super) fn referenced_identifiers(expr: &crate::ast::Expr) -> Vec<String> {
                 }
             }
             Expr::HasField { subject, .. } => stack.push(subject),
+            Expr::Embed { .. } => {}
         }
     }
 
@@ -450,6 +451,7 @@ fn is_int_shaped_inner(program: &Program, expr: &Expr, visiting: &mut HashSet<St
                 | Expr::SectionLiteral { .. }
                 | Expr::As { .. }
                 | Expr::String { .. }
+                | Expr::Embed { .. }
         ),
     }
 }

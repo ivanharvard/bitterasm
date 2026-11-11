@@ -351,6 +351,15 @@ pub enum Expr {
         field: String,
         span: Span,
     },
+
+    /// `@embed "path"`: the file's contents as numbered units, the way the
+    /// machine running the compiler stores them, in a struct shaped like a
+    /// string's: `__el0`, `__el1`, ..., and `len`. The loader makes `path`
+    /// relative to the file it's written in.
+    Embed {
+        path: String,
+        span: Span,
+    },
 }
 
 /// One field an `@extend` adds.
@@ -391,7 +400,8 @@ impl Expr {
             | Expr::In { span, .. }
             | Expr::Fold { span, .. }
             | Expr::Extend { span, .. }
-            | Expr::HasField { span, .. } => *span,
+            | Expr::HasField { span, .. }
+            | Expr::Embed { span, .. } => *span,
         }
     }
 }

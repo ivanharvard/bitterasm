@@ -76,6 +76,7 @@ pub fn resolve_error(error: ResolveError, source: Option<SourceId>) -> Diagnosti
         NonIntOperand { found, hint: None, span } => (format!("expected an integer here, found `{found}`"), span),
         NonIntOperand { found, hint: Some(hint), span } => (format!("expected an integer here, found `{found}`: {hint}"), span),
         ExpectedStructValue { span } => ("expected a struct value".into(), span),
+        EmbedFailed { path, reason, span } => (format!("can't embed `{path}`: {reason}"), span),
         ExpectedValueExpression { span } => ("expected a value expression".into(), span),
         UnsupportedMacroStatement { kind, span } => (format!("unsupported `{kind}` statement in macro body"), span),
         Fold { message, span } => (message.clone(), span),
